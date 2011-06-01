@@ -177,8 +177,6 @@
 'floor.l.d',
 'bc1t',
 'bc1f',
-'bc1tl',
-'bc1fl',
 'c.eq.d',
 'c.eq.s',
 'c.le.d',

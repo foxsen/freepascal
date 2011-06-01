@@ -150,6 +150,7 @@ unit cpugas;
           end;
       end;
 
+{
      function getnextfpreg(tmpfpu : shortstring) : shortstring;
      begin
        case length(tmpfpu) of
@@ -168,6 +169,7 @@ unit cpugas;
         end;
         getnextfpreg := tmpfpu;
      end;
+}
 
 
     procedure TMIPSInstrWriter.WriteInstruction(hp: Tai);
@@ -177,6 +179,7 @@ unit cpugas;
         i:  integer;
         tmpfpu: string;
         tmpfpu_len: longint;
+        r: TRegister;
       begin
         if hp.typ <> ait_instruction then
           exit;
@@ -233,8 +236,12 @@ unit cpugas;
 { bug if $f9/$f19
               tmpfpu_len := length(tmpfpu);
               tmpfpu[tmpfpu_len] := succ(tmpfpu[tmpfpu_len]);
+              
 }
-              s := #9 + gas_op2str[A_LWC1] + #9 + getnextfpreg(tmpfpu) + ',' + getopstr_4(taicpu(hp).oper[1]^); // + '(' + getopstr(taicpu(hp).oper[1]^) + ')';
+              r := taicpu(hp).oper[0]^.reg;
+              setsupreg(r, getsupreg(r) + 1);
+              tmpfpu := gas_regname(r);
+              s := #9 + gas_op2str[A_LWC1] + #9 + tmpfpu + ',' + getopstr_4(taicpu(hp).oper[1]^); // + '(' + getopstr(taicpu(hp).oper[1]^) + ')';
               owner.AsmWriteLn(s);
             end;
           A_SDC1:
@@ -247,7 +254,10 @@ unit cpugas;
               tmpfpu_len := length(tmpfpu);
               tmpfpu[tmpfpu_len] := succ(tmpfpu[tmpfpu_len]);
 }
-              s := #9 + gas_op2str[A_SWC1] + #9 + getnextfpreg(tmpfpu) + ',' + getopstr_4(taicpu(hp).oper[1]^); //+ ',' + getopstr(taicpu(hp).oper[2]^) + '(' + getopstr(taicpu(hp).oper[1]^) + ')';
+              r := taicpu(hp).oper[0]^.reg;
+              setsupreg(r, getsupreg(r) + 1);
+              tmpfpu := gas_regname(r);
+              s := #9 + gas_op2str[A_SWC1] + #9 + tmpfpu + ',' + getopstr_4(taicpu(hp).oper[1]^); //+ ',' + getopstr(taicpu(hp).oper[2]^) + '(' + getopstr(taicpu(hp).oper[1]^) + ')';
               owner.AsmWriteLn(s);
             end;
           else

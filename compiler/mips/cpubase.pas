@@ -329,9 +329,7 @@ unit cpubase;
       begin
         { This isn't 100% perfect because the arm allows jumps also by writing to PC=R15.
           To overcome this problem we simply forbid that FPC generates jumps by loading R15 }
-        is_calljmp:= o in [A_J,A_JAL,A_JALR,{ A_JALX, }A_JR,
-          A_BEQ,A_BNE,A_BGEZ,A_BGEZAL,A_BGTZ,A_BLEZ,A_BLTZ,A_BLTZAL,
-          A_BEQL,A_BGEZALL,A_BGEZL,A_BGTZL,A_BLEZL,A_BLTZALL,A_BLTZL,A_BNEL];
+        is_calljmp:= o in [A_J,A_JAL,A_JALR,{ A_JALX, }A_JR, A_BA, A_BC, A_BC1T, A_BC1F];
       end;
 
 
