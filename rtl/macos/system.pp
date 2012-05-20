@@ -1,5 +1,4 @@
 {
-    $Id: system.pp,v 1.33 2005/05/12 20:29:04 michael Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2002-2004 by Olle Raab
 
@@ -25,13 +24,18 @@ const
  LFNSupport = true;
  DirectorySeparator = ':';
  DriveSeparator = ':';
+ ExtensionSeparator = '.';
  PathSeparator = ',';  {Is used in MPW and OzTeX}
+ AllowDirectorySeparators : set of char = [':'];
+ AllowDriveSeparators : set of char = [':'];
  FileNameCaseSensitive = false;
+ FileNameCasePreserving = true;
  CtrlZMarksEOF: boolean = false; (* #26 not considered as end of file *)
-  
+
  maxExitCode = 65535;
  MaxPathLen = 256;
-  
+ AllFilesMask = '*';
+
 const
 { Default filehandles }
   UnusedHandle    : Longint = -1;
@@ -214,18 +218,24 @@ end;
                          SystemUnit Initialization
 *****************************************************************************}
 
+{$ifndef FPC_DARWIN_PASCALMAIN}
 procedure pascalmain; external name 'PASCALMAIN';
 
 {Main entry point in C style, needed to capture program parameters.
  For this to work, the system unit must be before the main program
  in the linking order.}
 procedure main(argcparam: Longint; argvparam: ppchar; envpparam: ppchar); cdecl; [public];
+{$else FPC_DARWIN_PASCALMAIN}
+procedure FPC_SYSTEMMAIN(argcparam: Longint; argvparam: ppchar; envpparam: ppchar); cdecl; [public];
+{$endif FPC_DARWIN_PASCALMAIN}
 
 begin
   argc:= argcparam;
   argv:= argvparam;
   envp:= envpparam;
+{$ifndef FPC_DARWIN_PASCALMAIN}
   pascalmain;  {run the pascal main program}
+{$endif FPC_DARWIN_PASCALMAIN}
 end;
 
 procedure setup_arguments;
@@ -471,6 +481,11 @@ begin
 {$WARNING To be implemented - using GetProcessInformation???}
 end;
 
+function CheckInitialStkLen(stklen : SizeUInt) : SizeUInt;
+begin
+  result := stklen;
+end;
+
 var
   resHdl: Mac_Handle;
   isFolder, hadAlias, leafIsAlias: Boolean;
@@ -504,7 +519,7 @@ begin
   { To be set if this is a library and not a program  }
   IsLibrary := FALSE;
 
-  StackLength := InitialStkLen;
+  StackLength := CheckInitialStkLen(InitialStkLen);
   StackBottom := SPtr - StackLength;
   pathTranslation:= false;
 
@@ -534,6 +549,7 @@ begin
 
   InitHeap;
   SysInitExceptions;
+  initunicodestringmanager;
   SysInitStdIO;
 
   { Setup environment and arguments }
@@ -543,12 +559,7 @@ begin
   InOutRes:=0;
   errno:=0;
   InitSystemThreads;
-{$ifdef HASVARIANT}
   initvariantmanager;
-{$endif HASVARIANT}
-{$ifdef HASWIDESTRING}
-  initwidestringmanager;
-{$endif HASWIDESTRING}
 
   if StandAlone = 0 then
     begin
@@ -557,29 +568,3 @@ begin
       InitCursorCtl(nil);
     end;
 end.
-
-
-{
-  $Log: system.pp,v $
-  Revision 1.33  2005/05/12 20:29:04  michael
-  + Added maxpathlen constant (maximum length of filename path)
-
-  Revision 1.32  2005/04/03 21:10:59  hajny
-    * EOF_CTRLZ conditional define replaced with CtrlZMarksEOF, #26 handling made more consistent (fix for bug 2453)
-
-  Revision 1.31  2005/03/20 19:37:31  olle
-    + Added optional path translation mechanism
-
-  Revision 1.30  2005/02/14 17:13:30  peter
-    * truncate log
-
-  Revision 1.29  2005/02/07 21:30:12  peter
-    * system unit updated
-
-  Revision 1.28  2005/02/01 20:22:49  florian
-    * improved widestring infrastructure manager
-
-  Revision 1.27  2005/01/24 18:51:23  olle
-    * filetype/filecreator changed after the file is opened, in case the file did not previously exist
-
-}

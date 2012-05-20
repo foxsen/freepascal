@@ -1,5 +1,4 @@
 {
-    $Id: script.pas,v 1.32 2005/02/14 17:13:07 peter Exp $
     Copyright (c) 1998-2002 by Peter Vreman
 
     This unit handles the writing of script files
@@ -25,101 +24,105 @@ unit script;
 {$i fpcdefs.inc}
 
 interface
-
+{$H+}
 uses
+  sysutils,
+  globtype,
   cclasses;
 
 type
   TScript=class
-    fn   : string[100];
-    data : TStringList;
+    fn   : TCmdStr;
+    data : TCmdStrList;
     executable : boolean;
-    constructor Create(const s:string);
-    constructor CreateExec(const s:string);
+    constructor Create(const s:TCmdStr);
+    constructor CreateExec(const s:TCmdStr);
     destructor Destroy;override;
-    procedure AddStart(const s:string);
-    procedure Add(const s:string);
+    procedure AddStart(const s:TCmdStr);
+    procedure Add(const s:TCmdStr);
     Function  Empty:boolean;
     procedure WriteToDisk;virtual;
   end;
 
   TAsmScript = class (TScript)
-    Constructor Create(Const ScriptName : String); virtual;
-    Procedure AddAsmCommand (Const Command, Options,FileName : String);virtual;abstract;
-    Procedure AddLinkCommand (Const Command, Options, FileName : String);virtual;abstract;
-    Procedure AddDeleteCommand (Const FileName : String);virtual;abstract;
-    Procedure AddDeleteDirCommand (Const FileName : String);virtual;abstract;
+    Constructor Create(Const ScriptName : TCmdStr); virtual;
+    Procedure AddAsmCommand (Const Command, Options,FileName : TCmdStr);virtual;abstract;
+    Procedure AddLinkCommand (Const Command, Options, FileName : TCmdStr);virtual;abstract;
+    Procedure AddDeleteCommand (Const FileName : TCmdStr);virtual;abstract;
+    Procedure AddDeleteDirCommand (Const FileName : TCmdStr);virtual;abstract;
   end;
 
   TAsmScriptDos = class (TAsmScript)
-    Constructor Create (Const ScriptName : String); override;
-    Procedure AddAsmCommand (Const Command, Options,FileName : String);override;
-    Procedure AddLinkCommand (Const Command, Options, FileName : String);override;
-    Procedure AddDeleteCommand (Const FileName : String);override;
-    Procedure AddDeleteDirCommand (Const FileName : String);override;
+    Constructor Create (Const ScriptName : TCmdStr); override;
+    Procedure AddAsmCommand (Const Command, Options,FileName : TCmdStr);override;
+    Procedure AddLinkCommand (Const Command, Options, FileName : TCmdStr);override;
+    Procedure AddDeleteCommand (Const FileName : TCmdStr);override;
+    Procedure AddDeleteDirCommand (Const FileName : TCmdStr);override;
     Procedure WriteToDisk;override;
   end;
 
   TAsmScriptAmiga = class (TAsmScript)
-    Constructor Create (Const ScriptName : String); override;
-    Procedure AddAsmCommand (Const Command, Options,FileName : String);override;
-    Procedure AddLinkCommand (Const Command, Options, FileName : String);override;
-    Procedure AddDeleteCommand (Const FileName : String);override;
-    Procedure AddDeleteDirCommand (Const FileName : String);override;
+    Constructor Create (Const ScriptName : TCmdStr); override;
+    Procedure AddAsmCommand (Const Command, Options,FileName : TCmdStr);override;
+    Procedure AddLinkCommand (Const Command, Options, FileName : TCmdStr);override;
+    Procedure AddDeleteCommand (Const FileName : TCmdStr);override;
+    Procedure AddDeleteDirCommand (Const FileName : TCmdStr);override;
     Procedure WriteToDisk;override;
   end;
 
   TAsmScriptUnix = class (TAsmScript)
-    Constructor Create (Const ScriptName : String);override;
-    Procedure AddAsmCommand (Const Command, Options,FileName : String);override;
-    Procedure AddLinkCommand (Const Command, Options, FileName : String);override;
-    Procedure AddDeleteCommand (Const FileName : String);override;
-    Procedure AddDeleteDirCommand (Const FileName : String);override;
+    Constructor Create (Const ScriptName : TCmdStr);override;
+    Procedure AddAsmCommand (Const Command, Options,FileName : TCmdStr);override;
+    Procedure AddLinkCommand (Const Command, Options, FileName : TCmdStr);override;
+    Procedure AddDeleteCommand (Const FileName : TCmdStr);override;
+    Procedure AddDeleteDirCommand (Const FileName : TCmdStr);override;
     Procedure WriteToDisk;override;
   end;
 
   TAsmScriptMPW = class (TAsmScript)
-    Constructor Create (Const ScriptName : String); override;
-    Procedure AddAsmCommand (Const Command, Options,FileName : String);override;
-    Procedure AddLinkCommand (Const Command, Options, FileName : String);override;
-    Procedure AddDeleteCommand (Const FileName : String);override;
-    Procedure AddDeleteDirCommand (Const FileName : String);override;
+    Constructor Create (Const ScriptName : TCmdStr); override;
+    Procedure AddAsmCommand (Const Command, Options,FileName : TCmdStr);override;
+    Procedure AddLinkCommand (Const Command, Options, FileName : TCmdStr);override;
+    Procedure AddDeleteCommand (Const FileName : TCmdStr);override;
+    Procedure AddDeleteDirCommand (Const FileName : TCmdStr);override;
     Procedure WriteToDisk;override;
   end;
 
   TLinkRes = Class (TScript)
-    procedure Add(const s:string);
-    procedure AddFileName(const s:string);
+    section: string[30];
+    fRealResponseFile: Boolean;
+    constructor Create(const ScriptName : TCmdStr; RealResponseFile: Boolean);
+    procedure Add(const s:TCmdStr);
+    procedure AddFileName(const s:TCmdStr);
+    procedure EndSection(const s:TCmdStr);
+    procedure StartSection(const s:TCmdStr);
   end;
 
 var
   AsmRes : TAsmScript;
 
-Function ScriptFixFileName(const s:string):string;
-Procedure GenerateAsmRes(const st : string);
+Function ScriptFixFileName(const s:TCmdStr):TCmdStr;
+Procedure GenerateAsmRes(const st : TCmdStr);
+Function GenerateScript(const st : TCmdStr): TAsmScript;
 
 
 implementation
 
 uses
 {$ifdef hasUnix}
-  {$ifdef havelinuxrtl10}
-    Linux,
-  {$else}
-    BaseUnix,
-  {$endif}
+  BaseUnix,
 {$endif}
-  cutils,
-  globtype,globals,systems,verbose;
+  cutils,cfileutl,
+  globals,systems,verbose;
 
 
 {****************************************************************************
                                    Helpers
 ****************************************************************************}
 
-    Function ScriptFixFileName(const s:string):string;
+    Function ScriptFixFileName(const s:TCmdStr):TCmdStr;
      begin
-       if cs_link_on_target in aktglobalswitches then
+       if cs_link_on_target in current_settings.globalswitches then
          ScriptFixFileName:=TargetFixFileName(s)
        else
          ScriptFixFileName:=FixFileName(s);
@@ -129,23 +132,23 @@ uses
                                   TScript
 ****************************************************************************}
 
-constructor TScript.Create(const s:string);
+constructor TScript.Create(const s: TCmdStr);
 begin
   fn:=FixFileName(s);
   executable:=false;
-  data:=TStringList.Create;
+  data:=TCmdStrList.Create;
 end;
 
 
-constructor TScript.CreateExec(const s:string);
+constructor TScript.CreateExec(const s:TCmdStr);
 begin
   fn:=FixFileName(s);
-  if cs_link_on_target in aktglobalswitches then
-    fn:=AddExtension(fn,target_info.scriptext)
+  if cs_link_on_target in current_settings.globalswitches then
+    fn:=ChangeFileExt(fn,target_info.scriptext)
   else
-    fn:=AddExtension(fn,source_info.scriptext);
+    fn:=ChangeFileExt(fn,source_info.scriptext);
   executable:=true;
-  data:=TStringList.Create;
+  data:=TCmdStrList.Create;
 end;
 
 
@@ -155,13 +158,13 @@ begin
 end;
 
 
-procedure TScript.AddStart(const s:string);
+procedure TScript.AddStart(const s:TCmdStr);
 begin
   data.Insert(s);
 end;
 
 
-procedure TScript.Add(const s:string);
+procedure TScript.Add(const s:TCmdStr);
 begin
    data.Concat(s);
 end;
@@ -176,17 +179,17 @@ procedure TScript.WriteToDisk;
 var
   t : file;
   i : longint;
-  s : string;
+  s : TCmdStr;
   le: string[2];
 
 begin
   Assign(t,fn);
-  if cs_link_on_target in aktglobalswitches then
+  if cs_link_on_target in current_settings.globalswitches then
     le:= target_info.newline
   else
     le:= source_info.newline;
 
-  {$I-}
+  {$push}{$I-}
   Rewrite(t,1);
   if ioresult<>0 then
     exit;
@@ -197,11 +200,11 @@ begin
       Blockwrite(t,le[1],length(le),i);
     end;
   Close(t);
-  {$I+}
+  {$pop}
   i:=ioresult;
 {$ifdef hasUnix}
   if executable then
-   {$ifdef havelinuxrtl10}ChMod{$else}fpchmod{$endif}(fn,493);
+   fpchmod(fn,493);
 {$endif}
 end;
 
@@ -209,7 +212,7 @@ end;
                                   Asm Response
 ****************************************************************************}
 
-Constructor TAsmScript.Create (Const ScriptName : String);
+Constructor TAsmScript.Create (Const ScriptName : TCmdStr);
 begin
   Inherited CreateExec(ScriptName);
 end;
@@ -219,13 +222,13 @@ end;
                                   DOS Asm Response
 ****************************************************************************}
 
-Constructor TAsmScriptDos.Create (Const ScriptName : String);
+Constructor TAsmScriptDos.Create (Const ScriptName : TCmdStr);
 begin
   Inherited Create(ScriptName);
 end;
 
 
-Procedure TAsmScriptDos.AddAsmCommand (Const Command, Options,FileName : String);
+Procedure TAsmScriptDos.AddAsmCommand (Const Command, Options,FileName : TCmdStr);
 begin
   if FileName<>'' then
    begin
@@ -237,7 +240,7 @@ begin
 end;
 
 
-Procedure TAsmScriptDos.AddLinkCommand (Const Command, Options, FileName : String);
+Procedure TAsmScriptDos.AddLinkCommand (Const Command, Options, FileName : TCmdStr);
 begin
   if FileName<>'' then
    begin
@@ -249,13 +252,13 @@ begin
 end;
 
 
-Procedure TAsmScriptDos.AddDeleteCommand (Const FileName : String);
+Procedure TAsmScriptDos.AddDeleteCommand (Const FileName : TCmdStr);
 begin
  Add('Del ' + MaybeQuoted (ScriptFixFileName (FileName)));
 end;
 
 
-Procedure TAsmScriptDos.AddDeleteDirCommand (Const FileName : String);
+Procedure TAsmScriptDos.AddDeleteDirCommand (Const FileName : TCmdStr);
 begin
  Add('Rmdir ' + MaybeQuoted (ScriptFixFileName (FileName)));
 end;
@@ -278,13 +281,14 @@ end;
                                   Amiga Asm Response
 ****************************************************************************}
 
-Constructor TAsmScriptAmiga.Create (Const ScriptName : String);
+
+Constructor TAsmScriptAmiga.Create (Const ScriptName : TCmdStr);
 begin
   Inherited Create(ScriptName);
 end;
 
 
-Procedure TAsmScriptAmiga.AddAsmCommand (Const Command, Options,FileName : String);
+Procedure TAsmScriptAmiga.AddAsmCommand (Const Command, Options,FileName : TCmdStr);
 begin
   if FileName<>'' then
    begin
@@ -293,7 +297,7 @@ begin
    end;
   Add(maybequoted(command)+' '+Options);
   { There is a problem here,
-    as allways return with a non zero error value PM  }
+    as always return with a non zero error value PM  }
   Add('if error');
   Add('why');
   Add('skip asmend');
@@ -301,7 +305,7 @@ begin
 end;
 
 
-Procedure TAsmScriptAmiga.AddLinkCommand (Const Command, Options, FileName : String);
+Procedure TAsmScriptAmiga.AddLinkCommand (Const Command, Options, FileName : TCmdStr);
 begin
   if FileName<>'' then
    begin
@@ -315,15 +319,15 @@ begin
 end;
 
 
-Procedure TAsmScriptAmiga.AddDeleteCommand (Const FileName : String);
+Procedure TAsmScriptAmiga.AddDeleteCommand (Const FileName : TCmdStr);
 begin
- Add('Delete ' + MaybeQuoted (ScriptFixFileName(FileName)));
+ Add('Delete ' + Unix2AmigaPath(MaybeQuoted(ScriptFixFileName(FileName))) + ' Quiet');
 end;
 
 
-Procedure TAsmScriptAmiga.AddDeleteDirCommand (Const FileName : String);
+Procedure TAsmScriptAmiga.AddDeleteDirCommand (Const FileName : TCmdStr);
 begin
- Add('Delete ' + MaybeQuoted (ScriptFixFileName(FileName)));
+ Add('Delete ' + Unix2AmigaPath(MaybeQuoted(ScriptFixFileName(FileName))) + ' All Quiet');
 end;
 
 
@@ -346,13 +350,13 @@ end;
                               Unix Asm Response
 ****************************************************************************}
 
-Constructor TAsmScriptUnix.Create (Const ScriptName : String);
+Constructor TAsmScriptUnix.Create (Const ScriptName : TCmdStr);
 begin
   Inherited Create(ScriptName);
 end;
 
 
-Procedure TAsmScriptUnix.AddAsmCommand (Const Command, Options,FileName : String);
+Procedure TAsmScriptUnix.AddAsmCommand (Const Command, Options,FileName : TCmdStr);
 begin
   if FileName<>'' then
    Add('echo Assembling '+ScriptFixFileName(FileName));
@@ -361,22 +365,26 @@ begin
 end;
 
 
-Procedure TAsmScriptUnix.AddLinkCommand (Const Command, Options, FileName : String);
+Procedure TAsmScriptUnix.AddLinkCommand (Const Command, Options, FileName : TCmdStr);
 begin
   if FileName<>'' then
    Add('echo Linking '+ScriptFixFileName(FileName));
+  Add('OFS=$IFS');
+  Add('IFS="');
+  Add('"');
   Add(maybequoted(command)+' '+Options);
   Add('if [ $? != 0 ]; then DoExitLink '+ScriptFixFileName(FileName)+'; fi');
+  Add('IFS=$OFS');
 end;
 
 
-Procedure TAsmScriptUnix.AddDeleteCommand (Const FileName : String);
+Procedure TAsmScriptUnix.AddDeleteCommand (Const FileName : TCmdStr);
 begin
  Add('rm ' + MaybeQuoted (ScriptFixFileName(FileName)));
 end;
 
 
-Procedure TAsmScriptUnix.AddDeleteDirCommand (Const FileName : String);
+Procedure TAsmScriptUnix.AddDeleteDirCommand (Const FileName : TCmdStr);
 begin
  Add('rmdir ' + MaybeQuoted (ScriptFixFileName(FileName)));
 end;
@@ -401,13 +409,13 @@ end;
                                   MPW (MacOS) Asm Response
 ****************************************************************************}
 
-Constructor TAsmScriptMPW.Create (Const ScriptName : String);
+Constructor TAsmScriptMPW.Create (Const ScriptName : TCmdStr);
 begin
   Inherited Create(ScriptName);
 end;
 
 
-Procedure TAsmScriptMPW.AddAsmCommand (Const Command, Options,FileName : String);
+Procedure TAsmScriptMPW.AddAsmCommand (Const Command, Options,FileName : TCmdStr);
 begin
   if FileName<>'' then
     Add('Echo Assembling '+ScriptFixFileName(FileName));
@@ -416,7 +424,7 @@ begin
 end;
 
 
-Procedure TAsmScriptMPW.AddLinkCommand (Const Command, Options, FileName : String);
+Procedure TAsmScriptMPW.AddLinkCommand (Const Command, Options, FileName : TCmdStr);
 begin
   if FileName<>'' then
     Add('Echo Linking '+ScriptFixFileName(FileName));
@@ -432,13 +440,13 @@ begin
 end;
 
 
-Procedure TAsmScriptMPW.AddDeleteCommand (Const FileName : String);
+Procedure TAsmScriptMPW.AddDeleteCommand (Const FileName : TCmdStr);
 begin
  Add('Delete ' + MaybeQuoted (ScriptFixFileName(FileName)));
 end;
 
 
-Procedure TAsmScriptMPW.AddDeleteDirCommand (Const FileName : String);
+Procedure TAsmScriptMPW.AddDeleteDirCommand (Const FileName : TCmdStr);
 begin
  Add('Delete ' + MaybeQuoted (ScriptFixFileName (FileName)));
 end;
@@ -453,44 +461,68 @@ end;
 
 
 
-Procedure GenerateAsmRes(const st : string);
-var
-  scripttyp : tscripttype;
+Procedure GenerateAsmRes(const st : TCmdStr);
 begin
-  if cs_link_on_target in aktglobalswitches then
-    scripttyp := target_info.script
-  else
-    scripttyp := source_info.script;
-  case scripttyp of
-    script_unix :
-      AsmRes:=TAsmScriptUnix.Create(st);
-    script_dos :
-      AsmRes:=TAsmScriptDos.Create(st);
-    script_amiga :
-      AsmRes:=TAsmScriptAmiga.Create(st);
-    script_mpw :
-      AsmRes:=TAsmScriptMPW.Create(st);
-  end;
+  AsmRes:=GenerateScript(st);
 end;
+
+function GenerateScript(const st: TCmdStr): TAsmScript;
+  var
+    scripttyp : tscripttype;
+  begin
+    if cs_link_on_target in current_settings.globalswitches then
+      scripttyp := target_info.script
+    else
+      scripttyp := source_info.script;
+    case scripttyp of
+      script_unix :
+        Result:=TAsmScriptUnix.Create(st);
+      script_dos :
+        Result:=TAsmScriptDos.Create(st);
+      script_amiga :
+        Result:=TAsmScriptAmiga.Create(st);
+      script_mpw :
+        Result:=TAsmScriptMPW.Create(st);
+    end;
+  end;
 
 
 {****************************************************************************
                                   Link Response
 ****************************************************************************}
 
-procedure TLinkRes.Add(const s:string);
+constructor TLinkRes.Create(const ScriptName: TCmdStr; RealResponseFile: Boolean);
+begin
+  inherited Create(ScriptName);
+  fRealResponseFile:=RealResponseFile;
+end;
+
+procedure TLinkRes.Add(const s:TCmdStr);
 begin
   if s<>'' then
    inherited Add(s);
 end;
 
-procedure TLinkRes.AddFileName(const s:string);
+procedure TLinkRes.AddFileName(const s:TCmdStr);
 begin
+  if section<>'' then
+   begin
+    inherited Add(section);
+    section:='';
+   end;
   if s<>'' then
    begin
-     if not(s[1] in ['a'..'z','A'..'Z','/','\','.','"']) then
+     { GNU ld only supports double quotes in the response file. }
+     if fRealResponseFile and
+        (s[1]='''') and
+        (((cs_link_on_target in current_settings.globalswitches) and
+          (target_info.script=script_unix)) or
+         (not(cs_link_on_target in current_settings.globalswitches) and
+          (source_info.script=script_unix))) then
+       inherited add(UnixRequoteWithDoubleQuotes(s))
+     else if not(s[1] in ['a'..'z','A'..'Z','/','\','.','"']) then
       begin
-        if cs_link_on_target in aktglobalswitches then
+        if cs_link_on_target in current_settings.globalswitches then
           inherited Add('.'+target_info.DirSep+s)
         else
           inherited Add('.'+source_info.DirSep+s);
@@ -500,10 +532,17 @@ begin
    end;
 end;
 
-end.
-{
-  $Log: script.pas,v $
-  Revision 1.32  2005/02/14 17:13:07  peter
-    * truncate log
+procedure TLinkRes.EndSection(const s:TCmdStr);
+begin
+  { only terminate if we started the section }
+  if section='' then
+    inherited Add(s);
+  section:='';
+end;
 
-}
+procedure TLinkRes.StartSection(const s:TCmdStr);
+begin
+  section:=s;
+end;
+
+end.

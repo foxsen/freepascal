@@ -1,5 +1,4 @@
 {
-    $Id: narmadd.pas,v 1.21 2005/02/16 22:02:26 florian Exp $
     Copyright (c) 2000-2002 by Florian Klaempfl
 
     Code generation for add nodes on the ARM
@@ -33,6 +32,8 @@ interface
        tarmaddnode = class(tcgaddnode)
        private
           function  GetResFlags(unsigned:Boolean):TResFlags;
+       public
+          function pass_1 : tnode;override;
        protected
           procedure second_addfloat;override;
           procedure second_cmpfloat;override;
@@ -47,9 +48,9 @@ interface
       globtype,systems,
       cutils,verbose,globals,
       symconst,symdef,paramgr,
-      aasmbase,aasmtai,aasmcpu,defutil,htypechk,
+      aasmbase,aasmtai,aasmdata,aasmcpu,defutil,htypechk,
       cgbase,cgutils,cgcpu,
-      cpuinfo,pass_1,pass_2,regvars,
+      cpuinfo,pass_1,pass_2,regvars,procinfo,
       cpupara,
       ncon,nset,nadd,
       ncgutil,tgobj,rgobj,rgcpu,cgobj,cg64f32;
@@ -68,7 +69,7 @@ interface
           else
             if not(unsigned) then
               begin
-                if nf_swaped in flags then
+                if nf_swapped in flags then
                   case NodeType of
                     ltn:
                       GetResFlags:=F_GT;
@@ -93,7 +94,7 @@ interface
               end
             else
               begin
-                if nf_swaped in Flags then
+                if nf_swapped in Flags then
                   case NodeType of
                     ltn:
                       GetResFlags:=F_HI;
@@ -123,15 +124,27 @@ interface
     procedure tarmaddnode.second_addfloat;
       var
         op : TAsmOp;
+        singleprec: boolean;
       begin
-        case aktfputype of
+        pass_left_right;
+        if (nf_swapped in flags) then
+          swapleftright;
+
+        case current_settings.fputype of
           fpu_fpa,
           fpu_fpa10,
           fpu_fpa11:
             begin
-              pass_left_right;
-              if (nf_swaped in flags) then
-                swapleftright;
+              { force fpureg as location, left right doesn't matter
+                as both will be in a fpureg }
+              location_force_fpureg(current_asmdata.CurrAsmList,left.location,true);
+              location_force_fpureg(current_asmdata.CurrAsmList,right.location,(left.location.loc<>LOC_CFPUREGISTER));
+
+              location_reset(location,LOC_FPUREGISTER,def_cgsize(resultdef));
+              if left.location.loc<>LOC_CFPUREGISTER then
+                location.register:=left.location.register
+              else
+                location.register:=right.location.register;
 
               case nodetype of
                 addn :
@@ -146,22 +159,55 @@ interface
                   internalerror(200308313);
               end;
 
-              { force fpureg as location, left right doesn't matter
-                as both will be in a fpureg }
-              location_force_fpureg(exprasmlist,left.location,true);
-              location_force_fpureg(exprasmlist,right.location,(left.location.loc<>LOC_CFPUREGISTER));
-
-              location_reset(location,LOC_FPUREGISTER,def_cgsize(resulttype.def));
-              if left.location.loc<>LOC_CFPUREGISTER then
-                location.register:=left.location.register
-              else
-                location.register:=right.location.register;
-
-              exprasmlist.concat(setoppostfix(taicpu.op_reg_reg_reg(op,
+              current_asmdata.CurrAsmList.concat(setoppostfix(taicpu.op_reg_reg_reg(op,
                  location.register,left.location.register,right.location.register),
-                 cgsize2fpuoppostfix[def_cgsize(resulttype.def)]));
+                 cgsize2fpuoppostfix[def_cgsize(resultdef)]));
+            end;
+          fpu_vfpv2,
+          fpu_vfpv3,
+          fpu_vfpv3_d16:
+            begin
+              { force mmreg as location, left right doesn't matter
+                as both will be in a fpureg }
+              location_force_mmregscalar(current_asmdata.CurrAsmList,left.location,true);
+              location_force_mmregscalar(current_asmdata.CurrAsmList,right.location,true);
 
-              location.loc:=LOC_FPUREGISTER;
+              location_reset(location,LOC_MMREGISTER,def_cgsize(resultdef));
+              if left.location.loc<>LOC_CMMREGISTER then
+                location.register:=left.location.register
+              else if right.location.loc<>LOC_CMMREGISTER then
+                location.register:=right.location.register
+              else
+                location.register:=cg.getmmregister(current_asmdata.CurrAsmList,location.size);
+
+              singleprec:=tfloatdef(left.resultdef).floattype=s32real;
+              case nodetype of
+                addn :
+                  if singleprec then
+                    op:=A_FADDS
+                  else
+                    op:=A_FADDD;
+                muln :
+                  if singleprec then
+                    op:=A_FMULS
+                  else
+                    op:=A_FMULD;
+                subn :
+                  if singleprec then
+                    op:=A_FSUBS
+                  else
+                    op:=A_FSUBD;
+                slashn :
+                  if singleprec then
+                    op:=A_FDIVS
+                  else
+                    op:=A_FDIVD;
+                else
+                  internalerror(2009111401);
+              end;
+
+              current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_reg(op,
+                 location.register,left.location.register,right.location.register));
             end;
           fpu_soft:
             { this case should be handled already by pass1 }
@@ -173,27 +219,59 @@ interface
 
 
     procedure tarmaddnode.second_cmpfloat;
+      var
+        op: TAsmOp;
       begin
         pass_left_right;
-        if (nf_swaped in flags) then
+        if (nf_swapped in flags) then
           swapleftright;
-
-        { force fpureg as location, left right doesn't matter
-          as both will be in a fpureg }
-        location_force_fpureg(exprasmlist,left.location,true);
-        location_force_fpureg(exprasmlist,right.location,true);
 
         location_reset(location,LOC_FLAGS,OS_NO);
         location.resflags:=getresflags(true);
 
-        if nodetype in [equaln,unequaln] then
-          exprasmlist.concat(setoppostfix(taicpu.op_reg_reg(A_CMF,
-             left.location.register,right.location.register),
-             cgsize2fpuoppostfix[def_cgsize(resulttype.def)]))
-        else
-          exprasmlist.concat(setoppostfix(taicpu.op_reg_reg(A_CMFE,
-             left.location.register,right.location.register),
-             cgsize2fpuoppostfix[def_cgsize(resulttype.def)]));
+        case current_settings.fputype of
+          fpu_fpa,
+          fpu_fpa10,
+          fpu_fpa11:
+            begin
+              { force fpureg as location, left right doesn't matter
+                as both will be in a fpureg }
+              location_force_fpureg(current_asmdata.CurrAsmList,left.location,true);
+              location_force_fpureg(current_asmdata.CurrAsmList,right.location,true);
+
+              if nodetype in [equaln,unequaln] then
+                current_asmdata.CurrAsmList.concat(setoppostfix(taicpu.op_reg_reg(A_CMF,
+                   left.location.register,right.location.register),
+                   cgsize2fpuoppostfix[def_cgsize(resultdef)]))
+              else
+                current_asmdata.CurrAsmList.concat(setoppostfix(taicpu.op_reg_reg(A_CMFE,
+                   left.location.register,right.location.register),
+                   cgsize2fpuoppostfix[def_cgsize(resultdef)]));
+            end;
+          fpu_vfpv2,
+          fpu_vfpv3,
+          fpu_vfpv3_d16:
+            begin
+              location_force_mmregscalar(current_asmdata.CurrAsmList,left.location,true);
+              location_force_mmregscalar(current_asmdata.CurrAsmList,right.location,true);
+
+              if (tfloatdef(left.resultdef).floattype=s32real) then
+                if nodetype in [equaln,unequaln] then
+                  op:=A_FCMPS
+                 else
+                   op:=A_FCMPES
+              else if nodetype in [equaln,unequaln] then
+                op:=A_FCMPD
+              else
+                op:=A_FCMPED;
+              current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(op,
+                left.location.register,right.location.register));
+              current_asmdata.CurrAsmList.concat(taicpu.op_none(A_FMSTAT));
+            end;
+          fpu_soft:
+            { this case should be handled already by pass1 }
+            internalerror(2009112404);
+        end;
 
         location_reset(location,LOC_FLAGS,OS_NO);
         location.resflags:=getresflags(false);
@@ -213,25 +291,25 @@ interface
         case nodetype of
           equaln:
             begin
-              exprasmlist.concat(taicpu.op_reg_reg(A_CMP,left.location.register,right.location.register));
+              current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_CMP,left.location.register,right.location.register));
               location.resflags:=F_EQ;
             end;
           unequaln:
             begin
-              exprasmlist.concat(taicpu.op_reg_reg(A_CMP,left.location.register,right.location.register));
+              current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_CMP,left.location.register,right.location.register));
               location.resflags:=F_NE;
             end;
           lten,
           gten:
             begin
-              if (not(nf_swaped in flags) and
+              if (not(nf_swapped in flags) and
                   (nodetype = lten)) or
-                 ((nf_swaped in flags) and
+                 ((nf_swapped in flags) and
                   (nodetype = gten)) then
                 swapleftright;
-              tmpreg:=cg.getintregister(exprasmlist,location.size);
-              exprasmlist.concat(taicpu.op_reg_reg_reg(A_AND,tmpreg,left.location.register,right.location.register));
-              exprasmlist.concat(taicpu.op_reg_reg(A_CMP,tmpreg,right.location.register));
+              tmpreg:=cg.getintregister(current_asmdata.CurrAsmList,location.size);
+              current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_reg(A_AND,tmpreg,left.location.register,right.location.register));
+              current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_CMP,tmpreg,right.location.register));
               location.resflags:=F_EQ;
             end;
           else
@@ -243,37 +321,38 @@ interface
     procedure tarmaddnode.second_cmp64bit;
       var
         unsigned : boolean;
-        tmpreg : tregister;
         oldnodetype : tnodetype;
       begin
         pass_left_right;
         force_reg_left_right(false,false);
 
-        unsigned:=not(is_signed(left.resulttype.def)) or
-                  not(is_signed(right.resulttype.def));
+        unsigned:=not(is_signed(left.resultdef)) or
+                  not(is_signed(right.resultdef));
 
         { operation requiring proper N, Z and C flags ? }
         if unsigned or (nodetype in [equaln,unequaln]) then
           begin
             location_reset(location,LOC_FLAGS,OS_NO);
             location.resflags:=getresflags(unsigned);
-            exprasmlist.concat(taicpu.op_reg_reg(A_CMP,left.location.register64.reghi,right.location.register64.reghi));
-            exprasmlist.concat(setcondition(taicpu.op_reg_reg(A_CMP,left.location.register64.reglo,right.location.register64.reglo),C_EQ));
+            current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_CMP,left.location.register64.reghi,right.location.register64.reghi));
+            if current_settings.cputype in cpu_thumb2 then
+              current_asmdata.CurrAsmList.concat(taicpu.op_cond(A_IT, C_EQ));
+            current_asmdata.CurrAsmList.concat(setcondition(taicpu.op_reg_reg(A_CMP,left.location.register64.reglo,right.location.register64.reglo),C_EQ));
           end
         else
         { operation requiring proper N, Z and V flags ? }
           begin
             location_reset(location,LOC_JUMP,OS_NO);
-            exprasmlist.concat(taicpu.op_reg_reg(A_CMP,left.location.register64.reghi,right.location.register64.reghi));
+            current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_CMP,left.location.register64.reghi,right.location.register64.reghi));
             { the jump the sequence is a little bit hairy }
             case nodetype of
                ltn,gtn:
                  begin
-                    cg.a_jmp_flags(exprasmlist,getresflags(false),truelabel);
+                    cg.a_jmp_flags(current_asmdata.CurrAsmList,getresflags(false),current_procinfo.CurrTrueLabel);
                     { cheat a little bit for the negative test }
-                    toggleflag(nf_swaped);
-                    cg.a_jmp_flags(exprasmlist,getresflags(false),falselabel);
-                    toggleflag(nf_swaped);
+                    toggleflag(nf_swapped);
+                    cg.a_jmp_flags(current_asmdata.CurrAsmList,getresflags(false),current_procinfo.CurrFalseLabel);
+                    toggleflag(nf_swapped);
                  end;
                lten,gten:
                  begin
@@ -282,21 +361,41 @@ interface
                       nodetype:=ltn
                     else
                       nodetype:=gtn;
-                    cg.a_jmp_flags(exprasmlist,getresflags(unsigned),truelabel);
+                    cg.a_jmp_flags(current_asmdata.CurrAsmList,getresflags(unsigned),current_procinfo.CurrTrueLabel);
                     { cheat for the negative test }
                     if nodetype=ltn then
                       nodetype:=gtn
                     else
                       nodetype:=ltn;
-                    cg.a_jmp_flags(exprasmlist,getresflags(unsigned),falselabel);
+                    cg.a_jmp_flags(current_asmdata.CurrAsmList,getresflags(unsigned),current_procinfo.CurrFalseLabel);
                     nodetype:=oldnodetype;
                  end;
             end;
-            exprasmlist.concat(taicpu.op_reg_reg(A_CMP,left.location.register64.reglo,right.location.register64.reglo));
+            current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_CMP,left.location.register64.reglo,right.location.register64.reglo));
             { the comparisaion of the low dword have to be
                always unsigned!                            }
-            cg.a_jmp_flags(exprasmlist,getresflags(true),truelabel);
-            cg.a_jmp_always(exprasmlist,falselabel);
+            cg.a_jmp_flags(current_asmdata.CurrAsmList,getresflags(true),current_procinfo.CurrTrueLabel);
+            cg.a_jmp_always(current_asmdata.CurrAsmList,current_procinfo.CurrFalseLabel);
+          end;
+      end;
+
+
+    function tarmaddnode.pass_1 : tnode;
+      var
+        unsigned : boolean;
+      begin
+        result:=inherited pass_1;
+
+        if not(assigned(result)) then
+          begin
+            unsigned:=not(is_signed(left.resultdef)) or
+              not(is_signed(right.resultdef));
+
+            if is_64bit(left.resultdef) and
+              ((nodetype in [equaln,unequaln]) or
+               (unsigned and (nodetype in [ltn,lten,gtn,gten]))
+              ) then
+              expectloc:=LOC_FLAGS;
           end;
       end;
 
@@ -310,23 +409,23 @@ interface
         pass_left_right;
         force_reg_left_right(true,true);
 
-        unsigned:=not(is_signed(left.resulttype.def)) or
-                  not(is_signed(right.resulttype.def));
+        unsigned:=not(is_signed(left.resultdef)) or
+                  not(is_signed(right.resultdef));
 
         if right.location.loc = LOC_CONSTANT then
           begin
              if is_shifter_const(right.location.value,b) then
-               exprasmlist.concat(taicpu.op_reg_const(A_CMP,left.location.register,right.location.value))
+               current_asmdata.CurrAsmList.concat(taicpu.op_reg_const(A_CMP,left.location.register,right.location.value))
              else
                begin
-                 tmpreg:=cg.getintregister(exprasmlist,location.size);
-                 cg.a_load_const_reg(exprasmlist,OS_INT,
+                 tmpreg:=cg.getintregister(current_asmdata.CurrAsmList,location.size);
+                 cg.a_load_const_reg(current_asmdata.CurrAsmList,OS_INT,
                    right.location.value,tmpreg);
-                 exprasmlist.concat(taicpu.op_reg_reg(A_CMP,left.location.register,tmpreg));
+                 current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_CMP,left.location.register,tmpreg));
                end;
           end
         else
-          exprasmlist.concat(taicpu.op_reg_reg(A_CMP,left.location.register,right.location.register));
+          current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_CMP,left.location.register,right.location.register));
 
         location_reset(location,LOC_FLAGS,OS_NO);
         location.resflags:=getresflags(unsigned);
@@ -335,13 +434,3 @@ interface
 begin
   caddnode:=tarmaddnode;
 end.
-{
-  $Log: narmadd.pas,v $
-  Revision 1.21  2005/02/16 22:02:26  florian
-    * fixed storing of floating point registers for procedures with large temp. area
-    * fixed int64 comparisation
-
-  Revision 1.20  2005/02/14 17:13:09  peter
-    * truncate log
-
-}

@@ -27,6 +27,9 @@
     999999999
 }
 
+{$R-}
+{$Q-}
+
 uses SysUtils,erroru;
 
 procedure Check(a,b:ansistring);
@@ -45,4 +48,3 @@ begin
  check(Format('%x', [$99999999]),'99999999');
  check(Format('%x', [$999999999]),'999999999');
 end.
-

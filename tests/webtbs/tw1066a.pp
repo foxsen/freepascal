@@ -1,4 +1,5 @@
 { %CPU=i386 }
+{ %OPT=-Cg- }
 { Source provided for Free Pascal Bug Report 1066 }
 { Submitted by "Fernando Oscar Schmitt" on  2000-07-24 }
 { e-mail: pulp@cpovo.net }
@@ -116,5 +117,3 @@ end;
 begin
 
 end.
-
-

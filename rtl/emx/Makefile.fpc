@@ -7,15 +7,16 @@ main=rtl
 
 [target]
 loaders=prt0 prt1
-units=$(SYSTEMUNIT) objpas macpas strings \
+units=$(SYSTEMUNIT) uuchar objpas macpas iso7185 strings \
       ports os2def doscalls moncalls kbdcalls moucalls viocalls \
       pmbitmap pmwin pmgpi pmstddlg pmhelp pmdev pmspl pmshl pmwp pmwsock pmbidi \
       dos crt objects printer matrix \
-      sysutils classes math typinfo varutils winsock \
-      charset ucomplex cpu mmx getopts heaptrc lineinfo dynlibs \
+      sysutils classes fgl math typinfo varutils winsock fmtbcd \
+      charset ucomplex cpu mmx getopts heaptrc lnfodwrf lineinfo dynlibs \
       video mouse keyboard variants types rtlconst sysconst dateutil \
-      strutils convutil ctypes
+      strutils convutil ctypes 
 rsts=math varutils typinfo variants pmhelp classes sysconst dateutil
+implicitunits=exeinfo
 
 [require]
 nortl=y
@@ -59,6 +60,7 @@ OBJPASDIR=$(RTL)/objpas
 GRAPHDIR=$(INC)/graph
 
 [rules]
+.NOTPARALLEL:
 # Get the system independent include file names.
 # This will set the following variables :
 # SYSINCNAMES
@@ -88,6 +90,8 @@ SYSDEPS=$(SYSINCDEPS) $(SYSCPUDEPS)
 
 $(SYSTEMUNIT)$(PPUEXT) : $(SYSTEMUNIT).pas $(SYSDEPS)
         $(COMPILER) -Us -Sg $(SYSTEMUNIT).pas
+
+uuchar$(PPUEXT): $(SYSTEMUNIT)$(PPUEXT) $(INC)/uuchar.pp
 
 objpas$(PPUEXT): $(OBJPASDIR)/objpas.pp $(INC)/except.inc $(SYSTEMUNIT)$(PPUEXT)
         $(COMPILER) -Fi$(OBJPASDIR) $(OBJPASDIR)/objpas.pp
@@ -136,7 +140,7 @@ winsock$(PPUEXT) : $(OS2INC)/winsock.pas pmwsock$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
 
 pmbidi$(PPUEXT) : $(OS2INC)/pmbidi.pas os2def$(PPUEXT) pmwin$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
 
-dynlibs$(PPUEXT) : $(INC)/dynlibs.pp doscalls$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
+dynlibs$(PPUEXT) : $(INC)/dynlibs.pas doscalls$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
 
 #
 # TP7 Compatible RTL Units
@@ -162,7 +166,8 @@ sysutils$(PPUEXT) : sysutils.pp $(wildcard $(OBJPASDIR)/sysutils/*.inc) \
         $(COMPILER) -Fi$(OBJPASDIR)/sysutils sysutils.pp
 
 classes$(PPUEXT) : $(OS2INC)/classes.pp $(wildcard $(OBJPASDIR)/classes/*.inc) \
-                   sysutils$(PPUEXT) typinfo$(PPUEXT) rtlconst$(PPUEXT) types$(PPUEXT) objpas$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
+                   sysutils$(PPUEXT) typinfo$(PPUEXT) rtlconst$(PPUEXT) types$(PPUEXT) \
+		   objpas$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT) fgl$(PPUEXT)
         $(COMPILER) -Fi$(OBJPASDIR)/classes $(OS2INC)/classes.pp
 
 math$(PPUEXT): $(OBJPASDIR)/math.pp objpas$(PPUEXT) sysutils$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
@@ -178,8 +183,14 @@ varutils$(PPUEXT) : $(OBJPASDIR)/cvarutil.inc $(OBJPASDIR)/varutils.inc \
 variants$(PPUEXT) : $(INC)/variants.pp varutils$(PPUEXT) sysutils$(PPUEXT) sysconst$(PPUEXT) typinfo$(PPUEXT) rtlconst$(PPUEXT)
         $(COMPILER) -Fi$(INC) $(INC)/variants.pp
 
+fmtbcd$(PPUEXT) : $(OBJPASDIR)/fmtbcd.pp objpas$(PPUEXT) sysutils$(PPUEXT) variants$(PPUEXT) classes$(PPUEXT) system$(PPUEXT)
+        $(COMPILER) $(OBJPASDIR)/fmtbcd.pp
+
 types$(PPUEXT) : $(OBJPASDIR/types.pp objpas$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
         $(COMPILER) $(OBJPASDIR)/types.pp
+
+fgl$(PPUEXT) : $(OBJPASDIR)/fgl.pp objpas$(PPUEXT) types$(PPUEXT) system$(PPUEXT) sysutils$(PPUEXT)
+        $(COMPILER) $(OBJPASDIR)/fgl.pp
 
 rtlconst$(PPUEXT) : $(OBJPASDIR)/rtlconst.pp objpas$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
         $(COMPILER) -Fi$(OBJPASDIR) $(OBJPASDIR)/rtlconst.pp
@@ -200,7 +211,7 @@ strutils$(PPUEXT) : $(OBJPASDIR)/strutils.pp objpas$(PPUEXT) $(SYSTEMUNIT)$(PPUE
 # Mac Pascal Model
 #
 
-macpas$(PPUEXT) : $(INC)/macpas.pp system$(PPUEXT)
+macpas$(PPUEXT) : $(INC)/macpas.pp objpas$(PPUEXT) math$(PPUEXT)
         $(COMPILER) $(INC)/macpas.pp $(REDIR)
 
 #
@@ -217,8 +228,10 @@ getopts$(PPUEXT) : $(INC)/getopts.pp $(SYSTEMUNIT)$(PPUEXT)
 
 heaptrc$(PPUEXT) : $(INC)/heaptrc.pp $(SYSTEMUNIT)$(PPUEXT)
         $(COMPILER) -Sg $(INC)/heaptrc.pp
-
+		
 lineinfo$(PPUEXT) : $(INC)/lineinfo.pp $(SYSTEMUNIT)$(PPUEXT)
+
+lnfodwrf$(PPUEXT) : $(INC)/lnfodwrf.pp $(SYSTEMUNIT)$(PPUEXT)
 
 charset$(PPUEXT) : $(INC)/charset.pp $(SYSTEMUNIT)$(PPUEXT)
 
@@ -226,4 +239,3 @@ ctypes$(PPUEXT) : $(INC)/ctypes.pp $(SYSTEMUNIT)$(PPUEXT)
 
 #
 # Other system-dependent RTL Units
-#

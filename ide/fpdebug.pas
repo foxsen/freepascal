@@ -1,5 +1,4 @@
 {
-    $Id: fpdebug.pas,v 1.62 2005/03/13 12:25:02 florian Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 1998-2000 by Pierre Muller
 
@@ -19,15 +18,12 @@ interface
 implementation
 end.
 {$else}
-
 interface
-
 {$i globdir.inc}
-
 uses
-{$ifdef win32}
+{$ifdef Windows}
   Windows,
-{$endif win32}
+{$endif Windows}
   Objects,Dialogs,Drivers,Views,
 {$ifndef NODEBUG}
   GDBCon,GDBInt,
@@ -44,7 +40,7 @@ type
 
      { if true the current debugger raw will stay in middle of
        editor window when debugging PM }
-     CenterDebuggerRow : boolean;
+     CenterDebuggerRow : TCentre;
      Disableallinvalidbreakpoints : boolean;
      OrigPwd,  { pwd at startup }
      LastFileName : string;
@@ -55,12 +51,14 @@ type
      HasExe   : boolean;
      RunCount : longint;
      WindowWidth : longint;
+     TBreakNumber : longint;
      FPCBreakErrorNumber : longint;
 {$ifdef SUPPORT_REMOTE}
      isRemoteDebugging:boolean;
 {$endif SUPPORT_REMOTE}
     constructor Init;
     procedure SetExe(const exefn:string);
+    procedure SetTBreak(tbreakstring : string);
     procedure SetWidth(AWidth : longint);
     procedure SetSourceDirs;
     destructor  Done;
@@ -69,6 +67,9 @@ type
     procedure DoBreakSession;virtual;}
     procedure DoEndSession(code:longint);virtual;
     procedure DoUserSignal;virtual;
+    procedure FlushAll; virtual;
+    function Query(question : pchar; args : pchar) : longint; virtual;
+
     procedure AnnotateError;
     procedure InsertBreakpoints;
     procedure RemoveBreakpoints;
@@ -205,6 +206,8 @@ type
 
     PWatch = ^TWatch;
     TWatch =  Object(TObject)
+      expr : pstring;
+      last_value,current_value : pchar;
       constructor Init(s : string);
       constructor Load(var S: TStream);
       procedure   Store(var S: TStream);
@@ -212,10 +215,8 @@ type
       procedure Get_new_value;
       procedure Force_new_value;
       destructor done;virtual;
-      expr : pstring;
     private
       GDBRunCount : longint;
-      last_value,current_value : pchar;
     end;
 
     PWatchesCollection = ^TWatchesCollection;
@@ -334,27 +335,23 @@ implementation
 
 uses
   Dos,
-{$ifdef fpc}
   Video,
-{$endif fpc}
 {$ifdef DOS}
   fpusrscr,
 {$endif DOS}
+
   App,Strings,
   FVConsts,
-{$ifdef win32}
+  MsgBox,
+{$ifdef Windows}
   Windebug,
-{$endif win32}
+{$endif Windows}
 {$ifdef Unix}
-  {$ifdef VER1_0}
-    Linux,
-  {$else}
-    termio,
-  {$endif}
+  termio,
 {$endif Unix}
   Systems,Globals,
   FPRegs,
-  FPString,FPVars,FPUtils,FPConst,FPSwitch,
+  FPVars,FPUtils,FPConst,FPSwitch,
   FPIntf,FPCompil,FPIde,FPHelp,
   Validate,WUtils,Wconsts;
 
@@ -430,13 +427,101 @@ const
      Store:   @TWatchesCollection.Store
   );
 
+{$ifdef USERESSTRINGS}
+resourcestring
+{$else}
+const
+{$endif}
+      button_OK          = 'O~K~';
+      button_Cancel      = 'Cancel';
+      button_New         = '~N~ew';
+      button_Edit        = '~E~dit';
+      button_Delete      = '~D~elete';
+      button_Close       = '~C~lose';
+      button_ToggleButton = '~T~oggle';
 
+      { Watches local menu items }
+      menu_watchlocal_edit = '~E~dit watch';
+      menu_watchlocal_new = '~N~ew watch';
+      menu_watchlocal_delete = '~D~elete watch';
+
+      { Breakpoints window local menu items }
+      menu_bplocal_gotosource = '~G~oto source';
+      menu_bplocal_editbreakpoint = '~E~dit breakpoint';
+      menu_bplocal_newbreakpoint = '~N~ew breakpoint';
+      menu_bplocal_deletebreakpoint = '~D~elete breakpoint';
+      menu_bplocal_togglestate = '~T~oggle state';
+
+      { Debugger messages and status hints }
+      msg_programexitedwithcodeandsteps = #3'Program exited with '#13+
+                                          #3'exitcode = %d'#13+
+                                          #3'hidden steps = %d';
+
+      msg_programexitedwithexitcode = #3'Program exited with '#13+
+                                      #3'exitcode = %d';
+
+      msg_programsignal             = #3'Program recieved signal %s'#13+
+                                      #3'%s';
+
+      msg_runningprogram  = 'Running...';
+      msg_runningremotely = 'Executable running remotely on ';
+      msg_connectingto    = 'Connecting to ';
+      msg_getting_info_on = 'Getting infos from ';
+      msg_runninginanotherwindow = 'Executable running in another window..';
+      msg_couldnotsetbreakpointat = #3'Could not set Breakpoint'#13+
+                                    #3+'%s:%d';
+      msg_couldnotsetbreakpointtype = #3'Could not set Breakpoint'#13+
+                                      #3+'%s %s';
+
+      button_DisableAllBreakpoints = 'Dis. ~a~ll invalid';
+
+      { Breakpoints window }
+      dialog_breakpointlist = 'Breakpoint list';
+      label_breakpointpropheader = ' Type      | State   | Position          | Path                        | Ignore | Conditions ';
+
+      dialog_modifynewbreakpoint = 'Modify/New Breakpoint';
+      label_breakpoint_name = '~N~ame';
+      label_breakpoint_line = '~L~ine';
+      label_breakpoint_conditions = '~C~onditions';
+      label_breakpoint_ignorecount = '~I~gnore count';
+      label_breakpoint_type = '~T~ype';
+
+      { Watches window }
+      dialog_watches = 'Watches';
+      label_watch_expressiontowatch = '~E~xpression to watch';
+      label_watch_values = 'Watch values';
+      msg_watch_currentvalue = 'Current value: '+#13+
+                               '%s';
+      msg_watch_currentandpreviousvalue = 'Current value: '+#13+
+                                          '%s'+#13+
+                                          'Previous value: '+#13+
+                                          '%s';
+
+      dialog_callstack = 'Call Stack';
+
+      menu_msglocal_saveas = 'Save ~a~s';
+
+      msg_cantdebugchangetargetto = #3'Sorry, can not debug'#13+
+                                    #3'programs compiled for %s.'#13+
+                                    #3'Change target to %s?';
+      msg_compiledwithoutdebuginforecompile =
+                                 #3'Warning, the program'#13+
+                                 #3'was compiled without'#13+
+                                 #3'debugging info.'#13+
+                                 #3'Recompile it?';
+      msg_nothingtodebug = 'Oooops, nothing to debug.';
+      msg_startingdebugger = 'Starting debugger';
 
 {$ifdef I386}
 const
   FrameName = '$ebp';
 {$define FrameNameKnown}
 {$endif i386}
+{$ifdef x86_64}
+const
+  FrameName = '$rbp';
+{$define FrameNameKnown}
+{$endif x86_64}
 {$ifdef m68k}
 const
   FrameName = '$fp';
@@ -449,14 +534,6 @@ const
   FrameName = '$r1';
 {$define FrameNameKnown}
 {$endif powerpc}
-
-{$ifdef TP}
-function HexStr(Value: longint; Len: byte): string;
-begin
-  HexStr:=IntToHex(Value,Len);
-end;
-{$endif}
-
 
 function  GDBFileName(st : string) : string;
 {$ifndef Unix}
@@ -472,20 +549,22 @@ begin
 { should we also use / chars ? }
   for i:=1 to Length(st) do
     if st[i]='\' then
-{$ifdef win32}
+{$ifdef Windows}
   { Don't touch at '\ ' used to escapes spaces in windows file names PM }
      if (i=length(st)) or (st[i+1]<>' ') then
-{$endif win32}
+{$endif Windows}
       st[i]:='/';
-{$ifdef win32}
-{ for win32 we should convert e:\ into //e/ PM }
+{$ifdef Windows}
+  {$ifndef USE_MINGW_GDB} // see mantis 11968 because of mingw build. MvdV
+{ for Windows we should convert e:\ into //e/ PM }
   if (length(st)>2) and (st[2]=':') and (st[3]='/') then
     st:=CygDrivePrefix+'/'+st[1]+copy(st,3,length(st));
+  {$endif}
 { support spaces in the name by escaping them but without changing '\ ' into '\\ ' }
   for i:=Length(st) downto 1 do
     if (st[i]=' ') and ((i=1) or (st[i-1]<>'\')) then
       st:=copy(st,1,i-1)+'\'+copy(st,i,length(st));
-{$endif win32}
+{$endif Windows}
 {$ifdef go32v2}
 { for go32v2 we should convert //e/ back into e:/  PM }
   if (length(st)>3) and (st[1]='/') and (st[2]='/') and (st[4]='/') then
@@ -504,13 +583,13 @@ begin
 {$ifdef Unix}
   OSFileName:=st;
 {$else}
-{$ifdef win32}
+{$ifdef Windows}
  {$ifndef NODEBUG}
-{ for win32 we should convert /cygdrive/e/ into e:\ PM }
+{ for Windows we should convert /cygdrive/e/ into e:\ PM }
   if pos(CygDrivePrefix+'/',st)=1 then
     st:=st[Length(CygdrivePrefix)+2]+':\'+copy(st,length(CygdrivePrefix)+4,length(st));
  {$endif NODEBUG}
-{$endif win32}
+{$endif Windows}
 { support spaces in the name by escaping them but without changing '\ ' into '\\ ' }
   for i:=Length(st) downto 2 do
     if (st[i]=' ') and (st[i-1]='\') then
@@ -536,7 +615,8 @@ procedure UpdateDebugViews;
 
   begin
 {$ifdef SUPPORT_REMOTE}
-     PushStatus(msg_getting_info_on+RemoteMachine);
+     if isRemoteDebugging then
+       PushStatus(msg_getting_info_on+RemoteMachine);
 {$endif SUPPORT_REMOTE}
      DeskTop^.Lock;
      If assigned(StackWindow) then
@@ -553,7 +633,8 @@ procedure UpdateDebugViews;
        VectorWindow^.Update;
      DeskTop^.UnLock;
 {$ifdef SUPPORT_REMOTE}
-     PopStatus;
+     if isRemoteDebugging then
+       PopStatus;
 {$endif SUPPORT_REMOTE}
   end;
 
@@ -581,6 +662,10 @@ begin
     begin
       LoadFile(f);
       HasExe:=true;
+      { Procedure HandleErrorAddrFrame
+         (Errno : longint;addr,frame : longint);
+         [public,alias:'FPC_BREAK_ERROR'];
+      Command('b HANDLEERRORADDRFRAME'); }
       Command('b FPC_BREAK_ERROR');
       FPCBreakErrorNumber:=last_breakpoint_number;
 {$ifdef FrameNameKnown}
@@ -600,8 +685,17 @@ begin
   else
     begin
       HasExe:=false;
+      reset_command:=true;
       Command('file');
+      reset_command:=false;
     end;
+end;
+
+
+procedure TDebugController.SetTBreak(tbreakstring : string);
+begin
+  Command('tbreak '+tbreakstring);
+  TBreakNumber:=Last_breakpoint_number;
 end;
 
 procedure TDebugController.SetWidth(AWidth : longint);
@@ -611,7 +705,7 @@ begin
 end;
 
 procedure TDebugController.SetSourceDirs;
-  var f,s: string;
+  var f,s: ansistring;
       i : longint;
       Dir : SearchRec;
 begin
@@ -640,9 +734,7 @@ begin
               Command('dir '+GDBFileName(GetShortName(s+Dir.Name)));
             Dos.FindNext(Dir);
           end;
-{$ifdef FPC}
         Dos.FindClose(Dir);
-{$endif def FPC}
       end;
   until i=0;
 end;
@@ -761,19 +853,21 @@ begin
            PopStatus;
            exit;
         end;
+      s:=IDEApp.GetRemoteExecString;
+      MessageBox(#3'Start in remote'#13#3+s,nil,mfOKbutton);
       PopStatus;
     end
   else
     begin
 {$endif SUPPORT_REMOTE}
-{$ifdef win32}
+{$ifdef Windows}
   { Run the debugge in another console }
   if DebuggeeTTY<>'' then
     Command('set new-console on')
   else
     Command('set new-console off');
   NoSwitch:=DebuggeeTTY<>'';
-{$endif win32}
+{$endif Windows}
 {$ifdef Unix}
   { Run the debuggee in another tty }
   if DebuggeeTTY <> '' then
@@ -782,7 +876,7 @@ begin
       Assign(Debuggeefile,DebuggeeTTY);
       system.Reset(Debuggeefile);
       ResetOK:=IOResult=0;
-      If ResetOK and {$ifdef ver1_0}IsATTY(textrec(Debuggeefile).handle){$else}(IsATTY(textrec(Debuggeefile).handle)<>-1){$endif} then
+      If ResetOK and (IsATTY(textrec(Debuggeefile).handle)<>-1) then
         begin
           Command('tty '+DebuggeeTTY);
           TTYUsed:=true;
@@ -876,6 +970,76 @@ begin
     GDBWindow^.WriteString(S);
 end;
 
+function TDebugController.Query(question : pchar; args : pchar) : longint;
+var
+  c : char;
+  WasModal : boolean;
+  ModalView : PView;
+  res : longint;
+begin
+  if not assigned(Application) then
+    begin
+      system.Write(question);
+      repeat
+        system.write('(y or n)');
+        system.read(c);
+        system.writeln(c);
+      until (lowercase(c)='y') or (lowercase(c)='n');
+      if lowercase(c)='y' then
+        query:=1
+      else
+        query:=0;
+      exit;
+    end;
+  if assigned(Application^.Current) and
+     ((Application^.Current^.State and sfModal)<>0) then
+    begin
+      WasModal:=true;
+      ModalView:=Application^.Current;
+      ModalView^.SetState(sfModal, false);
+      ModalView^.Hide;
+    end
+  else
+    WasModal:=false;
+  PushStatus(Question);
+  res:=MessageBox(Question,nil,mfyesbutton+mfnobutton);
+  PopStatus;
+  if res=cmYes then
+    Query:=1
+  else
+    Query:=0;
+  if WasModal then
+    begin
+      ModalView^.Show;
+      ModalView^.SetState(sfModal, true);
+      ModalView^.Draw;
+    end;
+end;
+
+procedure TDebugController.FlushAll;
+begin
+  if assigned(GDBWindow) then
+    begin
+      If StrLen(GetError)>0 then
+        begin
+          GDBWindow^.WriteErrorText(GetError);
+          if in_command=0 then
+            gdberrorbuf.reset;
+        end;
+
+      If StrLen(GetOutput)>0 then
+        begin
+          GDBWindow^.WriteOutputText(GetOutput);
+          { Keep output for command results }
+          if in_command=0 then
+            gdboutputbuf.reset;
+        end;
+    end
+  else
+    Inherited FlushAll;
+end;
+
+
 procedure TDebugController.CommandEnd(const s:string);
 begin
   if assigned(GDBWindow) and (in_command<=1) then
@@ -914,7 +1078,7 @@ begin
 end;
 
 procedure TDebugController.ResetDebuggerRows;
-  procedure ResetDebuggerRow(P: PView); {$ifndef FPC}far;{$endif}
+  procedure ResetDebuggerRow(P: PView);
   begin
     if assigned(P) and
        (TypeOf(P^)=TypeOf(TSourceWindow)) then
@@ -1035,8 +1199,9 @@ function TDebugController.GetPointerAt(addr : CORE_ADDR) : CORE_ADDR;
 var
   st : string;
   p : longint;
+  code : integer;
 begin
-  Command('x /wx 0x'+hexstr(longint(addr),8));
+  Command('x /wx 0x'+hexstr(PtrInt(addr),sizeof(PtrInt)*2));
   st:=strpas(GetOutput);
   p:=pos(':',st);
   while (p<length(st)) and (st[p+1] in [' ',#9]) do
@@ -1048,7 +1213,7 @@ begin
   while (st[p] in ['0'..'9','A'..'F','a'..'f']) do
     inc(p);
   Delete(st,p,High(st));
-  GetPointerAt:=HexToCard(st);
+  Val('$'+st,GetPointerAt,code);
 end;
 
 procedure TDebugController.DoSelectSourceLine(const fn:string;line:longint);
@@ -1197,13 +1362,19 @@ begin
        begin
           if (ExitCode<>0) or (ExitAddr<>0) then
             WarningBox(#3'Run Time Error '+IntToStr(ExitCode)+#13+
-                     #3'Error address $'+IntToHex(ExitAddr,8),nil)
+                     #3'Error address $'+HexStr(ExitAddr,8),nil)
           else
             WarningBox(#3'Run Time Error',nil);
        end
       else if not assigned(PB) then
         begin
-          WarningBox(#3'Stopped by breakpoint '+IntToStr(BreakIndex),nil);
+          if (BreakIndex<>start_break_number) and
+             (BreakIndex<>TbreakNumber) then
+            WarningBox(#3'Stopped by breakpoint '+IntToStr(BreakIndex),nil);
+          if BreakIndex=start_break_number then
+            start_break_number:=0;
+          if BreakIndex=TbreakNumber then
+            TbreakNumber:=0;
         end
       { For watch we should get old and new value !! }
       else if (Not assigned(GDBWindow) or not GDBWindow^.GetState(sfActive)) and
@@ -1265,17 +1436,17 @@ begin
      end;
   { In case we have something that the compiler touched }
   AskToReloadAllModifiedFiles;
-{$ifdef win32}
+{$ifdef Windows}
   main_pid_valid:=false;
-{$endif win32}
+{$endif Windows}
 end;
 
 
 procedure TDebugController.DoDebuggerScreen;
-{$ifdef win32}
+{$ifdef Windows}
   var
    IdeMode : DWord;
-{$endif win32}
+{$endif Windows}
 begin
   if NoSwitch then
     begin
@@ -1287,7 +1458,7 @@ begin
       Message(Application,evBroadcast,cmDebuggerStopped,pointer(ptrint(RunCount)));
       PopStatus;
     end;
-{$ifdef win32}
+{$ifdef Windows}
    if NoSwitch then
      begin
        { Ctrl-C as normal char }
@@ -1296,36 +1467,37 @@ begin
        SetConsoleMode(GetStdHandle(cardinal(Std_Input_Handle)), IdeMode);
      end;
    ChangeDebuggeeWindowTitleTo(Stopped_State);
-{$endif win32}
+{$endif Windows}
 end;
 
 
 procedure TDebugController.DoUserScreen;
 
-{$ifdef win32}
+{$ifdef Windows}
   var
    IdeMode : DWord;
-{$endif win32}
+{$endif Windows}
 begin
   Inc(RunCount);
   if NoSwitch then
     begin
 {$ifdef SUPPORT_REMOTE}
-      PushStatus(msg_runningremotely+RemoteMachine);
-{$else not SUPPORT_REMOTE}
+      if isRemoteDebugging then
+        PushStatus(msg_runningremotely+RemoteMachine)
+      else
+{$endif SUPPORT_REMOTE}
 {$ifdef Unix}
       PushStatus(msg_runninginanotherwindow+DebuggeeTTY);
 {$else not Unix}
       PushStatus(msg_runninginanotherwindow);
 {$endif Unix}
-{$endif not SUPPORT_REMOTE}
     end
   else
     begin
       PushStatus(msg_runningprogram);
       IDEApp.ShowUserScreen;
     end;
-{$ifdef win32}
+{$ifdef Windows}
    if NoSwitch then
      begin
        { Ctrl-C as interrupt }
@@ -1334,7 +1506,7 @@ begin
        SetConsoleMode(GetStdHandle(cardinal(Std_Input_Handle)), IdeMode);
      end;
    ChangeDebuggeeWindowTitleTo(Running_State);
-{$endif win32}
+{$endif Windows}
 end;
 
 {$endif NODEBUG}
@@ -1692,7 +1864,7 @@ end;
 
 function  TBreakpointCollection.GetGDB(index : longint) : PBreakpoint;
 
-  function IsNum(P : PBreakpoint) : boolean;{$ifndef FPC}far;{$endif}
+  function IsNum(P : PBreakpoint) : boolean;
   begin
     IsNum:=P^.GDBIndex=index;
   end;
@@ -1706,18 +1878,20 @@ end;
 
 procedure TBreakpointCollection.ShowBreakpoints(W : PFPWindow);
 
-  procedure SetInSource(P : PBreakpoint);{$ifndef FPC}far;{$endif}
+  procedure SetInSource(P : PBreakpoint);
   begin
     If assigned(P^.FileName) and
       (OSFileName(P^.FileName^)=OSFileName(FExpand(PSourceWindow(W)^.Editor^.FileName))) then
       PSourceWindow(W)^.Editor^.SetLineFlagState(P^.Line-1,lfBreakpoint,P^.state=bs_enabled);
   end;
 
-  procedure SetInDisassembly(P : PBreakpoint);{$ifndef FPC}far;{$endif}
+  procedure SetInDisassembly(P : PBreakpoint);
     var
       PDL : PDisasLine;
       S : string;
       ps,qs,i : longint;
+      HAddr : PtrInt;
+      code : integer;
   begin
     for i:=0 to PDisassemblyWindow(W)^.Editor^.GetLineCount-1 do
       begin
@@ -1736,8 +1910,12 @@ procedure TBreakpointCollection.ShowBreakpoints(W : PFPWindow);
           end
         else
           begin
-            If (P^.typ=bt_address) and (PDL^.Address=HexToCard(P^.Name^)) then
-              PDisassemblyWindow(W)^.Editor^.SetLineFlagState(i,lfBreakpoint,P^.state=bs_enabled);
+            if assigned(P^.Name) then
+              begin
+                Val('$'+P^.Name^,HAddr,code);
+                If (P^.typ=bt_address) and (PDL^.Address=HAddr) then
+                  PDisassemblyWindow(W)^.Editor^.SetLineFlagState(i,lfBreakpoint,P^.state=bs_enabled);
+              end;
           end;
       end;
   end;
@@ -1752,7 +1930,7 @@ end;
 
 procedure TBreakpointCollection.AdaptBreakpoints(Editor : PSourceEditor; Pos, Change : longint);
 
-  procedure AdaptInSource(P : PBreakpoint);{$ifndef FPC}far;{$endif}
+  procedure AdaptInSource(P : PBreakpoint);
   begin
     If assigned(P^.FileName) and
        (P^.FileName^=OSFileName(FExpand(Editor^.FileName))) then
@@ -1790,7 +1968,7 @@ end;
 
 function TBreakpointCollection.FindBreakpointAt(Editor : PSourceEditor; Line : longint) : PBreakpoint;
 
-  function IsAtLine(P : PBreakpoint) : boolean;{$ifndef FPC}far;{$endif}
+  function IsAtLine(P : PBreakpoint) : boolean;
   begin
     If assigned(P^.FileName) and
        (P^.FileName^=OSFileName(FExpand(Editor^.FileName))) and
@@ -1806,7 +1984,7 @@ end;
 
 procedure TBreakpointCollection.ShowAllBreakpoints;
 
-  procedure SetInSource(P : PBreakpoint);{$ifndef FPC}far;{$endif}
+  procedure SetInSource(P : PBreakpoint);
     var
       W : PSourceWindow;
   begin
@@ -1824,7 +2002,7 @@ end;
 
 function TBreakpointCollection.GetType(typ : BreakpointType;Const s : String) : PBreakpoint;
 
-  function IsThis(P : PBreakpoint) : boolean;{$ifndef FPC}far;{$endif}
+  function IsThis(P : PBreakpoint) : boolean;
   begin
     IsThis:=(P^.typ=typ) and (GetStr(P^.Name)=S);
   end;
@@ -1836,7 +2014,7 @@ end;
 
 function TBreakpointCollection.ToggleFileLine(FileName: String;LineNr : Longint) : boolean;
 
-  function IsThere(P : PBreakpoint) : boolean;{$ifndef FPC}far;{$endif}
+  function IsThere(P : PBreakpoint) : boolean;
   begin
     IsThere:=(P^.typ=bt_file_line) and assigned(P^.FileName) and
       (OSFileName(P^.FileName^)=FileName) and (P^.Line=LineNr);
@@ -1895,15 +2073,21 @@ begin
        S:=S+' ';
      S:=S+'|';
      if (typ=bt_file_line) then
-       S:=S+NameAndExtOf(GetStr(FileName))+':'+IntToStr(Line)
-         else
+       begin
+         S:=S+NameAndExtOf(GetStr(FileName))+':'+IntToStr(Line);
+         While Length(S)<40 do
+           S:=S+' ';
+         S:=S+'|';
+         S:=S+copy(DirOf(GetStr(FileName)),1,min(length(DirOf(GetStr(FileName))),29));
+       end
+     else
        S:=S+GetStr(name);
-     While Length(S)<40 do
+     While Length(S)<70 do
        S:=S+' ';
      S:=S+'|';
      if IgnoreCount>0 then
        S:=S+IntToStr(IgnoreCount);
-     While Length(S)<49 do
+     While Length(S)<79 do
        S:=S+' ';
      S:=S+'|';
      if assigned(Conditions) then
@@ -2070,7 +2254,7 @@ begin
   if W<>nil then
     begin
       W^.Select;
-      W^.Editor^.TrackCursor(true);
+      W^.Editor^.TrackCursor(do_centre);
       W^.Editor^.SetLineFlagExclusive(lfHighlightRow,P^.Breakpoint^.Line);
     end;
   if Assigned(Owner) then
@@ -2648,7 +2832,7 @@ procedure TWatch.Get_new_value;
       end;
     while loop_higher do
       begin
-         s:='parent_ebp';
+         s:='parentfp';
          if GetValue(s) then
            begin
              repeat
@@ -3024,6 +3208,12 @@ procedure   TWatchesListBox.HandleEvent(var Event: TEvent);
 var DontClear: boolean;
 begin
   case Event.What of
+    evMouseDown : begin
+                   if Event.Double then
+                      Message(@Self,evCommand,cmEdit,nil)
+                   else
+                     ClearEvent(Event);
+                  end;
     evKeyDown :
       begin
         DontClear:=false;
@@ -3430,15 +3620,17 @@ end;
 
 function GetGDBTargetShortName : string;
 begin
+{$ifndef CROSSGDB}
+GetGDBTargetShortName:=source_info.shortname;
+{$else CROSSGDB}
 {$ifdef SUPPORT_REMOTE}
 {$ifdef PALMOSGDB}
 GetGDBTargetShortName:='palmos';
 {$else}
 GetGDBTargetShortName:='linux';
 {$endif PALMOSGDB}
-{$else not SUPPORT_REMOTE}
-GetGDBTargetShortName:=source_info.shortname
 {$endif not SUPPORT_REMOTE}
+{$endif CROSSGDB}
 end;
 
 procedure InitDebugger;
@@ -3478,6 +3670,7 @@ begin
 {$endif}
 
   NeedRecompileExe:=false;
+{$ifndef SUPPORT_REMOTE}
   if UpCaseStr(TargetSwitches^.GetCurrSelParam)<>UpCaseStr(GetGDBTargetShortName) then
     begin
      ClearFormatParams;
@@ -3497,6 +3690,7 @@ begin
          IDEApp.UpdateTarget;
        end;
     end;
+{$endif ndef SUPPORT_REMOTE}
   if not NeedRecompileExe then
     NeedRecompileExe:=(not ExistsFile(ExeFile)) or (CompilationPhase<>cpDone) or
      (PrevMainFile<>MainFile) or NeedRecompile(cRun,false);
@@ -3664,18 +3858,4 @@ begin
 end;
 
 end.
-{$endif}
-
-{
-  $Log: fpdebug.pas,v $
-  Revision 1.62  2005/03/13 12:25:02  florian
-    + Recent files write full name now as hint in the status line
-    * Rundir hint in status line fixed
-
-  Revision 1.61  2005/02/14 17:13:18  peter
-    * truncate log
-
-  Revision 1.60  2005/01/08 11:43:18  florian
-    + vector unit window
-
-}
+{$endif NODEBUG}

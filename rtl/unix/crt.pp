@@ -1,5 +1,4 @@
 {
-    $Id: crt.pp,v 1.25 2005/05/14 15:01:49 hajny Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Michael Van Canneyt and Peter Vreman,
     members of the Free Pascal development team.
@@ -51,15 +50,20 @@ Const
 Var
   CurrX,CurrY : Byte;
   OutputRedir, InputRedir : boolean; { is the output/input being redirected (not a TTY) }
-  WinMinX,
-  WinMinY,
-  WinMaxX,
-  WinMaxY : Longint;
-
-
+{$ifdef debugcrt}
+  DebugFile : Text;
+{$endif}   
 {*****************************************************************************
                     Some Handy Functions Not in the System.PP
 *****************************************************************************}
+
+{$ifdef debugcrt}
+Procedure Debug(Msg : string);
+
+begin
+  Writeln(DebugFile,Msg);
+end;
+{$endif}
 
 Function Str(l:longint):string;
 {
@@ -425,7 +429,7 @@ begin
   ttySendStr(s);
 {Update MemCopy}
   idx:=(CurrY-1)*ScreenWidth-1;
-  for i:=1to length(s) do
+  for i:=1 to length(s) do
    if s[i]=#8 then
     begin
       if CurrX>1 then
@@ -436,8 +440,8 @@ begin
       ConsoleBuf^[idx+CurrX].ch:=s[i];
       ConsoleBuf^[idx+CurrX].attr:=TextAttr;
       inc(CurrX);
-      if CurrX>ScreenWidth then
-       CurrX:=ScreenWidth;
+      If CurrX>ScreenWidth then
+        CurrX:=$FF; // Mark as invalid.
     end;
 end;
 
@@ -448,18 +452,18 @@ Function FullWin:boolean;
   Full Screen 80x25? Window(1,1,80,25) is used, allows faster routines
 }
 begin
-  FullWin:=(WinMinX=1) and (WinMinY=1) and
-           (WinMaxX=ScreenWidth) and (WinMaxY=ScreenHeight);
+  FullWin:=(WindMinX=1) and (WindMinY=1) and
+           (WindMaxX=ScreenWidth) and (WindMaxY=ScreenHeight);
 end;
 
 
 procedure LineWrite(const temp:String);
 {
   Write a Line to the screen, doesn't write on 80,25 under Dos
-  the Current CurrX is set to WinMax. NO MEMORY UPDATE!
+  the Current CurrX is set to WindMax. NO MEMORY UPDATE!
 }
 begin
-  CurrX:=WinMaxX+1;
+  CurrX:=WindMaxX+1;
   ttySendStr(Temp);
 end;
 
@@ -576,16 +580,16 @@ End;
 
 
 
-Procedure GotoXy(X: Byte; Y: Byte);
+Procedure GotoXy(X: tcrtcoord; Y: tcrtcoord);
 {
   Go to coordinates X,Y in the current window.
 }
 Begin
-  If (X>0) and (X<=WinMaxX- WinMinX+1) and
-     (Y>0) and (Y<=WinMaxY-WinMinY+1) Then
+  If (X>0) and (X<=WindMaxX- WindMinX+1) and
+     (Y>0) and (Y<=WindMaxY-WindMinY+1) Then
    Begin
-     Inc(X,WinMinX-1);
-     Inc(Y,WinMinY-1);
+     Inc(X,WindMinX-1);
+     Inc(Y,WindMinY-1);
      ttyGotoXY(x,y);
    End;
 End;
@@ -600,10 +604,10 @@ Begin
   if (X1>X2) or (X2>ScreenWidth) or
      (Y1>Y2) or (Y2>ScreenHeight) then
    exit;
-  WinMinX:=X1;
-  WinMaxX:=X2;
-  WinMinY:=Y1;
-  WinMaxY:=Y2;
+  WindMinX:=X1;
+  WindMaxX:=X2;
+  WindMinY:=Y1;
+  WindMaxY:=Y2;
   WindMin:=((Y1-1) Shl 8)+(X1-1);
   WindMax:=((Y2-1) Shl 8)+(X2-1);
   GoToXY(1,1);
@@ -641,8 +645,8 @@ Begin
    end
   else
    begin
-     For Cy:=WinMinY To WinMaxY Do
-      DoEmptyLine(Cy,WinMinX,WinMaxX);
+     For Cy:=WindMinY To WindMaxY Do
+      DoEmptyLine(Cy,WindMinX,WindMaxX);
      GoToXY(1,1);
    end;
   ttySetFlush(oldflush);
@@ -665,27 +669,27 @@ Begin
      TextAttr:=OldTextAttr;
      ttyColor(i);
    end;
-  if FullWin or (WinMaxX = ScreenWidth) then
+  if FullWin or (WindMaxX = ScreenWidth) then
    begin
      if not OutputRedir then
       ttySendStr(#27'[K');
    end
   else
    begin
-   { Tweak winmaxx and winmaxy so no scrolling happends }
-     len:=WinMaxX-CurrX+1;
+   { Tweak WindMaxx and WindMaxy so no scrolling happends }
+     len:=WindMaxX-CurrX+1;
      IsLastLine:=false;
-     if CurrY=WinMaxY then
+     if CurrY=WindMaxY then
       begin
-        inc(WinMaxX,3);
-        inc(WinMaxY,2);
+        inc(WindMaxX,3);
+        inc(WindMaxY,2);
         IsLastLine:=true;
       end;
      ttySendStr(Space(len));
      if IsLastLine then
       begin
-        dec(WinMaxX,3);
-        dec(WinMaxY,2);
+        dec(WindMaxX,3);
+        dec(WindMaxY,2);
       end;
      ttyGotoXY(0,0);
    end;
@@ -693,22 +697,22 @@ End;
 
 
 
-Function WhereX: Byte;
+Function WhereX: tcrtcoord;
 {
   Return current X-position of cursor.
 }
 Begin
-  WhereX:=CurrX-WinMinX+1;
+  WhereX:=CurrX-WindMinX+1;
 End;
 
 
 
-Function WhereY: Byte;
+Function WhereY: tcrtcoord;
 {
   Return current Y-position of cursor.
 }
 Begin
-  WhereY:=CurrY-WinMinY+1;
+  WhereY:=CurrY-WindMinY+1;
 End;
 
 
@@ -998,11 +1002,12 @@ Begin
         4 : begin {Esc[1}
               case ch of
                '~' : PushExt(71);
+               '5' : State := 8;
                '7' : PushExt(64);
                '8' : PushExt(65);
                '9' : PushExt(66);
               end;
-              if (Ch<>'~') then
+              if not (Ch in ['~', '5']) then
                State:=255;
             end;
         5 : begin {Esc[2}
@@ -1040,9 +1045,18 @@ Begin
                'B' : PushExt(80);
                'C' : PushExt(77);
                'D' : PushExt(75);
+               'P' : PushExt(59);
+               'Q' : PushExt(60); 
+               'R' : PushExt(61);
+               'S' : PushExt(62);
               end;
           end;
 {$endif}
+        8 : begin {Esc[15}
+            case ch of
+              '~' : PushExt(63);
+            end;
+          end;
       255 : ;
         end;
         if State<>0 then
@@ -1073,22 +1087,22 @@ End;
 
 procedure DoLn;
 begin
-  if CurrY=WinMaxY then
+  if CurrY=WindMaxY then
    begin
      if FullWin then
       begin
         ttySendStr(#10#13);
-        CurrX:=WinMinX;
-        CurrY:=WinMaxY;
+        CurrX:=WindMinX;
+        CurrY:=WindMaxY;
       end
      else
       begin
-        ScrollScrnRegionUp(WinMinX,WinMinY,WinMaxX,WinMaxY,1);
-        ttyGotoXY(WinMinX,WinMaxY);
+        ScrollScrnRegionUp(WindMinX,WindMinY,WindMaxX,WindMaxY,1);
+        ttyGotoXY(WindMinX,WindMaxY);
       end;
    end
   else
-   ttyGotoXY(WinMinX,CurrY+1);
+   ttyGotoXY(WindMinX,CurrY+1);
 end;
 
 
@@ -1127,8 +1141,8 @@ var
   begin
     while (SendBytes>0) do
      begin
-       LeftX:=WinMaxX-CurrX+1;
-       if (SendBytes>LeftX) then
+       LeftX:=WindMaxX-CurrX+1;
+       if (SendBytes>=LeftX) then
         begin
           ttyWrite(Copy(s,i-SendBytes,LeftX));
           dec(SendBytes,LeftX);
@@ -1180,10 +1194,10 @@ begin
             'J' : if AnsiPara(AnsiCode)=2 then
                    ClrScr;
             'K' : ClrEol;
-            'A' : GotoXY(CurrX,Max(CurrY-AnsiPara(AnsiCode),WinMinY));
-            'B' : GotoXY(CurrX,Min(CurrY+AnsiPara(AnsiCode),WinMaxY));
-            'C' : GotoXY(Min(CurrX+AnsiPara(AnsiCode),WinMaxX),CurrY);
-            'D' : GotoXY(Max(CurrX-AnsiPara(AnsiCode),WinMinX),CurrY);
+            'A' : GotoXY(CurrX,Max(CurrY-AnsiPara(AnsiCode),WindMinY));
+            'B' : GotoXY(CurrX,Min(CurrY+AnsiPara(AnsiCode),WindMaxY));
+            'C' : GotoXY(Min(CurrX+AnsiPara(AnsiCode),WindMaxX),CurrY);
+            'D' : GotoXY(Max(CurrX-AnsiPara(AnsiCode),WindMinX),CurrY);
             'h' : ; {Stupid Thedraw [?7h Code}
            else
             found:=false;
@@ -1209,7 +1223,7 @@ begin
         case s[i] of
          #13 : begin {CR}
                  SendText;
-                 ttyGotoXY(WinMinX,CurrY);
+                 ttyGotoXY(WindMinX,CurrY);
                end;
          #10 : begin {NL}
                  SendText;
@@ -1271,7 +1285,7 @@ var
   c : char;
   i : longint;
 Begin
-  if isATTY(F.Handle)<>-1 then
+  if isATTY(F.Handle)=1 then
     begin
       F.BufPos := 0;
       i := 0;
@@ -1383,7 +1397,7 @@ Procedure DelLine;
   Delete current line. Scroll subsequent lines up
 }
 Begin
-  ScrollScrnRegionUp(WinMinX, CurrY, WinMaxX, WinMaxY, 1);
+  ScrollScrnRegionUp(WindMinX, CurrY, WindMaxX, WindMaxY, 1);
 End;
 
 
@@ -1393,28 +1407,37 @@ Procedure InsLine;
   Insert line at current cursor position. Scroll subsequent lines down.
 }
 Begin
-  ScrollScrnRegionDown(WinMinX, CurrY, WinMaxX, WinMaxY, 1);
+  ScrollScrnRegionDown(WindMinX, CurrY, WindMaxX, WindMaxY, 1);
 End;
 
+{$ifdef linux}
+  {$define havekiocsound}
+   const  KIOCSOUND = $4B2F;    // start sound generation (0 for off)
+{$else}
+ {$ifdef FreeBSD}
+   const  KIOCSOUND =$20004b3f;
+   {$define havekiocsound}
+ {$endif}
+{$endif}
 
-const
-  KIOCSOUND = $4B2F;    // start sound generation (0 for off)
+// ioctl might fail e.g. in putty. A redirect check is not enough, 
+// needs check for physical console too.
 
 Procedure Sound(Hz: Word);
 begin
-  if not OutputRedir then
+{$ifdef havekiocsound}
+  if (not OutputRedir) and (hz>0) then 
     fpIoctl(TextRec(Output).Handle, KIOCSOUND, Pointer(1193180 div Hz));
+{$endif}
 end;
-
-
 
 Procedure NoSound;
 begin
+{$ifdef havekiocsound}
   if not OutputRedir then
     fpIoctl(TextRec(Output).Handle, KIOCSOUND, nil);
+{$endif}
 end;
-
-
 
 Procedure TextMode (Mode: word);
 {
@@ -1524,27 +1547,31 @@ begin
   fpWrite(0,s[1],length(s));
   fpFD_ZERO(fds);
   fpFD_SET(1,fds);
-  if (fpSelect(2,@fds,nil,nil,1000)>0) then
-   begin
-     readed:=fpRead(1,buf,sizeof(buf));
-     i:=0;
-     while (i+5<readed) and (buf[i]<>#27) and (buf[i+1]<>'[') do
-      inc(i);
-     if i+5<readed then
-      begin
-        s:=space(16);
-        move(buf[i+2],s[1],16);
-        i:=Pos(';',s);
-        if i>0 then
-         begin
-           Val(Copy(s,1,i-1),y);
-           j:=Pos('R',s);
-           if j=0 then
-            j:=length(s);
-           Val(Copy(s,i+1,j-(i+1)),x);
-         end;
-      end;
-   end;
+  readed:=0;
+  repeat
+    if (fpSelect(2,@fds,nil,nil,1000)>0) then
+     begin
+       readed:=readed+fpRead(1,buf[readed],sizeof(buf)-readed);
+       i:=0;
+       while (i+5<readed) and (buf[i]<>#27) and (buf[i+1]<>'[') do
+        inc(i);
+       if i+5<readed then
+        begin
+          s:=space(16);
+          move(buf[i+2],s[1],16);
+          j:=Pos('R',s);
+          if j>0 then
+           begin
+             i:=Pos(';',s);
+             Val(Copy(s,1,i-1),y);
+             Val(Copy(s,i+1,j-(i+1)),x);
+             break;
+           end;
+        end;
+     end
+    else
+      break;
+  until false;
 end;
 
 
@@ -1572,6 +1599,10 @@ end;
 
 
 Initialization
+{$ifdef debugcrt}
+  Assign(DebugFile,'debug.txt');
+  ReWrite(DebugFile);
+{$endif}  
 { Redirect the standard output }
   assigncrt(Output);
   Rewrite(Output);
@@ -1580,18 +1611,18 @@ Initialization
   Reset(Input);
   TextRec(Input).Handle:=StdInputHandle;
 { Are we redirected to a file ? }
-  OutputRedir:= IsAtty(TextRec(Output).Handle)=-1;
+  OutputRedir:= IsAtty(TextRec(Output).Handle)<>1;
 { does the input come from another console or from a file? }
   InputRedir :=
-   (IsAtty(TextRec(Input).Handle)=-1) or
+   (IsAtty(TextRec(Input).Handle)<>1) or
    (not OutputRedir and
     (TTYName(TextRec(Input).Handle) <> TTYName(TextRec(Output).Handle)));
 { Get Size of terminal and set WindMax to the window }
   GetConsoleBuf;
-  WinMinX:=1;
-  WinMinY:=1;
-  WinMaxX:=ScreenWidth;
-  WinMaxY:=ScreenHeight;
+  WindMinX:=1;
+  WindMinY:=1;
+  WindMaxX:=ScreenWidth;
+  WindMaxY:=ScreenHeight;
   WindMax:=((ScreenHeight-1) Shl 8)+(ScreenWidth-1);
 {Get Current X&Y or Reset to Home}
   if OutputRedir then
@@ -1616,6 +1647,9 @@ Initialization
     end;
 
 Finalization
+{$ifdef debugcrt}
+  Close(DebugFile);
+{$endif}  
   ttyFlushOutput;
   if not OutputRedir then
     SetRawMode(False);
@@ -1624,18 +1658,3 @@ Finalization
    FreeMem(ConsoleBuf,ScreenHeight*ScreenWidth*2);
 
 End.
-{
-  $Log: crt.pp,v $
-  Revision 1.25  2005/05/14 15:01:49  hajny
-    * TextMode parameter type changed to word for TP/BP compatibility
-
-  Revision 1.24  2005/03/16 18:17:23  jonas
-    * fix from mischi to fix extra spaces under some terminals
-
-  Revision 1.23  2005/03/15 09:20:11  jonas
-    * endianess fixes from mischi
-
-  Revision 1.22  2005/02/14 17:13:31  peter
-    * truncate log
-
-}

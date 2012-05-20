@@ -1,5 +1,4 @@
 {
-    $Id: cpupi.pas,v 1.18 2005/02/14 17:13:09 peter Exp $
     Copyright (c) 2002 by Florian Klaempfl
 
     This unit contains the CPU specific part of tprocinfo
@@ -29,12 +28,15 @@ unit cpupi;
   interface
 
     uses
-       psub,procinfo;
+       psub,procinfo,aasmdata;
 
     type
        ti386procinfo = class(tcgprocinfo)
          constructor create(aparent:tprocinfo);override;
+         procedure set_first_temp_offset;override;
          function calc_stackframe_size:longint;override;
+         procedure generate_parameter_info;override;
+         procedure allocate_got_register(list: tasmlist);override;
        end;
 
 
@@ -42,9 +44,11 @@ unit cpupi;
 
     uses
       cutils,
-      globals,
-      tgobj,
-      cpubase;
+      systems,globals,globtype,
+      cgobj,tgobj,paramgr,
+      cpubase,
+      cgutils,
+      symconst;
 
     constructor ti386procinfo.create(aparent:tprocinfo);
       begin
@@ -53,23 +57,47 @@ unit cpupi;
       end;
 
 
+    procedure ti386procinfo.set_first_temp_offset;
+      begin
+        if paramanager.use_fixed_stack then
+          begin
+            if not(po_assembler in procdef.procoptions) and
+               (tg.direction > 0) then
+              tg.setfirsttemp(tg.direction*maxpushedparasize);
+          end;
+      end;
+
+
     function ti386procinfo.calc_stackframe_size:longint;
       begin
         { align to 4 bytes at least
           otherwise all those subl $2,%esp are meaningless PM }
-        result:=Align(tg.direction*tg.lasttemp,min(aktalignment.localalignmin,4));
+        if not(target_info.system in [system_i386_darwin,system_i386_iphonesim]) then
+          result:=Align(tg.direction*tg.lasttemp,min(current_settings.alignment.localalignmax,4))
+        else
+          result:=tg.direction*tg.lasttemp+maxpushedparasize;
       end;
 
 
+    procedure ti386procinfo.generate_parameter_info;
+      begin
+        inherited generate_parameter_info;
+        { Para_stack_size is only used to determine how many bytes to remove }
+        { from the stack at the end of the procedure (in the "ret $xx").     }
+        { If the stack is fixed, nothing has to be removed by the callee     }
+        if paramanager.use_fixed_stack then
+          para_stack_size := 0;
+      end;
+
+    procedure ti386procinfo.allocate_got_register(list: tasmlist);
+      begin
+        if (target_info.system in [system_i386_darwin,system_i386_iphonesim]) and
+           (cs_create_pic in current_settings.moduleswitches) then
+          begin
+            got := cg.getaddressregister(list);
+          end;
+      end;
 
 begin
    cprocinfo:=ti386procinfo;
 end.
-{
-  $Log: cpupi.pas,v $
-  Revision 1.18  2005/02/14 17:13:09  peter
-    * truncate log
-
-}
-
-

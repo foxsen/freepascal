@@ -1,5 +1,4 @@
 {
-    $Id: fpmsrch.inc,v 1.5 2005/02/14 17:13:18 peter Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 1998 by Berczi Gabor
 
@@ -53,7 +52,7 @@ var R: TRect;
       NameMatches:=(ProcS='') or (Pos(ProcS,UpcaseStr(St)) > 0);
     end;
 
-  procedure InsertInS(P: PSymbol); {$ifndef FPC}far;{$endif}
+  procedure InsertInS(P: PSymbol);
 
     procedure InsertItemsInS(P: PSymbolCollection);
     var I: Sw_integer;
@@ -121,7 +120,7 @@ var R: TRect;
     Overflow: boolean;
     Level : longint;
 
-  procedure InsertInS(P: PSymbol); {$ifndef FPC}far;{$endif}
+  procedure InsertInS(P: PSymbol);
 
     procedure InsertItemsInS(P: PSymbolCollection);
     var I: Sw_integer;
@@ -166,7 +165,7 @@ procedure TIDEApp.Modules;
 var
     R: TRect;
     S: PSortedSymbolCollection;
-procedure InsertInS(P: PSymbol); {$ifndef FPC}far;{$endif}
+procedure InsertInS(P: PSymbol);
 begin
   S^.Insert(P);
 end;
@@ -226,9 +225,3 @@ begin
     OpenOneSymbolBrowser(S);
 end;
 
-{
-  $Log: fpmsrch.inc,v $
-  Revision 1.5  2005/02/14 17:13:18  peter
-    * truncate log
-
-}

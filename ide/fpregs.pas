@@ -1,5 +1,4 @@
 {
-    $Id: fpregs.pas,v 1.11 2005/02/14 17:13:18 peter Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 1998-2000 by Pierre Muller
 
@@ -18,14 +17,12 @@ unit FPRegs;
 interface
 implementation
 end.
-{$else}
-
+{$else NODEBUG}
 interface
-
 uses
-{$ifdef win32}
+{$ifdef Windows}
   Windows,
-{$endif win32}
+{$endif Windows}
   Objects,Dialogs,Drivers,Views,
   FPViews;
 
@@ -34,10 +31,6 @@ uses
     MaxRegs = 128;
 
   type
-
-{$ifdef TP}
-    dword = longint;
-{$endif TP}
 
 {$undef cpu_known}
 
@@ -225,7 +218,6 @@ uses
   WViews,WEditor,
   wutils,
   FPConst,FPVars,
-  FPString,
   FPDebug;
 
 
@@ -265,6 +257,14 @@ Const
      Store:   @TVectorView.Store
   );
 
+{$ifdef useresstrings}
+resourcestring
+{$else}
+const
+{$endif}
+      dialog_registers = 'Register View';
+      dialog_fpu = 'FPU View';
+      dialog_vector = 'Vector Unit View';
 
 {****************************************************************************
                          TRegistersView
@@ -345,7 +345,7 @@ Const
                         rs.esp:=v
                       else if reg='ebp' then
                         rs.ebp:=v
-                      { under win32 flags are on a register named ps !! PM }
+                      { under Windows flags are on a register named ps !! PM }
                       else if (reg='eflags') or (reg='ps') then
                         rs.eflags:=v
                       else if reg='cs' then
@@ -1448,12 +1448,12 @@ Const
               end;
 
             SetColor(rs.mxcsr,OldReg.mxcsr);
-            WriteStr(1,i,'mxcsr'+IntToStr(i)+'  '+rs.mxcsr,color);
+            WriteStr(1,8,'mxcsr'+IntToStr(i)+'  '+rs.mxcsr,color);
 
             for i:=0 to 7 do
               begin
                 SetColor(rs.mmx[i],OldReg.mmx[i]);
-                WriteStr(1,i+8,'mmx'+IntToStr(i)+'  '+rs.mmx[i],color);
+                WriteStr(1,i+9,'mmx'+IntToStr(i)+'  '+rs.mmx[i],color);
               end;
 {$endif cpui386}
 {$ifdef cpupowerpc}
@@ -1502,7 +1502,7 @@ Const
        Desktop^.GetExtent(R);
 {$ifdef cpui386}
        R.A.X:=R.B.X-60;
-       R.B.Y:=R.A.Y+19;
+       R.B.Y:=R.A.Y+20;
 {$endif cpui386}
 {$ifdef cpum68k}
        R.A.X:=R.B.X-60;
@@ -1634,27 +1634,4 @@ begin
 end;
 
 end.
-{$endif}
-
-{
-  $Log: fpregs.pas,v $
-  Revision 1.11  2005/02/14 17:13:18  peter
-    * truncate log
-
-  Revision 1.10  2005/02/03 22:18:08  peter
-    * fix generic cpu compile
-
-  Revision 1.9  2005/01/16 00:26:43  florian
-    + all sparc registers are displayed now
-    + more sophisticated coloring of changed registers
-
-  Revision 1.8  2005/01/12 21:48:31  florian
-    + register view for sparc
-
-  Revision 1.7  2005/01/10 20:52:11  florian
-    * compilation fixed
-
-  Revision 1.6  2005/01/08 11:43:18  florian
-    + vector unit window
-
-}
+{$endif NODEBUG}

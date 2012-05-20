@@ -1,5 +1,4 @@
 {
-    $Id: unxsysc.inc,v 1.9 2005/02/14 17:13:30 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2001 by Free Pascal development team
 
@@ -14,37 +13,27 @@
 
  ***********************************************************************}
 
-Function  fsync (fd : cint) : cint;
-begin
-  fsync := do_SysCall(syscall_nr_fsync, fd);
-end;
-
 Function  fpFlock (fd,mode : cint) : cint;
 begin
   fpflock:=do_Syscall(Syscall_nr_flock,fd,mode);
 end;
 
-
-Function StatFS(Path:Pchar;Var Info:tstatfs):cint;
-{
-  Get all information on a fileSystem, and return it in Info.
-  Path is the name of a file/directory on the fileSystem you wish to
-  investigate.
-}
+Function  fpfStatFS (Fd: cint; Info:pstatfs):cint;
 begin
-  StatFS:=(do_SysCall(SysCall_nr_statfs,TSysParam(path),TSysParam(@Info)));
+  fpfstatfs:=do_SysCall(SysCall_nr_fstatfs,fd,TSysParam(info))
 end;
 
-Function fStatFS(Fd:cint;Var Info:tstatfs):cint;
-{
-  Get all information on a fileSystem, and return it in Info.
-  Fd is the file descriptor of a file/directory on the fileSystem
-  you wish to investigate.
-}
+Function  fpStatFS  (Path:pchar; Info:pstatfs):cint;
+
 begin
-  fStatFS:=(do_SysCall(SysCall_nr_fstatfs,fd,TSysParam(@info)));
+  fpstatfs:=do_SysCall(SysCall_nr_statfs,TSysParam(path),TSysParam(Info))
 end;
 
+Function  fpfsync (fd : cint) : cint;
+
+begin
+  fpfsync:=do_SysCall(syscall_nr_fsync, fd);
+end;
 
 {--------------------------------
       Port IO functions
@@ -70,12 +59,3 @@ end;
 
 {$endif cpui386}
 
-{
- $Log: unxsysc.inc,v $
- Revision 1.9  2005/02/14 17:13:30  peter
-   * truncate log
-
- Revision 1.8  2005/02/13 20:01:38  peter
-   * include file cleanup
-
-}

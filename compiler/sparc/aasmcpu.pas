@@ -1,5 +1,4 @@
 {
-    $Id: aasmcpu.pas,v 1.53 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 1999-2002 by Mazen Neifer
 
     Contains the assembler object for the SPARC
@@ -29,7 +28,7 @@ interface
 uses
   cclasses,
   globtype,globals,verbose,
-  aasmbase,aasmtai,
+  aasmbase,aasmtai,aasmdata,aasmsym,
   cgbase,cgutils,cpubase,cpuinfo;
 
     const
@@ -39,7 +38,7 @@ uses
       O_MOV_DEST = 1;
 
     type
-      taicpu = class(tai_cpu_abstract)
+      taicpu = class(tai_cpu_abstract_sym)
          delayslot_annulled : boolean;   { conditinal opcode with ,a }
          constructor op_none(op : tasmop);
 
@@ -76,8 +75,8 @@ uses
     procedure InitAsm;
     procedure DoneAsm;
 
-    function spilling_create_load(const ref:treference;r:tregister): tai;
-    function spilling_create_store(r:tregister; const ref:treference): tai;
+    function spilling_create_load(const ref:treference;r:tregister):Taicpu;
+    function spilling_create_store(r:tregister; const ref:treference):Taicpu;
 
 implementation
 
@@ -186,7 +185,7 @@ implementation
       begin
          inherited create(op);
          { only allowed to load the address }
-         if not(_op2.refaddr in [addr_lo,addr_hi]) then
+         if not(_op2.refaddr in [addr_low,addr_high]) then
            internalerror(200305311);
          ops:=3;
          loadreg(0,_op1);
@@ -247,14 +246,20 @@ implementation
 
     function taicpu.spilling_get_operation_type(opnr: longint): topertype;
       begin
-        if opnr=ops-1 then
-          result := operand_write
-        else
-          result := operand_read;
+        result := operand_read;
+        case opcode of
+          A_FCMPs,A_FCMPd,A_FCMPq :
+            ;
+          else
+            begin
+              if opnr=ops-1 then
+                result := operand_write;
+            end;
+        end;
       end;
 
 
-    function spilling_create_load(const ref:treference;r:tregister): tai;
+    function spilling_create_load(const ref:treference;r:tregister):Taicpu;
       begin
         case getregtype(r) of
           R_INTREGISTER :
@@ -276,7 +281,7 @@ implementation
       end;
 
 
-    function spilling_create_store(r:tregister; const ref:treference): tai;
+    function spilling_create_store(r:tregister; const ref:treference):Taicpu;
       begin
         case getregtype(r) of
           R_INTREGISTER :
@@ -311,9 +316,3 @@ begin
   cai_cpu:=taicpu;
   cai_align:=tai_align;
 end.
-{
-  $Log: aasmcpu.pas,v $
-  Revision 1.53  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

@@ -1,5 +1,4 @@
 {
-    $Id: compinnr.inc,v 1.16 2005/02/14 17:13:06 peter Exp $
     This file is part of the Free Pascal run time library and compiler.
     Copyright (c) 1998-2002 by the Free Pascal development team
 
@@ -62,6 +61,31 @@ const
    in_initialize_x      = 50;
    in_leave             = 51; {macpas}
    in_cycle             = 52; {macpas}
+   in_slice_x           = 53;
+   in_unaligned_x       = 54;
+   in_get_frame         = 56;
+   in_get_caller_addr   = 57;
+   in_get_caller_frame  = 58;
+   in_pack_x_y_z        = 59;
+   in_unpack_x_y_z      = 60;
+   in_bitsizeof_x       = 61;
+   in_writestr_x        = 62;
+   in_readstr_x         = 63;
+   in_abs_long          = 64;
+   in_ror_x             = 65;
+   in_ror_x_y           = 66;
+   in_rol_x             = 67;
+   in_rol_x_y           = 68;
+   in_objc_selector_x   = 69;
+   in_objc_protocol_x   = 70;
+   in_objc_encode_x     = 71;
+   in_sar_x_y           = 72;
+   in_sar_x             = 73;
+   in_bsf_x             = 74;
+   in_bsr_x             = 75;
+   in_default_x         = 76;
+   in_box_x             = 77; { managed platforms: wrap in class instance }
+   in_unbox_x_y         = 78; { manage platforms: extract from class instance }
 
 { Internal constant functions }
    in_const_sqr        = 100;
@@ -105,9 +129,3 @@ const
 
    { SSE }
 
-{
-  $Log: compinnr.inc,v $
-  Revision 1.16  2005/02/14 17:13:06  peter
-    * truncate log
-
-}

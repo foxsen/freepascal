@@ -1,5 +1,4 @@
 {
-    $Id: cpugas.pas,v 1.32 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 1999-2003 by Florian Klaempfl
 
     This unit implements an asmoutput class for SPARC AT&T syntax
@@ -28,18 +27,33 @@ interface
 
     uses
       cpubase,
-      aasmtai,aasmcpu,assemble,aggas;
+      aasmtai,aasmdata,aasmcpu,assemble,aggas;
 
     type
       TGasSPARC=class(TGnuAssembler)
-        procedure WriteInstruction(hp:Tai);override;
+        constructor create(smart: boolean); override;
       end;
+
+     TSPARCInstrWriter=class(TCPUInstrWriter)
+       procedure WriteInstruction(hp:Tai);override;
+     end;
 
 implementation
 
     uses
       cutils,systems,
       verbose,itcpugas,cgbase,cgutils;
+
+
+{****************************************************************************}
+{                         GNU PPC Assembler writer                           }
+{****************************************************************************}
+
+    constructor TGasSPARC.create(smart: boolean);
+      begin
+        inherited create(smart);
+        InstrWriter := TSPARCInstrWriter.create(self);
+      end;
 
 
     function GetReferenceString(var ref:TReference):string;
@@ -56,9 +70,9 @@ implementation
                  else if offset<0 then
                    GetReferenceString:=GetReferenceString+ToStr(offset);
                  case refaddr of
-                   addr_hi:
+                   addr_high:
                      GetReferenceString:='%hi('+GetReferenceString+')';
-                   addr_lo:
+                   addr_low:
                      GetReferenceString:='%lo('+GetReferenceString+')';
                  end;
               end
@@ -66,7 +80,7 @@ implementation
               begin
 {$ifdef extdebug}
                 if assigned(symbol) and
-                  not(refaddr in [addr_pic,addr_lo]) then
+                  not(refaddr in [addr_pic,addr_low]) then
                   internalerror(2003052601);
 {$endif extdebug}
                 if base<>NR_NO then
@@ -85,7 +99,7 @@ implementation
                     }
                     if assigned(symbol) then
                       begin
-                        if refaddr=addr_lo then
+                        if refaddr=addr_low then
                           GetReferenceString:='%lo('+symbol.name+')+'+GetReferenceString
                         else
                           GetReferenceString:=symbol.name+'+'+GetReferenceString;
@@ -113,7 +127,7 @@ implementation
             top_const:
               getopstr:=tostr(longint(val));
             top_ref:
-              if (oper.ref^.refaddr in [addr_no,addr_pic]) or ((oper.ref^.refaddr=addr_lo) and ((oper.ref^.base<>NR_NO) or
+              if (oper.ref^.refaddr in [addr_no,addr_pic]) or ((oper.ref^.refaddr=addr_low) and ((oper.ref^.base<>NR_NO) or
                 (oper.ref^.index<>NR_NO))) then
                 getopstr:='['+getreferencestring(ref^)+']'
               else
@@ -124,7 +138,7 @@ implementation
         end;
 
 
-    procedure TGasSPARC.WriteInstruction(hp:Tai);
+    procedure TSPARCInstrWriter.WriteInstruction(hp:Tai);
       var
         Op:TAsmOp;
         s:String;
@@ -144,14 +158,14 @@ implementation
                 internalerror(200401045);
               { FABSs %f<even>,%f<even> }
               s:=#9+std_op2str[A_FABSs]+#9+getopstr(taicpu(hp).oper[0]^)+','+getopstr(taicpu(hp).oper[1]^);
-              AsmWriteLn(s);
+              owner.AsmWriteLn(s);
               { FMOVs %f<odd>,%f<odd> }
               inc(taicpu(hp).oper[0]^.reg);
               inc(taicpu(hp).oper[1]^.reg);
               s:=#9+std_op2str[A_FMOVs]+#9+getopstr(taicpu(hp).oper[0]^)+','+getopstr(taicpu(hp).oper[1]^);
               dec(taicpu(hp).oper[0]^.reg);
               dec(taicpu(hp).oper[1]^.reg);
-              AsmWriteLn(s);
+              owner.AsmWriteLn(s);
             end;
           A_FMOVd:
             begin
@@ -161,14 +175,14 @@ implementation
                 internalerror(200401045);
               { FMOVs %f<even>,%f<even> }
               s:=#9+std_op2str[A_FMOVs]+#9+getopstr(taicpu(hp).oper[0]^)+','+getopstr(taicpu(hp).oper[1]^);
-              AsmWriteLn(s);
+              owner.AsmWriteLn(s);
               { FMOVs %f<odd>,%f<odd> }
               inc(taicpu(hp).oper[0]^.reg);
               inc(taicpu(hp).oper[1]^.reg);
               s:=#9+std_op2str[A_FMOVs]+#9+getopstr(taicpu(hp).oper[0]^)+','+getopstr(taicpu(hp).oper[1]^);
               dec(taicpu(hp).oper[0]^.reg);
               dec(taicpu(hp).oper[1]^.reg);
-              AsmWriteLn(s);
+              owner.AsmWriteLn(s);
             end
           else
             begin
@@ -182,7 +196,7 @@ implementation
                   for i:=1 to taicpu(hp).ops-1 do
                     s:=s+','+getopstr(taicpu(hp).oper[i]^);
                 end;
-              AsmWriteLn(s);
+              owner.AsmWriteLn(s);
             end;
         end;
       end;
@@ -194,23 +208,32 @@ implementation
            id     : as_gas;
            idtxt  : 'AS';
            asmbin : 'as';
+{$ifdef FPC_SPARC_V8_ONLY}
            asmcmd : '-o $OBJ $ASM';
-           supported_target : system_any;
+{$else}
+           asmcmd : '-Av9 -o $OBJ $ASM';
+{$endif}
+           supported_targets : [system_sparc_solaris,system_sparc_linux,system_sparc_embedded];
            flags : [af_allowdirect,af_needar,af_smartlink_sections];
            labelprefix : '.L';
            comment : '# ';
+           dollarsign: '$';
+         );
+
+      as_sparc_gas_info : tasminfo =
+         (
+           id     : as_ggas;
+           idtxt  : 'GAS';
+           asmbin : 'gas';
+           asmcmd : '-Av9 -o $OBJ $ASM';
+           supported_targets : [system_sparc_solaris,system_sparc_linux,system_sparc_embedded];
+           flags : [af_allowdirect,af_needar,af_smartlink_sections];
+           labelprefix : '.L';
+           comment : '# ';
+           dollarsign: '$';
          );
 
 begin
   RegisterAssembler(as_SPARC_as_info,TGasSPARC);
+  RegisterAssembler(as_SPARC_gas_info,TGasSPARC);
 end.
-{
-    $Log: cpugas.pas,v $
-    Revision 1.32  2005/02/14 17:13:10  peter
-      * truncate log
-
-    Revision 1.31  2005/01/23 17:14:21  florian
-      + optimized code generation on sparc
-      + some stuff for pic code on sparc added
-
-}

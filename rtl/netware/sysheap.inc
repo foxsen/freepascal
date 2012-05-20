@@ -1,5 +1,4 @@
 {
-    $Id: sysheap.inc,v 1.2 2005/02/14 17:13:30 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2001 by Free Pascal development team
 
@@ -94,14 +93,14 @@ end;
       OS Memory allocation / deallocation
  ****************************************************************************}
 
-function SysOSAlloc(size: ptrint): pointer;
+function SysOSAlloc(size: ptruint): pointer;
 begin
   result := sbrk(size);
 end;
 
 {$define HAS_SYSOSFREE}
 
-procedure SysOSFree(p: pointer; size: ptrint);
+procedure SysOSFree(p: pointer; size: ptruint);
 var i : longint;
 begin
 //fpmunmap(p, size);
@@ -120,12 +119,12 @@ end;
 
 {$define HAS_SYSOSFREE}
 
-procedure SysOSFree(p: pointer; size: ptrint);
+procedure SysOSFree(p: pointer; size: ptruint);
 begin
   _free (p);
 end;
 
-function SysOSAlloc(size: ptrint): pointer;
+function SysOSAlloc(size: ptruint): pointer;
 begin
   SysOSAlloc := _malloc (size);
 end;
@@ -134,17 +133,4 @@ end;
 
 
 
-{
-   $Log: sysheap.inc,v $
-   Revision 1.2  2005/02/14 17:13:30  peter
-     * truncate log
-
-   Revision 1.1  2005/02/06 16:57:18  peter
-     * threads for go32v2,os,emx,netware
-
-   Revision 1.1  2005/02/06 13:06:20  peter
-     * moved file and dir functions to sysfile/sysdir
-     * win32 thread in systemunit
-
-}
 

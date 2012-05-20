@@ -1,8 +1,7 @@
 {
-    $Id: powerpc.inc,v 1.76 2005/04/28 18:29:01 olle Exp $
 
     This file is part of the Free Pascal run time library.
-    Copyright (c) 2000-2001 by the Free Pascal development team.
+    Copyright (c) 2000-2006 by the Free Pascal development team.
 
     Portions Copyright (c) 2000 by Casey Duncan (casey.duncan@state.co.us)
 
@@ -18,6 +17,9 @@
 
  **********************************************************************}
 
+{$IFNDEF LINUX}
+    {$DEFINE USE_DCBZ}
+{$ENDIF LINUX}
 
 {****************************************************************************
                            PowerPC specific stuff
@@ -32,6 +34,8 @@ const
   ppc_fpu_invalid_snan = (1 shl (32-7));
 }
 
+{$ifndef FPUNONE}
+
 procedure fpc_enable_ppc_fpu_exceptions;
 assembler; nostackframe;
 asm
@@ -40,12 +44,9 @@ asm
   mtfsfi 1,0
   mtfsfi 2,0
   mtfsfi 3,0
-{$ifdef fpc_mtfsb0_corrected}
   mtfsb0 21
   mtfsb0 22
   mtfsb0 23
-
-{$endif fpc_mtfsb0_corrected}
 
   { enable invalid operations and division by zero exceptions. }
   { No overflow/underflow, since those give some spurious      }
@@ -53,10 +54,11 @@ asm
   mtfsfi 6,9
 end;
 
-
 procedure fpc_cpuinit;
 begin
-  fpc_enable_ppc_fpu_exceptions;
+  { don't let libraries influence the FPU cw set by the host program }
+  if not IsLibrary then
+    fpc_enable_ppc_fpu_exceptions;
 end;
 
 
@@ -207,6 +209,14 @@ _restfpr_31_l:  lwz     r0, 4(r11)
 end;
 {$endif MACOS}
 
+{$else}
+
+procedure fpc_cpuinit;
+begin
+end;
+
+{$endif}
+
 {****************************************************************************
                                 Move / Fill
 ****************************************************************************}
@@ -334,7 +344,7 @@ asm
           {  r0 := count div 4, will be moved to ctr when copying dwords  }
           srwi    r0,r5,2
 
-{$ifndef ppc603}
+{$if not defined(ppc603) and not defined(FPUNONE)}
           {  adjust the update count: it will now be 8 or -8 depending on overlap  }
           slwi    r10,r10,1
 
@@ -345,7 +355,7 @@ asm
           add     r4,r4,r6
 
           slwi    r6,r6,1
-
+{$IFDEF USE_DCBZ}
           { the dcbz offset must give a 32 byte aligned address when added   }
           { to the current dest address and its address must point to the    }
           { bytes that will be overwritten in the current iteration. In case }
@@ -359,15 +369,17 @@ asm
           add     r7,r7,r6
           neg     r7,r7
           subi    r7,r7,32
-
+{$ENDIF USE_DCBZ}
 .LMove32ByteDcbz:
           lfdux   f0,r3,r10
           lfdux   f1,r3,r10
           lfdux   f2,r3,r10
           lfdux   f3,r3,r10
+{$IFDEF USE_DCBZ}
           { must be done only now, in case source and dest are less than }
           { 32 bytes apart!                                              }
           dcbz    r4,r7
+{$ENDIF USE_DCBZ}
           stfdux  f0,r4,r10
           stfdux  f1,r4,r10
           stfdux  f2,r4,r10
@@ -450,7 +462,9 @@ var
   temp : packed record
     case byte of
       0: (l1,l2: longint);
+{$ifndef FPUNONE}
       1: (d: double);
+{$endif}
     end;
 {$endif FPC_ABI_AIX}
 asm
@@ -479,11 +493,14 @@ asm
         add       r3,r3,r10
         { decrease count with number of bytes already stored }
         sub       r4,r4,r10
+{$IFNDEF FPUNONE}
         blt       cr1,.LFillCharSmall
+{$IFDEF USE_DCBZ}
         { if we have to fill with 0 (which happens a lot), we can simply use }
         { dcbz for the most part, which is very fast, so make a special case }
         { for that                                                           }
         cmplwi    cr1,r5,0
+{$ENDIF}
         { align to a multiple of 32 (and immediately check whether we aren't }
         { already 32 byte aligned)                                           }
         rlwinm.   r10,r3,0,31-5+1,31
@@ -511,6 +528,7 @@ asm
         { check how many rest there is (to decide whether we'll use }
         { FillCharSmall or FillCharVerySmall)                       }
         cmplwi    cr7,r4,11
+{$IFDEF USE_DCBZ}
         { if filling with zero, only use dcbz }
         bne       cr1, .LFillCharNoZero
         { make r3 point again to the actual store position }
@@ -522,6 +540,7 @@ asm
         { if there was no rest, we're finished }
         beq       .LFillCharDone
         b         .LFillCharVerySmall
+{$ENDIF USE_DCBZ}
 .LFillCharNoZero:
 {$ifdef FPC_ABI_AIX}
         stw       r5,-4(r1)
@@ -535,10 +554,14 @@ asm
         { make r3 point to address-8, so we're able to use fp double stores }
         { with update (it's already -4 now)                                 }
         subi      r3,r3,4
+{$IFDEF USE_DCBZ}
         { load r10 with 8, so that dcbz uses the correct address }
         li        r10, 8
+{$ENDIF}
 .LFillChar32ByteLoop:
+{$IFDEF USE_DCBZ}
         dcbz      r3,r10
+{$ENDIF USE_DCBZ}
         stfdu     f0,8(r3)
         stfdu     f0,8(r3)
         stfdu     f0,8(r3)
@@ -550,6 +573,7 @@ asm
         addi      r3,r3,8
         b         .LFillCharVerySmall
 .LFillCharSmall:
+{$ENDIF FPUNONE}
         { when we arrive here, we're already 4 byte aligned }
         { get count div 4 to store dwords }
         srwi      r10,r4,2
@@ -759,10 +783,19 @@ asm
         lwzu    r9,4(r11)
         lwzu    r10,4(r4)
         { calculate difference }
-        sub.    r3,r9,r10
+        sub.    r0,r9,r10
         { if chars not equal or at the end, we're ready }
         bdnzt   cr0*4+eq, .LCompDWordLoop
 .LCompDWordDone:
+        cmplw cr1,r9,r10
+        beq .Ldone
+        { since these were two dwords, we have to perform an additional }
+        { unsigned comparison and set the result accordingly            }
+        bgt cr1,.Lpos
+        li r3,-2
+.Lpos:
+        addi r3,r3,1
+.Ldone:
 end;
 {$endif FPC_SYSTEM_HAS_COMPAREDWORD}
 
@@ -801,67 +834,7 @@ end;
                                  String
 ****************************************************************************}
 
-{$ifndef FPC_SYSTEM_HAS_FPC_SHORTSTR_ASSIGN}
-{$define FPC_SYSTEM_HAS_FPC_SHORTSTR_ASSIGN}
-function fpc_shortstr_to_shortstr(len:longint; const sstr: shortstring): shortstring; [public,alias: 'FPC_SHORTSTR_TO_SHORTSTR']; compilerproc;
-assembler; nostackframe;
-{ input: r3: pointer to result, r4: len, r5: sstr }
-asm
-        { load length source }
-        lbz     r10,0(r5)
-        {  load the begin of the dest buffer in the data cache }
-        dcbtst  0,r3
-
-        { put min(length(sstr),len) in r4 }
-        subfc   r7,r10,r4     { r0 := r4 - r10                               }
-        subfe   r4,r4,r4      { if r3 >= r4 then r3' := 0 else r3' := -1     }
-        and     r7,r7,r4      { if r3 >= r4 then r3' := 0 else r3' := r3-r10 }
-        add     r4,r10,r7     { if r3 >= r4 then r3' := r10 else r3' := r3   }
-
-        cmplwi  r4,0
-        { put length in ctr }
-        mtctr   r4
-        stb     r4,0(r3)
-        beq     .LShortStrCopyDone
-.LShortStrCopyLoop:
-        lbzu    r0,1(r5)
-        stbu    r0,1(r3)
-        bdnz    .LShortStrCopyLoop
-.LShortStrCopyDone:
-end;
-
-
-{$ifdef interncopy}
-procedure fpc_shortstr_assign(len:longint;sstr,dstr:pointer);[public,alias:'FPC_SHORTSTR_ASSIGN'];
-{$else}
-procedure fpc_shortstr_copy(len:longint;sstr,dstr:pointer);[public,alias:'FPC_SHORTSTR_COPY'];
-{$endif}
-assembler; nostackframe;
-{ input: r3: len, r4: sstr, r5: dstr }
-asm
-        { load length source }
-        lbz     r10,0(r4)
-        {  load the begin of the dest buffer in the data cache }
-        dcbtst  0,r5
-
-        { put min(length(sstr),len) in r3 }
-        subc    r0,r3,r10    { r0 := r3 - r10                               }
-        subfe   r3,r3,r3     { if r3 >= r4 then r3' := 0 else r3' := -1     }
-        and     r3,r0,r3     { if r3 >= r4 then r3' := 0 else r3' := r3-r10 }
-        add     r3,r3,r10    { if r3 >= r4 then r3' := r10 else r3' := r3   }
-
-        cmplwi  r3,0
-        { put length in ctr }
-        mtctr   r3
-        stb     r3,0(r5)
-        beq     .LShortStrCopyDone2
-.LShortStrCopyLoop2:
-        lbzu    r0,1(r4)
-        stbu    r0,1(r5)
-        bdnz    .LShortStrCopyLoop2
-.LShortStrCopyDone2:
-end;
-{$endif FPC_SYSTEM_HAS_FPC_SHORTSTR_ASSIGN}
+{$ifndef STR_CONCAT_PROCS}
 
 (*
 {$ifndef FPC_SYSTEM_HAS_FPC_SHORTSTR_CONCAT}
@@ -954,6 +927,8 @@ asm
 end;
 {$endif FPC_SYSTEM_HAS_FPC_SHORTSTR_APPEND_SHORTSTR}
 
+{$endif STR_CONCAT_PROCS}
+
 (*
 {$define FPC_SYSTEM_HAS_FPC_SHORTSTR_COMPARE}
 function fpc_shortstr_compare(const dstr,sstr:shortstring): longint; [public,alias:'FPC_SHORTSTR_COMPARE']; compilerproc;
@@ -1017,15 +992,20 @@ end;
 
 {$ifndef FPC_SYSTEM_HAS_FPC_PCHAR_TO_SHORTSTR}
 {$define FPC_SYSTEM_HAS_FPC_PCHAR_TO_SHORTSTR}
-function fpc_pchar_to_shortstr(p:pchar):shortstring;[public,alias:'FPC_PCHAR_TO_SHORTSTR']; compilerproc;
-assembler; nostackframe;
+{$ifndef FPC_STRTOSHORTSTRINGPROC}
+function fpc_pchar_to_shortstr(p:pchar):shortstring;[public,alias:'FPC_PCHAR_TO_SHORTSTR']; compilerproc; assembler; nostackframe;
+{$else FPC_STRTOSHORTSTRINGPROC}
+procedure fpc_pchar_to_shortstr(out res : shortstring;p:pchar);assembler;[public,alias:'FPC_PCHAR_TO_SHORTSTR']; compilerproc; nostackframe;
+{$define FPC_STRPASPROC}
+{$endif FPC_STRTOSHORTSTRINGPROC}
 {$include strpas.inc}
+{$undef FPC_STRPASPROC}
 {$endif FPC_SYSTEM_HAS_FPC_PCHAR_TO_SHORTSTR}
 
 
 {$ifndef FPC_SYSTEM_HAS_FPC_PCHAR_LENGTH}
 {$define FPC_SYSTEM_HAS_FPC_PCHAR_LENGTH}
-function fpc_pchar_length(p:pchar):longint;assembler;[public,alias:'FPC_PCHAR_LENGTH']; {$ifdef hascompilerproc} compilerproc; {$endif} nostackframe;
+function fpc_pchar_length(p:pchar):sizeint;assembler;[public,alias:'FPC_PCHAR_LENGTH']; compilerproc; nostackframe;
 {$include strlen.inc}
 {$endif FPC_SYSTEM_HAS_FPC_PCHAR_LENGTH}
 
@@ -1083,32 +1063,6 @@ asm
     li r3,0
 end;
 
-{$define FPC_SYSTEM_HAS_ABS_LONGINT}
-function abs(l:longint):longint; assembler;{$ifndef INTERNCONSTINTF}[internconst:fpc_in_const_abs];{$endif}{$ifdef SYSTEMINLINE}inline;{$endif} nostackframe;
-asm
-        srawi   r0,r3,31
-        add     r3,r0,r3
-        xor     r3,r3,r0
-end;
-
-
-{****************************************************************************
-                                 Math
-****************************************************************************}
-
-{$define FPC_SYSTEM_HAS_ODD_LONGINT}
-function odd(l:longint):boolean;assembler;{$ifndef INTERNCONSTINTF}[internconst:fpc_in_const_odd];{$endif}{$ifdef SYSTEMINLINE}inline;{$endif} nostackframe;
-asm
-        rlwinm  r3,r3,0,31,31
-end;
-
-
-{$define FPC_SYSTEM_HAS_SQR_LONGINT}
-function sqr(l:longint):longint;assembler;{$ifndef INTERNCONSTINTF}[internconst:fpc_in_const_sqr];{$endif}{$ifdef SYSTEMINLINE}inline;{$endif} nostackframe;
-asm
-        mullw   r3,r3,r3
-end;
-
 
 {$define FPC_SYSTEM_HAS_SPTR}
 Function Sptr : Pointer;assembler;{$ifdef SYSTEMINLINE}inline;{$endif} nostackframe;
@@ -1155,15 +1109,124 @@ asm
 end;
 
 
-{
-  $Log: powerpc.inc,v $
-  Revision 1.76  2005/04/28 18:29:01  olle
-    * Fixed bug in stack crawling routines for macos
+function InterLockedDecrement (var Target: longint) : longint; assembler; nostackframe;
+{ input:  address of target in r3 }
+{ output: target-1 in r3          }
+{ side-effect: target := target-1 }
+asm
+.LInterLockedDecLoop:
+        lwarx   r10,0,r3
+        subi    r10,r10,1
+        stwcx.  r10,0,r3
+        bne     .LInterLockedDecLoop
+        mr      r3,r10
+end;
 
-  Revision 1.75  2005/02/14 17:13:31  peter
-    * truncate log
 
-  Revision 1.74  2005/01/31 20:57:41  olle
-    * Fixed stack frame access for macos
+function InterLockedIncrement (var Target: longint) : longint; assembler; nostackframe;
+{ input:  address of target in r3 }
+{ output: target+1 in r3          }
+{ side-effect: target := target+1 }
+asm
+.LInterLockedIncLoop:
+        lwarx   r10,0,r3
+        addi    r10,r10,1
+        stwcx.  r10,0,r3
+        bne     .LInterLockedIncLoop
+        mr      r3,r10
+end;
 
-}
+
+function InterLockedExchange (var Target: longint;Source : longint) : longint; assembler; nostackframe;
+{ input:  address of target in r3, source in r4 }
+{ output: target in r3                          }
+{ side-effect: target := source                 }
+asm
+.LInterLockedXchgLoop:
+        lwarx   r10,0,r3
+        stwcx.  r4,0,r3
+        bne     .LInterLockedXchgLoop
+        mr      r3,r10
+end;
+
+
+function InterLockedExchangeAdd (var Target: longint;Source : longint) : longint; assembler; nostackframe;
+asm
+.LInterLockedXchgAddLoop:
+        lwarx   r10,0,r3
+        add     r10,r10,r4
+        stwcx.  r10,0,r3
+        bne     .LInterLockedXchgAddLoop
+        sub     r3,r10,r4
+end;
+
+
+function InterlockedCompareExchange(var Target: longint; NewValue: longint; Comperand: longint): longint; assembler; nostackframe;
+{ input:  address of target in r3, newvalue in r4, comparand in r5 }
+{ output: value stored in target before entry of the function      }
+{ side-effect: NewValue stored in target if (target = comparand)   }
+asm
+.LInterlockedCompareExchangeLoop:
+  lwarx  r10,0,r3
+  sub    r9,r10,r5
+  addic  r9,r9,-1
+  subfe  r9,r9,r9
+  and    r8,r4,r9
+  andc   r7,r10,r9
+  or     r6,r7,r8
+  stwcx. r6,0,r3
+  bne .LInterlockedCompareExchangeLoop
+  mr     r3, r10
+end;
+
+{$IFDEF MORPHOS}
+{ this is only required for MorphOS }
+{$define FPC_SYSTEM_HAS_SYSINITFPU}
+procedure SysInitFPU;{$ifdef SYSTEMINLINE}inline;{$endif}
+  var tmp: array[0..1] of dword;
+begin
+  asm
+     { setting fpu to round to nearest mode }
+     li r3,0
+     stw r3,8(r1)
+     stw r3,12(r1)
+     lfd f1,8(r1)
+     mtfsf 7,f1
+  end;
+  { powerpc might use softfloat code }
+  softfloat_exception_flags:=0;
+  softfloat_exception_mask:=float_flag_underflow or float_flag_inexact or float_flag_denormal;
+end;
+
+{$define FPC_SYSTEM_HAS_SYSRESETFPU}
+procedure SysResetFPU;{$ifdef SYSTEMINLINE}inline;{$endif}
+begin
+  softfloat_exception_flags:=0;
+end;
+{$ENDIF}
+
+{$ifndef FPC_SYSTEM_HAS_MEM_BARRIER}
+{$define FPC_SYSTEM_HAS_MEM_BARRIER}
+
+procedure ReadBarrier;assembler;nostackframe;{$ifdef SYSTEMINLINE}inline;{$endif}
+asm
+  isync
+end;
+
+procedure ReadDependencyBarrier;{$ifdef SYSTEMINLINE}inline;{$endif}
+begin
+  { reads imply barrier on earlier reads depended on }
+end;
+
+procedure ReadWriteBarrier;assembler;nostackframe;{$ifdef SYSTEMINLINE}inline;{$endif}
+asm
+  isync
+  eieio
+end;
+
+procedure WriteBarrier;assembler;nostackframe;{$ifdef SYSTEMINLINE}inline;{$endif}
+asm
+  eieio
+end;
+
+{$endif}

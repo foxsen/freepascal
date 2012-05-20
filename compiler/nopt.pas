@@ -1,5 +1,4 @@
 {
-    $Id: nopt.pas,v 1.20 2005/02/14 17:13:06 peter Exp $
     Copyright (c) 1998-2002 by Jonas Maebe
 
     This unit implements optimized nodes
@@ -26,7 +25,7 @@ unit nopt;
 
 interface
 
-uses node, nadd;
+uses node,nbas,nadd,constexp;
 
 type
   tsubnodetype = (
@@ -36,12 +35,12 @@ type
 
   taddoptnode = class(taddnode)
      subnodetype: tsubnodetype;
-     constructor create(ts: tsubnodetype; l,r : tnode); virtual;
+     constructor create(ts: tsubnodetype; l,r : tnode); virtual; reintroduce;
      { pass_1 will be overridden by the separate subclasses    }
-     { By default, pass_2 is the same as for addnode           }
+     { By default, pass_generate_code is the same as for addnode           }
      { Only if there's a processor specific implementation, it }
      { will be overridden.                                     }
-     function getcopy: tnode; override;
+     function dogetcopy: tnode; override;
      function docompare(p: tnode): boolean; override;
   end;
 
@@ -50,9 +49,9 @@ type
     { sometimes (it's initialized/updated by calling updatecurmaxlen)     }
     curmaxlen: byte;
     { pass_1 must be overridden, otherwise we get an endless loop }
-    function det_resulttype: tnode; override;
+    function pass_typecheck: tnode; override;
     function pass_1: tnode; override;
-    function getcopy: tnode; override;
+    function dogetcopy: tnode; override;
     function docompare(p: tnode): boolean; override;
    protected
     procedure updatecurmaxlen;
@@ -60,13 +59,13 @@ type
 
   { add a char to a shortstring }
   taddsstringcharoptnode = class(taddsstringoptnode)
-    constructor create(l,r : tnode); virtual;
+    constructor create(l,r : tnode); virtual; reintroduce;
   end;
   taddsstringcharoptnodeclass = class of taddsstringcharoptnode;
 
   { add a constant string to a short string }
   taddsstringcsstringoptnode = class(taddsstringoptnode)
-    constructor create(l,r : tnode); virtual;
+    constructor create(l,r : tnode); virtual; reintroduce;
     function pass_1: tnode; override;
   end;
   taddsstringcsstringoptnodeclass = class of taddsstringcsstringoptnode;
@@ -75,6 +74,8 @@ function canbeaddsstringcharoptnode(p: taddnode): boolean;
 function genaddsstringcharoptnode(p: taddnode): tnode;
 function canbeaddsstringcsstringoptnode(p: taddnode): boolean;
 function genaddsstringcsstringoptnode(p: taddnode): tnode;
+function canbemultistringadd(p: taddnode): boolean;
+function genmultistringadd(p: taddnode): tnode;
 
 
 function is_addsstringoptnode(p: tnode): boolean;
@@ -85,7 +86,9 @@ var
 
 implementation
 
-uses cutils, htypechk, defutil, defcmp, globtype, globals, cpubase, ncnv, ncon,ncal,
+uses cutils, systems,
+     htypechk, defutil, defcmp, globtype, globals, cpubase,
+     ncnv, ncon, ncal, ninl, nld, nmem,
      verbose, symconst,symdef, cgbase, procinfo;
 
 
@@ -95,20 +98,20 @@ uses cutils, htypechk, defutil, defcmp, globtype, globals, cpubase, ncnv, ncon,n
 
 constructor taddoptnode.create(ts: tsubnodetype; l,r : tnode);
 begin
-  { we need to keep the addn nodetype, otherwise taddnode.pass_2 will be }
+  { we need to keep the addn nodetype, otherwise taddnode.pass_generate_code will be }
   { confused. Comparison for equal nodetypes therefore has to be         }
   { implemented using the classtype() method (JM)                        }
   inherited create(addn,l,r);
   subnodetype := ts;
 end;
 
-function taddoptnode.getcopy: tnode;
+function taddoptnode.dogetcopy: tnode;
 var
   hp: taddoptnode;
 begin
-  hp := taddoptnode(inherited getcopy);
+  hp := taddoptnode(inherited dogetcopy);
   hp.subnodetype := subnodetype;
-  getcopy := hp;
+  dogetcopy := hp;
 end;
 
 function taddoptnode.docompare(p: tnode): boolean;
@@ -123,34 +126,33 @@ end;
                         TADDSSTRINGOPTNODE
 *****************************************************************************}
 
-function taddsstringoptnode.det_resulttype: tnode;
+function taddsstringoptnode.pass_typecheck: tnode;
 begin
   result := nil;
   updatecurmaxlen;
   { left and right are already firstpass'ed by taddnode.pass_1 }
-  if not is_shortstring(left.resulttype.def) then
+  if not is_shortstring(left.resultdef) then
    inserttypeconv(left,cshortstringtype);
-  if not is_shortstring(right.resulttype.def) then
+  if not is_shortstring(right.resultdef) then
    inserttypeconv(right,cshortstringtype);
-  resulttype := left.resulttype;
+  resultdef := left.resultdef;
 end;
 
 function taddsstringoptnode.pass_1: tnode;
 begin
   pass_1 := nil;
   expectloc:= LOC_REFERENCE;
-  calcregisters(self,0,0,0);
   { here we call STRCONCAT or STRCMP or STRCOPY }
   include(current_procinfo.flags,pi_do_call);
 end;
 
-function taddsstringoptnode.getcopy: tnode;
+function taddsstringoptnode.dogetcopy: tnode;
 var
   hp: taddsstringoptnode;
 begin
-  hp := taddsstringoptnode(inherited getcopy);
+  hp := taddsstringoptnode(inherited dogetcopy);
   hp.curmaxlen := curmaxlen;
-  getcopy := hp;
+  dogetcopy := hp;
 end;
 
 function taddsstringoptnode.docompare(p: tnode): boolean;
@@ -187,7 +189,7 @@ begin
     end
   else if (left.nodetype = stringconstn) then
     curmaxlen := min(tstringconstnode(left).len,255)
-  else if is_char(left.resulttype.def) then
+  else if is_char(left.resultdef) then
     curmaxlen := 1
   else if (left.nodetype = typeconvn) then
     begin
@@ -197,7 +199,7 @@ begin
 {       doesn't work yet, don't know why (JM)
         tc_chararray_2_string:
           curmaxlen :=
-            min(ttypeconvnode(left).left.resulttype.def.size,255); }
+            min(ttypeconvnode(left).left.resultdef.size,255); }
         else curmaxlen := 255;
       end;
     end
@@ -243,12 +245,12 @@ end;
 function canbeaddsstringcharoptnode(p: taddnode): boolean;
 begin
   canbeaddsstringcharoptnode :=
-    (cs_optimize in aktglobalswitches) and
+    (cs_opt_level1 in current_settings.optimizerswitches) and
 
 {   the shortstring will be gotten through conversion if necessary (JM)
-    is_shortstring(p.left.resulttype.def) and }
+    is_shortstring(p.left.resultdef) and }
     ((p.nodetype = addn) and
-     is_char(p.right.resulttype.def));
+     is_char(p.right.resultdef));
 end;
 
 function genaddsstringcharoptnode(p: taddnode): tnode;
@@ -265,10 +267,10 @@ end;
 function canbeaddsstringcsstringoptnode(p: taddnode): boolean;
 begin
   canbeaddsstringcsstringoptnode :=
-    (cs_optimize in aktglobalswitches) and
+    (cs_opt_level1 in current_settings.optimizerswitches) and
 
 {   the shortstring will be gotten through conversion if necessary (JM)
-    is_shortstring(p.left.resulttype.def) and }
+    is_shortstring(p.left.resultdef) and }
     ((p.nodetype = addn) and
      (p.right.nodetype = stringconstn));
 end;
@@ -283,14 +285,123 @@ begin
 end;
 
 
+function canbemultistringadd(p: taddnode): boolean;
+var
+  hp : tnode;
+  i  : longint;
+begin
+  result:=false;
+  if p.resultdef.typ<>stringdef then
+    exit;
+  i:=0;
+  hp:=p;
+  while assigned(hp) and (hp.nodetype=addn) do
+    begin
+      inc(i);
+      hp:=taddnode(hp).left;
+    end;
+  result:=(i>1);
+end;
+
+
+function genmultistringadd(p: taddnode): tnode;
+var
+  hp,sn : tnode;
+  arrp  : tarrayconstructornode;
+  newstatement : tstatementnode;
+  tempnode    : ttempcreatenode;
+  is_shortstr : boolean;
+  para : tcallparanode;
+begin
+  arrp:=nil;
+  hp:=p;
+  is_shortstr:=is_shortstring(p.resultdef);
+  while assigned(hp) and (hp.nodetype=addn) do
+    begin
+      sn:=taddnode(hp).right.getcopy;
+      inserttypeconv(sn,p.resultdef);
+      if is_shortstr then
+        begin
+          sn:=caddrnode.create(sn);
+          include(sn.flags,nf_typedaddr);
+          include(sn.flags,nf_internal);
+        end;
+      arrp:=carrayconstructornode.create(sn,arrp);
+      hp:=taddnode(hp).left;
+    end;
+  sn:=hp.getcopy;
+  inserttypeconv(sn,p.resultdef);
+  if is_shortstr then
+    begin
+      sn:=caddrnode.create(sn);
+      include(sn.flags,nf_internal);
+    end;
+  arrp:=carrayconstructornode.create(sn,arrp);
+  if assigned(aktassignmentnode) and
+     (aktassignmentnode.right=p) and
+     (aktassignmentnode.left.resultdef=p.resultdef) and
+     valid_for_var(aktassignmentnode.left,false) then
+    begin
+      para:=ccallparanode.create(
+              arrp,
+              ccallparanode.create(aktassignmentnode.left.getcopy,nil)
+            );
+      if is_ansistring(p.resultdef) then
+        para:=ccallparanode.create(
+                cordconstnode.create(
+                  getparaencoding(p.resultdef),
+                  u16inttype,
+                  true
+                ),
+                para
+              );
+      result:=ccallnode.createintern(
+                'fpc_'+tstringdef(p.resultdef).stringtypname+'_concat_multi',
+                para
+              );
+      include(aktassignmentnode.flags,nf_assign_done_in_right);
+    end
+  else
+    begin
+      result:=internalstatements(newstatement);
+      tempnode:=ctempcreatenode.create(p.resultdef,p.resultdef.size,tt_persistent ,true);
+      addstatement(newstatement,tempnode);
+      { initialize the temp, since it will be passed to a
+        var-parameter (and finalization, which is performed by the
+        ttempcreate node and which takes care of the initialization
+        on native targets, is a noop on managed VM targets) }
+      if (target_info.system in systems_managed_vm) and
+         is_managed_type(p.resultdef) then
+        addstatement(newstatement,cinlinenode.create(in_setlength_x,
+          false,
+          ccallparanode.create(genintconstnode(0),
+            ccallparanode.create(ctemprefnode.create(tempnode),nil))));
+      para:=ccallparanode.create(
+              arrp,
+              ccallparanode.create(ctemprefnode.create(tempnode),nil)
+            );
+      if is_ansistring(p.resultdef) then
+        para:=ccallparanode.create(
+                cordconstnode.create(
+                  getparaencoding(p.resultdef),
+                  u16inttype,
+                  true
+                ),
+                para
+              );
+      addstatement(
+        newstatement,
+        ccallnode.createintern(
+          'fpc_'+tstringdef(p.resultdef).stringtypname+'_concat_multi',
+          para
+        )
+      );
+      addstatement(newstatement,ctempdeletenode.create_normal_temp(tempnode));
+      addstatement(newstatement,ctemprefnode.create(tempnode));
+    end;
+end;
+
 begin
   caddsstringcharoptnode := taddsstringcharoptnode;
   caddsstringcsstringoptnode := taddsstringcsstringoptnode;
 end.
-
-{
-  $Log: nopt.pas,v $
-  Revision 1.20  2005/02/14 17:13:06  peter
-    * truncate log
-
-}

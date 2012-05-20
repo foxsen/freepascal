@@ -11,13 +11,17 @@ fpcpackage=y
 units = erroru popuperr ptest
 
 [compiler]
-targetdir=$(FULL_TARGET)
+targetdir=$(TARGETSUFFIX)
 
 [default]
 fpcdir=../..
 
 [rules]
-.PHONY: rtl extra all clean cleanrtl clean_ctest
+.PHONY: rtl extra fpcunit packages all clean distclean clean_ctest
+.PHONY: cleanrtl distcleanrtl
+.PHONY: cleanfpcunit distcleanfpcunit
+.PHONY: cleanpackages distcleanpackages
+
 
 #############################
 # RTL
@@ -27,8 +31,7 @@ DUMMYINSTALLDIR=$(BASEDIR)/tmp
 INSTALLOPT=INSTALL_PREFIX=$(DUMMYINSTALLDIR) INSTALL_UNITDIR=$(BASEDIR)/$(COMPILER_TARGETDIR)
 
 rtl-stamp.$(FULL_TARGET):
-        $(MAKE) -C ../../rtl all "OPT=$(OPT) -n"
-        $(DELTREE) $(COMPILER_TARGETDIR)
+        $(MAKE) -C ../../rtl all 'OPT=$(OPT) -n'
         $(MAKE) -C ../../rtl install $(INSTALLOPT)
         $(ECHO) Compiled > rtl-stamp.$(FULL_TARGET)
 
@@ -37,7 +40,56 @@ cleanrtl:
         $(DELTREE) $(DUMMYINSTALLDIR)
         -$(DEL) rtl-stamp.$(FULL_TARGET)
 
+distcleanrtl: cleanrtl
+
 rtl : rtl-stamp.$(FULL_TARGET)
+
+
+#############################
+# FPCUnit
+#
+
+DUMMYINSTALLDIR=$(BASEDIR)/tmp
+INSTALLOPT=INSTALL_PREFIX=$(DUMMYINSTALLDIR) INSTALL_UNITDIR=$(BASEDIR)/$(COMPILER_TARGETDIR)
+FPCUNITDIR=../../packages/fcl-fpcunit/src
+
+fpcunit-stamp.$(FULL_TARGET):
+ 	$(TESTCOMPILER) -Fu$(BASEDIR)/$(COMPILER_TARGETDIR) $(FPCUNITDIR)/testutils
+        $(TESTCOMPILER) -Fu$(BASEDIR)/$(COMPILER_TARGETDIR) $(FPCUNITDIR)/fpcunit
+        $(ECHO) Compiled > fpcunit-stamp.$(FULL_TARGET)
+
+cleanfpcunit:
+        $(DELTREE) $(COMPILER_TARGETDIR)
+        $(DELTREE) $(DUMMYINSTALLDIR)
+        -$(DEL) fpcunit-stamp.$(FULL_TARGET)
+
+distcleanfpcunit: cleanfpcunit
+	$(MAKE) -C $(FPCUNITDIR)/.. clean
+
+fpcunit : fpcunit-stamp.$(FULL_TARGET)
+
+
+#############################
+# Packages
+#
+
+DUMMYINSTALLDIR=$(BASEDIR)/tmp
+INSTALLOPT=INSTALL_PREFIX=$(DUMMYINSTALLDIR) INSTALL_UNITDIR=$(BASEDIR)/$(COMPILER_TARGETDIR)
+PACKAGESDIR=../../packages
+
+packages-stamp.$(FULL_TARGET):
+        $(MAKE) -C ../../packages all 'OPT=$(OPT) -n'
+        $(MAKE) -C ../../packages install $(INSTALLOPT)
+        $(ECHO) Compiled > packages-stamp.$(FULL_TARGET)
+
+cleanpackages:
+        $(DELTREE) $(COMPILER_TARGETDIR)
+        $(DELTREE) $(DUMMYINSTALLDIR)
+        -$(DEL) packages-stamp.$(FULL_TARGET)
+
+distcleanpackages: cleanpackages
+
+packages : packages-stamp.$(FULL_TARGET)
 
 
 #############################
@@ -46,6 +98,9 @@ rtl : rtl-stamp.$(FULL_TARGET)
 
 
 TESTOPT=-n -FE$(COMPILER_TARGETDIR) -T$(OS_TARGET) $(OPT)
+ifeq ($(CPU_TARGET),armeb)
+override TESTOPT+=-Cb
+endif
 ifneq ($(BINUTILSPREFIX),)
 override TESTOPT+=-XP$(BINUTILSPREFIX) -Xc
 endif
@@ -61,12 +116,16 @@ popuperr$(PPUEXT) : popuperr.pp
         $(TESTCOMPILER) popuperr.pp
 
 ifdef CCOMPILER
-../test/cg/obj/$(OS_TARGET)/$(CPU_TARGET)/ctest.o : ../test/cg/obj/ctest.c
+ctest: ../test/cg/obj/ctest.c
         $(CCOMPILER) -c -o ../test/cg/obj/$(OS_TARGET)/$(CPU_TARGET)/ctest.o ../test/cg/obj/ctest.c
+else
+ctest:
+        @$(ECHO) "No C compiler found"
+        @exit 1
 endif
 
 
-extra : erroru$(PPUEXT) ptest$(PPUEXT) popuperr$(PPUEXT) ../test/cg/obj/$(OS_TARGET)/$(CPU_TARGET)/ctest.o
+extra : erroru$(PPUEXT) ptest$(PPUEXT) popuperr$(PPUEXT)
 
 
 
@@ -74,9 +133,15 @@ extra : erroru$(PPUEXT) ptest$(PPUEXT) popuperr$(PPUEXT) ../test/cg/obj/$(OS_TAR
 # Main rules
 #
 
-all : rtl  extra
+ifdef QUICKTEST
+all : rtl fpcunit extra
+else
+all : rtl fpcunit packages extra
+endif
 
-clean : cleanrtl cleanall
+clean : cleanrtl cleanall cleanfpcunit cleanpackages
+
+distclean : clean distcleanrtl distcleanfpcunit distcleanpackages
 
 clean_ctest :
         -$(DEL) ../test/cg/obj/$(OS_TARGET)/$(CPU_TARGET)/ctest.o

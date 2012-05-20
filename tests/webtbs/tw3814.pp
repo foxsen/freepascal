@@ -1,3 +1,4 @@
+{%skiptarget=go32v2}
 { Source provided for Free Pascal Bug Report 3695 }
 { Submitted by "Pedro Lopez-Cabanillas" on  2005-02-25 }
 { e-mail: plcl@telefonica.net }
@@ -42,7 +43,7 @@ begin
   WriteLn('Starting MyThread.Execute');
   repeat
     // sleep(500);
-    if worker.count<10 then
+    if worker.counter<10 then
       Synchronize(worker.count);
   until Terminated;
   WriteLn('Ending MyThread.Execute');

@@ -1,5 +1,4 @@
 {
-    $Id: getopts.pp,v 1.7 2005/02/14 17:13:22 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Michael Van Canneyt,
     member of the Free Pascal development team.
@@ -48,20 +47,20 @@ Function GetLongOpts (ShortOpts : String;LongOpts : POption;var Longind : Longin
 
 
 Implementation
-
-{$ifdef TP}
-uses
-  strings;
-{$endif}
-
+{$IFNDEF FPC}
+  {$ifdef TP}
+    uses strings;
+  {$else }
+    uses SysUtils;
+    type PtrInt = Integer;
+  {$endif}
+{$ENDIF FPC}
 
 {***************************************************************************
                                Create an ArgV
 ***************************************************************************}
 
-{$ifdef TP}
-
-
+{$IF not Declared(argv)} //{$ifdef TP}
 
 type
   ppchar = ^pchar;
@@ -69,6 +68,8 @@ type
 var
   argc  : longint;
   argv  : apchar;
+const
+  CHAR_SIZE = SizeOf(Char);
 
 procedure setup_arguments;
 var
@@ -84,13 +85,16 @@ begin
 { create argv[0] which is the started filename }
   s:=paramstr(0);
   arglen:=length(s);
-  getmem(argsbuf[0],arglen + 1);
+  getmem(argsbuf[0], ( ( arglen + 1 ) * CHAR_SIZE ) );
   strpcopy(argsbuf[0],s);
 { create commandline }
   s:='';
   for i:=1 to paramcount do
     begin
-     s:=s+paramstr(i)+' ';
+    if Pos(' ', paramstr(i)) > 0 then 
+      s := s + '"' + paramstr(i) + '" '
+    else 
+      s:=s+paramstr(i)+' ';
     end;
   s:=s+#0;
   cmdline:=@s[1];
@@ -98,16 +102,16 @@ begin
   repeat
   { skip leading spaces }
     while cmdline^ in [' ',#9,#13] do
-     inc(longint(cmdline));
+     inc(PtrInt(cmdline),CHAR_SIZE);
     case cmdline^ of
       #0 : break;
      '"' : begin
              quote:=['"'];
-             inc(longint(cmdline));
+             inc(PtrInt(cmdline),CHAR_SIZE);
            end;
     '''' : begin
              quote:=[''''];
-             inc(longint(cmdline));
+             inc(PtrInt(cmdline),CHAR_SIZE);
            end;
     else
      quote:=[' ',#9,#13];
@@ -115,15 +119,15 @@ begin
   { scan until the end of the argument }
     argstart:=cmdline;
     while (cmdline^<>#0) and not(cmdline^ in quote) do
-     inc(longint(cmdline));
+     inc(PtrInt(cmdline),CHAR_SIZE);
   { reserve some memory }
     arglen:=cmdline-argstart;
-    getmem(argsbuf[count],arglen+1);
-    move(argstart^,argsbuf[count]^,arglen);
+    getmem(argsbuf[count],(arglen+1) * CHAR_SIZE);
+    move(argstart^,argsbuf[count]^,arglen * CHAR_SIZE);
     argsbuf[count][arglen]:=#0;
   { skip quote }
     if cmdline^ in quote then
-     inc(longint(cmdline));
+     inc(PtrInt(cmdline),CHAR_SIZE);
     inc(count);
   until false;
 { create argc }
@@ -135,7 +139,7 @@ begin
   move(argsbuf,argv,count shl 2);
 end;
 
-{$endif TP}
+{$IFEND} //{$endif TP}
 
 {***************************************************************************
                                Real Getopts
@@ -215,8 +219,6 @@ end;
 
 Function Internal_getopt (Var Optstring : string;LongOpts : POption;
                           LongInd : pointer;Long_only : boolean ) : char;
-type
-  pinteger=^integer;
 var
   temp,endopt,
   option_index : byte;
@@ -290,7 +292,7 @@ begin
          begin
            optarg:=strpas(argv[optind]);
            inc(optind);
-           Internal_getopt:=#1;
+           Internal_getopt:=#0;
            exit;
          end;
       end;
@@ -339,7 +341,7 @@ begin
               else
                ambig:=true;
            end;
-          inc(pointer(p),sizeof(toption));
+          inc(PByte(p),sizeof(toption)); //inc(pointer(p),sizeof(toption)); // for Delphi compatibility
           inc(option_index);
         end;
        if ambig and not exact then
@@ -393,7 +395,7 @@ begin
            end; { argument in next parameter end;}
           nextchar:=0;
           if longind<>nil then
-           pinteger(longind)^:=indfound+1;
+           plongint(longind)^:=indfound+1;
           if pfound^.flag<>nil then
            begin
              pfound^.flag^:=pfound^.value;
@@ -493,10 +495,18 @@ begin
   getlongopts:=internal_getopt(shortopts,longopts,@longind,true);
 end;
 
-
-begin
+{$ifdef FPC}
+    initialization
+{$endif}
+{$ifndef FPC}
+  {$ifdef TP}
+    begin
+  {$else}
+    initialization
+  {$endif}
+{$endif}
 { create argv if running under TP }
-{$ifdef TP}
+{$ifndef FPC}
   setup_arguments;
 {$endif}
 { Needed to detect startup }
@@ -504,9 +514,3 @@ begin
   Optind:=0;
   nrargs:=argc;
 end.
-{
-  $Log: getopts.pp,v $
-  Revision 1.7  2005/02/14 17:13:22  peter
-    * truncate log
-
-}

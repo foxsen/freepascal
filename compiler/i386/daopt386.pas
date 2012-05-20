@@ -1,5 +1,4 @@
 {
-    $Id: daopt386.pas,v 1.82 2005/02/26 01:23:29 jonas Exp $
     Copyright (c) 1998-2002 by Jonas Maebe, member of the Freepascal
       development team
 
@@ -30,8 +29,8 @@ interface
 
 uses
   globtype,
-  cclasses,aasmbase,aasmtai,aasmcpu,cgbase,cgutils,
-  cpubase,optbase;
+  cclasses,aasmbase,aasmtai,aasmdata,aasmcpu,cgbase,cgutils,
+  cpubase;
 
 {******************************* Constants *******************************}
 
@@ -42,7 +41,7 @@ const
   con_ref = 1;
   con_const = 2;
   { The contents aren't usable anymore for CSE, but they may still be   }
-  { usefull for detecting whether the result of a load is actually used }
+  { useful for detecting whether the result of a load is actually used }
   con_invalid = 3;
   { the reverse of the above (in case a (conditional) jump is encountered): }
   { CSE is still possible, but the original instruction can't be removed    }
@@ -58,6 +57,7 @@ const
     OS_F32,OS_F64,OS_F80,OS_C64,OS_F128,
     OS_M32,
     OS_ADDR,OS_NO,OS_NO,
+    OS_NO,
     OS_NO);
 
 
@@ -65,8 +65,9 @@ const
 {********************************* Types *********************************}
 
 type
-  TRegArray = Array[RS_EAX..RS_ESP] of tsuperregister;
-  TRegSet = Set of RS_EAX..RS_ESP;
+  TRegEnum = RS_EAX..RS_ESP;
+  TRegArray = Array[TRegEnum] of tsuperregister;
+  TRegSet = Set of TRegEnum;
   toptreginfo = Record
                 NewRegsEncountered, OldRegsEncountered: TRegSet;
                 RegsLoadedForRef: TRegSet;
@@ -167,7 +168,7 @@ type
 
 {*********************** procedures and functions ************************}
 
-procedure InsertLLItem(AsmL: TAAsmOutput; prev, foll, new_one: TLinkedListItem);
+procedure InsertLLItem(AsmL: TAsmList; prev, foll, new_one: TLinkedListItem);
 
 
 function RefsEqual(const R1, R2: TReference): Boolean;
@@ -187,17 +188,18 @@ function writeToRegDestroysContents(destReg, supreg: tsuperregister;
 function writeDestroysContents(const op: toper; supreg: tsuperregister; size: tcgsize;
   const c: tcontent; var memwritedestroyed: boolean): boolean;
 
+function sequenceDependsonReg(const Content: TContent; seqreg: tsuperregister; supreg: tsuperregister): Boolean;
 
 function GetNextInstruction(Current: tai; var Next: tai): Boolean;
 function GetLastInstruction(Current: tai; var Last: tai): Boolean;
-    procedure SkipHead(var p: tai);
+procedure SkipHead(var p: tai);
 function labelCanBeSkipped(p: tai_label): boolean;
 
-procedure RemoveLastDeallocForFuncRes(asmL: TAAsmOutput; p: tai);
+procedure RemoveLastDeallocForFuncRes(asmL: TAsmList; p: tai);
 function regLoadedWithNewValue(supreg: tsuperregister; canDependOnPrevValue: boolean;
            hp: tai): boolean;
 procedure UpdateUsedRegs(var UsedRegs: TRegSet; p: tai);
-procedure AllocRegBetween(asml: taasmoutput; reg: tregister; p1, p2: tai; const initialusedregs: tregset);
+procedure AllocRegBetween(asml: TAsmList; reg: tregister; p1, p2: tai; var initialusedregs: tregset);
 function FindRegDealloc(supreg: tsuperregister; p: tai): boolean;
 
 function InstructionsEquivalent(p1, p2: tai; var RegInfo: toptreginfo): Boolean;
@@ -207,24 +209,17 @@ function OpsEqual(const o1,o2:toper): Boolean;
 
 type
   tdfaobj = class
-    constructor create(_list: taasmoutput); virtual;
+    constructor create(_list: TAsmList); virtual;
 
     function pass_1(_blockstart: tai): tai;
-    function pass_2: boolean;
+    function pass_generate_code: boolean;
     procedure clear;
 
     function getlabelwithsym(sym: tasmlabel): tai;
 
    private
-    { Walks through the list to find the lowest and highest label number, inits the }
-    { labeltable and fixes/optimizes some regallocs                                 }
-     procedure initlabeltable;
-
-    function initdfapass2: boolean;
-    procedure dodfapass2;
-
     { asm list we're working on }
-    list: taasmoutput;
+    list: TAsmList;
 
     { current part of the asm list }
     blockstart, blockend: tai;
@@ -238,6 +233,13 @@ type
     { all labels in the current block: their value mapped to their location }
     lolab, hilab, labdif: longint;
     labeltable: plabeltable;
+
+    { Walks through the list to find the lowest and highest label number, inits the }
+    { labeltable and fixes/optimizes some regallocs                                 }
+     procedure initlabeltable;
+
+    function initdfapass2: boolean;
+    procedure dodfapass2;
   end;
 
 
@@ -299,7 +301,7 @@ var
               (TSearchDoubleIntItem(p).int2 = int2);
   end;
 
-  function TSearchLinkedList.searchByValue(p: PSearchLinkedListItem): boolean;
+  function TSearchLinkedList.FindByValue(p: PSearchLinkedListItem): boolean;
   var temp: PSearchLinkedListItem;
   begin
     temp := first;
@@ -336,9 +338,9 @@ begin
       begin
         case tai_regalloc(p).ratype of
           ra_alloc :
-            UsedRegs := UsedRegs + [tai_regalloc(p).reg];
+            Include(UsedRegs, TRegEnum(getsupreg(tai_regalloc(p).reg)));
           ra_dealloc :
-            UsedRegs := UsedRegs - [tai_regalloc(p).reg];
+            Exclude(UsedRegs, TRegEnum(getsupreg(tai_regalloc(p).reg)));
         end;
         p := tai(p.next);
       end;
@@ -379,9 +381,9 @@ begin
   until false;
 end;
 
-procedure RemoveLastDeallocForFuncRes(asml: taasmoutput; p: tai);
+procedure RemoveLastDeallocForFuncRes(asml: TAsmList; p: tai);
 
-  procedure DoRemoveLastDeallocForFuncRes(asml: taasmoutput; supreg: tsuperregister);
+  procedure DoRemoveLastDeallocForFuncRes(asml: TAsmList; supreg: tsuperregister);
   var
     hp2: tai;
   begin
@@ -402,18 +404,18 @@ procedure RemoveLastDeallocForFuncRes(asml: taasmoutput; p: tai);
   end;
 
 begin
-    case current_procinfo.procdef.rettype.def.deftype of
+    case current_procinfo.procdef.returndef.typ of
       arraydef,recorddef,pointerdef,
          stringdef,enumdef,procdef,objectdef,errordef,
          filedef,setdef,procvardef,
          classrefdef,forwarddef:
         DoRemoveLastDeallocForFuncRes(asml,RS_EAX);
       orddef:
-        if current_procinfo.procdef.rettype.def.size <> 0 then
+        if current_procinfo.procdef.returndef.size <> 0 then
           begin
             DoRemoveLastDeallocForFuncRes(asml,RS_EAX);
             { for int64/qword }
-            if current_procinfo.procdef.rettype.def.size = 8 then
+            if current_procinfo.procdef.returndef.size = 8 then
               DoRemoveLastDeallocForFuncRes(asml,RS_EDX);
           end;
     end;
@@ -424,18 +426,18 @@ var
   regCounter: TSuperRegister;
 begin
   regs := [];
-  case current_procinfo.procdef.rettype.def.deftype of
+  case current_procinfo.procdef.returndef.typ of
     arraydef,recorddef,pointerdef,
        stringdef,enumdef,procdef,objectdef,errordef,
        filedef,setdef,procvardef,
        classrefdef,forwarddef:
      regs := [RS_EAX];
     orddef:
-      if current_procinfo.procdef.rettype.def.size <> 0 then
+      if current_procinfo.procdef.returndef.size <> 0 then
         begin
           regs := [RS_EAX];
           { for int64/qword }
-          if current_procinfo.procdef.rettype.def.size = 8 then
+          if current_procinfo.procdef.returndef.size = 8 then
             regs := regs + [RS_EDX];
         end;
   end;
@@ -445,11 +447,11 @@ begin
 end;
 
 
-procedure AddRegDeallocFor(asml: taasmoutput; reg: tregister; p: tai);
+procedure AddRegDeallocFor(asml: TAsmList; reg: tregister; p: tai);
 var
   hp1: tai;
   funcResRegs: tregset;
-  funcResReg: boolean;
+{  funcResReg: boolean;}
 begin
 { if not(supreg in rg.usableregsint) then
     exit;}
@@ -459,7 +461,7 @@ begin
 {  funcResRegs := funcResRegs - rg.usableregsint;}
 {  funcResRegs := funcResRegs - [RS_EDI];}
 {  funcResRegs := funcResRegs - [RS_EAX,RS_EBX,RS_ECX,RS_EDX,RS_ESI]; }
-  funcResReg := getsupreg(reg) in funcresregs;
+{  funcResReg := getsupreg(reg) in funcresregs;}
 
   hp1 := p;
 {
@@ -507,7 +509,7 @@ begin
   while assigned(p) and
        (p.typ in SkipInstr + [ait_label,ait_align]) Do
     if (p.typ <> ait_Label) or
-       (tai_label(p).l <> l) then
+       (tai_label(p).labsym <> l) then
       GetNextInstruction(p, p)
     else
        begin
@@ -540,7 +542,7 @@ end;
 
 { inserts new_one between prev and foll }
 
-procedure InsertLLItem(AsmL: TAAsmOutput; prev, foll, new_one: TLinkedListItem);
+procedure InsertLLItem(AsmL: TAsmList; prev, foll, new_one: TLinkedListItem);
 begin
   if assigned(prev) then
     if assigned(foll) then
@@ -687,10 +689,8 @@ begin
 end;
 
 
-{$ifdef q+}
+{$push}
 {$q-}
-{$define overflowon}
-{$endif q+}
 
 // checks whether a write to r2 of size "size" contains address r1
 function refsoverlapping(const r1, r2: treference; size1, size2: tcgsize): boolean;
@@ -708,18 +708,17 @@ begin
     (r1.relsymbol = r2.relsymbol);
 end;
 
-{$ifdef overflowon}
-{$q+}
-{$undef overflowon}
-{$endif overflowon}
+{$pop}
 
 
 function isgp32reg(supreg: tsuperregister): boolean;
 {Checks if the register is a 32 bit general purpose register}
 begin
   isgp32reg := false;
+{$push}{$warnings off}
   if (supreg >= RS_EAX) and (supreg <= RS_EBX) then
     isgp32reg := true
+{$pop}
 end;
 
 
@@ -810,7 +809,7 @@ function regInInstruction(supreg: tsuperregister; p1: tai): boolean;
 { this one ignores CH_ALL opcodes, while regModifiedByInstruction doesn't  }
 var
   p: taicpu;
-  opcount: Word;
+  opcount: longint;
 begin
   regInInstruction := false;
   if p1.typ <> ait_instruction then
@@ -837,6 +836,13 @@ begin
          (supreg in [RS_EAX,RS_EDX])
     else
       begin
+        for opcount := 0 to p.ops-1 do
+          if (p.oper[opCount]^.typ = top_ref) and
+             reginref(supreg,p.oper[opcount]^.ref^) then
+            begin
+              regInInstruction := true;
+              exit
+            end;
         for opcount := 1 to maxinschanges do
           case insprop[p.opcode].Ch[opCount] of
             CH_REAX..CH_MEDI:
@@ -984,7 +990,7 @@ function GetNextInstruction(Current: tai; var Next: tai): Boolean;
 begin
   repeat
     if (Current.typ = ait_marker) and
-       (tai_Marker(current).Kind = AsmBlockStart) then
+       (tai_Marker(current).Kind = mark_AsmBlockStart) then
       begin
         GetNextInstruction := False;
         Next := Nil;
@@ -998,16 +1004,16 @@ begin
       Current := tai(current.Next);
 {    if assigned(Current) and
        (current.typ = ait_Marker) and
-       (tai_Marker(current).Kind = NoPropInfoStart) then
+       (tai_Marker(current).Kind = mark_NoPropInfoStart) then
       begin
         while assigned(Current) and
               ((current.typ <> ait_Marker) or
-               (tai_Marker(current).Kind <> NoPropInfoend)) Do
+               (tai_Marker(current).Kind <> mark_NoPropInfoEnd)) Do
           Current := tai(current.Next);
       end;}
   until not(assigned(Current)) or
         (current.typ <> ait_Marker) or
-        not(tai_Marker(current).Kind in [NoPropInfoStart,NoPropInfoend]);
+        not(tai_Marker(current).Kind in [mark_NoPropInfoStart,mark_NoPropInfoEnd]);
   Next := Current;
   if assigned(Current) and
      not((current.typ in SkipInstr) or
@@ -1016,7 +1022,7 @@ begin
     then
       GetNextInstruction :=
          not((current.typ = ait_marker) and
-             (tai_marker(current).kind = asmBlockStart))
+             (tai_marker(current).kind = mark_AsmBlockStart))
     else
       begin
         GetNextInstruction := False;
@@ -1033,29 +1039,29 @@ begin
     Current := tai(current.previous);
     while assigned(Current) and
           (((current.typ = ait_Marker) and
-            not(tai_Marker(current).Kind in [AsmBlockend{,NoPropInfoend}])) or
+            not(tai_Marker(current).Kind in [mark_AsmBlockEnd{,mark_NoPropInfoEnd}])) or
            (current.typ in SkipInstr) or
            ((current.typ = ait_label) and
             labelCanBeSkipped(tai_label(current)))) Do
       Current := tai(current.previous);
 {    if assigned(Current) and
        (current.typ = ait_Marker) and
-       (tai_Marker(current).Kind = NoPropInfoend) then
+       (tai_Marker(current).Kind = mark_NoPropInfoEnd) then
       begin
         while assigned(Current) and
               ((current.typ <> ait_Marker) or
-               (tai_Marker(current).Kind <> NoPropInfoStart)) Do
+               (tai_Marker(current).Kind <> mark_NoPropInfoStart)) Do
           Current := tai(current.previous);
       end;}
   until not(assigned(Current)) or
         (current.typ <> ait_Marker) or
-        not(tai_Marker(current).Kind in [NoPropInfoStart,NoPropInfoend]);
+        not(tai_Marker(current).Kind in [mark_NoPropInfoStart,mark_NoPropInfoEnd]);
   if not(assigned(Current)) or
      (current.typ in SkipInstr) or
      ((current.typ = ait_label) and
       labelCanBeSkipped(tai_label(current))) or
      ((current.typ = ait_Marker) and
-      (tai_Marker(current).Kind = AsmBlockend))
+      (tai_Marker(current).Kind = mark_AsmBlockEnd))
     then
       begin
         Last := nil;
@@ -1077,12 +1083,12 @@ begin
     oldp := p;
     if (p.typ in SkipInstr) or
        ((p.typ = ait_marker) and
-        (tai_Marker(p).Kind in [AsmBlockend,inlinestart,inlineend])) then
+        (tai_Marker(p).Kind in [mark_AsmBlockEnd,mark_NoLineInfoStart,mark_NoLineInfoEnd])) then
       GetNextInstruction(p,p)
     else if ((p.Typ = Ait_Marker) and
-        (tai_Marker(p).Kind = nopropinfostart)) then
-   {a marker of the NoPropInfoStart can't be the first instruction of a
-    TAAsmoutput list}
+        (tai_Marker(p).Kind = mark_NoPropInfoStart)) then
+   {a marker of the mark_NoPropInfoStart can't be the first instruction of a
+    TAsmList list}
       GetNextInstruction(tai(p.previous),p);
     until p = oldp
 end;
@@ -1090,7 +1096,7 @@ end;
 
 function labelCanBeSkipped(p: tai_label): boolean;
 begin
-  labelCanBeSkipped := not(p.l.is_used) or p.l.is_addr;
+  labelCanBeSkipped := not(p.labsym.is_used) or (p.labsym.labeltype<>alt_jump);
 end;
 
 {******************* The Data Flow Analyzer functions ********************}
@@ -1116,10 +1122,13 @@ begin
      (p.oper[1]^.typ = top_reg) and
      (getsupreg(p.oper[1]^.reg) = supreg) and
      (canDependOnPrevValue or
-      (p.oper[0]^.typ <> top_ref) or
-      not regInRef(supreg,p.oper[0]^.ref^)) or
-     ((p.opcode = A_POP) and
-      (getsupreg(p.oper[0]^.reg) = supreg)));
+      (p.oper[0]^.typ = top_const) or
+      ((p.oper[0]^.typ = top_reg) and
+       (getsupreg(p.oper[0]^.reg) <> supreg)) or
+      ((p.oper[0]^.typ = top_ref) and
+       not regInRef(supreg,p.oper[0]^.ref^)))) or
+    ((p.opcode = A_POP) and
+     (getsupreg(p.oper[0]^.reg) = supreg));
 end;
 
 procedure UpdateUsedRegs(var UsedRegs: TRegSet; p: tai);
@@ -1129,7 +1138,9 @@ begin
     while assigned(p) and
           ((p.typ in (SkipInstr - [ait_RegAlloc])) or
            ((p.typ = ait_label) and
-            labelCanBeSkipped(tai_label(p)))) Do
+            labelCanBeSkipped(tai_label(p))) or
+           ((p.typ = ait_marker) and
+            (tai_Marker(p).Kind in [mark_AsmBlockEnd,mark_NoLineInfoStart,mark_NoLineInfoEnd]))) do
          p := tai(p.next);
     while assigned(p) and
           (p.typ=ait_RegAlloc) Do
@@ -1138,9 +1149,9 @@ begin
           begin
             case tai_regalloc(p).ratype of
               ra_alloc :
-                UsedRegs := UsedRegs + [getsupreg(tai_regalloc(p).reg)];
+                Include(UsedRegs, TRegEnum(getsupreg(tai_regalloc(p).reg)));
               ra_dealloc :
-                UsedRegs := UsedRegs - [getsupreg(tai_regalloc(p).reg)];
+                Exclude(UsedRegs, TRegEnum(getsupreg(tai_regalloc(p).reg)));
             end;
           end;
         p := tai(p.next);
@@ -1152,13 +1163,15 @@ begin
 end;
 
 
-procedure AllocRegBetween(asml: taasmoutput; reg: tregister; p1, p2: tai; const initialusedregs: tregset);
+procedure AllocRegBetween(asml: TAsmList; reg: tregister; p1, p2: tai; var initialusedregs: tregset);
 { allocates register reg between (and including) instructions p1 and p2 }
 { the type of p1 and p2 must not be in SkipInstr                        }
 { note that this routine is both called from the peephole optimizer     }
 { where optinfo is not yet initialised) and from the cse (where it is)  }
 var
-  hp: tai;
+  hp, start: tai;
+  removedsomething,
+  firstRemovedWasAlloc,
   lastRemovedWasDealloc: boolean;
   supreg: tsuperregister;
 begin
@@ -1167,29 +1180,32 @@ begin
      (ptaiprop(p1.optinfo)^.usedregs <> initialusedregs) then
    internalerror(2004101010);
 {$endif EXTDEBUG}
-  supreg := getsupreg(reg);
-{ if not(supreg in rg.usableregsint+[RS_EDI,RS_ESI]) or
-     not(assigned(p1)) then}
- if not(supreg in [RS_EAX,RS_EBX,RS_ECX,RS_EDX,RS_EDI,RS_ESI]) or
+  start := p1;
+ if (reg = NR_ESP) or
+    (reg = current_procinfo.framepointer) or
      not(assigned(p1)) then
     { this happens with registers which are loaded implicitely, outside the }
     { current block (e.g. esi with self)                                    }
     exit;
+  supreg := getsupreg(reg);
   { make sure we allocate it for this instruction }
   getnextinstruction(p2,p2);
   lastRemovedWasDealloc := false;
+  removedSomething := false;
+  firstRemovedWasAlloc := false;
 {$ifdef allocregdebug}
   hp := tai_comment.Create(strpnew('allocating '+std_regname(newreg(R_INTREGISTER,supreg,R_SUBWHOLE))+
     ' from here...'));
   insertllitem(asml,p1.previous,p1,hp);
   hp := tai_comment.Create(strpnew('allocated '+std_regname(newreg(R_INTREGISTER,supreg,R_SUBWHOLE))+
     ' till here...'));
-  insertllitem(asml,p2,p1.next,hp);
+  insertllitem(asml,p2,p2.next,hp);
 {$endif allocregdebug}
   if not(supreg in initialusedregs) then
     begin
       hp := tai_regalloc.alloc(reg,nil);
       insertllItem(asmL,p1.previous,p1,hp);
+      include(initialusedregs,supreg);
     end;
   while assigned(p1) and
         (p1 <> p2) do
@@ -1206,6 +1222,11 @@ begin
            (p1.typ = ait_regalloc) then
           if (getsupreg(tai_regalloc(p1).reg) = supreg) then
             begin
+              if not removedSomething then
+                begin
+                  firstRemovedWasAlloc := tai_regalloc(p1).ratype=ra_alloc;
+                  removedSomething := true;
+                end;
               lastRemovedWasDealloc := (tai_regalloc(p1).ratype=ra_dealloc);
               hp := tai(p1.Next);
               asml.Remove(p1);
@@ -1218,6 +1239,11 @@ begin
     end;
   if assigned(p1) then
     begin
+      if firstRemovedWasAlloc then
+        begin
+          hp := tai_regalloc.Alloc(reg,nil);
+          insertLLItem(asmL,start.previous,start,hp);
+        end;
       if lastRemovedWasDealloc then
         begin
           hp := tai_regalloc.DeAlloc(reg,nil);
@@ -1241,6 +1267,7 @@ begin
     begin
       p := tai(p.previous);
       if (p.typ = ait_regalloc) and
+         (getregtype(tai_regalloc(p).reg) = R_INTREGISTER) and
          (getsupreg(tai_regalloc(p).reg) = supreg) then
         if (tai_regalloc(p).ratype=ra_dealloc) then
           if first then
@@ -1350,10 +1377,12 @@ procedure DestroyReg(p1: ptaiprop; supreg: tsuperregister; doincState:Boolean);
  action (e.g. this register holds the contents of a variable and the value
  of the variable in memory is changed) }
 begin
+{$push}{$warnings off}
   { the following happens for fpu registers }
   if (supreg < low(NrOfInstrSinceLastMod)) or
      (supreg > high(NrOfInstrSinceLastMod)) then
     exit;
+{$pop}
   NrOfInstrSinceLastMod[supreg] := 0;
   with p1^.regs[supreg] do
     begin
@@ -1693,10 +1722,8 @@ begin
   RefInSequence := TmpResult
 end;
 
-{$ifdef q+}
+{$push}
 {$q-}
-{$define overflowon}
-{$endif q+}
 // checks whether a write to r2 of size "size" contains address r1
 function arrayrefsoverlapping(const r1, r2: treference; size1, size2: tcgsize): Boolean;
 var
@@ -1711,10 +1738,7 @@ begin
     (r1.symbol=r2.symbol) and
     (r1.base = r2.base)
 end;
-{$ifdef overflowon}
-{$q+}
-{$undef overflowon}
-{$endif overflowon}
+{$pop}
 
 function isSimpleRef(const ref: treference): boolean;
 { returns true if ref is reference to a local or global variable, to a  }
@@ -1786,13 +1810,13 @@ begin
          (assigned(ref.symbol) and
           (ref.base <> NR_NO)) then
         { local/global variable or parameter which is an array }
-        refsEq := {$ifdef fpc}@{$endif}arrayRefsOverlapping
+        refsEq := @arrayRefsOverlapping
       else
         { local/global variable or parameter which is not an array }
-        refsEq := {$ifdef fpc}@{$endif}refsOverlapping;
+        refsEq := @refsOverlapping;
       invalsmemwrite :=
         assigned(c.memwrite) and
-        ((not(cs_uncertainOpts in aktglobalswitches) and
+        ((not(cs_opt_size in current_settings.optimizerswitches) and
           containsPointerRef(c.memwrite)) or
          refsEq(c.memwrite.oper[1]^.ref^,ref,topsize2tcgsize[c.memwrite.opsize],size));
       if not(c.typ in [con_ref,con_noRemoveRef,con_invalid]) then
@@ -1813,7 +1837,7 @@ begin
       with c do
         writeToMemDestroysContents :=
           (typ in [con_ref,con_noRemoveRef]) and
-          ((not(cs_uncertainOpts in aktglobalswitches) and
+          ((not(cs_opt_size in current_settings.optimizerswitches) and
             containsPointerLoad(c)
            ) or
            (refInSequence(ref,c,refsEq,size) and
@@ -1837,7 +1861,7 @@ begin
     begin
       invalsmemwrite :=
         assigned(c.memwrite) and
-        (not(cs_UncertainOpts in aktglobalswitches) or
+        (not(cs_opt_size in current_settings.optimizerswitches) or
          containsPointerRef(c.memwrite));
       if not(c.typ in [con_ref,con_noRemoveRef,con_invalid]) then
         begin
@@ -1847,7 +1871,7 @@ begin
       with c do
         writeToMemDestroysContents :=
           (typ in [con_ref,con_noRemoveRef]) and
-          (not(cs_UncertainOpts in aktglobalswitches) or
+          (not(cs_opt_size in current_settings.optimizerswitches) or
          { for movsl }
            ((ref.base = NR_EDI) and (ref.index = NR_EDI)) or
          { don't destroy if reg contains a parameter, local or global variable }
@@ -1877,6 +1901,7 @@ begin
   case op.typ of
     top_reg:
       writeDestroysContents :=
+        (getregtype(op.reg) = R_INTREGISTER) and
         writeToRegDestroysContents(getsupreg(op.reg),supreg,c);
     top_ref:
       writeDestroysContents :=
@@ -1948,7 +1973,7 @@ begin
 end;
 
 
-procedure AddInstr2RegContents({$ifdef statedebug} asml: taasmoutput; {$endif}
+procedure AddInstr2RegContents({$ifdef statedebug} asml: TAsmList; {$endif}
 p: taicpu; supreg: tsuperregister);
 {$ifdef statedebug}
 var
@@ -1988,7 +2013,7 @@ begin
 end;
 
 
-procedure AddInstr2OpContents({$ifdef statedebug} asml: TAAsmoutput; {$endif}
+procedure AddInstr2OpContents({$ifdef statedebug} asml: TAsmList; {$endif}
 p: taicpu; const oper: TOper);
 begin
   if oper.typ = top_reg then
@@ -2005,7 +2030,7 @@ end;
 {************************************** TDFAOBJ **************************************}
 {*************************************************************************************}
 
-constructor tdfaobj.create(_list: taasmoutput);
+constructor tdfaobj.create(_list: TAsmList);
 begin
   list := _list;
   blockstart := nil;
@@ -2041,16 +2066,16 @@ begin
         if not labelcanbeskipped(tai_label(p)) then
           begin
             labelfound := true;
-             if (tai_Label(p).l.labelnr < lolab) then
-               lolab := tai_label(p).l.labelnr;
-             if (tai_Label(p).l.labelnr > hilab) then
-               hilab := tai_label(p).l.labelnr;
+             if (tai_Label(p).labsym.labelnr < lolab) then
+               lolab := tai_label(p).labsym.labelnr;
+             if (tai_Label(p).labsym.labelnr > hilab) then
+               hilab := tai_label(p).labsym.labelnr;
           end;
       prev := p;
       getnextinstruction(p, p);
     end;
   if (prev.typ = ait_marker) and
-     (tai_marker(prev).kind = asmblockstart) then
+     (tai_marker(prev).kind = mark_AsmBlockStart) then
     blockend := prev
   else blockend := nil;
   if labelfound then
@@ -2070,9 +2095,10 @@ begin
       case p.typ of
         ait_label:
           if not labelcanbeskipped(tai_label(p)) then
-            labeltable^[tai_label(p).l.labelnr-lolab].taiobj := p;
+            labeltable^[tai_label(p).labsym.labelnr-lolab].taiobj := p;
 {$ifdef i386}
         ait_regalloc:
+         if (getregtype(tai_regalloc(p).reg) = R_INTREGISTER) then
           begin
             supreg:=getsupreg(tai_regalloc(p).reg);
             case tai_regalloc(p).ratype of
@@ -2094,7 +2120,7 @@ begin
                   exclude(usedregs, supreg);
                   hp1 := p;
                   hp2 := nil;
-                  while not(findregalloc(getsupreg(tai_regalloc(p).reg), tai(hp1.next),ra_alloc)) and
+                  while not(findregalloc(supreg,tai(hp1.next),ra_alloc)) and
                         getnextinstruction(hp1, hp1) and
                         regininstruction(getsupreg(tai_regalloc(p).reg), hp1) Do
                     hp2 := hp1;
@@ -2112,7 +2138,8 @@ begin
                       list.remove(p);
                       p.free;
                       p := hp1;
-                      include(usedregs,supreg);
+//                      don't include here, since then the allocation will be removed when it's processed
+//                      include(usedregs,supreg);
                     end;
                 end;
              end;
@@ -2165,15 +2192,15 @@ begin
         ait_label:
           begin
             if not labelcanbeskipped(tai_label(p)) then
-              labeltable^[tai_label(p).l.labelnr-lolab].instrnr := nroftaiobjs
+              labeltable^[tai_label(p).labsym.labelnr-lolab].instrnr := nroftaiobjs
           end;
         ait_instruction:
           begin
             if taicpu(p).is_jmp then
              begin
-               if (tasmlabel(taicpu(p).oper[0]^.sym).labelnr >= lolab) and
-                  (tasmlabel(taicpu(p).oper[0]^.sym).labelnr <= hilab) then
-                 inc(labeltable^[tasmlabel(taicpu(p).oper[0]^.sym).labelnr-lolab].refsfound);
+               if (tasmlabel(taicpu(p).oper[0]^.sym).labsymabelnr >= lolab) and
+                  (tasmlabel(taicpu(p).oper[0]^.sym).labsymabelnr <= hilab) then
+                 inc(labeltable^[tasmlabel(taicpu(p).oper[0]^.sym).labsymabelnr-lolab].refsfound);
              end;
           end;
 {        ait_instruction:
@@ -2277,11 +2304,11 @@ begin
 {$else JumpAnal}
           begin
            if not labelCanBeSkipped(tai_label(p)) then
-             With LTable^[tai_Label(p).l^.labelnr-LoLab] Do
+             With LTable^[tai_Label(p).labsym^.labelnr-LoLab] Do
 {$ifDef AnalyzeLoops}
-              if (RefsFound = tai_Label(p).l^.RefCount)
+              if (RefsFound = tai_Label(p).labsym^.RefCount)
 {$else AnalyzeLoops}
-              if (JmpsProcessed = tai_Label(p).l^.RefCount)
+              if (JmpsProcessed = tai_Label(p).labsym^.RefCount)
 {$endif AnalyzeLoops}
                 then
 {all jumps to this label have been found}
@@ -2328,11 +2355,11 @@ begin
                             while GetNextInstruction(hp, hp) and
                                   not((hp.typ = ait_instruction) and
                                       (taicpu(hp).is_jmp) and
-                                      (tasmlabel(taicpu(hp).oper[0]^.sym).labelnr = tai_Label(p).l^.labelnr)) and
+                                      (tasmlabel(taicpu(hp).oper[0]^.sym).labsymabelnr = tai_Label(p).labsym^.labelnr)) and
                                   not((hp.typ = ait_label) and
-                                      (LTable^[tai_Label(hp).l^.labelnr-LoLab].RefsFound
-                                       = tai_Label(hp).l^.RefCount) and
-                                      (LTable^[tai_Label(hp).l^.labelnr-LoLab].JmpsProcessed > 0)) Do
+                                      (LTable^[tai_Label(hp).labsym^.labelnr-LoLab].RefsFound
+                                       = tai_Label(hp).labsym^.RefCount) and
+                                      (LTable^[tai_Label(hp).labsym^.labelnr-LoLab].JmpsProcessed > 0)) Do
                               inc(Cnt);
                             if (hp.typ = ait_label)
                               then
@@ -2363,9 +2390,7 @@ begin
           end;
 {$endif JumpAnal}
 
-{$ifdef GDB}
-        ait_stabs, ait_stabn, ait_stab_function_name:;
-{$endif GDB}
+        ait_stab, ait_force_line, ait_function_name:;
         ait_align: ; { may destroy flags !!! }
         ait_instruction:
           begin
@@ -2381,7 +2406,7 @@ begin
                       con_invalid: typ := con_unknown;
                     end;
 {$else JumpAnal}
-          With LTable^[tasmlabel(taicpu(p).oper[0]^.sym).labelnr-LoLab] Do
+          With LTable^[tasmlabel(taicpu(p).oper[0]^.sym).labsymabelnr-LoLab] Do
             if (RefsFound = tasmlabel(taicpu(p).oper[0]^.sym).RefCount) then
               begin
                 if (InstrCnt < InstrNr)
@@ -2550,6 +2575,7 @@ begin
                                   DestroyReg(curprop, tmpsupreg, true);
                                   typ := Con_Const;
                                   StartMod := p;
+                                  nrOfMods := 1;
                                 end
                             end;
                           top_ref:
@@ -2586,7 +2612,7 @@ begin
                   if (taicpu(p).ops >= 2) then
                     ReadOp(curprop,taicpu(p).oper[1]^);
                   if (taicpu(p).ops <= 2) then
-                    if (taicpu(p).oper[1]^.typ = top_none) then
+                    if (taicpu(p).ops=1) then
                       begin
                         readreg(curprop,RS_EAX);
 {$ifdef statedebug}
@@ -2748,21 +2774,19 @@ begin
 end;
 
 
-function tdfaobj.pass_2: boolean;
+function tdfaobj.pass_generate_code: boolean;
 begin
   if initdfapass2 then
     begin
       dodfapass2;
-      pass_2 := true
+      pass_generate_code := true
     end
   else
-    pass_2 := false;
+    pass_generate_code := false;
 end;
 
-{$ifopt r+}
-{$define rangewason}
+{$push}
 {$r-}
-{$endif}
 function tdfaobj.getlabelwithsym(sym: tasmlabel): tai;
 begin
   if (sym.labelnr >= lolab) and
@@ -2771,10 +2795,7 @@ begin
   else
     getlabelwithsym := nil;
 end;
-{$ifdef rangewason}
-{$r+}
-{$undef rangewason}
-{$endif}
+{$pop}
 
 
 procedure tdfaobj.clear;
@@ -2793,18 +2814,3 @@ end;
 
 
 end.
-
-{
-  $Log: daopt386.pas,v $
-  Revision 1.82  2005/02/26 01:23:29  jonas
-    * fixed loop which could go into neverneverland in case of embedded
-      assembler blocks
-
-  Revision 1.81  2005/02/14 17:13:09  peter
-    * truncate log
-
-  Revision 1.80  2005/01/03 14:59:28  jonas
-    * remove "release subregA; allocate other_subreg_of_A" sequences so the
-      register renaming doesn't stop early
-
-}

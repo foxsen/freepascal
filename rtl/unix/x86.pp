@@ -1,5 +1,4 @@
 {
-    $Id: x86.pp,v 1.7 2005/02/14 17:13:32 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1997-2004 by the Free Pascal development team
 
@@ -52,11 +51,18 @@ Procedure WritePort (Port : Longint; Value : Byte);
   Writes 'Value' to port 'Port'
 }
 begin
-        asm
+  asm
+{$ifdef CPU386}        
         movl port,%edx
         movb value,%al
         outb %al,%dx
-        end ['EAX','EDX'];
+{$endif CPU386}        
+{$ifdef CPUX86_64}        
+        movl port,%edx
+        movb value,%al
+        outb %al,%dx
+{$endif CPUX86_64}        
+  end;
 end;
 
 Procedure WritePort (Port : Longint; Value : Word);
@@ -65,11 +71,18 @@ Procedure WritePort (Port : Longint; Value : Word);
 }
 
 begin
-        asm
+  asm
+{$ifdef CPU386}        
         movl port,%edx
         movw value,%ax
         outw %ax,%dx
-        end ['EAX','EDX'];
+{$endif CPU386}        
+{$ifdef CPUX86_64}        
+        movl port,%edx
+        movw value,%ax
+        outw %ax,%dx
+{$endif CPUX86_64}        
+  end;
 end;
 
 
@@ -78,13 +91,19 @@ Procedure WritePort (Port : Longint; Value : Longint);
 {
   Writes 'Value' to port 'Port'
 }
-
 begin
-        asm
+  asm
+{$ifdef CPU386}        
         movl port,%edx
         movl value,%eax
         outl %eax,%dx
-        end ['EAX','EDX'];
+{$endif CPU386}        
+{$ifdef CPUX86_64}        
+        movl port,%edx
+        movl value,%eax
+        outl %eax,%dx
+{$endif CPUX86_64}        
+  end;
 end;
 
 
@@ -93,11 +112,18 @@ Procedure WritePortB (Port : Longint; Value : Byte);
   Writes 'Value' to port 'Port'
 }
 begin
-        asm
+  asm
+{$ifdef CPU386}        
         movl port,%edx
         movb value,%al
         outb %al,%dx
-        end ['EAX','EDX'];
+{$endif CPU386}        
+{$ifdef CPUX86_64}        
+        movl port,%edx
+        movb value,%al
+        outb %al,%dx
+{$endif CPUX86_64}        
+  end;
 end;
 
 Procedure WritePortW (Port : Longint; Value : Word);
@@ -106,11 +132,18 @@ Procedure WritePortW (Port : Longint; Value : Word);
 }
 
 begin
-        asm
+  asm
+{$ifdef CPU386}        
         movl port,%edx
         movw value,%ax
         outw %ax,%dx
-        end ['EAX','EDX'];
+{$endif CPU386}        
+{$ifdef CPUX86_64}        
+        movl port,%edx
+        movw value,%ax
+        outw %ax,%dx
+{$endif CPUX86_64}        
+  end;
 end;
 
 
@@ -121,11 +154,18 @@ Procedure WritePortL (Port : Longint; Value : Longint);
 }
 
 begin
-        asm
+  asm
+{$ifdef CPU386}        
         movl port,%edx
         movl value,%eax
         outl %eax,%dx
-        end ['EAX','EDX'];
+{$endif CPU386}        
+{$ifdef CPUX86_64}        
+        movl port,%edx
+        movl value,%eax
+        outl %eax,%dx
+{$endif CPUX86_64}        
+  end;
 end;
 
 
@@ -136,13 +176,23 @@ Procedure WritePortl (Port : Longint; Var Buf; Count: longint);
 }
 begin
   asm
+{$ifdef CPU386}        
         movl count,%ecx
         movl buf,%esi
         movl port,%edx
         cld
         rep
         outsl
-  end ['ECX','ESI','EDX'];
+{$endif CPU386}        
+{$ifdef CPUX86_64}        
+        movl count,%ecx
+        movq buf,%rsi
+        movl port,%edx
+        cld
+        rep
+        outsl
+{$endif CPUX86_64}        
+  end;
 end;
 
 
@@ -153,13 +203,23 @@ Procedure WritePortW (Port : Longint; Var Buf; Count: longint);
 }
 begin
   asm
+{$ifdef CPU386}        
         movl count,%ecx
         movl buf,%esi
         movl port,%edx
         cld
         rep
         outsw
-  end ['ECX','ESI','EDX'];
+{$endif CPU386}        
+{$ifdef CPUX86_64}        
+        movl count,%ecx
+        movq buf,%rsi
+        movl port,%edx
+        cld
+        rep
+        outsw
+{$endif CPUX86_64}        
+  end;
 end;
 
 
@@ -170,13 +230,23 @@ Procedure WritePortB (Port : Longint; Var Buf; Count: longint);
 }
 begin
   asm
+{$ifdef CPU386}        
         movl count,%ecx
         movl buf,%esi
         movl port,%edx
         cld
         rep
         outsb
-  end ['ECX','ESI','EDX'];
+{$endif CPU386}        
+{$ifdef CPUX86_64}        
+        movl count,%ecx
+        movq buf,%rsi
+        movl port,%edx
+        cld
+        rep
+        outsb
+{$endif CPUX86_64}        
+  end;
 end;
 
 
@@ -186,12 +256,20 @@ Procedure ReadPort (Port : Longint; Var Value : Byte);
   Reads 'Value' from port 'Port'
 }
 begin
-        asm
+  asm
+{$ifdef CPU386}        
         movl port,%edx
         inb %dx,%al
         movl value,%edx
         movb %al,(%edx)
-        end ['EAX','EDX'];
+{$endif CPU386}        
+{$ifdef CPUX86_64}        
+        movl port,%edx
+        inb %dx,%al
+        movq value,%rdx
+        movb %al,(%rdx)
+{$endif CPUX86_64}        
+  end;
 end;
 
 
@@ -201,12 +279,20 @@ Procedure ReadPort (Port : Longint; Var Value : Word);
   Reads 'Value' from port 'Port'
 }
 begin
-        asm
+  asm
+{$ifdef CPU386}        
         movl port,%edx
         inw %dx,%ax
         movl value,%edx
         movw %ax,(%edx)
-        end ['EAX','EDX'];
+{$endif CPU386}        
+{$ifdef CPUX86_64}        
+        movl port,%edx
+        inw %dx,%ax
+        movq value,%rdx
+        movw %ax,(%rdx)
+{$endif CPUX86_64}        
+  end;
 end;
 
 
@@ -216,12 +302,20 @@ Procedure ReadPort (Port : Longint; Var Value : Longint);
   Reads 'Value' from port 'Port'
 }
 begin
-        asm
+  asm
+{$ifdef CPU386}        
         movl port,%edx
         inl %dx,%eax
         movl value,%edx
         movl %eax,(%edx)
-        end ['EAX','EDX'];
+{$endif CPU386}        
+{$ifdef CPUX86_64}        
+        movl port,%edx
+        inl %dx,%eax
+        movq value,%rdx
+        movl %eax,(%rdx)
+{$endif CPUX86_64}        
+  end;
 end;
 
 
@@ -230,31 +324,50 @@ function ReadPortB (Port : Longint): Byte; assembler;
 {
   Reads a byte from port 'Port'
 }
-
 asm
+{$ifdef CPU386}        
   movl port,%edx
   xorl %eax,%eax
   inb %dx,%al
-end ['EAX','EDX'];
+{$endif CPU386}        
+{$ifdef CPUX86_64}        
+  movl port,%edx
+  xorl %eax,%eax
+  inb %dx,%al
+{$endif CPUX86_64}        
+end;
 
 function ReadPortW (Port : Longint): Word; assembler;
 {
   Reads a word from port 'Port'
 }
 asm
+{$ifdef CPU386}        
   movl port,%edx
   xorl %eax,%eax
   inw %dx,%ax
-end ['EAX','EDX'];
+{$endif CPU386}        
+{$ifdef CPUX86_64}        
+  movl port,%edx
+  xorl %eax,%eax
+  inw %dx,%ax
+{$endif CPUX86_64}        
+end;
 
 function ReadPortL (Port : Longint): LongInt; assembler;
 {
   Reads a LongInt from port 'Port'
 }
 asm
+{$ifdef CPU386}        
   movl port,%edx
   inl %dx,%eax
-end ['EAX','EDX'];
+{$endif CPU386}        
+{$ifdef CPUX86_64}        
+  movl port,%edx
+  inl %dx,%eax
+{$endif CPUX86_64}        
+end;
 
 Procedure ReadPortL (Port : Longint; Var Buf; Count: longint);
 {
@@ -262,13 +375,23 @@ Procedure ReadPortL (Port : Longint; Var Buf; Count: longint);
 }
 begin
   asm
+{$ifdef CPU386}        
         movl count,%ecx
         movl buf,%edi
         movl port,%edx
         cld
         rep
         insl
-  end ['ECX','EDI','EDX'];
+{$endif CPU386}        
+{$ifdef CPUX86_64}        
+        movl count,%ecx
+        movq buf,%rdi
+        movl port,%edx
+        cld
+        rep
+        insl
+{$endif CPUX86_64}        
+  end;
 end;
 
 
@@ -279,13 +402,23 @@ Procedure ReadPortW (Port : Longint; Var Buf; Count: longint);
 }
 begin
   asm
+{$ifdef CPU386}        
         movl count,%ecx
         movl buf,%edi
         movl port,%edx
         cld
         rep
         insw
-  end ['ECX','EDI','EDX'];
+{$endif CPU386}        
+{$ifdef CPUX86_64}        
+        movl count,%ecx
+        movq buf,%rdi
+        movl port,%edx
+        cld
+        rep
+        insw
+{$endif CPUX86_64}        
+  end;
 end;
 
 Procedure ReadPortB (Port : Longint; Var Buf; Count: longint);
@@ -294,13 +427,23 @@ Procedure ReadPortB (Port : Longint; Var Buf; Count: longint);
 }
 begin
   asm
+{$ifdef CPU386}        
         movl count,%ecx
         movl buf,%edi
         movl port,%edx
         cld
         rep
         insb
-  end ['ECX','EDI','EDX'];
+{$endif CPU386}        
+{$ifdef CPUX86_64}        
+        movl count,%ecx
+        movq buf,%rdi
+        movl port,%edx
+        cld
+        rep
+        insb
+{$endif CPUX86_64}        
+  end;
 end;
 
 {$ifdef linux}
@@ -376,24 +519,11 @@ Function fpIoPL(Level : cint) : cint;
 begin
  {$ifdef Linux}
   fpIOPL:=do_Syscall(Syscall_nr_iopl,TSysParam(Level));
+ {$else}
+  fpIOPL:=-1;
+  FpSetErrNo(ESysENoSys);
  {$endif}
 end;
 
 
 end.
-
-{
-  $Log: x86.pp,v $
-  Revision 1.7  2005/02/14 17:13:32  peter
-    * truncate log
-
-  Revision 1.6  2005/02/05 20:07:19  michael
-  + Fix for compilation with version 1.0.10
-
-  Revision 1.5  2005/02/05 10:44:01  marco
-   * FreeBSD ioperm fixes backported from 1.0
-
-  Revision 1.4  2005/02/05 08:42:24  marco
-   * regvars problem fixed
-
-}

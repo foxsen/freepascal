@@ -41,9 +41,14 @@ begin
  getintres := $7F7F;
 end;
 
-function getbyteboolval : boolean;
+function getbyteboolval : bytebool;
 begin
   getbyteboolval := TRUE;
+end;
+
+function getbooleanval : boolean;
+begin
+  getbooleanval := TRUE;
 end;
 
 procedure test(value, required: longint);
@@ -57,14 +62,17 @@ begin
     writeln('Passed!');
 end;
 
-
+const
+  lb = longbool(false);
 
 var
  longres :  longint;
  intres : smallint;
+ booleanval  : boolean;
  byteboolval : bytebool;
  wordboolval : wordbool;
  longboolval : longbool;
+ booleanres  : boolean;
  byteboolres : bytebool;
  wordboolres : wordbool;
  longboolres : longbool;
@@ -79,6 +87,9 @@ Begin
    longres := $7F7F7F7F;
    longres := not longres;
    Write('Value should be $80808080...');
+
+   { the following test give range check errors }
+   {$R-}
    test(longres,$80808080);
 
    { CURRENT NODE : REGISTER }
@@ -93,6 +104,11 @@ Begin
    { CURRENT NODE : LOC_REGISTER }
    { LEFT NODE :  LOC_REFERENCE  }
    WriteLn('(current) : LOC_REGISTER; (left) : LOC_REFERENCE');
+   booleanval := TRUE;
+   booleanres := not booleanval;
+   Write('Value should be FALSE...');
+   test(ord(booleanres),0);
+
    byteboolval := TRUE;
    byteboolres := not byteboolval;
    Write('Value should be FALSE...');
@@ -119,10 +135,20 @@ Begin
    { LEFT NODE :  LOC_FLAGS  }
    WriteLn('(current) : LOC_FLAGS; (left) : LOC_FLAGS');
    intres := 1;
+   booleanres := TRUE;
+   booleanres:= not ((intres = 1));
+   Write('Value should be FALSE...');
+   test(ord(booleanres),0);
+
+   intres := 1;
    byteboolres := TRUE;
    byteboolres:= not ((intres = 1));
    Write('Value should be FALSE...');
    test(ord(byteboolres),0);
+
+  longboolres:=not(lb);
+  Write('Value should be $ffffffff...');
+  test(ord(longboolres),-1);
 
   { !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! }
   { CURRENT_NODE : LOC_JUMP }
@@ -150,4 +176,3 @@ Begin
    test(int64res and $FFFFFFFF,$00008080);
 {$ENDIF}
 end.
-

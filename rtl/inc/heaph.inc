@@ -1,5 +1,4 @@
 {
-    $Id: heaph.inc,v 1.15 2005/03/04 16:49:34 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team
 
@@ -16,13 +15,12 @@
 
 { Memorymanager }
 type
-{$ifdef HASGETFPCHEAPSTATUS}
   TFPCHeapStatus = record
     MaxHeapSize,
     MaxHeapUsed,
     CurrHeapSize,
     CurrHeapUsed,
-    CurrHeapFree  : ptrint;
+    CurrHeapFree  : ptruint;
   end;
   THeapStatus = record
     TotalAddrSpace: Cardinal;
@@ -36,116 +34,69 @@ type
     Overhead: Cardinal;
     HeapErrorCode: Cardinal;
   end;
-{$else HASGETFPCHEAPSTATUS}
-  THeapStatus = record
-    MaxHeapSize,
-    MaxHeapUsed,
-    CurrHeapSize,
-    CurrHeapUsed,
-    CurrHeapFree  : ptrint;
-  end;
-{$endif HASGETFPCHEAPSTATUS}
 
   PMemoryManager = ^TMemoryManager;
   TMemoryManager = record
-    NeedLock            : boolean;
-    Getmem              : Function(Size:ptrint):Pointer;
-    Freemem             : Function(p:pointer):ptrint;
-    FreememSize         : Function(p:pointer;Size:ptrint):ptrint;
-    AllocMem            : Function(Size:ptrint):Pointer;
-    ReAllocMem          : Function(var p:pointer;Size:ptrint):Pointer;
-    MemSize             : function(p:pointer):ptrint;
-{$ifdef HASGETFPCHEAPSTATUS}
+    NeedLock            : boolean;   // Obsolete
+    Getmem              : Function(Size:ptruint):Pointer;
+    Freemem             : Function(p:pointer):ptruint;
+    FreememSize         : Function(p:pointer;Size:ptruint):ptruint;
+    AllocMem            : Function(Size:ptruint):Pointer;
+    ReAllocMem          : Function(var p:pointer;Size:ptruint):Pointer;
+    MemSize             : function(p:pointer):ptruint;
+    InitThread          : procedure;
+    DoneThread          : procedure;
+    RelocateHeap        : procedure;
     GetHeapStatus       : function :THeapStatus;
     GetFPCHeapStatus    : function :TFPCHeapStatus;
-{$else HASGETFPCHEAPSTATUS}
-    GetHeapStatus : procedure(var status:THeapStatus);
-{$endif HASGETFPCHEAPSTATUS}
-  end;
-
-  TMemoryMutexManager = record
-    MutexInit : procedure;
-    MutexDone : procedure;
-    MutexLock : procedure;
-    MutexUnlock : procedure;
   end;
 
 procedure GetMemoryManager(var MemMgr: TMemoryManager);
 procedure SetMemoryManager(const MemMgr: TMemoryManager);
 function  IsMemoryManagerSet: Boolean;
-procedure SetMemoryMutexManager(var MutexMgr: TMemoryMutexManager);
 
 { Variables }
 const
-  growheapsizesmall : ptrint=32*1024; { fixed-size small blocks will grow with 32k }
-  growheapsize1 : ptrint=256*1024;  { < 256k will grow with 256k }
-  growheapsize2 : ptrint=1024*1024; { > 256k will grow with 1m }
+  MaxKeptOSChunks: DWord = 4; { if more than MaxKeptOSChunks are free, the heap manager will release
+                              chunks back to the OS }
+  growheapsizesmall : ptruint=32*1024; { fixed-size small blocks will grow with 32k }
+  growheapsize1 : ptruint=256*1024;  { < 256k will grow with 256k }
+  growheapsize2 : ptruint=1024*1024; { > 256k will grow with 1m }
 var
   ReturnNilIfGrowHeapFails : boolean;
 
+{$ifndef EMBEDDED}
 { Default MemoryManager functions }
-Function  SysGetmem(Size:ptrint):Pointer;
-Function  SysFreemem(p:pointer):ptrint;
-Function  SysFreememSize(p:pointer;Size:ptrint):ptrint;
-Function  SysMemSize(p:pointer):ptrint;
-Function  SysAllocMem(size:ptrint):Pointer;
-function  SysTryResizeMem(var p:pointer;size : ptrint):boolean;
-Function  SysReAllocMem(var p:pointer;size:ptrint):Pointer;
-{$ifdef HASGETFPCHEAPSTATUS}
+Function  SysGetmem(Size:ptruint):Pointer;
+Function  SysFreemem(p:pointer):ptruint;
+Function  SysFreememSize(p:pointer;Size:ptruint):ptruint;
+Function  SysMemSize(p:pointer):ptruint;
+Function  SysAllocMem(size:ptruint):Pointer;
+function  SysTryResizeMem(var p:pointer;size:ptruint):boolean;
+Function  SysReAllocMem(var p:pointer;size:ptruint):Pointer;
 function  SysGetHeapStatus:THeapStatus;
 function  SysGetFPCHeapStatus:TFPCHeapStatus;
-{$else}
-procedure SysGetHeapStatus(var status:THeapStatus);
-{$endif HASGETFPCHEAPSTATUS}
+{$endif EMBEDDED}
 
+{$ifdef FPC_HAS_FEATURE_HEAP}
 { Tp7 functions }
-Procedure Getmem(Var p:pointer;Size:ptrint);
-Procedure Getmemory(Var p:pointer;Size:ptrint);
-Procedure Freemem(p:pointer;Size:ptrint);
-Procedure Freememory(p:pointer;Size:ptrint);
+Procedure Getmem(Out p:pointer;Size:ptruint);
+Procedure Getmemory(Out p:pointer;Size:ptruint);
+Procedure Freemem(p:pointer;Size:ptruint);
+Procedure Freememory(p:pointer;Size:ptruint);
 
 { FPC additions }
-Function  MemSize(p:pointer):ptrint;
+Function  MemSize(p:pointer):ptruint;
 
 { Delphi functions }
-function GetMem(size:ptrint):pointer;
-function GetMemory(size:ptrint):pointer;
-function Freemem(p:pointer):ptrint;
-function Freememory(p:pointer):ptrint;
-function AllocMem(Size:ptrint):pointer;
-function ReAllocMem(var p:pointer;Size:ptrint):pointer;
-function ReAllocMemory(var p:pointer;Size:ptrint):pointer;
-{$ifdef HASGETFPCHEAPSTATUS}
+function GetMem(size:ptruint):pointer;
+function GetMemory(size:ptruint):pointer; cdecl;
+function Freemem(p:pointer):ptruint;
+function Freememory(p:pointer):ptruint; cdecl;
+function AllocMem(Size:ptruint):pointer;
+function ReAllocMem(var p:pointer;Size:ptruint):pointer;
+function ReAllocMemory(p:pointer;Size:ptruint):pointer; cdecl;
 function GetHeapStatus:THeapStatus;
 function GetFPCHeapStatus:TFPCHeapStatus;
-{$else}
-procedure GetHeapStatus(var status:THeapStatus);
-{$endif HASGETFPCHEAPSTATUS}
+{$endif FPC_HAS_FEATURE_HEAP}
 
-{$ifndef ValueGetmem}
-{ Needed to solve overloading problem with call from assembler (PFV) }
-Procedure AsmGetmem(var p:pointer;size:ptrint);
-{$endif ValueGetmem}
-{$ifndef ValueFreemem}
-Procedure AsmFreemem(var p:pointer);
-{$endif ValueFreemem}
-
-{ Bootstrapping }
-{$ifndef HASGETHEAPSTATUS}
-Function  Memavail:ptrint;
-Function  Maxavail:ptrint;
-Function  Heapsize:ptrint;
-{$endif HASGETHEAPSTATUS}
-
-{
-  $Log: heaph.inc,v $
-  Revision 1.15  2005/03/04 16:49:34  peter
-    * fix getheapstatus bootstrapping
-
-  Revision 1.14  2005/02/28 15:38:38  marco
-   * getFPCheapstatus  (no, FPC HEAP, not FP CHEAP!)
-
-  Revision 1.13  2005/02/14 17:13:22  peter
-    * truncate log
-
-}

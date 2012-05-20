@@ -1,5 +1,4 @@
 {
-    $Id: typinfo.pp,v 1.45 2005/04/16 09:24:29 michael Exp $
     This file is part of the Free Pascal run time library.
 
     Copyright (c) 1999-2000 by Florian Klaempfl
@@ -22,6 +21,7 @@ unit typinfo;
   interface
 
 {$MODE objfpc}
+{$inline on}
 {$h+}
 
   uses SysUtils;
@@ -30,28 +30,41 @@ unit typinfo;
 // temporary types:
 
     type
-{$ifndef HASVARIANT}
-       Variant      = Pointer;
-{$endif}
 
 {$MINENUMSIZE 1   this saves a lot of memory }
+{$ifdef FPC_RTTI_PACKSET1}
+{ for Delphi compatibility }
+{$packset 1}
+{$endif}
        // if you change one of the following enumeration types
        // you have also to change the compiler in an appropriate way !
-       TTypeKind = (tkUnknown,tkInteger,tkChar,tkEnumeration,
-                   tkFloat,tkSet,tkMethod,tkSString,tkLString,tkAString,
+       TTypeKind = (tkUnknown,tkInteger,tkChar,tkEnumeration,tkFloat,
+                   tkSet,tkMethod,tkSString,tkLString,tkAString,
                    tkWString,tkVariant,tkArray,tkRecord,tkInterface,
                    tkClass,tkObject,tkWChar,tkBool,tkInt64,tkQWord,
-                   tkDynArray,tkInterfaceRaw);
+                   tkDynArray,tkInterfaceRaw,tkProcVar,tkUString,tkUChar,
+                   tkHelper);
 
        TOrdType  = (otSByte,otUByte,otSWord,otUWord,otSLong,otULong);
 
+{$ifndef FPUNONE}
        TFloatType = (ftSingle,ftDouble,ftExtended,ftComp,ftCurr);
+{$endif}
        TMethodKind = (mkProcedure,mkFunction,mkConstructor,mkDestructor,
-                      mkClassProcedure, mkClassFunction);
-       TParamFlags    = set of (pfVar,pfConst,pfArray,pfAddress,pfReference,pfOut);
-       TIntfFlag      = (ifHasGuid,ifDispInterface,ifDispatch);
+                      mkClassProcedure,mkClassFunction,mkClassConstructor, 
+                      mkClassDestructor,mkOperatorOverload);
+       TParamFlag     = (pfVar,pfConst,pfArray,pfAddress,pfReference,pfOut);
+       TParamFlags    = set of TParamFlag;
+       TIntfFlag      = (ifHasGuid,ifDispInterface,ifDispatch,ifHasStrGUID);
        TIntfFlags     = set of TIntfFlag;
        TIntfFlagsBase = set of TIntfFlag;
+
+       // don't rely on integer values of TCallConv since it includes all conventions
+       // which both delphi and fpc support. In the future delphi can support more and
+       // fpc own conventions will be shifted/reordered accordinly
+       TCallConv = (ccReg, ccCdecl, ccPascal, ccStdCall, ccSafeCall,
+                    ccCppdecl, ccFar16, ccOldFPCCall, ccInternProc,
+                    ccSysCall, ccSoftFloat, ccMWPascal);
 
 {$MINENUMSIZE DEFAULT}
 
@@ -65,6 +78,31 @@ unit typinfo;
 
    type
       TTypeKinds = set of TTypeKind;
+      ShortStringBase = string[255];
+
+      PVmtFieldEntry = ^TVmtFieldEntry;
+      TVmtFieldEntry =
+{$ifndef FPC_REQUIRES_PROPER_ALIGNMENT}
+      packed
+{$endif FPC_REQUIRES_PROPER_ALIGNMENT}
+      record
+        FieldOffset: PtrUInt;
+        TypeIndex: Word;
+        Name: ShortString;
+      end;
+
+      PVmtFieldTable = ^TVmtFieldTable;
+      TVmtFieldTable =
+{$ifndef FPC_REQUIRES_PROPER_ALIGNMENT}
+      packed
+{$endif FPC_REQUIRES_PROPER_ALIGNMENT}
+      record
+        Count: Word;
+        ClassTab: Pointer;
+        { should be array[Word] of TFieldInfo;  but
+          Elements have variant size! force at least proper alignment }
+        Fields: array[0..0] of TVmtFieldEntry
+      end;
 
 {$PACKRECORDS 1}
       TTypeInfo = record
@@ -84,9 +122,9 @@ unit typinfo;
 {$endif FPC_REQUIRES_PROPER_ALIGNMENT}
       record
          case TTypeKind of
-            tkUnKnown,tkLString,tkWString,tkAString,tkVariant:
+            tkUnKnown,tkLString,tkWString,tkAString,tkVariant,tkUString:
               ();
-            tkInteger,tkChar,tkEnumeration,tkWChar:
+            tkInteger,tkChar,tkEnumeration,tkWChar,tkSet:
               (OrdType : TOrdType;
                case TTypeKind of
                   tkInteger,tkChar,tkEnumeration,tkBool,tkWChar : (
@@ -95,13 +133,16 @@ unit typinfo;
                       tkEnumeration:
                         (
                         BaseType : PTypeInfo;
-                        NameList : ShortString)
+                        NameList : ShortString;
+                        {EnumUnitName: ShortString;})
                     );
                   tkSet:
                     (CompType : PTypeInfo)
               );
+{$ifndef FPUNONE}
             tkFloat:
               (FloatType : TFloatType);
+{$endif}
             tkSString:
               (MaxLength : Byte);
             tkClass:
@@ -109,6 +150,13 @@ unit typinfo;
                ParentInfo : PTypeInfo;
                PropCount : SmallInt;
                UnitName : ShortString
+               // here the properties follow as array of TPropInfo
+              );
+            tkHelper:
+              (HelperParent : PTypeInfo;
+               ExtendedInfo : PTypeInfo;
+               HelperProps : SmallInt;
+               HelperUnit : ShortString
                // here the properties follow as array of TPropInfo
               );
             tkMethod:
@@ -122,19 +170,37 @@ unit typinfo;
                     TypeName : ShortString;
                   end;
               followed by
-                  ResultType : ShortString}
+                  ResultType : ShortString     // for mkFunction, mkClassFunction only
+                  ResultTypeRef : PPTypeInfo;  // for mkFunction, mkClassFunction only
+                  CC : TCallConv;
+                  ParamTypeRefs : array[1..ParamCount] of PPTypeInfo;}
               );
             tkInt64:
               (MinInt64Value, MaxInt64Value: Int64);
             tkQWord:
               (MinQWordValue, MaxQWordValue: QWord);
-            tkInterface,
+            tkInterface:
+              (
+               IntfParent: PTypeInfo;
+               IntfFlags : TIntfFlagsBase;
+               GUID: TGUID;
+               IntfUnit: ShortString;
+              );
             tkInterfaceRaw:
               (
-               IntfParent: PPTypeInfo;
-               IID: PGUID;
+               RawIntfParent: PTypeInfo;
+               RawIntfFlags : TIntfFlagsBase;
+               IID: TGUID;
+               RawIntfUnit: ShortString;
                IIDStr: ShortString;
-               IntfUnit: ShortString;
+              );
+            tkDynArray:
+              (
+              elSize     : PtrUInt;
+              elType2    : PPTypeInfo;
+              varType    : Longint;
+              elType     : PPTypeInfo;
+              DynUnitName: ShortStringBase
               );
       end;
 
@@ -182,22 +248,24 @@ unit typinfo;
 // general property handling
 Function GetTypeData(TypeInfo : PTypeInfo) : PTypeData;
 
-Function GetPropInfo(TypeInfo : PTypeInfo;const PropName : string) : PPropInfo;
-Function GetPropInfo(TypeInfo : PTypeInfo;const PropName : string; AKinds : TTypeKinds) : PPropInfo;
-Function GetPropInfo(Instance: TObject; const PropName: string; AKinds: TTypeKinds) : PPropInfo;
+Function GetPropInfo(TypeInfo: PTypeInfo;const PropName: string): PPropInfo;
+Function GetPropInfo(TypeInfo: PTypeInfo;const PropName: string; AKinds: TTypeKinds): PPropInfo;
 Function GetPropInfo(Instance: TObject; const PropName: string): PPropInfo;
-Function GetPropInfo(AClass: TClass; const PropName: string; AKinds: TTypeKinds) : PPropInfo;
+Function GetPropInfo(Instance: TObject; const PropName: string; AKinds: TTypeKinds): PPropInfo;
 Function GetPropInfo(AClass: TClass; const PropName: string): PPropInfo;
+Function GetPropInfo(AClass: TClass; const PropName: string; AKinds: TTypeKinds): PPropInfo;
+
 Function FindPropInfo(Instance: TObject; const PropName: string): PPropInfo;
-Function FindPropInfo(AClass:TClass;const PropName: string): PPropInfo;
-Procedure GetPropInfos(TypeInfo : PTypeInfo;PropList : PPropList);
-{$ifdef ver1_0}
-Function  GetPropList(TypeInfo : PTypeInfo;TypeKinds : TTypeKinds; PropList : PPropList;Sorted : boolean):longint;
-Function GetPropList(TypeInfo: PTypeInfo; var PropList: PPropList): SizeInt;
-{$else}
-Function  GetPropList(TypeInfo : PTypeInfo;TypeKinds : TTypeKinds; PropList : PPropList;Sorted : boolean = true):longint;
+Function FindPropInfo(Instance: TObject; const PropName: string; AKinds: TTypeKinds): PPropInfo;
+Function FindPropInfo(AClass: TClass; const PropName: string): PPropInfo;
+Function FindPropInfo(AClass: TClass; const PropName: string; AKinds: TTypeKinds): PPropInfo;
+
+Procedure GetPropInfos(TypeInfo: PTypeInfo; PropList: PPropList);
+Function GetPropList(TypeInfo: PTypeInfo; TypeKinds: TTypeKinds; PropList: PPropList; Sorted: boolean = true): longint;
 Function GetPropList(TypeInfo: PTypeInfo; out PropList: PPropList): SizeInt;
-{$endif}
+function GetPropList(AClass: TClass; out PropList: PPropList): Integer;
+function GetPropList(Instance: TObject; out PropList: PPropList): Integer;
+
 
 
 // Property information routines.
@@ -232,17 +300,22 @@ Function  GetStrProp(Instance: TObject; const PropName: string): string;
 Procedure SetStrProp(Instance: TObject; const PropName: string; const Value: AnsiString);
 Procedure SetStrProp(Instance: TObject; PropInfo : PPropInfo; const Value : Ansistring);
 
-{$ifdef HASWIDESTRING}
 Function GetWideStrProp(Instance: TObject; PropInfo: PPropInfo): WideString;
 Function GetWideStrProp(Instance: TObject; const PropName: string): WideString;
 Procedure SetWideStrProp(Instance: TObject; const PropName: string; const Value: WideString);
 Procedure SetWideStrProp(Instance: TObject; PropInfo: PPropInfo; const Value: WideString);
-{$endif HASWIDESTRING}
 
+Function GetUnicodeStrProp(Instance: TObject; PropInfo: PPropInfo): UnicodeString;
+Function GetUnicodeStrProp(Instance: TObject; const PropName: string): UnicodeString;
+Procedure SetUnicodeStrProp(Instance: TObject; const PropName: string; const Value: UnicodeString);
+Procedure SetUnicodeStrProp(Instance: TObject; PropInfo: PPropInfo; const Value: UnicodeString);
+
+{$ifndef FPUNONE}
 Function  GetFloatProp(Instance: TObject; PropInfo : PPropInfo) : Extended;
 Function  GetFloatProp(Instance: TObject; const PropName: string): Extended;
 Procedure SetFloatProp(Instance: TObject; const PropName: string; Value: Extended);
 Procedure SetFloatProp(Instance: TObject; PropInfo : PPropInfo;  Value : Extended);
+{$endif}
 
 Function  GetObjectProp(Instance: TObject; const PropName: string): TObject;
 Function  GetObjectProp(Instance: TObject; const PropName: string; MinClass: TClass): TObject;
@@ -250,8 +323,8 @@ Function  GetObjectProp(Instance: TObject; PropInfo: PPropInfo): TObject;
 Function  GetObjectProp(Instance: TObject; PropInfo: PPropInfo; MinClass: TClass): TObject;
 Procedure SetObjectProp(Instance: TObject; const PropName: string; Value: TObject);
 Procedure SetObjectProp(Instance: TObject; PropInfo: PPropInfo; Value: TObject);
-
 Function  GetObjectPropClass(Instance: TObject; const PropName: string): TClass;
+Function  GetObjectPropClass(AClass: TClass; const PropName: string): TClass;
 
 Function  GetMethodProp(Instance: TObject; PropInfo: PPropInfo) : TMethod;
 Function  GetMethodProp(Instance: TObject; const PropName: string): TMethod;
@@ -271,13 +344,26 @@ Function  GetVariantProp(Instance: TObject; const PropName: string): Variant;
 Procedure SetVariantProp(Instance: TObject; const PropName: string; const Value: Variant);
 Procedure SetVariantProp(Instance: TObject; PropInfo : PPropInfo; const Value: Variant);
 
+function GetInterfaceProp(Instance: TObject; const PropName: string): IInterface;
+function GetInterfaceProp(Instance: TObject; PropInfo: PPropInfo): IInterface;
+procedure SetInterfaceProp(Instance: TObject; const PropName: string; const Value: IInterface);
+procedure SetInterfaceProp(Instance: TObject; PropInfo: PPropInfo; const Value: IInterface);
+
+function GetRawInterfaceProp(Instance: TObject; const PropName: string): Pointer;
+function GetRawInterfaceProp(Instance: TObject; PropInfo: PPropInfo): Pointer;
+procedure SetRawInterfaceProp(Instance: TObject; const PropName: string; const Value: Pointer);
+procedure SetRawInterfaceProp(Instance: TObject; PropInfo: PPropInfo; const Value: Pointer);
 
 // Auxiliary routines, which may be useful
 Function GetEnumName(TypeInfo : PTypeInfo;Value : Integer) : string;
 Function GetEnumValue(TypeInfo : PTypeInfo;const Name : string) : Integer;
+function GetEnumNameCount(enum1: PTypeInfo): SizeInt;
+
+function SetToString(TypeInfo: PTypeInfo; Value: Integer; Brackets: Boolean) : String;
 function SetToString(PropInfo: PPropInfo; Value: Integer; Brackets: Boolean) : String;
 function SetToString(PropInfo: PPropInfo; Value: Integer) : String;
 function StringToSet(PropInfo: PPropInfo; const Value: string): Integer;
+function StringToSet(TypeInfo: PTypeInfo; const Value: string): Integer;
 
 const
     BooleanIdents: array[Boolean] of String = ('False', 'True');
@@ -287,19 +373,21 @@ Type
   EPropertyError  = Class(Exception);
   TGetPropValue   = Function (Instance: TObject; const PropName: string; PreferStrings: Boolean) : Variant;
   TSetPropValue   = Procedure (Instance: TObject; const PropName: string; const Value: Variant);
-  TGetVariantProp = Function (Instance: TObject; PropInfo : PPropInfo): Variant;  
+  TGetVariantProp = Function (Instance: TObject; PropInfo : PPropInfo): Variant;
   TSetVariantProp = Procedure (Instance: TObject; PropInfo : PPropInfo; const Value: Variant);
-  
+
+  EPropertyConvertError = class(Exception); // Not used (yet), but defined for compatibility.
+
 Const
   OnGetPropValue   : TGetPropValue = Nil;
   OnSetPropValue   : TSetPropValue = Nil;
   OnGetVariantprop : TGetVariantProp = Nil;
   OnSetVariantprop : TSetVariantProp = Nil;
- 
+
 Implementation
 
 uses rtlconsts;
-  
+
 type
   PMethod = ^TMethod;
 
@@ -307,14 +395,14 @@ type
   Auxiliary methods
   ---------------------------------------------------------------------}
 
-function aligntoptr(p : pointer) : pointer;
-  begin
+function aligntoptr(p : pointer) : pointer;inline;
+   begin
 {$ifdef FPC_REQUIRES_PROPER_ALIGNMENT}
-    if (ptrint(p) mod sizeof(ptrint))<>0 then
-      inc(ptrint(p),sizeof(ptrint)-ptrint(p) mod sizeof(ptrint));
+     result:=align(p,sizeof(p));
+{$else FPC_REQUIRES_PROPER_ALIGNMENT}
+     result:=p;
 {$endif FPC_REQUIRES_PROPER_ALIGNMENT}
-    result:=p;
-  end;
+   end;
 
 
 Function GetEnumName(TypeInfo : PTypeInfo;Value : Integer) : string;
@@ -323,16 +411,27 @@ Function GetEnumName(TypeInfo : PTypeInfo;Value : Integer) : string;
       PT : PTypeData;
 
 begin
- PT:=GetTypeData(TypeInfo);
- // ^.BaseType);
- //      If PT^.MinValue<0 then Value:=Ord(Value<>0); {map to 0/1}
- PS:=@PT^.NameList;
- While Value>0 Do
-  begin
-    PS:=PShortString(pointer(PS)+PByte(PS)^+1);
-    Dec(Value);
-  end;
- Result:=PS^;
+  PT:=GetTypeData(TypeInfo);
+  if TypeInfo^.Kind=tkBool then
+    begin
+      case Value of
+        0,1:
+          Result:=BooleanIdents[Boolean(Value)];
+        else
+          Result:='';
+      end;
+    end
+ else
+   begin
+     PS:=@PT^.NameList;
+     dec(Value,PT^.MinValue);
+     While Value>0 Do
+       begin
+         PS:=PShortString(pointer(PS)+PByte(PS)^+1);
+         Dec(Value);
+       end;
+     Result:=PS^;
+   end;
 end;
 
 
@@ -341,43 +440,98 @@ Function GetEnumValue(TypeInfo : PTypeInfo;const Name : string) : Integer;
   Var PS : PShortString;
       PT : PTypeData;
       Count : longint;
+      sName: shortstring;
 
 begin
   If Length(Name)=0 then
     exit(-1);
+  sName := Name;
   PT:=GetTypeData(TypeInfo);
   Count:=0;
   Result:=-1;
-  PS:=@PT^.NameList;
-  While (Result=-1) and (PByte(PS)^<>0) do
+
+  if TypeInfo^.Kind=tkBool then
     begin
-      If CompareText(PS^, Name) = 0 then
-        Result:=Count;
-      PS:=PShortString(pointer(PS)+PByte(PS)^+1);
-      Inc(Count);
+    If CompareText(BooleanIdents[false],Name)=0 then
+      result:=0
+    else if CompareText(BooleanIdents[true],Name)=0 then
+      result:=1;
+    end
+ else
+   begin
+     PS:=@PT^.NameList;
+     While (Result=-1) and (PByte(PS)^<>0) do
+       begin
+         If ShortCompareText(PS^, sName) = 0 then
+           Result:=Count+PT^.MinValue;
+         PS:=PShortString(pointer(PS)+PByte(PS)^+1);
+         Inc(Count);
+       end;
+   end;
+end;
+
+
+function GetEnumNameCount(enum1: PTypeInfo): SizeInt;
+var
+  PS: PShortString;
+  PT: PTypeData;
+  Count: SizeInt;
+begin
+  PT:=GetTypeData(enum1);
+  if enum1^.Kind=tkBool then
+    Result:=2
+  else
+    begin
+      Count:=0;
+      Result:=0;
+
+      PS:=@PT^.NameList;
+      While (PByte(PS)^<>0) do
+        begin
+          PS:=PShortString(pointer(PS)+PByte(PS)^+1);
+          Inc(Count);
+        end;
+      { the last string is the unit name }
+      Result := Count - 1;
     end;
 end;
 
 
 Function SetToString(PropInfo: PPropInfo; Value: Integer; Brackets: Boolean) : String;
 
+begin
+  Result:=SetToString(PropInfo^.PropType,Value,Brackets);
+end;
+
+Function SetToString(TypeInfo: PTypeInfo; Value: Integer; Brackets: Boolean) : String;
+
+type
+  tsetarr = bitpacked array[0..31] of 0..1;
 Var
   I : Integer;
   PTI : PTypeInfo;
 
 begin
-  PTI:=GetTypeData(PropInfo^.PropType)^.CompType;
+{$if defined(FPC_BIG_ENDIAN)}
+  { On big endian systems, set element 0 is in the most significant bit,
+    and the same goes for the elements of bitpacked arrays there.  }
+  case GetTypeData(TypeInfo)^.OrdType of
+    otSByte,otUByte: Value:=Value shl 24;
+    otSWord,otUWord: Value:=Value shl 16;
+  end;
+{$endif}
+
+  PTI:=GetTypeData(TypeInfo)^.CompType;
   Result:='';
   For I:=0 to SizeOf(Integer)*8-1 do
     begin
-      if ((Value and 1)<>0) then
+      if (tsetarr(Value)[i]<>0) then
         begin
           If Result='' then
             Result:=GetEnumName(PTI,i)
           else
             Result:=Result+','+GetEnumName(PTI,I);
         end;
-      Value:=Value shr 1;
     end;
   if Brackets then
     Result:='['+Result+']';
@@ -409,8 +563,13 @@ begin
     end;
 end;
 
-
 Function StringToSet(PropInfo: PPropInfo; const Value: string): Integer;
+
+begin
+  Result:=StringToSet(PropInfo^.PropType,Value);
+end;
+
+Function StringToSet(TypeInfo: PTypeInfo; const Value: string): Integer;
 Var
   S,T : String;
   I : Integer;
@@ -418,7 +577,7 @@ Var
 
 begin
   Result:=0;
-  PTI:=GetTypeData(PropInfo^.PropType)^.Comptype;
+  PTI:=GetTypeData(TypeInfo)^.Comptype;
   S:=Value;
   I:=1;
   If Length(S)>0 then
@@ -455,21 +614,21 @@ Function GetPropInfo(TypeInfo : PTypeInfo;const PropName : string) : PPropInfo;
 var
   hp : PTypeData;
   i : longint;
-  p : string;
+  p : shortstring;
   pd : ^TPropData;
 begin
-  P:=UpCase(PropName);
+  P:=PropName;  // avoid Ansi<->short conversion in a loop
   while Assigned(TypeInfo) do
     begin
       // skip the name
       hp:=GetTypeData(Typeinfo);
       // the class info rtti the property rtti follows immediatly
       pd:=aligntoptr(pointer(pointer(@hp^.UnitName)+Length(hp^.UnitName)+1));
-      Result:=@pd^.PropList;
+      Result:=PPropInfo(@pd^.PropList);
       for i:=1 to pd^.PropCount do
         begin
           // found a property of that name ?
-          if Upcase(Result^.Name)=P then
+          if ShortCompareText(Result^.Name, P) = 0 then
             exit;
           // skip to next property
           Result:=PPropInfo(aligntoptr(pointer(@Result^.Name)+byte(Result^.Name[0])+1));
@@ -523,9 +682,25 @@ begin
 end;
 
 
-Function FindPropInfo(AClass:TClass;const PropName: string): PPropInfo;
+Function FindPropInfo(Instance: TObject; const PropName: string; AKinds: TTypeKinds): PPropInfo;
 begin
-  result:=GetPropInfo(AClass,PropName);
+  result:=GetPropInfo(Instance, PropName, AKinds);
+  if Result=nil then
+    Raise EPropertyError.CreateFmt(SErrPropertyNotFound, [PropName]);
+end;
+
+
+Function FindPropInfo(AClass: TClass; const PropName: string): PPropInfo;
+begin
+  result:=GetPropInfo(AClass, PropName);
+  if result=nil then
+    Raise EPropertyError.CreateFmt(SErrPropertyNotFound, [PropName]);
+end;
+
+
+Function FindPropInfo(AClass: TClass; const PropName: string; AKinds: TTypeKinds): PPropInfo;
+begin
+  result:=GetPropInfo(AClass, PropName, AKinds);
   if result=nil then
     Raise EPropertyError.CreateFmt(SErrPropertyNotFound, [PropName]);
 end;
@@ -533,13 +708,14 @@ end;
 
 Function IsStoredProp(Instance : TObject;PropInfo : PPropInfo) : Boolean;
 type
+  TBooleanIndexFunc=function(Index:integer):boolean of object;
   TBooleanFunc=function:boolean of object;
 var
   AMethod : TMethod;
 begin
   case (PropInfo^.PropProcs shr 4) and 3 of
     ptfield:
-      Result:=PBoolean(Pointer(Instance)+Longint(PropInfo^.StoredProc))^;
+      Result:=PBoolean(Pointer(Instance)+PtrUInt(PropInfo^.StoredProc))^;
     ptconst:
       Result:=LongBool(PropInfo^.StoredProc);
     ptstatic,
@@ -548,9 +724,12 @@ begin
         if (PropInfo^.PropProcs shr 4) and 3=ptstatic then
           AMethod.Code:=PropInfo^.StoredProc
         else
-          AMethod.Code:=ppointer(Pointer(Instance.ClassType)+Longint(PropInfo^.StoredProc))^;
+          AMethod.Code:=ppointer(Pointer(Instance.ClassType)+PtrUInt(PropInfo^.StoredProc))^;
         AMethod.Data:=Instance;
-        Result:=TBooleanFunc(AMethod)();
+        if ((PropInfo^.PropProcs shr 6) and 1)<>0 then
+           Result:=TBooleanIndexFunc(AMethod)(PropInfo^.Index)
+        else
+           Result:=TBooleanFunc(AMethod)();
       end;
   end;
 end;
@@ -567,25 +746,30 @@ Var
   TP : PPropInfo;
   Count : Longint;
 begin
-  TD:=GetTypeData(TypeInfo);
   // Get this objects TOTAL published properties count
-  TP:=aligntoptr(PPropInfo(aligntoptr((@TD^.UnitName+Length(TD^.UnitName)+1))));
-  Count:=PWord(TP)^;
-  // Now point TP to first propinfo record.
-  Inc(Pointer(TP),SizeOF(Word));
-  tp:=aligntoptr(tp);
-  While Count>0 do
-    begin
-      PropList^[0]:=TP;
-      Inc(Pointer(PropList),SizeOf(Pointer));
-      // Point to TP next propinfo record.
-      // Located at Name[Length(Name)+1] !
-      TP:=aligntoptr(PPropInfo(pointer(@TP^.Name)+PByte(@TP^.Name)^+1));
-      Dec(Count);
-    end;
-  // recursive call for parent info.
-  If TD^.Parentinfo<>Nil then
-    GetPropInfos (TD^.ParentInfo,PropList);
+  TD:=GetTypeData(TypeInfo);
+  // Clear list
+  FillChar(PropList^,TD^.PropCount*sizeof(Pointer),0);
+  repeat
+    TD:=GetTypeData(TypeInfo);
+    // published properties count for this object
+    TP:=aligntoptr(PPropInfo(aligntoptr((Pointer(@TD^.UnitName)+Length(TD^.UnitName)+1))));
+    Count:=PWord(TP)^;
+    // Now point TP to first propinfo record.
+    Inc(Pointer(TP),SizeOF(Word));
+    tp:=aligntoptr(tp);
+    While Count>0 do
+      begin
+        // Don't overwrite properties with the same name
+        if PropList^[TP^.NameIndex]=nil then
+          PropList^[TP^.NameIndex]:=TP;
+        // Point to TP next propinfo record.
+        // Located at Name[Length(Name)+1] !
+        TP:=aligntoptr(PPropInfo(pointer(@TP^.Name)+PByte(@TP^.Name)^+1));
+        Dec(Count);
+      end;
+    TypeInfo:=TD^.Parentinfo;
+  until TypeInfo=nil;
 end;
 
 Procedure InsertProp (PL : PProplist;PI : PPropInfo; Count : longint);
@@ -609,11 +793,7 @@ Type TInsertProp = Procedure (PL : PProplist;PI : PPropInfo; Count : longint);
 
 //Const InsertProps : array[false..boolean] of TInsertProp = (InsertPropNoSort,InsertProp);
 
-{$ifdef ver1_0}
-Function  GetPropList(TypeInfo : PTypeInfo;TypeKinds : TTypeKinds; PropList : PPropList;Sorted : boolean):longint;
-{$else}
 Function  GetPropList(TypeInfo : PTypeInfo;TypeKinds : TTypeKinds; PropList : PPropList;Sorted : boolean = true):longint;
-{$endif}
 
 {
   Store Pointers to property information OF A CERTAIN KIND in the list pointed
@@ -655,20 +835,27 @@ begin
 end;
 
 
-{$ifdef ver1_0}
-Function GetPropList(TypeInfo: PTypeInfo; var PropList: PPropList): SizeInt;
-{$else}
 Function GetPropList(TypeInfo: PTypeInfo; out PropList: PPropList): SizeInt;
-{$endif}
-  begin
-    result:=GetTypeData(TypeInfo)^.Propcount;
-    if result>0 then
-      begin
-        getmem(PropList,result*sizeof(pointer));
-        GetPropInfos(TypeInfo,PropList);
-      end;
-  end;
+begin
+  result:=GetTypeData(TypeInfo)^.Propcount;
+  if result>0 then
+    begin
+      getmem(PropList,result*sizeof(pointer));
+      GetPropInfos(TypeInfo,PropList);
+    end
+  else
+    PropList:=Nil;
+end;
 
+function GetPropList(AClass: TClass; out PropList: PPropList): Integer;
+begin
+  Result := GetPropList(PTypeInfo(AClass.ClassInfo), PropList);
+end;
+
+function GetPropList(Instance: TObject; out PropList: PPropList): Integer;
+begin
+  Result := GetPropList(Instance.ClassType, PropList);
+end;
 
 { ---------------------------------------------------------------------
   Property access functions
@@ -701,10 +888,18 @@ begin
   Signed := false;
   DataSize := 4;
   case TypeInfo^.Kind of
+{$ifdef cpu64}
+    tkInterface,
+    tkInterfaceRaw,
+    tkDynArray,
+    tkClass:
+      DataSize:=8;
+{$endif cpu64}
     tkChar, tkBool:
       DataSize:=1;
     tkWChar:
       DataSize:=2;
+    tkSet,
     tkEnumeration,
     tkInteger:
       begin
@@ -731,17 +926,17 @@ begin
     ptfield:
       if Signed then begin
         case DataSize of
-          1: Result:=PShortInt(Pointer(Instance)+Ptrint(PropInfo^.GetProc))^;
-          2: Result:=PSmallInt(Pointer(Instance)+Ptrint(PropInfo^.GetProc))^;
-          4: Result:=PLongint(Pointer(Instance)+Ptrint(PropInfo^.GetProc))^;
-          8: Result:=PInt64(Pointer(Instance)+Ptrint(PropInfo^.GetProc))^;
+          1: Result:=PShortInt(Pointer(Instance)+PtrUInt(PropInfo^.GetProc))^;
+          2: Result:=PSmallInt(Pointer(Instance)+PtrUInt(PropInfo^.GetProc))^;
+          4: Result:=PLongint(Pointer(Instance)+PtrUInt(PropInfo^.GetProc))^;
+          8: Result:=PInt64(Pointer(Instance)+PtrUInt(PropInfo^.GetProc))^;
         end;
       end else begin
         case DataSize of
-          1: Result:=PByte(Pointer(Instance)+Ptrint(PropInfo^.GetProc))^;
-          2: Result:=PWord(Pointer(Instance)+Ptrint(PropInfo^.GetProc))^;
-          4: Result:=PLongint(Pointer(Instance)+Ptrint(PropInfo^.GetProc))^;
-          8: Result:=PInt64(Pointer(Instance)+Ptrint(PropInfo^.GetProc))^;
+          1: Result:=PByte(Pointer(Instance)+PtrUInt(PropInfo^.GetProc))^;
+          2: Result:=PWord(Pointer(Instance)+PtrUInt(PropInfo^.GetProc))^;
+          4: Result:=PLongint(Pointer(Instance)+PtrUInt(PropInfo^.GetProc))^;
+          8: Result:=PInt64(Pointer(Instance)+PtrUInt(PropInfo^.GetProc))^;
         end;
       end;
     ptstatic,
@@ -750,7 +945,7 @@ begin
         if (PropInfo^.PropProcs and 3)=ptStatic then
           AMethod.Code:=PropInfo^.GetProc
         else
-          AMethod.Code:=PPointer(Pointer(Instance.ClassType)+Ptrint(PropInfo^.GetProc))^;
+          AMethod.Code:=PPointer(Pointer(Instance.ClassType)+PtrUInt(PropInfo^.GetProc))^;
         AMethod.Data:=Instance;
         if ((PropInfo^.PropProcs shr 6) and 1)<>0 then begin
           case DataSize of
@@ -787,11 +982,19 @@ var
   DataSize: Integer;
   AMethod : TMethod;
 begin
-  if PropInfo^.PropType^.Kind in [tkInt64,tkQword] then
+  if PropInfo^.PropType^.Kind in [tkInt64,tkQword
+  { why do we have to handle classes here, see also below? (FK) }
+{$ifdef cpu64}
+    ,tkInterface
+    ,tkInterfaceRaw
+    ,tkDynArray
+    ,tkClass
+{$endif cpu64}
+    ] then
     DataSize := 8
   else
     DataSize := 4;
-  if PropInfo^.PropType^.Kind <> tkClass then
+  if not(PropInfo^.PropType^.Kind in [tkInt64,tkQword,tkClass]) then
     begin
       { cut off unnecessary stuff }
       case GetTypeData(PropInfo^.PropType)^.OrdType of
@@ -810,10 +1013,10 @@ begin
   case (PropInfo^.PropProcs shr 2) and 3 of
     ptfield:
       case DataSize of
-        1: PByte(Pointer(Instance)+Ptrint(PropInfo^.SetProc))^:=Byte(Value);
-        2: PWord(Pointer(Instance)+Ptrint(PropInfo^.SetProc))^:=Word(Value);
-        4:PLongint(Pointer(Instance)+Ptrint(PropInfo^.SetProc))^:=Longint(Value);
-        8: PInt64(Pointer(Instance)+Ptrint(PropInfo^.SetProc))^:=Value;
+        1: PByte(Pointer(Instance)+PtrUInt(PropInfo^.SetProc))^:=Byte(Value);
+        2: PWord(Pointer(Instance)+PtrUInt(PropInfo^.SetProc))^:=Word(Value);
+        4: PLongint(Pointer(Instance)+PtrUInt(PropInfo^.SetProc))^:=Longint(Value);
+        8: PInt64(Pointer(Instance)+PtrUInt(PropInfo^.SetProc))^:=Value;
       end;
     ptstatic,
     ptvirtual :
@@ -821,7 +1024,7 @@ begin
         if ((PropInfo^.PropProcs shr 2) and 3)=ptStatic then
           AMethod.Code:=PropInfo^.SetProc
         else
-          AMethod.Code:=PPointer(Pointer(Instance.ClassType)+Ptrint(PropInfo^.SetProc))^;
+          AMethod.Code:=PPointer(Pointer(Instance.ClassType)+PtrUInt(PropInfo^.SetProc))^;
         AMethod.Data:=Instance;
         if datasize=8 then
           begin
@@ -1000,9 +1203,155 @@ end;
 
 Function GetObjectPropClass(Instance: TObject; const PropName: string): TClass;
 begin
-  Result:=GetTypeData(FindPropInfo(Instance,PropName)^.PropType)^.ClassType;
+  Result:=GetTypeData(FindPropInfo(Instance,PropName,[tkClass])^.PropType)^.ClassType;
 end;
 
+Function  GetObjectPropClass(AClass: TClass; const PropName: string): TClass;
+begin
+  Result:=GetTypeData(FindPropInfo(AClass,PropName,[tkClass])^.PropType)^.ClassType;
+end;
+
+{ ---------------------------------------------------------------------
+    Interface wrapprers
+  ---------------------------------------------------------------------}
+
+
+function GetInterfaceProp(Instance: TObject; const PropName: string): IInterface;
+
+begin
+  Result:=GetInterfaceProp(Instance,FindPropInfo(Instance,PropName));
+end;
+
+
+function GetInterfaceProp(Instance: TObject; PropInfo: PPropInfo): IInterface;
+type
+  TGetInterfaceProc=function:IInterface of object;
+  TGetInterfaceProcIndex=function(index:longint):IInterface of object;
+var
+  TypeInfo: PTypeInfo;
+  AMethod : TMethod;
+begin
+  Result:=nil;
+
+  TypeInfo := PropInfo^.PropType;
+  case (PropInfo^.PropProcs) and 3 of
+    ptfield:
+      Result:=IInterface(PPointer(Pointer(Instance)+PtrUInt(PropInfo^.GetProc))^);
+    ptstatic,
+    ptvirtual :
+      begin
+        if (PropInfo^.PropProcs and 3)=ptStatic then
+          AMethod.Code:=PropInfo^.GetProc
+        else
+          AMethod.Code:=PPointer(Pointer(Instance.ClassType)+PtrUInt(PropInfo^.GetProc))^;
+        AMethod.Data:=Instance;
+        if ((PropInfo^.PropProcs shr 6) and 1)<>0 then
+          Result:=TGetInterfaceProcIndex(AMethod)(PropInfo^.Index)
+        else
+          Result:=TGetInterfaceProc(AMethod)();
+      end;
+  end;
+end;
+
+
+procedure SetInterfaceProp(Instance: TObject; const PropName: string; const Value: IInterface);
+
+begin
+  SetInterfaceProp(Instance,FindPropInfo(Instance,PropName),Value);
+end;
+
+procedure SetInterfaceProp(Instance: TObject; PropInfo: PPropInfo; const Value: IInterface);
+type
+  TSetIntfStrProcIndex=procedure(index:longint;const i:IInterface) of object;
+  TSetIntfStrProc=procedure(i:IInterface) of object;
+var
+  AMethod : TMethod;
+begin
+  case Propinfo^.PropType^.Kind of
+    tkInterface:
+      begin
+        case (PropInfo^.PropProcs shr 2) and 3 of
+          ptField:
+            PInterface(Pointer(Instance)+PtrUInt(PropInfo^.SetProc))^:=Value;
+          ptstatic,
+          ptvirtual :
+            begin
+              if ((PropInfo^.PropProcs shr 2) and 3)=ptStatic then
+                AMethod.Code:=PropInfo^.SetProc
+              else
+                AMethod.Code:=PPointer(Pointer(Instance.ClassType)+PtrUInt(PropInfo^.SetProc))^;
+              AMethod.Data:=Instance;
+              if ((PropInfo^.PropProcs shr 6) and 1)<>0 then
+                TSetIntfStrProcIndex(AMethod)(PropInfo^.Index,Value)
+              else
+                TSetIntfStrProc(AMethod)(Value);
+            end;
+        end;
+      end;
+    tkInterfaceRaw:
+      Raise Exception.Create('Cannot set RAW interface from IUnknown interface');
+  end;
+end;
+
+{ ---------------------------------------------------------------------
+    RAW (Corba) Interface wrapprers
+  ---------------------------------------------------------------------}
+
+
+function GetRawInterfaceProp(Instance: TObject; const PropName: string): Pointer;
+
+begin
+  Result:=GetRawInterfaceProp(Instance,FindPropInfo(Instance,PropName));
+end;
+
+function GetRawInterfaceProp(Instance: TObject; PropInfo: PPropInfo): Pointer;
+
+begin
+{$ifdef cpu64}
+  Result:=Pointer(GetInt64Prop(Instance,PropInfo));
+{$else cpu64}
+  Result:=Pointer(PtrInt(GetOrdProp(Instance,PropInfo)));
+{$endif cpu64}
+end;
+
+procedure SetRawInterfaceProp(Instance: TObject; const PropName: string; const Value: Pointer);
+
+begin
+  SetRawInterfaceProp(Instance,FindPropInfo(Instance,PropName),Value);
+end;
+
+procedure SetRawInterfaceProp(Instance: TObject; PropInfo: PPropInfo; const Value: Pointer);
+type
+  TSetPointerProcIndex=procedure(index:longint;const i:Pointer) of object;
+  TSetPointerProc=procedure(i:Pointer) of object;
+var
+  AMethod : TMethod;
+begin
+  case Propinfo^.PropType^.Kind of
+    tkInterfaceRaw:
+      begin
+        case (PropInfo^.PropProcs shr 2) and 3 of
+          ptField:
+            PPointer(Pointer(Instance)+PtrUInt(PropInfo^.SetProc))^:=Value;
+          ptstatic,
+          ptvirtual :
+            begin
+              if ((PropInfo^.PropProcs shr 2) and 3)=ptStatic then
+                AMethod.Code:=PropInfo^.SetProc
+              else
+                AMethod.Code:=PPointer(Pointer(Instance.ClassType)+PtrUInt(PropInfo^.SetProc))^;
+              AMethod.Data:=Instance;
+              if ((PropInfo^.PropProcs shr 6) and 1)<>0 then
+                TSetPointerProcIndex(AMethod)(PropInfo^.Index,Value)
+              else
+                TSetPointerProc(AMethod)(Value);
+            end;
+        end;
+      end;
+    tkInterface:
+      Raise Exception.Create('Cannot set interface from RAW interface');
+  end;
+end;
 
 { ---------------------------------------------------------------------
   String properties
@@ -1019,10 +1368,10 @@ var
 begin
   Result:='';
   case Propinfo^.PropType^.Kind of
-{$ifdef HASWIDESTRING}
     tkWString:
       Result:=GetWideStrProp(Instance,PropInfo);
-{$endif HASWIDESTRING}
+    tkUString :
+      Result := GetUnicodeStrProp(Instance,PropInfo);
     tkSString:
       begin
         case (PropInfo^.PropProcs) and 3 of
@@ -1034,7 +1383,7 @@ begin
               if (PropInfo^.PropProcs and 3)=ptStatic then
                 AMethod.Code:=PropInfo^.GetProc
               else
-                AMethod.Code:=PPointer(Pointer(Instance.ClassType)+Ptrint(PropInfo^.GetProc))^;
+                AMethod.Code:=PPointer(Pointer(Instance.ClassType)+PtrUInt(PropInfo^.GetProc))^;
               AMethod.Data:=Instance;
               if ((PropInfo^.PropProcs shr 6) and 1)<>0 then
                 Result:=TGetShortStrProcIndex(AMethod)(PropInfo^.Index)
@@ -1054,7 +1403,7 @@ begin
               if (PropInfo^.PropProcs and 3)=ptStatic then
                 AMethod.Code:=PropInfo^.GetProc
               else
-                AMethod.Code:=PPointer(Pointer(Instance.ClassType)+Ptrint(PropInfo^.GetProc))^;
+                AMethod.Code:=PPointer(Pointer(Instance.ClassType)+PtrUInt(PropInfo^.GetProc))^;
               AMethod.Data:=Instance;
               if ((PropInfo^.PropProcs shr 6) and 1)<>0 then
                 Result:=TGetAnsiStrProcIndex(AMethod)(PropInfo^.Index)
@@ -1077,10 +1426,10 @@ var
   AMethod : TMethod;
 begin
   case Propinfo^.PropType^.Kind of
-{$ifdef HASWIDESTRING}
     tkWString:
       SetWideStrProp(Instance,PropInfo,Value);
-{$endif HASWIDESTRING}
+    tkUString:
+       SetUnicodeStrProp(Instance,PropInfo,Value);
     tkSString:
       begin
         case (PropInfo^.PropProcs shr 2) and 3 of
@@ -1089,10 +1438,10 @@ begin
           ptstatic,
           ptvirtual :
             begin
-              if (PropInfo^.PropProcs and 3)=ptStatic then
+              if ((PropInfo^.PropProcs shr 2) and 3)=ptStatic then
                 AMethod.Code:=PropInfo^.SetProc
               else
-                AMethod.Code:=PPointer(Pointer(Instance.ClassType)+Ptrint(PropInfo^.SetProc))^;
+                AMethod.Code:=PPointer(Pointer(Instance.ClassType)+PtrUInt(PropInfo^.SetProc))^;
               AMethod.Data:=Instance;
               if ((PropInfo^.PropProcs shr 6) and 1)<>0 then
                 TSetShortStrProcIndex(AMethod)(PropInfo^.Index,Value)
@@ -1112,7 +1461,7 @@ begin
               if ((PropInfo^.PropProcs shr 2) and 3)=ptStatic then
                 AMethod.Code:=PropInfo^.SetProc
               else
-                AMethod.Code:=PPointer(Pointer(Instance.ClassType)+Ptrint(PropInfo^.SetProc))^;
+                AMethod.Code:=PPointer(Pointer(Instance.ClassType)+PtrUInt(PropInfo^.SetProc))^;
               AMethod.Data:=Instance;
               if ((PropInfo^.PropProcs shr 6) and 1)<>0 then
                 TSetAnsiStrProcIndex(AMethod)(PropInfo^.Index,Value)
@@ -1137,7 +1486,6 @@ begin
 end;
 
 
-{$ifdef HASWIDESTRING}
 Function GetWideStrProp(Instance: TObject; const PropName: string): WideString;
 begin
   Result:=GetWideStrProp(Instance, FindPropInfo(Instance, PropName));
@@ -1161,6 +1509,8 @@ begin
   case Propinfo^.PropType^.Kind of
     tkSString,tkAString:
       Result:=GetStrProp(Instance,PropInfo);
+    tkUString :
+      Result := GetUnicodeStrProp(Instance,PropInfo);
     tkWString:
       begin
         case (PropInfo^.PropProcs) and 3 of
@@ -1195,6 +1545,8 @@ begin
   case Propinfo^.PropType^.Kind of
     tkSString,tkAString:
        SetStrProp(Instance,PropInfo,Value);
+    tkUString:
+       SetUnicodeStrProp(Instance,PropInfo,Value);
     tkWString:
       begin
         case (PropInfo^.PropProcs shr 2) and 3 of
@@ -1218,8 +1570,93 @@ begin
   end;
 end;
 
-{$endif HASWIDESTRING}
+Function GetUnicodeStrProp(Instance: TObject; const PropName: string): UnicodeString;
+begin
+  Result:=GetUnicodeStrProp(Instance, FindPropInfo(Instance, PropName));
+end;
 
+
+procedure SetUnicodeStrProp(Instance: TObject; const PropName: string; const Value: UnicodeString);
+begin
+  SetUnicodeStrProp(Instance,FindPropInfo(Instance,PropName),Value);
+end;
+
+
+Function GetUnicodeStrProp(Instance: TObject; PropInfo: PPropInfo): UnicodeString;
+type
+  TGetUnicodeStrProcIndex=function(index:longint):UnicodeString of object;
+  TGetUnicodeStrProc=function():UnicodeString of object;
+var
+  AMethod : TMethod;
+begin
+  Result:='';
+  case Propinfo^.PropType^.Kind of
+    tkSString,tkAString:
+      Result:=GetStrProp(Instance,PropInfo);
+    tkWString:
+      Result:=GetWideStrProp(Instance,PropInfo);
+    tkUString:
+      begin
+        case (PropInfo^.PropProcs) and 3 of
+          ptField:
+            Result := PUnicodeString(Pointer(Instance)+PtrUInt(PropInfo^.GetProc))^;
+          ptstatic,
+          ptvirtual :
+            begin
+              if (PropInfo^.PropProcs and 3)=ptStatic then
+                AMethod.Code:=PropInfo^.GetProc
+              else
+                AMethod.Code:=PPointer(Pointer(Instance.ClassType)+PtrUInt(PropInfo^.GetProc))^;
+              AMethod.Data:=Instance;
+              if ((PropInfo^.PropProcs shr 6) and 1)<>0 then
+                Result:=TGetUnicodeStrProcIndex(AMethod)(PropInfo^.Index)
+              else
+                Result:=TGetUnicodeStrProc(AMethod)();
+            end;
+        end;
+      end;
+  end;
+end;
+
+
+Procedure SetUnicodeStrProp(Instance: TObject; PropInfo: PPropInfo; const Value: UnicodeString);
+type
+  TSetUnicodeStrProcIndex=procedure(index:longint;s:UnicodeString) of object;
+  TSetUnicodeStrProc=procedure(s:UnicodeString) of object;
+var
+  AMethod : TMethod;
+begin
+  case Propinfo^.PropType^.Kind of
+    tkSString,tkAString:
+       SetStrProp(Instance,PropInfo,Value);
+    tkWString:
+       SetWideStrProp(Instance,PropInfo,Value);
+    tkUString:
+      begin
+        case (PropInfo^.PropProcs shr 2) and 3 of
+          ptField:
+            PUnicodeString(Pointer(Instance)+PtrUInt(PropInfo^.SetProc))^:=Value;
+          ptstatic,
+          ptvirtual :
+            begin
+              if ((PropInfo^.PropProcs shr 2) and 3)=ptStatic then
+                AMethod.Code:=PropInfo^.SetProc
+              else
+                AMethod.Code:=PPointer(Pointer(Instance.ClassType)+PtrUInt(PropInfo^.SetProc))^;
+              AMethod.Data:=Instance;
+              if ((PropInfo^.PropProcs shr 6) and 1)<>0 then
+                TSetUnicodeStrProcIndex(AMethod)(PropInfo^.Index,Value)
+              else
+                TSetUnicodeStrProc(AMethod)(Value);
+            end;
+        end;
+      end;
+  end;
+end;
+
+
+
+{$ifndef FPUNONE}
 
 { ---------------------------------------------------------------------
   Float properties
@@ -1233,10 +1670,8 @@ type
   TGetDoubleProcIndex = function(Index: integer): Double of object;
   TGetSingleProc = function:Single of object;
   TGetSingleProcIndex = function(Index: integer):Single of object;
-{$ifdef HASCURRENCY}
   TGetCurrencyProc = function : Currency of object;
   TGetCurrencyProcIndex = function(Index: integer) : Currency of object;
-{$endif HASCURRENCY}
 var
   AMethod : TMethod;
 begin
@@ -1245,17 +1680,15 @@ begin
     ptField:
       Case GetTypeData(PropInfo^.PropType)^.FloatType of
        ftSingle:
-         Result:=PSingle(Pointer(Instance)+Ptrint(PropInfo^.GetProc))^;
+         Result:=PSingle(Pointer(Instance)+PtrUInt(PropInfo^.GetProc))^;
        ftDouble:
-         Result:=PDouble(Pointer(Instance)+Ptrint(PropInfo^.GetProc))^;
+         Result:=PDouble(Pointer(Instance)+PtrUInt(PropInfo^.GetProc))^;
        ftExtended:
-         Result:=PExtended(Pointer(Instance)+Ptrint(PropInfo^.GetProc))^;
+         Result:=PExtended(Pointer(Instance)+PtrUInt(PropInfo^.GetProc))^;
        ftcomp:
-         Result:=PComp(Pointer(Instance)+Ptrint(PropInfo^.GetProc))^;
-{$ifdef HASCURRENCY}
+         Result:=PComp(Pointer(Instance)+PtrUInt(PropInfo^.GetProc))^;
        ftcurr:
-         Result:=PCurrency(Pointer(Instance)+Ptrint(PropInfo^.GetProc))^;
-{$endif HASCURRENCY}
+         Result:=PCurrency(Pointer(Instance)+PtrUInt(PropInfo^.GetProc))^;
        end;
     ptStatic,
     ptVirtual:
@@ -1263,31 +1696,29 @@ begin
         if (PropInfo^.PropProcs and 3)=ptStatic then
           AMethod.Code:=PropInfo^.GetProc
         else
-          AMethod.Code:=PPointer(Pointer(Instance.ClassType)+Ptrint(PropInfo^.GetProc))^;
+          AMethod.Code:=PPointer(Pointer(Instance.ClassType)+PtrUInt(PropInfo^.GetProc))^;
         AMethod.Data:=Instance;
         Case GetTypeData(PropInfo^.PropType)^.FloatType of
           ftSingle:
-            if ((PropInfo^.PropProcs shr 6) and 1)<>0 then
+            if ((PropInfo^.PropProcs shr 6) and 1)=0 then
               Result:=TGetSingleProc(AMethod)()
             else
               Result:=TGetSingleProcIndex(AMethod)(PropInfo^.Index);
           ftDouble:
-            if ((PropInfo^.PropProcs shr 6) and 1)<>0 then
+            if ((PropInfo^.PropProcs shr 6) and 1)=0 then
               Result:=TGetDoubleProc(AMethod)()
             else
               Result:=TGetDoubleProcIndex(AMethod)(PropInfo^.Index);
           ftExtended:
-            if ((PropInfo^.PropProcs shr 6) and 1)<>0 then
+            if ((PropInfo^.PropProcs shr 6) and 1)=0 then
               Result:=TGetExtendedProc(AMethod)()
             else
               Result:=TGetExtendedProcIndex(AMethod)(PropInfo^.Index);
-          {$ifdef HASCURRENCY}
           ftCurr:
-            if ((PropInfo^.PropProcs shr 6) and 1)<>0 then
+            if ((PropInfo^.PropProcs shr 6) and 1)=0 then
               Result:=TGetCurrencyProc(AMethod)()
             else
               Result:=TGetCurrencyProcIndex(AMethod)(PropInfo^.Index);
-          {$endif HASCURRENCY}
         end;
       end;
   end;
@@ -1297,15 +1728,13 @@ end;
 Procedure SetFloatProp(Instance : TObject;PropInfo : PPropInfo; Value : Extended);
 type
   TSetExtendedProc = procedure(const AValue: Extended) of object;
-  TSetExtendedProcIndex = procedure(Index: integer; const AValue: Extended) of object;
+  TSetExtendedProcIndex = procedure(Index: integer; AValue: Extended) of object;
   TSetDoubleProc = procedure(const AValue: Double) of object;
-  TSetDoubleProcIndex = procedure(Index: integer; const AValue: Double) of object;
+  TSetDoubleProcIndex = procedure(Index: integer; AValue: Double) of object;
   TSetSingleProc = procedure(const AValue: Single) of object;
-  TSetSingleProcIndex = procedure(Index: integer; const AValue: Single) of object;
-{$ifdef HASCURRENCY}
+  TSetSingleProcIndex = procedure(Index: integer; AValue: Single) of object;
   TSetCurrencyProc = procedure(const AValue: Currency) of object;
-  TSetCurrencyProcIndex = procedure(Index: integer; const AValue: Currency) of object;
-{$endif HASCURRENCY}
+  TSetCurrencyProcIndex = procedure(Index: integer;  AValue: Currency) of object;
 Var
   AMethod : TMethod;
 begin
@@ -1313,22 +1742,20 @@ begin
     ptfield:
       Case GetTypeData(PropInfo^.PropType)^.FloatType of
         ftSingle:
-          PSingle(Pointer(Instance)+Ptrint(PropInfo^.SetProc))^:=Value;
+          PSingle(Pointer(Instance)+PtrUInt(PropInfo^.SetProc))^:=Value;
         ftDouble:
-          PDouble(Pointer(Instance)+Ptrint(PropInfo^.SetProc))^:=Value;
+          PDouble(Pointer(Instance)+PtrUInt(PropInfo^.SetProc))^:=Value;
         ftExtended:
-          PExtended(Pointer(Instance)+Ptrint(PropInfo^.SetProc))^:=Value;
+          PExtended(Pointer(Instance)+PtrUInt(PropInfo^.SetProc))^:=Value;
 {$ifdef FPC_COMP_IS_INT64}
         ftComp:
           PComp(Pointer(Instance)+PtrUInt(PropInfo^.SetProc))^:=trunc(Value);
 {$else FPC_COMP_IS_INT64}
         ftComp:
-          PComp(Pointer(Instance)+PtrUInt(PropInfo^.SetProc))^:=Value;
+          PComp(Pointer(Instance)+PtrUInt(PropInfo^.SetProc))^:=Comp(Value);
 {$endif FPC_COMP_IS_INT64}
-{$ifdef HASCURRENCY}
         ftCurr:
- 	  PCurrency(Pointer(Instance)+PtrUInt(PropInfo^.SetProc))^:=Value;
-{$endif HASCURRENCY}
+          PCurrency(Pointer(Instance)+PtrUInt(PropInfo^.SetProc))^:=Value;
        end;
     ptStatic,
     ptVirtual:
@@ -1336,31 +1763,29 @@ begin
         if ((PropInfo^.PropProcs shr 2) and 3)=ptStatic then
           AMethod.Code:=PropInfo^.SetProc
         else
-          AMethod.Code:=PPointer(Pointer(Instance.ClassType)+Ptrint(PropInfo^.SetProc))^;
+          AMethod.Code:=PPointer(Pointer(Instance.ClassType)+PtrUInt(PropInfo^.SetProc))^;
         AMethod.Data:=Instance;
         Case GetTypeData(PropInfo^.PropType)^.FloatType of
           ftSingle:
-            if ((PropInfo^.PropProcs shr 6) and 1)<>0 then
+            if ((PropInfo^.PropProcs shr 6) and 1)=0 then
               TSetSingleProc(AMethod)(Value)
             else
               TSetSingleProcIndex(AMethod)(PropInfo^.Index,Value);
           ftDouble:
-            if ((PropInfo^.PropProcs shr 6) and 1)<>0 then
+            if ((PropInfo^.PropProcs shr 6) and 1)=0 then
               TSetDoubleProc(AMethod)(Value)
             else
               TSetDoubleProcIndex(AMethod)(PropInfo^.Index,Value);
           ftExtended:
-            if ((PropInfo^.PropProcs shr 6) and 1)<>0 then
+            if ((PropInfo^.PropProcs shr 6) and 1)=0 then
               TSetExtendedProc(AMethod)(Value)
             else
               TSetExtendedProcIndex(AMethod)(PropInfo^.Index,Value);
-          {$ifdef HASCURRENCY}
           ftCurr:
-            if ((PropInfo^.PropProcs shr 6) and 1)<>0 then
+            if ((PropInfo^.PropProcs shr 6) and 1)=0 then
               TSetCurrencyProc(AMethod)(Value)
             else
               TSetCurrencyProcIndex(AMethod)(PropInfo^.Index,Value);
-          {$endif HASCURRENCY}
         end;
       end;
   end;
@@ -1378,6 +1803,7 @@ begin
   SetFloatProp(Instance,FindPropInfo(Instance,PropName),Value);
 end;
 
+{$endif}
 
 { ---------------------------------------------------------------------
   Method properties
@@ -1397,7 +1823,7 @@ begin
   case (PropInfo^.PropProcs) and 3 of
     ptfield:
       begin
-        Value:=PMethod(Pointer(Instance)+Ptrint(PropInfo^.GetProc));
+        Value:=PMethod(Pointer(Instance)+PtrUInt(PropInfo^.GetProc));
         if Value<>nil then
           Result:=Value^;
       end;
@@ -1407,7 +1833,7 @@ begin
         if (PropInfo^.PropProcs and 3)=ptStatic then
           AMethod.Code:=PropInfo^.GetProc
         else
-          AMethod.Code:=PPointer(Pointer(Instance.ClassType)+Ptrint(PropInfo^.GetProc))^;
+          AMethod.Code:=PPointer(Pointer(Instance.ClassType)+PtrUInt(PropInfo^.GetProc))^;
         AMethod.Data:=Instance;
         if ((PropInfo^.PropProcs shr 6) and 1)<>0 then
           Result:=TGetMethodProcIndex(AMethod)(PropInfo^.Index)
@@ -1420,26 +1846,26 @@ end;
 
 Procedure SetMethodProp(Instance : TObject;PropInfo : PPropInfo; const Value : TMethod);
 type
-  TSetMethodProcIndex=procedure(index:longint;p:PMethod) of object;
-  TSetMethodProc=procedure(p:PMethod) of object;
+  TSetMethodProcIndex=procedure(index:longint;p:TMethod) of object;
+  TSetMethodProc=procedure(p:TMethod) of object;
 var
   AMethod : TMethod;
 begin
   case (PropInfo^.PropProcs shr 2) and 3 of
     ptfield:
-      PMethod(Pointer(Instance)+Ptrint(PropInfo^.SetProc))^ := Value;
+      PMethod(Pointer(Instance)+PtrUInt(PropInfo^.SetProc))^ := Value;
     ptstatic,
     ptvirtual :
       begin
         if ((PropInfo^.PropProcs shr 2) and 3)=ptStatic then
           AMethod.Code:=PropInfo^.SetProc
         else
-          AMethod.Code:=PPointer(Pointer(Instance.ClassType)+Ptrint(PropInfo^.SetProc))^;
+          AMethod.Code:=PPointer(Pointer(Instance.ClassType)+PtrUInt(PropInfo^.SetProc))^;
         AMethod.Data:=Instance;
         if ((PropInfo^.PropProcs shr 6) and 1)<>0 then
-          TSetMethodProcIndex(AMethod)(PropInfo^.Index,@Value)
+          TSetMethodProcIndex(AMethod)(PropInfo^.Index,Value)
         else
-          TSetMethodProc(AMethod)(@Value);
+          TSetMethodProc(AMethod)(Value);
       end;
   end;
 end;
@@ -1535,7 +1961,7 @@ end;
 
 Function PropIsType(Instance: TObject; const PropName: string; TypeKind: TTypeKind): Boolean;
 begin
-  Result:=FindPropInfo(Instance,PropName)^.PropType^.Kind=TypeKind
+  Result:=PropType(Instance,PropName)=TypeKind
 end;
 
 Function PropIsType(AClass: TClass; const PropName: string; TypeKind: TTypeKind): Boolean;
@@ -1559,40 +1985,3 @@ begin
 end;
 
 end.
-{
-  $Log: typinfo.pp,v $
-  Revision 1.45  2005/04/16 09:24:29  michael
-  + Moved constants to rtlconsts and added callbacks for variant support
-
-  Revision 1.44  2005/04/14 17:43:07  michael
-  + Added getPropValue by Uberto Barbini
-
-  Revision 1.43  2005/04/05 06:44:25  marco
-   * Currency property patch from Dean Zobec
-
-  Revision 1.42  2005/04/03 11:50:58  marco
-   * patch for 3854 added. There are probably more places that need explicit
-  currency handling.
-
-  Revision 1.41  2005/03/14 21:15:52  florian
-    * fixed compilation on i386
-
-  Revision 1.40  2005/03/14 19:16:06  peter
-    * getordprop supports int64
-
-  Revision 1.39  2005/02/26 20:59:38  florian
-    * fixed 1.0.10 issue
-
-  Revision 1.38  2005/02/26 11:37:01  florian
-    + overload of GetPropList added
-
-  Revision 1.37  2005/02/22 12:14:56  marco
-   * getproplist sorted param added.
-
-  Revision 1.36  2005/02/14 17:13:31  peter
-    * truncate log
-
-  Revision 1.35  2005/02/08 16:10:29  florian
-    * TTOrdType -> TOrdType
-
-}

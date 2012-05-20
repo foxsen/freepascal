@@ -1,4 +1,4 @@
-{ %target=linux,freebsd }
+{ %target=linux,freebsd,darwin,solaris,aix }
 
 {$mode objfpc}
 program testr;
@@ -29,7 +29,6 @@ begin
     f:=f*10.0;
     f:=cosh(f);
     writeln(buf,round(F));
-    f:=cosh(f);
     end;
 end;
 
@@ -43,4 +42,3 @@ end;
 begin
   DoTest;
 end.
-

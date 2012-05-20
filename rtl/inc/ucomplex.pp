@@ -1,5 +1,4 @@
 {
-    $Id: ucomplex.pp,v 1.4 2005/02/14 17:13:29 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Pierre Muller,
     member of the Free Pascal development team.
@@ -13,6 +12,10 @@
 
  **********************************************************************}
 Unit UComplex;
+{$ifndef VER2_0}
+{$INLINE ON}
+{$define TEST_INLINE}
+{$endif VER2_0}
 
 { created for FPC by Pierre Muller }
 { inpired from the complex unit from  JD GAYRARD mai 95 }
@@ -21,6 +24,7 @@ Unit UComplex;
 
   interface
 
+{$ifndef FPUNONE}
     uses math;
 
     type complex = record
@@ -312,14 +316,35 @@ Unit UComplex;
   inline;
   {$endif TEST_INLINE}
     { division : z := znum / zden }
-    var
-       denom : real;
-    begin
-       with zden do denom := (re * re) + (im * im);
-       { generates a fpu exception if denom=0 as for reals }
-       z.re := ((znum.re * zden.re) + (znum.im * zden.im)) / denom;
-       z.im := ((znum.im * zden.re) - (znum.re * zden.im)) / denom;
-    end;
+    { The following algorithm is used to properly handle
+      denominator overflow:
+
+                 |  a + b(d/c)   c - a(d/c)
+                 |  ---------- + ---------- I     if |d| < |c|
+      a + b I    |  c + d(d/c)   a + d(d/c)
+      -------  = |
+      c + d I    |  b + a(c/d)   -a+ b(c/d)
+                 |  ---------- + ---------- I     if |d| >= |c|
+                 |  d + c(c/d)   d + c(c/d)
+    }
+     var
+       tmp, denom : real;
+     begin
+       if ( abs(zden.re) > abs(zden.im) ) then
+       begin
+          tmp := zden.im / zden.re;
+          denom := zden.re + zden.im * tmp;
+          z.re := (znum.re + znum.im * tmp) / denom;
+          z.im := (znum.im - znum.re * tmp) / denom;
+       end
+       else
+       begin
+          tmp := zden.re / zden.im;
+          denom := zden.im + zden.re * tmp;
+          z.re := (znum.im + znum.re * tmp) / denom;
+          z.im := (-znum.re + znum.im * tmp) / denom;
+       end;
+     end;
 
     operator / (znum : complex; r : real) z : complex;
       { division : z := znum / r }
@@ -348,7 +373,7 @@ Unit UComplex;
   function carg (z : complex): real;
     { argument : 0 / z = p ei0 }
     begin
-       carg := arctan2(z.re, z.im);
+       carg := arctan2(z.im, z.re);
     end;
 
   function cong (z : complex) : complex;
@@ -405,12 +430,9 @@ Unit UComplex;
   function cln (z : complex) : complex;
     { natural logarithm : r := ln(z) }
     { ln( p exp(i0)) = ln(p) + i0 + 2kpi }
-    var modz : real;
     begin
-       with z do
-         modz := (re * re) + (im * im);
-       cln.re := ln(modz);
-       cln.im := arctan2(z.re, z.im);
+       cln.re := ln(cmod(z));
+       cln.im := arctan2(z.im, z.re);
     end;
 
   function csqrt (z : complex) : complex;
@@ -550,7 +572,7 @@ Unit UComplex;
     {                          _________  }
     { argch(z) = -/+ ln(z + i.V 1 - z.z)  }
     begin
-       carg_ch:=-cln(z+i*csqrt(z*z-1.0));
+       carg_ch:=-cln(z+i*csqrt(1.0-z*z));
     end;
 
   function carg_sh (z : complex) : complex;
@@ -565,7 +587,7 @@ Unit UComplex;
     { hyperbolic arc tangent }
     { argth(z) = 1/2 ln((z + 1) / (1 - z)) }
     begin
-       carg_th:=cln((z+1.0)/(z-1.0))/2.0;
+       carg_th:=cln((z+1.0)/(1.0-z))/2.0;
     end;
 
   { functions to write out a complex value }
@@ -612,10 +634,7 @@ Unit UComplex;
     end;
 
 
+{$else}
+implementation
+{$endif FPUNONE}
 end.
-{
-  $Log: ucomplex.pp,v $
-  Revision 1.4  2005/02/14 17:13:29  peter
-    * truncate log
-
-}

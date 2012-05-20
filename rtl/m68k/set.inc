@@ -1,5 +1,4 @@
 {
-    $Id: set.inc,v 1.4 2005/02/14 17:13:30 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Carl-Eric Codere,
     member of the Free Pascal development team.
@@ -163,7 +162,7 @@
           { adjust value to correct endian }
           lsl.w  #8,d0
           pea    p
-          jsr    SET_SET_BYTE
+//          jsr    SET_SET_BYTE
           sub.b  #1,d0
           bra    @LSetRLoop
        @Lend:
@@ -420,9 +419,3 @@
         end;
      end;
 
-{
-  $Log: set.inc,v $
-  Revision 1.4  2005/02/14 17:13:30  peter
-    * truncate log
-
-}

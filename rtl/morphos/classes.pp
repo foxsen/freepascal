@@ -1,5 +1,4 @@
 {
-    $Id: classes.pp,v 1.3 2005/03/07 17:57:24 peter Exp $
     This file is part of the Free Component Library (FCL)
     Copyright (c) 1999-2002 by the Free Pascal development team
 
@@ -27,6 +26,9 @@ uses
   sysutils,
   rtlconsts,
   types,
+{$ifdef FPC_TESTGENERICS}
+  fgl,
+{$endif}
   typinfo;
 
 {$i classesh.inc}
@@ -46,12 +48,3 @@ finalization
   CommonCleanup;
 
 end.
-{
-  $Log: classes.pp,v $
-  Revision 1.3  2005/03/07 17:57:24  peter
-    * renamed rtlconst to rtlconsts
-
-  Revision 1.2  2005/02/14 17:13:30  peter
-    * truncate log
-
-}

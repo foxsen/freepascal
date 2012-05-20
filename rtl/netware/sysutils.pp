@@ -1,5 +1,4 @@
 {
-    $Id: sysutils.pp,v 1.20 2005/02/26 14:38:14 florian Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Florian Klaempfl
     member of the Free Pascal development team
@@ -19,6 +18,7 @@ unit sysutils;
 interface
 
 {$MODE objfpc}
+{$MODESWITCH OUT}
 { force ansistrings }
 {$H+}
 
@@ -27,6 +27,7 @@ uses DOS;
 {$I nwsys.inc}
 {$I errno.inc}
 {$DEFINE HAS_SLEEP}
+{$DEFINE HAS_OSERROR}
 
 TYPE
   TNetwareFindData =
@@ -72,6 +73,10 @@ implementation
   uses
     sysconst;
 
+{$define FPC_FEXPAND_DRIVES}
+{$define FPC_FEXPAND_VOLUMES}
+{$define FPC_FEXPAND_NO_DEFAULT_PATHS}
+
 { Include platform independent implementation part }
 {$i sysutils.inc}
 
@@ -80,7 +85,7 @@ implementation
                               File Functions
 ****************************************************************************}
 
-Function FileOpen (Const FileName : string; Mode : Integer) : Longint;
+Function FileOpen (Const FileName : string; Mode : Integer) : THandle;
 VAR NWOpenFlags : longint;
 BEGIN
   NWOpenFlags:=0;
@@ -95,57 +100,68 @@ BEGIN
 end;
 
 
-Function FileCreate (Const FileName : String) : Longint;
+Function FileCreate (Const FileName : String) : THandle;
 
 begin
   FileCreate:=_open(Pchar(FileName),O_RdWr or O_Creat or O_Trunc,0);
 end;
 
-Function FileCreate (Const FileName : String; mode:longint) : Longint;
+Function FileCreate (Const FileName : String; Rights:longint) : THandle;
 
 begin
   FileCreate:=FileCreate (FileName);
 end;
 
 
-Function FileRead (Handle : Longint; Var Buffer; Count : longint) : Longint;
+Function FileCreate (Const FileName : String; ShareMode: Longint; Rights:longint) : THandle;
+
+begin
+  FileCreate:=FileCreate (FileName);
+end;
+
+
+Function FileRead (Handle : THandle; Out Buffer; Count : longint) : longint;
 
 begin
   FileRead:=_read (Handle,@Buffer,Count);
 end;
 
 
-Function FileWrite (Handle : Longint; const Buffer; Count : Longint) : Longint;
+Function FileWrite (Handle : THandle; const Buffer; Count : Longint) : longint;
 
 begin
   FileWrite:=_write (Handle,@Buffer,Count);
 end;
 
 
-Function FileSeek (Handle,FOffset,Origin : Longint) : Longint;
+Function FileSeek (Handle : THandle; FOffset,Origin : Longint) : Longint;
 
 begin
   FileSeek:=_lseek (Handle,FOffset,Origin);
 end;
 
 
-Function FileSeek (Handle : Longint; FOffset,Origin : Int64) : Int64;
+Function FileSeek (Handle : THandle; FOffset: Int64; Origin: Longint) : Int64;
 begin
   {$warning need to add 64bit FileSeek }
   FileSeek:=FileSeek(Handle,Longint(FOffset),Longint(Origin));
 end;
 
 
-Procedure FileClose (Handle : Longint);
+Procedure FileClose (Handle : THandle);
 
 begin
   _close(Handle);
 end;
 
-Function FileTruncate (Handle,Size: Longint) : boolean;
+Function FileTruncate (Handle : THandle; Size: Int64) : boolean;
 
 begin
-  FileTruncate:=(_chsize(Handle,Size) = 0);
+  if Size > high (longint) then
+   FileTruncate := false
+{$WARNING Possible support for 64-bit FS to be checked!}
+  else
+   FileTruncate:=(_chsize(Handle,Size) = 0);
 end;
 
 Function FileLock (Handle,FOffset,FLen : Longint) : Longint;
@@ -219,7 +235,7 @@ END;
 
 
 
-Function FindFirst (Const Path : String; Attr : Longint; Var Rslt : TSearchRec) : Longint;
+Function FindFirst (Const Path : String; Attr : Longint; out Rslt : TSearchRec) : Longint;
 begin
   IF path = '' then
     exit (18);
@@ -269,7 +285,7 @@ begin
 end;
 
 
-Function FileGetDate (Handle : Longint) : Longint;
+Function FileGetDate (Handle : THandle) : Longint;
 Var Info : NWStatBufT;
     PTM  : PNWTM;
 begin
@@ -287,7 +303,7 @@ begin
 end;
 
 
-Function FileSetDate (Handle,Age : Longint) : Longint;
+Function FileSetDate (Handle : THandle; Age : Longint) : Longint;
 begin
   { i think its impossible under netware from FileHandle. I dident found a way to get the
     complete pathname of a filehandle, that would be needed for ChangeDirectoryEntry }
@@ -447,7 +463,7 @@ end;
                               Misc Functions
 ****************************************************************************}
 
-procedure Beep;
+procedure SysBeep;
 begin
   _RingTheBell;
 end;
@@ -525,7 +541,7 @@ begin
 end;
 
 
-function ExecuteProcess(Const Path: AnsiString; Const ComLine: AnsiString):integer;
+function ExecuteProcess(Const Path: AnsiString; Const ComLine: AnsiString;Flags:TExecuteFlags=[]):integer;
 
 var
   e : EOSError;
@@ -549,7 +565,7 @@ end;
 
 
 function ExecuteProcess (const Path: AnsiString;
-                                  const ComLine: array of AnsiString): integer;
+                                  const ComLine: array of AnsiString;Flags:TExecuteFlags=[]): integer;
 
 var
   CommandLine: AnsiString;
@@ -570,6 +586,13 @@ begin
   _delay (milliseconds);
 end;
 
+Function GetLastOSError : Integer;
+
+begin
+  Result:=Integer(__get_errno_ptr^);
+end;
+
+
 
 {****************************************************************************
                               Initialization code
@@ -578,16 +601,7 @@ end;
 Initialization
   InitExceptions;       { Initialize exceptions. OS independent }
   InitInternational;    { Initialize internationalization settings }
+  OnBeep:=@SysBeep;
 Finalization
   DoneExceptions;
 end.
-{
-
-  $Log: sysutils.pp,v $
-  Revision 1.20  2005/02/26 14:38:14  florian
-    + SysLocale
-
-  Revision 1.19  2005/02/14 17:13:30  peter
-    * truncate log
-
-}

@@ -1,5 +1,4 @@
 {
-    $Id: procinfo.pas,v 1.18 2005/02/14 17:13:07 peter Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl
 
     Information about the current procedure that is being compiled
@@ -35,25 +34,37 @@ unit procinfo;
       symconst,symtype,symdef,symsym,
       { aasm }
       cpubase,cpuinfo,cgbase,cgutils,
-      aasmbase,aasmtai
+      aasmbase,aasmtai,aasmdata,
+      optutils
       ;
 
     const
-      inherited_inlining_flags : tprocinfoflags = [pi_do_call];
+      inherited_inlining_flags : tprocinfoflags =
+        [pi_do_call,
+         { the stack frame can't be removed in this case }
+         pi_has_assembler_block,
+         pi_uses_exceptions];
 
 
     type
-       {# This object gives information on the current routine being
-          compiled.
+       tsavedlabels = array[Boolean] of TAsmLabel;
+
+       { This object gives information on the current routine being
+         compiled.
        }
        tprocinfo = class(tlinkedlistitem)
+       private
+          { list to store the procinfo's of the nested procedures }
+          nestedprocs : tlinkedlist;
+          procedure addnestedproc(child: tprocinfo);
+       public
           { pointer to parent in nested procedures }
           parent : tprocinfo;
-          {# the definition of the routine itself }
+          { the definition of the routine itself }
           procdef : tprocdef;
-          { procinfo of the main procedure that is inlining
-            the current function, only used in tcgcallnode.inlined_pass2 }
-          inlining_procinfo : tprocinfo;
+          { nested implicit finalzation procedure, used for platform-specific
+            exception handling }
+          finalize_procinfo : tprocinfo;
           { file location of begin of procedure }
           entrypos  : tfileposinfo;
           { file location of end of procedure }
@@ -64,13 +75,13 @@ unit procinfo;
           exitswitches  : tlocalswitches;
 
           { Size of the parameters on the stack }
-          para_stack_size : longint;
+          para_stack_size : pint;
 
           { Offset of temp after para/local are allocated }
           tempstart : longint;
 
-          {# some collected informations about the procedure
-             see pi_xxxx constants above
+          { some collected informations about the procedure
+            see pi_xxxx constants above
           }
           flags : tprocinfoflags;
 
@@ -79,28 +90,45 @@ unit procinfo;
 
           { register containing currently the got }
           got : tregister;
-          gotlabel : tasmlabel;
+          CurrGOTLabel : tasmlabel;
 
           { Holds the reference used to store all saved registers. }
           save_regs_ref : treference;
 
-          { label to leave the sub routine }
-          aktexitlabel : tasmlabel;
+          { Last assembler instruction of procedure prologue }
+          endprologue_ai : tlinkedlistitem;
 
-          {# The code for the routine itself, excluding entry and
-             exit code. This is a linked list of tai classes.
+          { Amount of stack adjustment after all alignments }
+          final_localsize : longint;
+
+          { Labels for TRUE/FALSE condition, BREAK and CONTINUE }
+          CurrBreakLabel,
+          CurrContinueLabel,
+          CurrTrueLabel,
+          CurrFalseLabel : tasmlabel;
+
+          { label to leave the sub routine }
+          CurrExitLabel : tasmlabel;
+
+          { The code for the routine itself, excluding entry and
+            exit code. This is a linked list of tai classes.
           }
-          aktproccode : taasmoutput;
+          aktproccode : TAsmList;
           { Data (like jump tables) that belongs to this routine }
-          aktlocaldata : taasmoutput;
+          aktlocaldata : TAsmList;
 
           { max. of space need for parameters }
           maxpushedparasize : aint;
 
+          { is this a constructor that calls another constructor on itself
+            (either inherited, or another constructor of the same class)?
+            Requires different entry code for some targets. }
+          ConstructorCallingConstructor: boolean;
+
           constructor create(aparent:tprocinfo);virtual;
           destructor destroy;override;
 
-          procedure allocate_push_parasize(size:longint);virtual;
+          procedure allocate_push_parasize(size:longint);
 
           function calc_stackframe_size:longint;virtual;
 
@@ -110,6 +138,27 @@ unit procinfo;
 
           { Generate parameter information }
           procedure generate_parameter_info;virtual;
+
+          { Allocate got register }
+          procedure allocate_got_register(list: TAsmList);virtual;
+
+          { get frame pointer }
+          procedure init_framepointer; virtual;
+
+          { Destroy the entire procinfo tree, starting from the outermost parent }
+          procedure destroy_tree;
+
+          { Store CurrTrueLabel and CurrFalseLabel to saved and generate new ones }
+          procedure save_jump_labels(out saved: tsavedlabels);
+
+          { Restore CurrTrueLabel and CurrFalseLabel from saved }
+          procedure restore_jump_labels(const saved: tsavedlabels);
+
+          function get_first_nestedproc: tprocinfo;
+          function has_nestedprocs: boolean;
+
+          { Add to parent's list of nested procedures even if parent is a 'main' procedure }
+          procedure force_nested;
        end;
        tcprocinfo = class of tprocinfo;
 
@@ -117,7 +166,6 @@ unit procinfo;
        cprocinfo : tcprocinfo;
        { information about the current sub routine being parsed (@var(pprocinfo))}
        current_procinfo : tprocinfo;
-
 
 implementation
 
@@ -138,33 +186,91 @@ implementation
         procdef:=nil;
         para_stack_size:=0;
         flags:=[];
+        init_framepointer;
         framepointer:=NR_FRAME_POINTER_REG;
         maxpushedparasize:=0;
         { asmlists }
-        aktproccode:=Taasmoutput.Create;
-        aktlocaldata:=Taasmoutput.Create;
-        reference_reset(save_regs_ref);
+        aktproccode:=TAsmList.Create;
+        aktlocaldata:=TAsmList.Create;
+        reference_reset(save_regs_ref,sizeof(aint));
         { labels }
-        objectlibrary.getlabel(aktexitlabel);
-        objectlibrary.getlabel(gotlabel);
+        current_asmdata.getjumplabel(CurrExitLabel);
+        current_asmdata.getjumplabel(CurrGOTLabel);
+        CurrBreakLabel:=nil;
+        CurrContinueLabel:=nil;
+        CurrTrueLabel:=nil;
+        CurrFalseLabel:=nil;
+        if Assigned(parent) and (parent.procdef.parast.symtablelevel>=normal_function_level) then
+          parent.addnestedproc(Self);
       end;
 
+    procedure tprocinfo.force_nested;
+      begin
+        if Assigned(parent) and (parent.procdef.parast.symtablelevel<normal_function_level) then
+          parent.addnestedproc(Self);
+      end;
 
     destructor tprocinfo.destroy;
       begin
+         nestedprocs.free;
          aktproccode.free;
          aktlocaldata.free;
       end;
 
+    procedure tprocinfo.destroy_tree;
+      var
+        hp: tprocinfo;
+      begin
+        hp:=Self;
+        while Assigned(hp.parent) do
+          hp:=hp.parent;
+        hp.Free;
+      end;
+
+    procedure tprocinfo.addnestedproc(child: tprocinfo);
+      begin
+        if nestedprocs=nil then
+          nestedprocs:=TLinkedList.Create;
+        nestedprocs.insert(child);
+      end;
+
+    function tprocinfo.get_first_nestedproc: tprocinfo;
+      begin
+        if assigned(nestedprocs) then
+          result:=tprocinfo(nestedprocs.first)
+        else
+          result:=nil;
+      end;
+
+    function tprocinfo.has_nestedprocs: boolean;
+      begin
+        result:=assigned(nestedprocs) and (nestedprocs.count>0);
+      end;
+
+    procedure tprocinfo.save_jump_labels(out saved: tsavedlabels);
+      begin
+        saved[false]:=CurrFalseLabel;
+        saved[true]:=CurrTrueLabel;
+        current_asmdata.getjumplabel(CurrTrueLabel);
+        current_asmdata.getjumplabel(CurrFalseLabel);
+      end;
+
+    procedure tprocinfo.restore_jump_labels(const saved: tsavedlabels);
+      begin
+        CurrFalseLabel:=saved[false];
+        CurrTrueLabel:=saved[true];
+      end;
 
     procedure tprocinfo.allocate_push_parasize(size:longint);
       begin
+        if size>maxpushedparasize then
+          maxpushedparasize:=size;
       end;
 
 
     function tprocinfo.calc_stackframe_size:longint;
       begin
-        result:=Align(tg.direction*tg.lasttemp,aktalignment.localalignmin);
+        result:=Align(tg.direction*tg.lasttemp,current_settings.alignment.localalignmin);
       end;
 
 
@@ -175,16 +281,24 @@ implementation
 
     procedure tprocinfo.generate_parameter_info;
       begin
-        { generate callee paraloc register info, it returns the size that
+        { generate callee paraloc register info, it initialises the size that
           is allocated on the stack }
-        para_stack_size:=paramanager.create_paraloc_info(procdef,calleeside);
+        procdef.init_paraloc_info(calleeside);
+        para_stack_size:=procdef.calleeargareasize;
+      end;
+
+
+    procedure tprocinfo.allocate_got_register(list: TAsmList);
+      begin
+        { most os/cpu combo's don't use this yet, so not yet abstract }
+      end;
+
+
+    procedure tprocinfo.init_framepointer;
+      begin
+        { most targets use a constant, but some have a typed constant that must
+          be initialized }
       end;
 
 
 end.
-{
-  $Log: procinfo.pas,v $
-  Revision 1.18  2005/02/14 17:13:07  peter
-    * truncate log
-
-}

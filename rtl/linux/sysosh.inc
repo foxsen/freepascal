@@ -1,5 +1,4 @@
 {
-    $Id: sysosh.inc,v 1.3 2005/04/13 20:10:50 florian Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2001 by Free Pascal development team
 
@@ -20,8 +19,10 @@
 type
   { fd are int in C also for 64bit targets (x86_64) }
   THandle = Longint;
-  TThreadID = THandle;
   
+  { pthread_t is defined as an "unsigned long" }
+  TThreadID = PtrUInt;
+
   { pthread_mutex_t }
   PRTLCriticalSection = ^TRTLCriticalSection;
   TRTLCriticalSection = record
@@ -36,17 +37,4 @@ type
   end;
 
 
-{
-   $Log: sysosh.inc,v $
-   Revision 1.3  2005/04/13 20:10:50  florian
-     + TThreadID
-
-   Revision 1.2  2005/02/14 17:13:30  peter
-     * truncate log
-
-   Revision 1.1  2005/02/06 11:20:52  peter
-     * threading in system unit
-     * removed systhrds unit
-
-}
 

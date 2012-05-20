@@ -1,5 +1,4 @@
 {
-    $Id: sysnr.inc,v 1.3 2005/02/14 17:13:30 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Michael Van Canneyt,
     member of the Free Pascal development team.
@@ -411,6 +410,9 @@ const
      syscall_nr_mlockall = 242;
   { syscall: "munlockall" ret: "int" args:  }
      syscall_nr_munlockall = 243;
+  { syscall: "__sigtimedwait" ret:"int" args: "const sigset_t *" "siginfo_t *" 
+             "struct timespec *" }
+     syscall_nr_sigtimedwait = 244;
   { syscall: "__posix_rename" ret: "int" args: "const char  " "const char  "  }
      syscall_nr___posix_rename = 270;
   { syscall: "swapctl" ret: "int" args: "int" "const void  " "int"  }
@@ -489,7 +491,27 @@ const
      syscall_nr_issetugid = 305;
   { syscall: "utrace" ret: "int" args: "const char  " "void  " "size_t"  }
      syscall_nr_utrace = 306;
-     syscall_nr_MAXSYSCALL = 340;
+  { syscall: "__sigaction_sigtramp" ret: "int" args: "int" "const struct sigaction *"
+	     "struct sigaction *" "const void *" "int"  }
+     syscall_nr___sigaction_sigtramp = 340;
+{$ifdef CPUX86_64}
+  {$define USE_SIGACTION_SIGTRAMP}
+{$endif}
+  { syscall: "kqueue" ret: "int" args: }
+     syscall_nr_kqueue = 344;
+  { syscall: "kevent" ret: "int" args: "int" "const struct kevent *" "size_t" "struct kevent *" "size_t" "const struct timespec *" }
+    syscall_nr_kevent = 345;
+  { syscall: "__stat30" ret: "int" args: "const char *" "struct stat *" }
+    syscall_nr___stat30 = 387;
+
+  { syscall: "__fstat30" ret: "int" args: "int" "struct stat *" }
+    syscall_nr___fstat30 = 388;
+
+  { syscall: "__lstat30" ret: "int" args: "const char *" "struct stat *" }
+    syscall_nr___lstat30 = 389;
+
+
+     syscall_nr_MAXSYSCALL = 390;
      syscall_nr_NSYSENT = 512;
 
 
@@ -498,12 +520,21 @@ const
   and removed those who are equal
   and added some equivalents, unchecked PM }
 
+{$ifdef NETBSD_USE_STAT30}
 { syscall_nr_compat_12_fstat12 = 189 }
 { syscall_nr___fstat13 = 279 }
- syscall_nr_fstat                       = syscall_nr___fstat13;
+ syscall_nr_fstat                       = syscall_nr___fstat30;
 { syscall_nr_compat_12_lstat12 = 190 }
 {  syscall_nr___lstat13 = 280 }
+ syscall_nr_lstat                       = syscall_nr___lstat30;
+{ syscall_nr_compat_12_stat12 = 188; }
+{ syscall_nr___stat13 = 278 }
+ syscall_nr_stat                        = syscall_nr___stat30;
+{$else}
+ syscall_nr_fstat                       = syscall_nr___fstat13;
  syscall_nr_lstat                       = syscall_nr___lstat13;
+ syscall_nr_stat                        = syscall_nr___stat13;
+{$endif}
 { syscall_nr_sigaction                   = 342; MISSING }
 { syscall: "__sigaction14" ret: "int" args: "int" "const struct sigaction  " "struct sigaction  "  }
  syscall_nr_sigaction = syscall_nr___sigaction14;
@@ -520,9 +551,6 @@ const
  syscall_nr_sigreturn = syscall_nr___sigreturn14;
 { Note: syscall_nr_sigreturn was not on the checked list for FreeBSD }
 
-{ syscall_nr_compat_12_stat12 = 188; }
-{ syscall_nr___stat13 = 278 }
- syscall_nr_stat                        = syscall_nr___stat13;
 { syscall_nr_wait4 = 7 }
  syscall_nr_waitpid                     =   syscall_nr_wait4;
 { This one seems to be missing !!!!
@@ -531,9 +559,3 @@ const
 { syscall_nr_compat_12_getdirentries = 196 }
  syscall_nr_getdirentries = syscall_nr_compat_12_getdirentries;
 
-{
-  $Log: sysnr.inc,v $
-  Revision 1.3  2005/02/14 17:13:30  peter
-    * truncate log
-
-}

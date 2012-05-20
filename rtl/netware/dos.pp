@@ -1,5 +1,4 @@
 {
-    $Id: dos.pp,v 1.15 2005/02/14 17:13:30 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team.
 
@@ -106,7 +105,7 @@ end;
 
 function GetMsCount: int64;
 begin
-  GetMsCount := Nwserv.GetCurrentTicks * 55;
+  GetMsCount := int64 (Nwserv.GetCurrentTicks) * 55;
 end;
 
 
@@ -372,8 +371,7 @@ begin
   else
     begin
        { allow backslash as slash }
-       for i:=1 to length(dirlist) do
-         if dirlist[i]='\' then dirlist[i]:='/';
+       DoDirSeparators(dirlist);
        repeat
          p1:=pos(';',dirlist);
          if p1<>0 then
@@ -487,11 +485,7 @@ begin
 
     end;
 
-    for i := 1 to length(GetEnv) do
-
-      if GetEnv[i] = '\' then
-
-        GetEnv[i] := '/';
+    DoDirSeparators(getenv);
 
   end else
   begin
@@ -517,13 +511,3 @@ End;
 
 
 end.
-{
-  $Log: dos.pp,v $
-  Revision 1.15  2005/02/14 17:13:30  peter
-    * truncate log
-
-  Revision 1.14  2005/01/11 11:32:33  armin
-  * fixed compile error in getenv
-
-}
-

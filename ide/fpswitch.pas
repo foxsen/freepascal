@@ -1,5 +1,4 @@
 {
-    $Id: fpswitch.pas,v 1.22 2005/02/14 17:13:18 peter Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 1998-2000 by Berczi Gabor
 
@@ -30,16 +29,17 @@ const
 type
     TParamID =
       (idNone,idAlign,idRangeChecks,idStackChecks,idIOChecks,
-       idOverflowChecks,idAsmDirect,idAsmATT,idAsmIntel,idAsmMot,
+       idOverflowChecks,idObjMethCallChecks,
+       idAsmDirect,idAsmATT,idAsmIntel,idAsmMot,idAsmStandard,
        idSymInfNone,idSymInfGlobalOnly,idSymInfGlobalLocal,
        idStackSize,idHeapSize,idStrictVarStrings,idExtendedSyntax,
        idMMXOps,idTypedAddress,idPackRecords,idPackEnum,idStackFrames,
        idReferenceInfo,idDebugInfo,idBoolEval,
-       idLongString,idTypeInfo);
+       idAnsiString,idTypeInfo);
 
     TSwitchMode = (om_Normal,om_Debug,om_Release);
 
-    TSwitchItemTyp = (ot_Select,ot_Boolean,ot_String,ot_Longint);
+    TSwitchItemTyp = (ot_Select,ot_Boolean,ot_String,ot_MultiString,ot_Longint);
 
     PSwitchItem = ^TSwitchItem;
     TSwitchItem = object(TObject)
@@ -49,8 +49,9 @@ type
       ParamID   : TParamID;
       constructor Init(const n,p:string; AID: TParamID);
       function  NeedParam:boolean;virtual;
-      function  ParamValue:string;virtual;
+      function  ParamValue(nr:sw_integer):string;virtual;
       function  ParamValueBool(SM: TSwitchMode):boolean;virtual;
+      function  ParamCount:sw_integer;virtual;
       function  GetSwitchStr(SM: TSwitchMode): string; virtual;
       function  GetNumberStr(SM: TSwitchMode): string; virtual;
       function  GetOptionStr(SM: TSwitchMode): string; virtual;
@@ -82,16 +83,28 @@ type
       SeparateSpaces : boolean;
       constructor Init(const n,p:string;AID: TParamID; mult,allowspaces:boolean);
       function  NeedParam:boolean;virtual;
-      function  ParamValue:string;virtual;
+      function  ParamValue(nr:sw_integer):string;virtual;
       procedure Reset;virtual;
     end;
+
+    PMultiStringItem = ^TMultiStringItem;
+    TMultiStringItem = object(TSwitchItem)
+      MultiStr : array[TSwitchMode] of PunsortedStringCollection;
+      constructor Init(const n,p:string;AID: TParamID);
+      function  NeedParam:boolean;virtual;
+      function  ParamValue(nr:sw_integer):string;virtual;
+      function  ParamCount:sw_integer;virtual;
+      procedure Reset;virtual;
+      destructor done;virtual;
+    end;
+
 
     PLongintItem = ^TLongintItem;
     TLongintItem = object(TSwitchItem)
       Val : array[TSwitchMode] of longint;
       constructor Init(const n,p:string; AID: TParamID);
       function  NeedParam:boolean;virtual;
-      function  ParamValue:string;virtual;
+      function  ParamValue(nr:sw_integer):string;virtual;
       function  GetNumberStr(SM: TSwitchMode): string; virtual;
       procedure Reset;virtual;
     end;
@@ -111,13 +124,16 @@ type
       procedure AddBooleanItem(const name,param:string; AID: TParamID);
       procedure AddLongintItem(const name,param:string; AID: TParamID);
       procedure AddStringItem(const name,param:string;AID: TParamID;mult,allowspaces:boolean);
+      procedure AddMultiStringItem(const name,param:string;AID: TParamID);
       function  GetCurrSel:integer;
       function  GetCurrSelParam : String;
       function  GetBooleanItem(index:integer):boolean;
       function  GetLongintItem(index:integer):longint;
       function  GetStringItem(index:integer):string;
+      function  GetMultiStringItem(index:integer):PunsortedStringCollection;
+      function  GetItemTyp(index:integer):TSwitchItemTyp;
       procedure SetCurrSel(index:integer);
-      function  SetCurrSelParam(const s : String) : boolean;
+      function  SetCurrSelParam(const s:string) : boolean;
       procedure SetBooleanItem(index:integer;b:boolean);
       procedure SetLongintItem(index:integer;l:longint);
       procedure SetStringItem(index:integer;const s:string);
@@ -149,11 +165,12 @@ var
     ProfileInfoSwitches,
     {MemorySizeSwitches, doubled !! }
     SyntaxSwitches,
+    CompilerModeSwitches,
     VerboseSwitches,
     CodegenSwitches,
     OptimizationSwitches,
-    OptimizingGoalSwitches,
-    ProcessorSwitches,
+    ProcessorCodeGenerationSwitches,
+    ProcessorOptimizationSwitches,
     AsmReaderSwitches,
     AsmInfoSwitches,
     AsmOutputSwitches,
@@ -166,6 +183,8 @@ var
 { write/read the Switches to fpc.cfg file }
 procedure WriteSwitches(const fn:string);
 procedure ReadSwitches(const fn:string);
+
+procedure UpdateAsmOutputSwitches;
 
 { initialize }
 procedure InitSwitches;
@@ -180,10 +199,139 @@ implementation
 uses
   Dos,
   GlobType,
-  FPString,FPVars,FPUtils;
+  CpuInfo,
+  FPVars,FPUtils;
 
 var
   CfgFile : text;
+
+{$ifdef useresstrings}
+resourcestring
+{$else}
+const
+{$endif}
+      msg_automaticallycreateddontedit = 'Automatically created file, don''t edit.';
+
+      { Compiler options }
+      opt_objectpascal = 'Object pascal support';
+      opt_clikeoperators = 'C-like operators';
+      opt_stopafterfirsterror = 'Stop after first error';
+      opt_allowlabelandgoto = 'Allow LABEL and GOTO';
+      opt_cplusplusstyledinline = 'Allow inline';
+      opt_globalcmacros = 'Enable macros';
+      opt_allowstaticinobjects = 'Allow STATIC in objects';
+      opt_assertions = 'Include assertion code';
+      opt_kylix = 'Load Kylix compat. unit';
+      opt_ansistring = 'Use Ansi Strings';
+      opt_strictvarstrings = 'Strict var-strings';
+      opt_extendedsyntax = 'Extended syntax';
+      opt_allowmmxoperations = 'Allow MMX operations';
+
+      opt_mode_freepascal = 'Free Pascal dialect';
+      opt_mode_objectpascal = 'Object Pascal extension on';
+      opt_mode_turbopascal = 'Turbo Pascal compatible';
+      opt_mode_delphi = 'Delphi compatible';
+      opt_mode_macpascal = 'Macintosh Pascal dialect';
+      opt_mode_gnupascal = 'GNU Pascal';
+      { Verbose options }
+      opt_warnings = '~W~arnings';
+      opt_notes = 'N~o~tes';
+      opt_hints = '~H~ints';
+      opt_generalinfo = 'General ~I~nfo';
+      opt_usedtriedinfo = '~U~sed,tried info';
+      opt_all = '~A~ll';
+      opt_showallprocsonerror = 'Show all ~P~rocedures if error';
+      { Checking options }
+      opt_rangechecking = '~R~ange checking';
+      opt_stackchecking = '~S~tack checking';
+      opt_iochecking = '~I~/O checking';
+      opt_overflowchecking = 'Integer ~o~verflow checking';
+      opt_objmethcallvalid = 'Object ~m~ethod call checking';
+      { Code generation }
+      opt_pic = '~P~osition independent code';
+      opt_smart = 'Create smart~l~inkable units';
+      { Code options }
+      //opt_generatefastercode = 'Generate ~f~aster code';
+      opt_generatesmallercode = 'G~e~nerate smaller code';
+      opt_useregistervariables = 'Use regis~t~er-variables';
+      opt_uncertainoptimizations = '~U~ncertain optimizations';
+      opt_level1optimizations = 'Level ~1~ optimizations';
+      opt_level2optimizations = 'Level ~2~ optimizations';
+      opt_level3optimizations = 'Level ~3~ optimizations';
+      { optimization processor target }
+      opt_i386486 = 'i~3~86/i486';
+      opt_pentium = 'P~e~ntium (tm)';
+      opt_pentiummmx = 'PentiumMM~X~ (tm)';
+      opt_pentiumpro = '~P~entium2/PentiumM/AMD';
+      opt_pentiumiv = 'Pentium~4~';
+      opt_pentiumm = 'Pentium~M~';
+      opt_m68000 = 'm~6~8000';
+      opt_m68020 = 'm680~2~0';
+      { Assembler options }
+      opt_directassembler = '~D~irect assembler';
+      opt_defaultassembler = '~D~efault style assembler';
+      opt_attassembler = '~A~T&T style assembler';
+      opt_intelassembler = '~I~ntel style assembler';
+      opt_motassembler = '~M~otorola style assembler';
+      opt_standardassembler = '~S~tandard style assembler';
+      opt_listsource = '~L~ist source';
+      opt_listregisterallocation = 'list ~r~egister allocation';
+      opt_listtempallocation = 'list ~t~emp allocation';
+      opt_listnodeallocation = 'list ~n~ode allocation';
+      opt_useasmpipe = 'use ~p~ipe with assembler';
+      { Assembler output selection }
+      opt_usedefaultas = 'Use ~d~efault output';
+      opt_usegnuas = 'Use ~G~NU as';
+      { I386 assembler output selection }
+      opt_usenasmcoff = 'Use ~N~ASM coff';
+      opt_usenasmwin32 = 'Use NASM ~w~in32';
+      opt_usenasmwdosx= 'Use ~N~ASM w~d~osx';
+      opt_usenasmelf = 'Use NASM el~f~';
+      opt_usenasmbeos = 'Use NASM ~b~eos';
+      opt_usenasmobj = 'Use NASM ~o~bj';
+      opt_usemasm = 'Use ~M~ASM';
+      opt_usetasm = 'Use ~T~ASM';
+      opt_usewasm = 'Use ~W~ASM';
+      opt_usecoff = 'Use internal ~c~off';
+      opt_usepecoff = 'Use internal ~p~ecoff';
+      opt_usepecoffwdosx = 'Use internal pewdos~x~';
+      opt_useelf= 'Use internal ~e~lf';
+
+      { Browser options }
+      opt_nobrowser = 'N~o~ browser';
+      opt_globalonlybrowser = 'Only Glob~a~l browser';
+      opt_localglobalbrowser = '~L~ocal and global browser';
+      { Conditional defines }
+      opt_conditionaldefines = 'Conditio~n~al defines';
+      { Memory sizes }
+      opt_stacksize = '~S~tack size';
+      opt_heapsize = '~H~eap size';
+      { Directory options }
+      opt_unitdirectories = '~U~nit directories';
+      opt_includedirectories = '~I~nclude directories';
+      opt_librarydirectories = '~L~ibrary directories';
+      opt_objectdirectories = '~O~bject directories';
+      opt_exeppudirectories = '~E~XE output directory';
+      opt_ppuoutputdirectory = '~P~PU output directory';
+      opt_cross_tools_directory = '~C~ross tools directory';
+      opt_dynamic_linker = '~D~ynamic linker path';
+      { Library options }
+      opt_librariesdefault = '~T~arget default';
+      opt_dynamiclibraries = 'Link to ~D~ynamic libraries';
+      opt_staticlibraries = 'Link to ~S~tatic libraries';
+      opt_smartlibraries = 'Link to S~m~art libraries';
+      opt_forcestaticlibs = 'Only link to st~a~tic libraries';
+      { Symbol info options }
+      opt_stripalldebugsymbols = '~S~trip all debug symbols from executable';
+      opt_nogendebugsymbolinfo = 'Skip ~d~ebug information generation';
+      opt_gendebugsymbolinfo = 'Generate ~d~ebug symbol information';
+      opt_gensymbolandbacktraceinfo = 'Generate also backtrace ~l~ine information';
+      opt_valgrindinfo = 'Generate ~v~algrind compatible debug info';
+      { Link after options }
+      opt_linkafter = 'Call ~l~inker after';
+      { Profiling options }
+      opt_noprofileinfo = '~N~o profile information';
+      opt_gprofinfo = 'Generate profile code for g~p~rof';
 
 {*****************************************************************************
             TSwitchItem
@@ -204,7 +352,7 @@ begin
 end;
 
 
-function TSwitchItem.ParamValue:string;
+function TSwitchItem.ParamValue(nr:sw_integer):string;
 begin
   ParamValue:='';
 end;
@@ -213,6 +361,12 @@ function TSwitchItem.ParamValueBool(SM: TSwitchMode):boolean;
 begin
   Abstract;
   ParamValueBool:=false;
+end;
+
+function TSwitchItem.ParamCount:sw_integer;
+
+begin
+  ParamCount:=1;
 end;
 
 function TSwitchItem.GetSwitchStr(SM: TSwitchMode): string;
@@ -310,7 +464,7 @@ begin
 end;
 
 
-function TStringItem.ParamValue:string;
+function TStringItem.ParamValue(nr:sw_integer):string;
 begin
   ParamValue:=Str[SwitchesMode];
 end;
@@ -321,6 +475,58 @@ begin
   FillChar(Str,sizeof(Str),0);
 end;
 
+{*****************************************************************************
+            TMultiStringItem
+*****************************************************************************}
+
+constructor TMultiStringItem.Init(const n,p:string;AID:TParamID);
+
+var i:TSwitchMode;
+
+begin
+  inherited Init(n,p,AID);
+  typ:=ot_MultiString;
+  for i:=low(MultiStr) to high(MultiStr) do
+    new(MultiStr[i],init(5,5));
+{  Reset;}
+end;
+
+function TMultiStringItem.NeedParam:boolean;
+
+begin
+  NeedParam:=(multistr[SwitchesMode]^.count<>0);
+end;
+
+function TMultiStringItem.ParamValue(nr:sw_integer):string;
+
+begin
+  ParamValue:=MultiStr[SwitchesMode]^.at(nr)^;
+end;
+
+function TMultiStringItem.ParamCount:sw_integer;
+
+begin
+  ParamCount:=Multistr[SwitchesMode]^.count;
+end;
+
+procedure TMultiStringItem.Reset;
+
+var i:TSwitchMode;
+
+begin
+  for i:=low(multiStr) to high(multiStr) do
+    MultiStr[i]^.freeall;
+end;
+
+destructor TmultiStringItem.done;
+
+var i:TSwitchMode;
+
+begin
+  for i:=low(MultiStr) to high(MultiStr) do
+    dispose(MultiStr[i],done);
+  inherited done;
+end;
 
 {*****************************************************************************
                 TLongintItem
@@ -340,7 +546,7 @@ begin
 end;
 
 
-function TLongintItem.ParamValue:string;
+function TLongintItem.ParamValue(nr:sw_integer):string;
 var
   s : string;
 begin
@@ -411,11 +617,15 @@ begin
 end;
 
 
-procedure TSwitches.AddStringItem(const name,param:string;AID: TParamID;mult,allowspaces:boolean);
+procedure TSwitches.AddStringItem(const name,param:string;AID:TParamID;mult,allowspaces:boolean);
 begin
   Items^.Insert(New(PStringItem,Init(name,Param,AID,mult,allowspaces)));
 end;
 
+procedure TSwitches.AddMultiStringItem(const name,param:string;AID:TParamID);
+begin
+  Items^.Insert(New(PMultiStringItem,Init(name,Param,AID)));
+end;
 
 function TSwitches.ItemCount:integer;
 begin
@@ -497,6 +707,29 @@ begin
    GetStringItem:='';
 end;
 
+function TSwitches.GetMultiStringItem(index:integer):PUnsortedStringCollection;
+
+var p:PMultiStringItem;
+
+begin
+  if index<ItemCount then
+    p:=Items^.at(Index)
+  else
+    p:=nil;
+  if (p<>nil) and (p^.typ=ot_multistring) then
+    GetMultiStringItem:=p^.MultiStr[SwitchesMode]
+  else
+    GetMultiStringItem:=nil;
+end;
+
+function TSwitches.GetItemTyp(index:integer):TSwitchItemTyp;
+
+var p:PSwitchItem;
+
+begin
+  assert(index<itemcount);
+  GetItemTyp:=PSwitchItem(items^.at(index))^.typ;
+end;
 
 procedure TSwitches.SetBooleanItem(index:integer;b:boolean);
 var
@@ -556,12 +789,12 @@ end;
 
 procedure TSwitches.SetCurrSel(index:integer);
 begin
-  if IsSel then
+  if index<ItemCount then
    SelNr[SwitchesMode]:=index;
 end;
 
 function  TSwitches.SetCurrSelParam(const s : String) : boolean;
-  function checkitem(P:PSwitchItem):boolean;{$ifndef FPC}far;{$endif}
+  function checkitem(P:PSwitchItem):boolean;
   begin
     { empty items are not equivalent to others !! }
     CheckItem:=((S='') and (P^.Param='')) or
@@ -586,7 +819,7 @@ procedure TSwitches.WriteItemsCfg;
 var
   Pref : char;
 
-  procedure writeitem(P:PSwitchItem);{$ifndef FPC}far;{$endif}
+  procedure writeitem(P:PSwitchItem);
   var
     s,s1 : string;
     i,j : integer;
@@ -614,7 +847,8 @@ var
          end
        else
          if P^.Param<>'/' then
-           Writeln(CfgFile,' -'+Pref+P^.Param+P^.ParamValue);
+           for i:=0 to p^.ParamCount-1 do
+             Writeln(CfgFile,' -'+Pref+P^.Param+P^.ParamValue(i));
      end;
   end;
 
@@ -657,12 +891,15 @@ end;
 
 function TSwitches.ReadItemsCfg(const s:string):boolean;
 
-  function checkitem(P:PSwitchItem):boolean;{$ifndef FPC}far;{$endif}
+  function checkitem(P:PSwitchItem):boolean;
   begin
     { empty items are not equivalent to others !! }
     { but -dGDB didn't work because of this PM }
-    CheckItem:=((P^.Param='') and ((S='') or (P^.typ=ot_String))) or
-               ((Length(P^.Param)>0) and (P^.Param=Copy(s,1,length(P^.Param))));
+    CheckItem:=((P^.Param='') and ((S='') or (P^.typ in [ot_Boolean,ot_String]))) or
+               ((Length(P^.Param)>0) and (upcase(P^.Param)=upcase(S)) and
+                not (P^.typ in [ot_Boolean,ot_String])) or
+               ((Length(P^.Param)>0) and (P^.typ<>ot_Select) and
+                (P^.Param=Copy(s,1,length(P^.Param))));
   end;
 
 var
@@ -682,6 +919,8 @@ begin
            else
             PStringItem(FoundP)^.Str[SwitchesMode]:=Copy(s,length(FoundP^.Param)+1,255);
          end;
+      ot_MultiString :
+        PMultiStringItem(foundP)^.MultiStr[SwitchesMode]^.insert(newstr(copy(s,length(foundP^.param)+1,255)));
       ot_Longint : Val(Copy(s,length(FoundP^.Param)+1,255),PLongintItem(FoundP)^.Val[SwitchesMode],code);
      end;
      ReadItemsCfg:=true;
@@ -713,12 +952,13 @@ begin
      SwitchesMode := SWM;
      Writeln(CfgFile,'#IFDEF '+SwitchesModeStr[SwitchesMode]);
      TargetSwitches^.WriteItemsCfg;
+     CompilerModeSwitches^.WriteItemsCfg;
      VerboseSwitches^.WriteItemsCfg;
      SyntaxSwitches^.WriteItemsCfg;
      CodegenSwitches^.WriteItemsCfg;
      OptimizationSwitches^.WriteItemsCfg;
-     OptimizingGoalSwitches^.WriteItemsCfg;
-     ProcessorSwitches^.WriteItemsCfg;
+     ProcessorCodeGenerationSwitches^.WriteItemsCfg;
+     ProcessorOptimizationSwitches^.WriteItemsCfg;
      AsmReaderSwitches^.WriteItemsCfg;
      AsmInfoSwitches^.WriteItemsCfg;
      AsmOutputSwitches^.WriteItemsCfg;
@@ -776,16 +1016,18 @@ begin
                res:=CodegenSwitches^.ReadItemsCfg(s);
                if not res then
                  res:=MemorySwitches^.ReadItemsCfg(s);
+               if not res then
+                 res:=ProcessorCodeGenerationSwitches^.ReadItemsCfg(s);
              end;
        'd' : res:=ConditionalSwitches^.ReadItemsCfg(s);
        'F' : res:=DirectorySwitches^.ReadItemsCfg(s);
        'g' : res:=DebugInfoSwitches^.ReadItemsCfg(s);
        'O' : begin
-               res:=true;
-               if not OptimizationSwitches^.ReadItemsCfg(s) then
-                 if not ProcessorSwitches^.ReadItemsCfg(s) then
-                   res:=OptimizingGoalSwitches^.ReadItemsCfg(s);
+               res:=OptimizationSwitches^.ReadItemsCfg(s);
+               if not res then
+                 res:=ProcessorOptimizationSwitches^.ReadItemsCfg(s);
              end;
+       'M' : res:=CompilerModeSwitches^.ReadItemsCfg(s);
        'p' : res:=ProfileInfoSwitches^.ReadItemsCfg(s);
        's' : res:=LinkAfterSwitches^.ReadItemsCfg(s);
        'R' : res:=AsmReaderSwitches^.ReadItemsCfg(s);
@@ -825,7 +1067,7 @@ var
   P : PStringItem;
   S : String;
   c : char;
-  function checkitem(P:PSwitchItem):boolean;{$ifndef FPC}far;{$endif}
+  function checkitem(P:PSwitchItem):boolean;
   begin
     CheckItem:=(P^.Typ=ot_string) and (P^.Param=c);
   end;
@@ -847,30 +1089,103 @@ begin
 end;
 
 {*****************************************************************************
+             AsmOutputInitialize
+*****************************************************************************}
+
+procedure UpdateAsmOutputSwitches;
+var
+  ta : tasm;
+  st : string;
+begin
+  if assigned(AsmOutputSwitches) then
+    dispose(AsmOutputSwitches,Done);
+  New(AsmOutputSwitches,InitSelect('A'));
+  with AsmOutputSwitches^ do
+   begin
+
+     AddDefaultSelect(opt_usedefaultas);
+     for ta:=low(tasm) to high(tasm) do
+       if assigned(asminfos[ta]) and
+         ((target_info.system in asminfos[ta]^.supported_targets) or
+         (system_any in asminfos[ta]^.supported_targets)) then
+         begin
+           st:='Asm '+asminfos[ta]^.idtxt;
+           if asminfos[ta]^.idtxt='AS' then
+             st:=opt_usegnuas;
+{$ifdef I386}
+           if asminfos[ta]^.idtxt='NASMCOFF' then
+             st:=opt_usenasmcoff;
+           if asminfos[ta]^.idtxt='NASMOBJ' then
+             st:=opt_usenasmobj;
+           if asminfos[ta]^.idtxt='NASMWIN32' then
+             st:=opt_usenasmwin32;
+           if asminfos[ta]^.idtxt='NASMWDOSX' then
+             st:=opt_usenasmwdosx;
+           if asminfos[ta]^.idtxt='NASMELF' then
+             st:=opt_usenasmelf;
+           if asminfos[ta]^.idtxt='NASMBEOS' then
+             st:=opt_usenasmbeos;
+           if asminfos[ta]^.idtxt='MASM' then
+             st:=opt_usemasm;
+           if asminfos[ta]^.idtxt='TASM' then
+             st:=opt_usetasm;
+           if asminfos[ta]^.idtxt='WASM' then
+             st:=opt_usewasm;
+           if asminfos[ta]^.idtxt='COFF' then
+             st:=opt_usecoff;
+           if asminfos[ta]^.idtxt='PECOFF' then
+             st:=opt_usepecoff;
+           if asminfos[ta]^.idtxt='PEWDOSX' then
+             st:=opt_usepecoffwdosx;
+           if asminfos[ta]^.idtxt='ELF' then
+             st:=opt_useelf;
+{$endif I386}
+           AddSelectItem(st,asminfos[ta]^.idtxt,idNone);
+         end;
+   end;
+end;
+
+{*****************************************************************************
              Initialize
 *****************************************************************************}
 
 procedure InitSwitches;
 var
   t : tsystem;
+  cpu : tcputype;
+  st : string;
 begin
   New(SyntaxSwitches,Init('S'));
   with SyntaxSwitches^ do
    begin
-     AddBooleanItem(opt_objectpascal,'2',idNone);
-     AddBooleanItem(opt_clikeoperators,'c',idNone);
+//     AddBooleanItem(opt_objectpascal,'2',idNone);
      AddBooleanItem(opt_stopafterfirsterror,'e',idNone);
      AddBooleanItem(opt_allowlabelandgoto,'g',idNone);
-     AddBooleanItem(opt_cplusplusstyledinline,'i',idNone);
      AddBooleanItem(opt_globalcmacros,'m',idNone);
-     AddBooleanItem(opt_tp7compatibility,'o',idNone);
-     AddBooleanItem(opt_delphicompatibility,'d',idNone);
+     AddBooleanItem(opt_cplusplusstyledinline,'i',idNone);
+//     AddBooleanItem(opt_tp7compatibility,'o',idNone);
+//     AddBooleanItem(opt_delphicompatibility,'d',idNone);
+     AddBooleanItem(opt_assertions,'a',idNone);
+     AddBooleanItem(opt_ansistring,'h',idAnsiString);
+     AddBooleanItem(opt_kylix,'k',idNone);
      AddBooleanItem(opt_allowstaticinobjects,'s',idNone);
+     AddBooleanItem(opt_clikeoperators,'c',idNone);
      { Useless as they are not passed to the compiler PM
      AddBooleanItem(opt_strictvarstrings,'/',idStrictVarStrings);
      AddBooleanItem(opt_extendedsyntax,'/',idExtendedSyntax);
      AddBooleanItem(opt_allowmmxoperations,'/',idMMXOps);  }
    end;
+  New(CompilerModeSwitches,InitSelect('M'));
+  with CompilerModeSwitches^ do
+    begin
+       AddSelectItem(opt_mode_freepascal,'fpc',idNone);
+       AddSelectItem(opt_mode_objectpascal,'objfpc',idNone);
+       AddSelectItem(opt_mode_turbopascal,'tp',idNone);
+       AddSelectItem(opt_mode_delphi,'delphi',idNone);
+       AddSelectItem(opt_mode_macpascal,'macpascal',idNone);
+{      GNU Pascal mode doesn't do much, better disable it
+       AddSelectItem(opt_mode_gnupascal,'gpc',idNone);}
+    end;
   New(VerboseSwitches,Init('v'));
   with VerboseSwitches^ do
    begin
@@ -889,21 +1204,20 @@ begin
      AddBooleanItem(opt_stackchecking,'t',idStackChecks);
      AddBooleanItem(opt_iochecking,'i',idIOChecks);
      AddBooleanItem(opt_overflowchecking,'o',idOverflowChecks);
+     AddBooleanItem(opt_objmethcallvalid,'R',idObjMethCallChecks);
+     AddBooleanItem(opt_pic,'g',idNone);
+     AddBooleanItem(opt_smart,'X',idNone);
    end;
-  New(OptimizingGoalSwitches,InitSelect('O'));
-  with OptimizingGoalSwitches^ do
-    begin
-       AddSelectItem(opt_generatefastercode,'G',idNone);
-       AddSelectItem(opt_generatesmallercode,'g',idNone);
-    end;
   New(OptimizationSwitches,Init('O'));
   with OptimizationSwitches^ do
    begin
+     AddBooleanItem(opt_generatesmallercode,'s',idNone);
 {$ifdef I386}
-     AddBooleanItem(opt_useregistervariables,'r',idNone);
-     AddBooleanItem(opt_uncertainoptimizations,'u',idNone);
+     AddBooleanItem(opt_useregistervariables,'oregvar',idNone);
+     AddBooleanItem(opt_uncertainoptimizations,'ouncertain',idNone);
      AddBooleanItem(opt_level1optimizations,'1',idNone);
      AddBooleanItem(opt_level2optimizations,'2',idNone);
+     AddBooleanItem(opt_level3optimizations,'3',idNone);
 {$else not I386}
  {$ifdef m68k}
      AddBooleanItem(opt_level1optimizations,'a',idNone);
@@ -911,19 +1225,69 @@ begin
  {$endif m68k}
 {$endif I386}
    end;
-  New(ProcessorSwitches,InitSelect('O'));
-  with ProcessorSwitches^ do
+  New(ProcessorOptimizationSwitches,InitSelect('O'));
+  with ProcessorOptimizationSwitches^ do
    begin
+     for cpu:=low(tcputype) to high(tcputype) do
+       begin
+         st:=cputypestr[cpu];
 {$ifdef I386}
-     AddSelectItem(opt_i386486,'p1',idNone);
-     AddSelectItem(opt_pentiumandmmx,'p2',idNone);
-     AddSelectItem(opt_pentiumpro,'p3',idNone);
-{$else not I386}
- {$ifdef m68k}
-     AddSelectItem(opt_m68000,'',idNone);
-     AddSelectItem(opt_m68020,'2',idNone);
- {$endif m68k}
+         if st='386' then
+           st:=opt_i386486;
+         if st='PENTIUM' then
+           st:=opt_pentium;
+         if st='PENTIUM2' then
+           st:=opt_pentiummmx;
+         if st='PENTIUM3' then
+           st:=opt_pentiumpro;
+         if st='PENTIUM4' then
+           st:=opt_pentiumiv;
+         if st='PENTIUMM' then
+           st:=opt_pentiumM;
 {$endif not I386}
+{$ifdef m68k}
+         if st='68000' then
+           st:=opt_m68000;
+         if st='68020' then
+           st:=opt_m68020;
+{$endif m68k}
+         if st<>'' then
+           AddSelectItem(st,'p'+cputypestr[cpu],idNone);
+       end;
+   end;
+  New(ProcessorCodeGenerationSwitches,InitSelect('C'));
+  with ProcessorCodeGenerationSwitches^ do
+   begin
+     for cpu:=low(tcputype) to high(tcputype) do
+       begin
+         st:=cputypestr[cpu];
+{$ifdef I386}
+         if st='386' then
+           st:=opt_i386486;
+         if st='PENTIUM' then
+           st:=opt_pentium;
+         if st='PENTIUM2' then
+           st:=opt_pentiummmx;
+         if st='PENTIUM3' then
+           st:=opt_pentiumpro;
+         if st='PENTIUM4' then
+           st:=opt_pentiumiv;
+         if st='PENTIUMM' then
+           st:=opt_pentiumM;
+{$endif not I386}
+{$ifdef m68k}
+         if st='68000' then
+           st:=opt_m68000;
+         if st='68020' then
+           st:=opt_m68020;
+{$endif m68k}
+         { we use the string twice so kill duplicate highlights }
+         while pos('~',st)<>0 do
+           delete(st,pos('~',st),1);
+
+         if st<>'' then
+           AddSelectItem(st,'p'+cputypestr[cpu],idNone);
+       end;
    end;
   New(TargetSwitches,InitSelect('T'));
   with TargetSwitches^ do
@@ -937,12 +1301,15 @@ begin
   with AsmReaderSwitches^ do
    begin
 {$ifdef I386}
-     AddSelectItem(opt_directassembler,'direct',idAsmDirect);
+     AddSelectItem(opt_defaultassembler,'default',idNone);
+{     AddSelectItem(opt_directassembler,'direct',idAsmDirect);}
      AddSelectItem(opt_attassembler,'att',idAsmATT);
      AddSelectItem(opt_intelassembler,'intel',idAsmIntel);
 {$endif I386}
 {$ifdef M68K}
-     AddSelectItem(opt_motassembler,'mot',idAsmDirect);
+     AddSelectItem(opt_defaultassembler,'default',idNone);
+     //AddSelectItem(opt_standardassembler,'standard',idAsmStandard);
+     AddSelectItem(opt_motassembler,'motorola',idAsmMot);
 {$endif M68K}
    end;
   New(AsmInfoSwitches,Init('a'));
@@ -951,22 +1318,10 @@ begin
      AddBooleanItem(opt_listsource,'l',idNone);
      AddBooleanItem(opt_listregisterallocation,'r',idNone);
      AddBooleanItem(opt_listtempallocation,'t',idNone);
+     AddBooleanItem(opt_listnodeallocation,'n',idNone);
+     AddBooleanItem(opt_useasmpipe,'p',idNone);
    end;
-  New(AsmOutputSwitches,InitSelect('A'));
-  with AsmOutputSwitches^ do
-   begin
-     AddDefaultSelect(opt_usedefaultas);
-{$ifdef I386}
-     AddSelectItem(opt_usegnuas,'as',idNone);
-     AddSelectItem(opt_usenasmcoff,'nasmcoff',idNone);
-     AddSelectItem(opt_usenasmelf,'nasmelf',idNone);
-     AddSelectItem(opt_usenasmobj,'nasmobj',idNone);
-     AddSelectItem(opt_usemasm,'masm',idNone);
-     AddSelectItem(opt_usetasm,'tasm',idNone);
-     AddSelectItem(opt_usecoff,'coff',idNone);
-     AddSelectItem(opt_usepecoff,'pecoff',idNone);
-{$endif I386}
-   end;
+  UpdateAsmOutputSwitches;
   New(BrowserSwitches,InitSelect('b'));
   with BrowserSwitches^ do
    begin
@@ -988,13 +1343,14 @@ begin
   New(DirectorySwitches,Init('F'));
   with DirectorySwitches^ do
    begin
-     AddStringItem(opt_unitdirectories,'u',idNone,true,true);
-     AddStringItem(opt_includedirectories,'i',idNone,true,true);
-     AddStringItem(opt_librarydirectories,'l',idNone,true,true);
-     AddStringItem(opt_objectdirectories,'o',idNone,true,true);
+     AddMultiStringItem(opt_unitdirectories,'u',idNone);
+     AddMultiStringItem(opt_includedirectories,'i',idNone);
+     AddMultiStringItem(opt_librarydirectories,'l',idNone);
+     AddMultiStringItem(opt_objectdirectories,'o',idNone);
      AddStringItem(opt_exeppudirectories,'E',idNone,true,true);
      AddStringItem(opt_ppuoutputdirectory,'U',idNone,true,true);
      AddStringItem(opt_cross_tools_directory,'D',idNone,true,true);
+     AddStringItem(opt_dynamic_linker,'L',idNone,false,false);
    end;
 
   New(LibLinkerSwitches,InitSelect('X'));
@@ -1017,6 +1373,7 @@ begin
      AddSelectItem(opt_nogendebugsymbolinfo,'-',idNone);
      AddSelectItem(opt_gendebugsymbolinfo,'',idNone);
      AddSelectItem(opt_gensymbolandbacktraceinfo,'l',idNone);
+     AddSelectItem(opt_valgrindinfo,'v',idNone);
      { AddSelectItem('Generate ~d~bx symbol information','d');
        does not work anyhow (PM) }
    end;
@@ -1050,18 +1407,27 @@ begin
   for i:=low(TSwitchMode) to high(TSwitchMode) do
     begin
        SwitchesMode:=i;
-{$ifdef i386}
+
        { default is Pentium }
-       ProcessorSwitches^.SetCurrSel(1);
+       ProcessorOptimizationSwitches^.SetCurrSel(1);
        { AT&T reader }
        AsmReaderSwitches^.SetCurrSel(1);
-{$endif i386}
+
+       { FPC mode}
+       CompilerModeSwitches^.SetCurrSel(0);
+(* Use platform defaults for memory switches. *)
        { 128k stack }
-       MemorySwitches^.SetLongintItem(0,65536*2);
+{       MemorySwitches^.SetLongintItem(0,65536*2);}
+       MemorySwitches^.SetLongintItem(0,0);
        { 2 MB heap }
-       MemorySwitches^.SetLongintItem(1,1024*1024*2);
+{       MemorySwitches^.SetLongintItem(1,1024*1024*2);}
+       MemorySwitches^.SetLongintItem(1,0);
        { goto/lable allowed }
+       SyntaxSwitches^.SetBooleanItem(1,true);
+       { inline allowed }
        SyntaxSwitches^.SetBooleanItem(3,true);
+       { Exe size complaints are louder than speed complaints: Optimize for size by default. }
+       OptimizationSwitches^.SetBooleanItem(0,true);
        case i of
           om_debug:
             begin
@@ -1073,15 +1439,29 @@ begin
                CodegenSwitches^.SetBooleanItem(2,true);
                { overflow checking }
                CodegenSwitches^.SetBooleanItem(3,true);
+               { method call checking }
+               CodegenSwitches^.SetBooleanItem(4,true);
+               { assertions on }
+               SyntaxSwitches^.SetBooleanItem(4,true);
             end;
           om_normal:
             begin
-               OptimizationSwitches^.SetBooleanItem(2,true);
+               {Register variables.}
+               OptimizationSwitches^.SetBooleanItem(1,true);
+               {Level 1 optimizations.}
+               OptimizationSwitches^.SetBooleanItem(3,true);
             end;
           om_release:
             begin
-               OptimizationSwitches^.SetBooleanItem(2,true);
-               OptimizationSwitches^.SetBooleanItem(3,true);
+               {Register variables.}
+               OptimizationSwitches^.SetBooleanItem(1,true);
+               {Level 2 optimizations.}
+               OptimizationSwitches^.SetBooleanItem(4,true);
+               {Smart linking.}
+               LibLinkerSwitches^.SetCurrSel(3);
+               CodegenSwitches^.SetBooleanItem(6,true);
+               {Strip debug info}
+               OtherLinkerSwitches^.SetBooleanItem(0,true);
             end;
        end;
        { set appriopriate default target }
@@ -1091,13 +1471,15 @@ begin
 end;
 
 procedure DoneSwitches;
+
 begin
   dispose(SyntaxSwitches,Done);
+  dispose(CompilerModeSwitches,Done);
   dispose(VerboseSwitches,Done);
   dispose(CodegenSwitches,Done);
   dispose(OptimizationSwitches,Done);
-  dispose(OptimizingGoalSwitches,Done);
-  dispose(ProcessorSwitches,Done);
+  dispose(ProcessorOptimizationSwitches,Done);
+  dispose(ProcessorCodeGenerationSwitches,Done);
   dispose(BrowserSwitches,Done);
   dispose(TargetSwitches,Done);
   dispose(AsmReaderSwitches,Done);
@@ -1130,8 +1512,10 @@ procedure AddParam(const S: string);
 begin
   MiscParams^.Insert(NewStr(S));
 end;
+
 procedure EnumSwitches(P: PSwitches);
-procedure HandleSwitch(P: PSwitchItem); {$ifndef FPC}far;{$endif}
+
+procedure HandleSwitch(P: PSwitchItem);
 begin
   case P^.ParamID of
 {    idAlign :}
@@ -1139,10 +1523,12 @@ begin
     idStackChecks    : AddSwitch('S'+P^.GetSwitchStr(SM));
     idIOChecks       : AddSwitch('I'+P^.GetSwitchStr(SM));
     idOverflowChecks : AddSwitch('Q'+P^.GetSwitchStr(SM));
+    idObjMethCallChecks: AddSwitch('OBJECTCHECKS'+P^.GetSwitchStr(SM));
 {    idAsmDirect      : if P^.GetParamValueBool[SM] then AddParam('ASMMODE DIRECT');
     idAsmATT         : if P^.GetParamValueBool[SM] then AddParam('ASMMODE ATT');
     idAsmIntel       : if P^.GetParamValueBool[SM] then AddParam('ASMMODE INTEL');
-    idAsmMot         : if P^.GetParamValueBool[SM] then AddParam('ASMMODE MOT');}
+    idAsmMot         : if P^.GetParamValueBool[SM] then AddParam('ASMMODE MOTOROLA');
+    idAsmStandard    : if P^.GetParamValueBool[SM] then AddParam('ASMMODE STANDARD');}
 {    idSymInfNone     : ;
     idSymInfGlobalOnly:;
     idSymInfGlobalLocal:if P^.ParamValueBool(SM) then AddSwitch('L+');}
@@ -1158,7 +1544,7 @@ begin
     idReferenceInfo   : AddSwitch('Y'+P^.GetSwitchStr(SM));
     idDebugInfo       : AddSwitch('D'+P^.GetSwitchStr(SM));
     idBoolEval        : AddSwitch('B'+P^.GetSwitchStr(SM));
-    idLongString      : AddSwitch('H'+P^.GetSwitchStr(SM));
+    idAnsiString      : AddSwitch('H'+P^.GetSwitchStr(SM));
     idTypeInfo        : AddSwitch('M'+P^.GetSwitchStr(SM));
    end;
 end;
@@ -1176,11 +1562,12 @@ begin
   EnumSwitches(DebugInfoSwitches);
   EnumSwitches(ProfileInfoSwitches);
   EnumSwitches(SyntaxSwitches);
+  EnumSwitches(CompilerModeSwitches);
   EnumSwitches(VerboseSwitches);
   EnumSwitches(CodegenSwitches);
   EnumSwitches(OptimizationSwitches);
-  EnumSwitches(OptimizingGoalSwitches);
-  EnumSwitches(ProcessorSwitches);
+  EnumSwitches(ProcessorOptimizationSwitches);
+  EnumSwitches(ProcessorCodeGenerationSwitches);
   EnumSwitches(AsmReaderSwitches);
   EnumSwitches(AsmInfoSwitches);
   EnumSwitches(AsmOutputSwitches);
@@ -1210,9 +1597,3 @@ end;
 
 
 end.
-{
-  $Log: fpswitch.pas,v $
-  Revision 1.22  2005/02/14 17:13:18  peter
-    * truncate log
-
-}

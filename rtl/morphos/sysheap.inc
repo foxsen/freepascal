@@ -1,11 +1,8 @@
 {
-    $Id: sysheap.inc,v 1.1 2005/02/07 21:30:12 peter Exp $
     This file is part of the Free Pascal run time library.
-    Copyright (c) 2001 by Free Pascal development team
+    Copyright (c) 2005 by Free Pascal development team
 
-    This file implements all the base types and limits required
-    for a minimal POSIX compliant subset required to port the compiler
-    to a new OS.
+    Low level memory functions
 
     See the file COPYING.FPC, included in this distribution,
     for details about the copyright.
@@ -16,34 +13,39 @@
 
  **********************************************************************}
 
+{ Enable this for memory allocation debugging }
+{DEFINE MOSFPC_MEMDEBUG}
+
 {*****************************************************************************
       OS Memory allocation / deallocation
  ****************************************************************************}
 
-function SysOSAlloc(size: ptrint): pointer;
+function SysOSAlloc(size: ptruint): pointer;
+{$IFDEF MOSFPC_MEMDEBUG}
+var values: array[0..2] of dword;
+{$ENDIF}
 begin
   result:=AllocPooled(MOS_heapPool,size);
+{$IFDEF MOSFPC_MEMDEBUG}
+  values[0]:=dword(result);
+  values[1]:=dword(size);
+  values[2]:=DWord(Sptr-StackBottom);
+  RawDoFmt('FPC_MEM_DEBUG: $%lx:=SysOSAlloc(%ld), free stack: %ld bytes'+#10,@values,pointer(1),nil);
+{$ENDIF}
 end;
 
 {$define HAS_SYSOSFREE}
 
-procedure SysOSFree(p: pointer; size: ptrint);
+procedure SysOSFree(p: pointer; size: ptruint);
+{$IFDEF MOSFPC_MEMDEBUG}
+var values: array[0..2] of dword;
+{$ENDIF}
 begin
   FreePooled(MOS_heapPool,p,size);
+{$IFDEF MOSFPC_MEMDEBUG}
+  values[0]:=dword(p);
+  values[1]:=dword(size);
+  values[2]:=DWord(Sptr-StackBottom);
+  RawDoFmt('FPC_MEM_DEBUG: SysOSFree($%lx,%ld), free stack: %ld bytes'+#10,@values,pointer(1),nil);
+{$ENDIF}
 end;
-
-
-{
-   $Log: sysheap.inc,v $
-   Revision 1.1  2005/02/07 21:30:12  peter
-     * system unit updated
-
-   Revision 1.1  2005/02/06 16:57:18  peter
-     * threads for go32v2,os,emx,netware
-
-   Revision 1.1  2005/02/06 13:06:20  peter
-     * moved file and dir functions to sysfile/sysdir
-     * win32 thread in systemunit
-
-}
-

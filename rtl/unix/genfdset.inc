@@ -1,5 +1,4 @@
 {
-   $Id: genfdset.inc,v 1.6 2005/02/14 17:13:31 peter Exp $
    This file is part of the Free Pascal run time library.
    (c) 2002 by Marco van de Voort
    members of the Free Pascal development team.
@@ -20,7 +19,7 @@ function fpFD_SET(fdno:cint;var nset : TFDSet): cint;
 Begin
    if (fdno<0) or (fdno > FD_MAXFDSET) Then
        exit(-1);
-   nset[fdno shr ln2bitsinword]:=nset[(fdno) shr ln2bitsinword] OR (1 shl ((fdno) and ln2bitmask));
+   nset[fdno shr ln2bitsinword]:=nset[(fdno) shr ln2bitsinword] OR (culong(1) shl ((fdno) and ln2bitmask));
    fpFD_SET:=0;
 End;
 
@@ -29,11 +28,11 @@ function fpFD_CLR(fdno:cint;var nset : TFDSet): cint;
 Begin
    if (fdno<0) or (fdno >  FD_MAXFDSET) Then
        exit(-1);
-   nset[(fdno) shr ln2bitsinword]:=nset[(fdno) shr ln2bitsinword] AND Cardinal(NOT (1 shl ((fdno) and ln2bitmask)));
+   nset[(fdno) shr ln2bitsinword]:=nset[(fdno) shr ln2bitsinword] AND Cardinal(NOT (culong(1) shl ((fdno) and ln2bitmask)));
    fpFD_CLR:=0;
 End;
 
-function fpFD_ZERO(var nset : TFDSet):cint;
+function fpFD_ZERO(out nset : TFDSet):cint;
 
 var i :longint;
 
@@ -56,15 +55,9 @@ function fpFD_ISSET(fdno:cint;const nset : TFDSet): cint;
 Begin
    if (fdno<0) or (fdno >  FD_MAXFDSET) Then
        exit(-1);
-    if ((nset[(fdno) shr ln2bitsinword]) and (1 shl ((fdno) and ln2bitmask)))>0 Then
+    if ((nset[fdno shr ln2bitsinword]) and (culong(1) shl ((fdno) and ln2bitmask)))>0 Then
      fpFD_ISSET:=1
     else
      fpFD_ISSET:=0;
 End;
 
-{
-   $Log: genfdset.inc,v $
-   Revision 1.6  2005/02/14 17:13:31  peter
-     * truncate log
-
-}

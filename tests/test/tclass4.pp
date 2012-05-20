@@ -1,5 +1,5 @@
-{%RESULT=219 }
-{%OPT=-CR}
+{ %RESULT=219 }
+{ %OPT=-CR }
 {$mode objfpc}
 program test_class;
 
@@ -43,4 +43,3 @@ Begin
   _cla2:=tobj2.create;
   tobj1(pointer(_cla2)).mymethod;
 end.
-

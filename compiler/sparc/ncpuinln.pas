@@ -1,5 +1,4 @@
 {
-    $Id: ncpuinln.pas,v 1.12 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl
 
     Generate SPARC inline nodes
@@ -45,10 +44,10 @@ interface
 implementation
 
     uses
-      systems,
+      systems,globtype,
       cutils,verbose,
       symconst,symdef,
-      aasmtai,aasmcpu,
+      aasmtai,aasmdata,aasmcpu,
       cgbase,pass_2,
       cpubase,paramgr,
       nbas,ncon,ncal,ncnv,nld,
@@ -61,11 +60,11 @@ implementation
     procedure tsparcinlinenode.load_fpu_location;
       begin
         secondpass(left);
-        location_force_fpureg(exprasmlist,left.location,true);
+        location_force_fpureg(current_asmdata.CurrAsmList,left.location,true);
         location_copy(location,left.location);
         if left.location.loc=LOC_CFPUREGISTER then
           begin
-           location.register:=cg.getfpuregister(exprasmlist,location.size);
+           location.register:=cg.getfpuregister(current_asmdata.CurrAsmList,location.size);
            location.loc := LOC_FPUREGISTER;
          end;
       end;
@@ -74,8 +73,6 @@ implementation
     function tsparcinlinenode.first_abs_real : tnode;
       begin
         expectloc:=LOC_FPUREGISTER;
-        registersint:=left.registersint;
-        registersfpu:=max(left.registersfpu,1);
         first_abs_real := nil;
       end;
 
@@ -83,8 +80,6 @@ implementation
     function tsparcinlinenode.first_sqr_real : tnode;
       begin
         expectloc:=LOC_FPUREGISTER;
-        registersint:=left.registersint;
-        registersfpu:=max(left.registersfpu,1);
         first_sqr_real:=nil;
       end;
 
@@ -92,8 +87,6 @@ implementation
     function tsparcinlinenode.first_sqrt_real : tnode;
       begin
         expectloc:=LOC_FPUREGISTER;
-        registersint:=left.registersint;
-        registersfpu:=max(left.registersfpu,1);
         first_sqrt_real := nil;
       end;
 
@@ -101,13 +94,13 @@ implementation
     procedure tsparcinlinenode.second_abs_real;
       begin
         load_fpu_location;
-        case tfloatdef(left.resulttype.def).typ of
+        case tfloatdef(left.resultdef).floattype of
           s32real:
-            exprasmlist.concat(taicpu.op_reg_reg(A_FABSs,left.location.register,location.register));
+            current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_FABSs,left.location.register,location.register));
           s64real:
-            exprasmlist.concat(taicpu.op_reg_reg(A_FABSd,left.location.register,location.register));
+            current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_FABSd,left.location.register,location.register));
           s128real:
-            exprasmlist.concat(taicpu.op_reg_reg(A_FABSq,left.location.register,location.register));
+            current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_FABSq,left.location.register,location.register));
           else
             internalerror(200410031);
         end;
@@ -117,13 +110,13 @@ implementation
     procedure tsparcinlinenode.second_sqr_real;
       begin
         load_fpu_location;
-        case tfloatdef(left.resulttype.def).typ of
+        case tfloatdef(left.resultdef).floattype of
           s32real:
-            exprasmlist.concat(taicpu.op_reg_reg_reg(A_FMULs,left.location.register,left.location.register,location.register));
+            current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_reg(A_FMULs,left.location.register,left.location.register,location.register));
           s64real:
-            exprasmlist.concat(taicpu.op_reg_reg_reg(A_FMULd,left.location.register,left.location.register,location.register));
+            current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_reg(A_FMULd,left.location.register,left.location.register,location.register));
           s128real:
-            exprasmlist.concat(taicpu.op_reg_reg_reg(A_FMULq,left.location.register,left.location.register,location.register));
+            current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_reg(A_FMULq,left.location.register,left.location.register,location.register));
           else
             internalerror(200410032);
         end;
@@ -133,13 +126,13 @@ implementation
     procedure tsparcinlinenode.second_sqrt_real;
       begin
         load_fpu_location;
-        case tfloatdef(left.resulttype.def).typ of
+        case tfloatdef(left.resultdef).floattype of
           s32real:
-            exprasmlist.concat(taicpu.op_reg_reg(A_FSQRTs,left.location.register,location.register));
+            current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_FSQRTs,left.location.register,location.register));
           s64real:
-            exprasmlist.concat(taicpu.op_reg_reg(A_FSQRTd,left.location.register,location.register));
+            current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_FSQRTd,left.location.register,location.register));
           s128real:
-            exprasmlist.concat(taicpu.op_reg_reg(A_FSQRTq,left.location.register,location.register));
+            current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_FSQRTq,left.location.register,location.register));
           else
             internalerror(200410033);
         end;
@@ -148,9 +141,3 @@ implementation
 begin
   cInlineNode:=tsparcinlinenode;
 end.
-{
-  $Log: ncpuinln.pas,v $
-  Revision 1.12  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

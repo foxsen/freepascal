@@ -1,5 +1,4 @@
 {
-    $Id: typefile.inc,v 1.6 2005/02/14 17:13:29 peter Exp $
     This file is part of the Free Pascal Run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team
 
@@ -16,7 +15,7 @@
                     subroutines for typed file handling
 ****************************************************************************}
 
-Procedure assign(var f:TypedFile;const Name:string);
+Procedure Assign(out f:TypedFile;const Name:string);
 {
   Assign Name to file f so it can be used with the file routines
 }
@@ -28,7 +27,7 @@ Begin
 End;
 
 
-Procedure assign(var f:TypedFile;p:pchar);
+Procedure Assign(out f:TypedFile;p:pchar);
 {
   Assign Name to file f so it can be used with the file routines
 }
@@ -37,7 +36,7 @@ begin
 end;
 
 
-Procedure assign(var f:TypedFile;c:char);
+Procedure Assign(out f:TypedFile;c:char);
 {
   Assign Name to file f so it can be used with the file routines
 }
@@ -46,7 +45,7 @@ begin
 end;
 
 
-Procedure fpc_reset_typed(var f : TypedFile;Size : Longint);[Public,IOCheck, Alias:'FPC_RESET_TYPED']; {$ifdef hascompilerproc} compilerproc; {$endif}
+Procedure fpc_reset_typed(var f : TypedFile;Size : Longint);[Public,IOCheck, Alias:'FPC_RESET_TYPED']; compilerproc;
 Begin
   If InOutRes <> 0 then
    exit;
@@ -54,7 +53,7 @@ Begin
 End;
 
 
-Procedure fpc_rewrite_typed(var f : TypedFile;Size : Longint);[Public,IOCheck, Alias:'FPC_REWRITE_TYPED']; {$ifdef hascompilerproc} compilerproc; {$endif}
+Procedure fpc_rewrite_typed(var f : TypedFile;Size : Longint);[Public,IOCheck, Alias:'FPC_REWRITE_TYPED']; compilerproc;
 Begin
   If InOutRes <> 0 then
    exit;
@@ -62,7 +61,51 @@ Begin
 End;
 
 
-Procedure fpc_typed_write(TypeSize : Longint;var f : TypedFile;const Buf);[IOCheck, Public, Alias :'FPC_TYPED_WRITE']; {$ifdef hascompilerproc} compilerproc; {$endif}
+{$ifdef FPC_HAS_FEATURE_RANDOM}
+{ this code is duplicated in the iso7185 unit }
+Procedure DoAssign(var t : TypedFile);
+Begin
+  Assign(t,'fpc_'+HexStr(random(1000000000),8)+'.tmp');
+End;
+{$else FPC_HAS_FEATURE_RANDOM}
+{ this code is duplicated in the iso7185 unit }
+Procedure DoAssign(var t : TypedFile);
+const
+  start : dword = 0;
+Begin
+  Assign(t,'fpc_'+HexStr(start,8)+'.tmp');
+  inc(start);
+End;
+{$endif FPC_HAS_FEATURE_RANDOM}
+
+
+Procedure fpc_reset_typed_iso(var f : TypedFile;Size : Longint);[Public,IOCheck, Alias:'FPC_RESET_TYPED_ISO']; compilerproc;
+Begin
+  If InOutRes <> 0 then
+   exit;
+
+  { create file name? }
+  if FileRec(f).mode=0 then
+    DoAssign(f);
+
+  Reset(UnTypedFile(f),Size);
+End;
+
+
+Procedure fpc_rewrite_typed_iso(var f : TypedFile;Size : Longint);[Public,IOCheck, Alias:'FPC_REWRITE_TYPED_ISO']; compilerproc;
+Begin
+  If InOutRes <> 0 then
+   exit;
+
+  { create file name? }
+  if FileRec(f).mode=0 then
+    DoAssign(f);
+
+  Rewrite(UnTypedFile(f),Size);
+End;
+
+
+Procedure fpc_typed_write(TypeSize : Longint;var f : TypedFile;const Buf);[IOCheck, Public, Alias :'FPC_TYPED_WRITE']; compilerproc;
 Begin
   If InOutRes <> 0 then
    exit;
@@ -74,7 +117,7 @@ Begin
   end;
 End;
 
-Procedure fpc_typed_read(TypeSize : Longint;var f : TypedFile;var Buf);[IOCheck, Public, Alias :'FPC_TYPED_READ']; {$ifdef hascompilerproc} compilerproc; {$endif}
+Procedure fpc_typed_read(TypeSize : Longint;var f : TypedFile;out Buf);[IOCheck, Public, Alias :'FPC_TYPED_READ']; compilerproc;
 var
   Result : Longint;
 Begin
@@ -92,9 +135,3 @@ Begin
   end;
 End;
 
-{
-  $Log: typefile.inc,v $
-  Revision 1.6  2005/02/14 17:13:29  peter
-    * truncate log
-
-}

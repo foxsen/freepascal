@@ -1,5 +1,4 @@
 {
-    $Id: emu387.pp,v 1.4 2005/02/14 17:13:22 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Pierre Muller
 
@@ -68,7 +67,7 @@ begin
 end;
 
 
-function nofpsig( sig : longint) : longint;
+function nofpsig( sig : longint) : longint;cdecl;
 const
   last_eip : longint = 0;
 var
@@ -188,7 +187,7 @@ begin
             if length(cp)=0 then
               begin
                  for i:=length(prog_name) downto 1 do
-                   if (prog_name[i]='\') or (prog_name[i]='/') then
+                   if prog_name[i] in AllowDirectorySeparators then
                      break;
                  if i>1 then
                    cp:=copy(prog_name,1,i);
@@ -215,9 +214,3 @@ end;
 begin
    npxsetup(paramstr(0));
 end.
-{
-  $Log: emu387.pp,v $
-  Revision 1.4  2005/02/14 17:13:22  peter
-    * truncate log
-
-}

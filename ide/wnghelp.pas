@@ -1,5 +1,4 @@
 {
-    $Id: wnghelp.pas,v 1.6 2005/02/14 17:13:19 peter Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 2000 by Berczi Gabor
 
@@ -351,7 +350,7 @@ begin
       Alias:=Trim(copy(Alias,1,HelpFacility^.IndexTabSize-4-2))+'..';
   FormatAlias:=Alias;
 end;}
-procedure AddToIndex(P: PContainerItemRec); {$ifndef FPC}far;{$endif}
+procedure AddToIndex(P: PContainerItemRec);
 var S: string;
 begin
   S:=Trim(P^.Name);
@@ -445,17 +444,17 @@ procedure AddLine(const S: string);
 begin
   Lines^.InsertStr(S);
 end;
-procedure AddToTopic(P: PContainerItemRec); {$ifndef FPC}far;{$endif}
+procedure AddToTopic(P: PContainerItemRec);
 begin
   AddLine(hscLink+Trim(P^.Name)+hscLink);
   AddLinkToTopic(T,ID,P^.FilePos);
 end;
-procedure AddTopicLine(P: PString); {$ifndef FPC}far;{$endif}
+procedure AddTopicLine(P: PString);
 begin
   AddLine(' '+GetStr(P));
 end;
 var LinkCount: sw_integer;
-procedure AddLink(P: PLinkRec); {$ifndef FPC}far;{$endif}
+procedure AddLink(P: PLinkRec);
 begin
   Inc(LinkCount);
   if LinkCount=1 then
@@ -506,7 +505,7 @@ begin
   inherited Done;
 end;
 
-function CreateProc(const FileName,Param: string;Index : longint): PHelpFile; {$ifndef FPC}far;{$endif}
+function CreateProc(const FileName,Param: string;Index : longint): PHelpFile;
 begin
   CreateProc:=New(PNGHelpFile, Init(FileName,Index));
 end;
@@ -517,9 +516,3 @@ begin
 end;
 
 END.
-{
-  $Log: wnghelp.pas,v $
-  Revision 1.6  2005/02/14 17:13:19  peter
-    * truncate log
-
-}

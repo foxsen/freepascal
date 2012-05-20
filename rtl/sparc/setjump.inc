@@ -1,5 +1,4 @@
 {
-    $Id: setjump.inc,v 1.13 2005/04/24 21:19:22 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2002 by Jonas Maebe and other members of the
     Free Pascal development team
@@ -19,7 +18,7 @@
 #define RW_FP [%fp + 0x48]
 }
 
-procedure longjmp(var s : jmp_buf;value:longint);assembler;nostackframe;[Public,alias:'FPC_LONGJMP'];
+procedure fpc_longjmp(var s : jmp_buf;value:longint);assembler;nostackframe;[Public,alias:'FPC_LONGJMP'];compilerproc;
   asm
     // Store our arguments in global registers so we can still
     // use them while unwinding frames and their register windows.
@@ -80,7 +79,7 @@ procedure longjmp(var s : jmp_buf;value:longint);assembler;nostackframe;[Public,
   end;
 
 
-function setjmp(var S:jmp_buf):longint;assembler;nostackframe;[Public,alias:'FPC_SETJMP'];
+function fpc_setjmp(var S:jmp_buf):longint;assembler;nostackframe;[Public,alias:'FPC_SETJMP'];compilerproc;
   asm
     // We don't create a stackframe so we can save PC,SP and FP of the caller
     st      %o7, [%o0+8]
@@ -91,19 +90,3 @@ function setjmp(var S:jmp_buf):longint;assembler;nostackframe;[Public,alias:'FPC
     mov     %g0, %o0
   end;
 
-{
-  $Log: setjump.inc,v $
-  Revision 1.13  2005/04/24 21:19:22  peter
-    * unblock signal in signalhandler, remove the sigprocmask call
-      from setjmp
-
-  Revision 1.12  2005/02/14 17:13:31  peter
-    * truncate log
-
-  Revision 1.11  2005/02/13 20:01:38  peter
-    * include file cleanup
-
-  Revision 1.10  2005/01/20 16:38:28  peter
-    * restore sigprocmask for linux
-
-}

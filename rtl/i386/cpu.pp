@@ -1,5 +1,4 @@
 {
-    $Id: cpu.pp,v 1.4 2005/02/14 17:13:22 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Florian Klaempfl
 
@@ -26,6 +25,8 @@ unit cpu;
     { returns the contents of the cr0 register }
     function cr0 : longint;
 
+    var
+      is_sse3_cpu : boolean = false;
 
   implementation
 
@@ -38,20 +39,22 @@ unit cpu;
         Tested under go32v1 and Linux on c6x86 with CpuID enabled and disabled (PFV)
       }
       asm
-         pushf
-         pushf
+         push    ebx
+         pushfd
+         pushfd
          pop     eax
          mov     ebx,eax
          xor     eax,200000h
          push    eax
-         popf
-         pushf
+         popfd
+         pushfd
          pop     eax
-         popf
+         popfd
          and     eax,200000h
          and     ebx,200000h
          cmp     eax,ebx
          setnz   al
+         pop     ebx
       end;
 
 
@@ -71,11 +74,28 @@ unit cpu;
          floating_point_emulation:=(cr0 and $4)<>0;
       end;
 
+
+{$ASMMODE ATT}
+    function sse3_support : boolean;
+      var
+         _ecx : longint;
+      begin
+         if cpuid_support then
+           begin
+              asm
+                 pushl %ebx
+                 movl $1,%eax
+                 cpuid
+                 movl %ecx,_ecx
+                 popl %ebx
+              end;
+              sse3_support:=(_ecx and $1)<>0;
+           end
+         else
+           { a cpu with without cpuid instruction supports never sse3 }
+           sse3_support:=false;
+      end;
+
+begin
+  is_sse3_cpu:=sse3_support;
 end.
-
-{
-  $Log: cpu.pp,v $
-  Revision 1.4  2005/02/14 17:13:22  peter
-    * truncate log
-
-}

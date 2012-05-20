@@ -1,5 +1,4 @@
 {
-  $Id: testfail.pp,v 1.4 2005/02/14 17:13:37 peter Exp $
     This file is part of the Free Pascal test suite.
     Copyright (c) 1999-2002 by the Free Pascal development team.
 
@@ -50,7 +49,6 @@ end;
 
 procedure RunFail;
 var
-  outname,
   TestExe : string;
 begin
   TestExe:=ForceExtension(FailName,ExeExt);
@@ -68,9 +66,3 @@ begin
     UseComSpec:=true;
   RunFail;
 end.
-{
-  $Log: testfail.pp,v $
-  Revision 1.4  2005/02/14 17:13:37  peter
-    * truncate log
-
-}

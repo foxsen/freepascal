@@ -1,5 +1,4 @@
 {
-    $Id: osmacro.inc,v 1.3 2005/02/15 22:27:45 jonas Exp $
     Copyright (c) 2000-2002 by Marco van de Voort
 
     The *BSD POSIX macro's that are used both in the Baseunix unit as the
@@ -88,18 +87,3 @@ begin
  wtermsig:=cint(status and 127);
 end;
 
-{
-  $Log: osmacro.inc,v $
-  Revision 1.3  2005/02/15 22:27:45  jonas
-    * fixed wifexited and wstopsig
-
-  Revision 1.2  2005/02/14 17:13:21  peter
-    * truncate log
-
-  Revision 1.1  2005/02/13 21:47:56  peter
-    * include file cleanup part 2
-
-  Revision 1.6  2005/02/13 20:01:37  peter
-    * include file cleanup
-
-}

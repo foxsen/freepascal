@@ -1,5 +1,4 @@
 {
-    $Id: itcpugas.pas,v 1.6 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl
 
     This unit contains the i386 AT&T instruction tables
@@ -30,7 +29,7 @@ interface
       cgbase,cpubase;
 
     type
-      TAttSuffix = (AttSufNONE,AttSufINT,AttSufFPU,AttSufFPUint);
+      TAttSuffix = (AttSufNONE,AttSufINT,AttSufFPU,AttSufFPUint,AttSufINTdual);
 
     const
 {$ifdef x86_64}
@@ -50,7 +49,24 @@ interface
        's','l','t','v','x',
        'd',
        '','','',
-       't'
+       't',
+       ''
+     );
+     { suffix-to-opsize conversion tables, used in asmreadrer }
+     { !! S_LQ excluded: movzlq does not exist, movslq is processed
+       as a separate instruction w/o suffix (aka movsxd), and there are
+       no more instructions needing it. }
+     att_sizesuffixstr : array[0..11] of string[2] = (
+       '','BW','BL','WL','BQ','WQ',{'LQ',}'B','W','L','S','Q','T'
+     );
+     att_sizesuffix : array[0..11] of topsize = (
+       S_NO,S_BW,S_BL,S_WL,S_BQ,S_WQ,{S_LQ,}S_B,S_W,S_L,S_NO,S_Q,S_NO
+     );
+     att_sizefpusuffix : array[0..11] of topsize = (
+       S_NO,S_NO,S_NO,S_NO,S_NO,S_NO,{S_NO,}S_NO,S_NO,S_FL,S_FS,S_NO,S_FX
+     );
+     att_sizefpuintsuffix : array[0..11] of topsize = (
+       S_NO,S_NO,S_NO,S_NO,S_NO,S_NO,{S_NO,}S_NO,S_NO,S_IL,S_IS,S_IQ,S_NO
      );
 {$else x86_64}
      gas_opsize2str : array[topsize] of string[2] = ('',
@@ -59,7 +75,21 @@ interface
        's','l','t','v','',
        'd',
        '','','',
-       't'
+       't',
+       ''
+     );
+     { suffix-to-opsize conversion tables, used in asmreadrer }
+     att_sizesuffixstr : array[0..9] of string[2] = (
+       '','BW','BL','WL','B','W','L','S','Q','T'
+     );
+     att_sizesuffix : array[0..9] of topsize = (
+       S_NO,S_BW,S_BL,S_WL,S_B,S_W,S_L,S_NO,S_NO,S_NO
+     );
+     att_sizefpusuffix : array[0..9] of topsize = (
+       S_NO,S_NO,S_NO,S_NO,S_NO,S_NO,S_FL,S_FS,S_NO,S_FX
+     );
+     att_sizefpuintsuffix : array[0..9] of topsize = (
+       S_NO,S_NO,S_NO,S_NO,S_NO,S_NO,S_IL,S_IS,S_IQ,S_NO
      );
 {$endif x86_64}
 
@@ -135,9 +165,3 @@ implementation
       end;
 
 end.
-{
-  $Log: itcpugas.pas,v $
-  Revision 1.6  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

@@ -1,5 +1,4 @@
 {
-    $Id: stringsi.inc,v 1.7 2005/02/14 17:13:29 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team
 
@@ -48,6 +47,8 @@
          lstr2 : SizeInt;
       begin
          strpos:=nil;
+         if (str1 = nil) or (str2 = nil) then
+           exit;
          p:=strscan(str1,str2^);
          if p=nil then
            exit;
@@ -64,9 +65,26 @@
            end;
       end;
 
-{
-  $Log: stringsi.inc,v $
-  Revision 1.7  2005/02/14 17:13:29  peter
-    * truncate log
-
-}
+    function stripos(str1,str2 : pchar) : pchar;
+      var
+         p : pchar;
+         lstr2 : SizeInt;
+      begin
+         stripos:=nil;
+         if (str1 = nil) or (str2 = nil) then
+           exit;
+         p:=striscan(str1,str2^);
+         if p=nil then
+           exit;
+         lstr2:=strlen(str2);
+         while p<>nil do
+           begin
+              if strlicomp(p,str2,lstr2)=0 then
+                begin
+                   stripos:=p;
+                   exit;
+                end;
+              inc(p);
+              p:=striscan(p,str2^);
+           end;
+      end;

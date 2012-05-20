@@ -1,5 +1,4 @@
 {
-    $Id: fexpand.inc,v 1.18 2005/02/14 17:13:22 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1997-2000 by the Free Pascal development team
 
@@ -51,7 +50,7 @@
  {$DEFINE FPC_FEXPAND_UPDIR_HELPER}
 {$ENDIF FPC_FEXPAND_DIRSEP_IS_UPDIR}
 
-procedure GetDirIO (DriveNr: byte; var Dir: OpenString);
+procedure GetDirIO (DriveNr: byte; var Dir: String);
 
 (* GetDirIO is supposed to return the root of the given drive   *)
 (* in case of an error for compatibility of FExpand with TP/BP. *)
@@ -68,7 +67,7 @@ end;
 
 {$IFDEF FPC_FEXPAND_VOLUMES}
  {$IFNDEF FPC_FEXPAND_NO_DEFAULT_PATHS}
-procedure GetDirIO (const VolumeName: OpenString; var Dir: OpenString);
+procedure GetDirIO (const VolumeName: OpenString; var Dir: string);
 
 var
   OldInOutRes: word;
@@ -92,7 +91,8 @@ function FExpand (const Path: PathStr): PathStr;
    FPC_FEXPAND_NO_DOTS_UPDIR, FPC_FEXPAND_DIRSEP_IS_UPDIR,
    FPC_FEXPAND_DIRSEP_IS_CURDIR and FPC_FEXPAND_MULTIPLE_UPDIR conditionals
    might be defined to specify FExpand behaviour - see end of this file for
-   individual descriptions.
+   individual descriptions. Finally, FPC_FEXPAND_SYSUTILS allows to reuse
+   the same implementation for SysUtils.ExpandFileName.
 *)
 
 {$IFDEF FPC_FEXPAND_DRIVES}
@@ -119,28 +119,18 @@ begin
 {$ENDIF FPC_FEXPAND_UNC}
 
 (* First convert the path to uppercase if appropriate for current platform. *)
-    if FileNameCaseSensitive then
+    if FileNameCasePreserving then
         Pa := Path
     else
         Pa := UpCase (Path);
 
 (* Allow both '/' and '\' as directory separators *)
 (* by converting all to the native one.           *)
-    if DirectorySeparator = '\' then
-    {Allow slash as backslash}
-      begin
-        for I := 1 to Length (Pa) do
-          if Pa [I] = '/' then
-            Pa [I] := DirectorySeparator
-      end
-    else
-      if DirectorySeparator = '\' then
-    {Allow backslash as slash}
-        begin
-          for I := 1 to Length (Pa) do
-            if Pa [I] = '\' then
-              Pa [I] := DirectorySeparator;
-        end;
+{$warnings off}
+	  for I := 1 to Length (Pa) do
+	    if Pa [I] in AllowDirectorySeparators  then
+	      Pa [I] := DirectorySeparator;
+{$warnings on}
 
 (* PathStart is amount of characters to strip to get beginning *)
 (* of path without volume/drive specification.                 *)
@@ -162,11 +152,15 @@ begin
     if (Length (Pa) >= 1) and (Pa [1] = '~') and
                       ((Pa [2] = DirectorySeparator) or (Length (Pa) = 1)) then
         begin
- {$IFDEF FPC_FEXPAND_GETENV_PCHAR}
+ {$IFDEF FPC_FEXPAND_SYSUTILS}
+            S := GetEnvironmentVariable ('HOME');
+ {$ELSE FPC_FEXPAND_SYSUTILS}
+  {$IFDEF FPC_FEXPAND_GETENV_PCHAR}
             S := StrPas (GetEnv ('HOME'));
- {$ELSE FPC_FEXPAND_GETENV_PCHAR}
+  {$ELSE FPC_FEXPAND_GETENV_PCHAR}
             S := GetEnv ('HOME');
- {$ENDIF FPC_FEXPAND_GETENV_PCHAR}
+  {$ENDIF FPC_FEXPAND_GETENV_PCHAR}
+ {$ENDIF FPC_FEXPAND_SYSUTILS}
             if (S = '') or (Length (S) = 1)
                                           and (S [1] = DirectorySeparator) then
                 Delete (Pa, 1, 1)
@@ -183,7 +177,7 @@ begin
     if PathStart > 1 then
 {$ELSE FPC_FEXPAND_VOLUMES}
     if (Length (Pa) > 1) and (Pa [1] in ['A'..'Z', 'a'..'z']) and
-                                                 (Pa [2] = DriveSeparator) then
+      (Pa [2] = DriveSeparator) and (DriveSeparator <> DirectorySeparator) then
 {$ENDIF FPC_FEXPAND_VOLUMES}
         begin
 
@@ -213,12 +207,12 @@ begin
                     if Copy (Pa, 1, PathStart - 2) = Copy (S, 1, PathStart - 2)
                                                                            then
   {$ELSE FPC_FEXPAND_VOLUMES}
-                    if Pa [1] = S [1] then
+                    if UpCase(Pa [1]) = UpCase(S [1]) then
   {$ENDIF FPC_FEXPAND_VOLUMES}
                         begin
                             { remove ending slash if it already exists }
                             if S [Length (S)] = DirectorySeparator then
-                                Dec (S [0]);
+                               SetLength(S,Length(s)-1);
                             Pa := S + DirectorySeparator +
                               Copy (Pa, PathStart, Length (Pa) - PathStart + 1)
                         end
@@ -443,7 +437,7 @@ begin
     else
         if (Length (Dirs) <> 0) and (Dirs [Length (Dirs)] = '.') and
                         (Dirs [Pred (Length (Dirs))] = DirectorySeparator) then
-            Dec (Dirs [0], 2);
+            Delete (Dirs,length(Dirs)-1,2);
 
     {Finally remove '.\' at the beginning of the string of directories...}
     while (Length (Dirs) >= 2) and (Dirs [1] = '.')
@@ -500,7 +494,7 @@ begin
                     and (Length (Path) <> 0)
                           and (Path [Length (Path)] <> DirectorySeparator)
                                                                            then
-        Dec (Pa [0]);
+        Delete (PA,length(PA),1);
 {$ENDIF FPC_FEXPAND_DIRSEP_IS_UPDIR}
 
     FExpand := Pa;
@@ -562,7 +556,7 @@ end;
    parent directory and so on (Amiga). Please, note that you can decide
    to support both '..' and DirectorySeparator as references to the parent
    directory at the same time for compatibility reasons - however this
-   support makes it impossible to use an otherwise possibly valid name
+   support makes it impossible to use anotherwise possibly valid name
    of '..'.
 
    FPC_FEXPAND_DIRSEP_IS_CURDIR - DirectorySeparator at the beginning of
@@ -574,11 +568,8 @@ end;
    FPC_FEXPAND_MULTIPLE_UPDIR - grouping of more characters specifying
    upper directory references higher directory levels. Example: '...'
    (Netware).
+
+   FPC_FEXPAND_SYSUTILS allows to reuse the same implementation for
+   SysUtils.ExpandFileName by avoiding things specific for unit Dos.
 *)
 
-{
-  $Log: fexpand.inc,v $
-  Revision 1.18  2005/02/14 17:13:22  peter
-    * truncate log
-
-}

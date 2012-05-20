@@ -1,5 +1,4 @@
 {
-    $Id: nwsys.inc,v 1.14 2005/02/14 17:13:30 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2004 by the Free Pascal development team
     Copyright (c) 2001-2004 Armin Diehl
@@ -369,10 +368,4 @@ function spawnlp(mode:longint; path:Pchar; arg0:Pchar):longint;cdecl;external Cl
 function spawnvp(mode:longint; path:Pchar; argv:PPchar):longint;cdecl;external Clib name 'spawnvp';
 
 
-{
-  $Log: nwsys.inc,v $
-  Revision 1.14  2005/02/14 17:13:30  peter
-    * truncate log
-
-}
 

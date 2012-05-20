@@ -1,5 +1,4 @@
 {
-    $Id: check.pp,v 1.3 2005/02/14 17:13:30 peter Exp $
     This file is part of Free Pascal for Netware.
     Copyright (c) 1999-2002 by the Free Pascal development team.
 
@@ -19,7 +18,7 @@
 {$Copyright (c) 2002 the FreePascal development team}
 
 
-{ using crt automaticly calls _SetAutoScreenDestructionMode (TRUE);
+{ using crt automatically calls _SetAutoScreenDestructionMode (TRUE);
   so no "Press any key to close screeen" will be shown by netware }
 uses crt;
 
@@ -43,11 +42,3 @@ begin
   System.NetwareCheckFunction := @checkfunction;
   ReadKey;
 end.
-
-{
-  $Log: check.pp,v $
-  Revision 1.3  2005/02/14 17:13:30  peter
-    * truncate log
-
-}
-

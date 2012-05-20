@@ -1,5 +1,4 @@
 {
-    $Id: dynlibs.inc,v 1.5 2005/02/14 17:13:31 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team
 
@@ -26,6 +25,8 @@ type
 
 const
  NilHandle = 0;
+// these are for easier crossplatform construction of dll names in dynloading libs.
+ SharedSuffix  = 'dll';
 
 {$else}
 
@@ -36,7 +37,7 @@ const
 uses
  DosCalls;
 
-function LoadLibrary (Name: AnsiString): TLibHandle;
+function LoadLibrary (const Name: AnsiString): TLibHandle;
 var
  ErrPath: array [0..259] of char;
  Handle: longint;
@@ -45,7 +46,7 @@ begin
                                 then Result := Handle else Result := NilHandle;
 end;
 
-function GetProcedureAddress (Lib: TLibHandle; ProcName: AnsiString): pointer;
+function GetProcedureAddress (Lib: TLibHandle; const ProcName: AnsiString): pointer;
 var
  P: pointer;
 begin
@@ -60,9 +61,3 @@ end;
 
 {$endif}
 
-{
-  $Log: dynlibs.inc,v $
-  Revision 1.5  2005/02/14 17:13:31  peter
-    * truncate log
-
-}

@@ -1,5 +1,4 @@
 {
-    $Id: fpcalc.pas,v 1.14 2005/02/14 17:13:18 peter Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 1998 by Berczi Gabor
 
@@ -102,24 +101,30 @@ implementation
 
 uses
 {$ifdef Unix}
-  {$ifdef VER1_0}
-    linux,
-  {$else}
-    baseunix,
-    unix,
-  {$endif}
+  baseunix,
+  unix,
 {$endif}
 {$ifdef go32v2}
   dpmiexcp,
 {$endif}
-{$ifdef win32}
-  signals,
-{$endif}
-  FPString,FPUtils,FPConst,WUtils;
+{$ifdef windows}
+ {$ifdef HasSignal}
+    signals,
+  {$endif}
+{$endif windows}
+  FPUtils,FPConst,WUtils;
 
 const
   cmCalcButton  = 100;
   cmPressButton = 101;
+
+{$ifdef useresstrings}
+resourcestring
+{$else}
+const
+{$endif}
+      dialog_calculator       = 'Calculator';
+
 
 procedure TCalcButton.HandleEvent(var Event: TEvent);
 var
@@ -232,7 +237,7 @@ const
 {$ifdef Unix}
 Procedure CalcSigFPE(sig : longint);cdecl;
 {$else}
-function CalcSigFPE(sig : longint) : longint;{$ifndef go32v2}cdecl;{$endif}
+function CalcSigFPE(sig : longint) : longint;cdecl;
 {$endif}
 begin
 {$ifdef CPUI386}
@@ -288,7 +293,7 @@ begin
 {$endif HasSignal}
     begin
 {$ifdef HasSignal}
-      StoreSigFPE:={$ifdef unix}{$ifdef ver1_0}Signal{$else}fpSignal{$endif}{$else}Signal{$endif}(SIGFPE,@CalcSigFPE);
+      StoreSigFPE:={$ifdef unix}fpSignal{$else}Signal{$endif}(SIGFPE,@CalcSigFPE);
 {$endif HasSignal}
       if (Status = csError) and (Key <> 'C') then Key := ' ';
       if HexShown then
@@ -307,7 +312,7 @@ begin
     {          Status := csValid;}
               GetDisplay(R);
               if Key='1/X' then begin if R=0 then Error else SetDisplay(1/R,false) end else
-              if Key='SQR' then begin if R<0 then Error else SetDisplay(sqrt(R),false) end else
+              if Key='SQRT' then begin if R<0 then Error else SetDisplay(sqrt(R),false) end else
               if Key='LOG' then begin if R<=0 then Error else SetDisplay(ln(R),false) end else
               if Key='X^2' then SetDisplay(R*R,false) else
               if Key='M+' then Memory:=Memory+R else
@@ -372,7 +377,7 @@ begin
                   '*', '/': R := R / 100;
                 end;
               case _Operator of
-                '^': SetDisplay(Power(Operand,R),false);
+                '^': if (Operand = 0)and(R <= 0) then Error else SetDisplay(Power(Operand,R),false);
                 '+': SetDisplay(Operand + R,false);
                 '-': SetDisplay(Operand - R,false);
                 '*': SetDisplay(Operand * R,false);
@@ -387,7 +392,7 @@ begin
         else CalcKey:=false;
       end;
 {$ifdef HasSignal}
-      {$ifdef unix}{$ifdef ver1_0}Signal{$else}fpSignal{$endif}{$else}Signal{$endif}(SIGFPE,StoreSigFPE);
+      {$ifdef unix}fpSignal{$else}Signal{$endif}(SIGFPE,StoreSigFPE);
 {$endif HasSignal}
       DrawView;
 {$ifdef HasSignal}
@@ -463,11 +468,11 @@ end;
 
 constructor TCalculator.Init;
 const
-  Keys: array[0..29] of string[3] =
+  Keys: array[0..29] of string[4] =
    ('M+',  'x^y','C'  ,#27  ,'%'  ,#241 ,
     'M-',  'x^2','7'  ,'8'  ,'9'  ,'/'  ,
     'M'#26,'1/x','4'  ,'5'  ,'6'  ,'*'  ,
-    'M'#27,'sqr','1'  ,'2'  ,'3'  ,'-'  ,
+    'M'#27,'sqrt','1'  ,'2'  ,'3'  ,'-'  ,
     'M'#29,'log','0'  ,'.'  ,'='  ,'+'  );
 var
   I: Integer;
@@ -577,9 +582,3 @@ begin
 end;
 
 end.
-{
-  $Log: fpcalc.pas,v $
-  Revision 1.14  2005/02/14 17:13:18  peter
-    * truncate log
-
-}

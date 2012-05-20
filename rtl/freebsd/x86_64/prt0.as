@@ -11,7 +11,7 @@ abitag:
 	.long	4
 	.long	1
 	.string	"FreeBSD"
-	.long	502110
+	.long	700055
 	.section	.rodata
 .LC0:
 	.string	""
@@ -39,21 +39,20 @@ _start:
 	movq	-8(%rbp), %rax
 	movl	(%rax), %eax
 	movl	%eax, -20(%rbp)
-	movl	%eax, operatingsystem_parameter_argc
+	movl	%eax, operatingsystem_parameter_argc(%rip)
 	movq	-8(%rbp), %rax
 	addq	$8, %rax
 	movq	%rax, -32(%rbp)
-	movq    %rax, operatingsystem_parameter_argv
+	movq    %rax, operatingsystem_parameter_argv(%rip)
 	movl	-20(%rbp), %eax
 	cltq
 	salq	$3, %rax
 	addq	-8(%rbp), %rax
 	addq	$16, %rax
 	movq	%rax, -40(%rbp)
-	movq    %rax, operatingsystem_parameter_envp
+	movq    %rax, operatingsystem_parameter_envp(%rip)
 	movq	-40(%rbp), %rax
 	movq	%rax, environ(%rip)
-	movq    %rax,environ
 	cmpl	$0, -20(%rbp)
 	jle	.L5
 	movq	-32(%rbp), %rax
@@ -96,12 +95,33 @@ _start:
 	xorq    %rbp,%rbp
 	call	main
 	movl	%eax, %edi
-	call	exit
+#       call	exit
 .LFE9:
 	.size	_start, .-_start
 #APP
 	.ident	"$FreeBSD: src/lib/csu/amd64/crt1.c,v 1.13 2003/04/30 19:27:07 peter Exp $"
 #NO_APP
+
+.bss
+        .type   __stkptr,@object
+        .size   __stkptr,8
+        .global __stkptr
+__stkptr:
+        .skip   8
+
+        .type operatingsystem_parameters,@object
+        .size operatingsystem_parameters,24
+operatingsystem_parameters:
+        .skip 3*8
+
+        .global operatingsystem_parameter_envp
+        .global operatingsystem_parameter_argc
+        .global operatingsystem_parameter_argv
+        .set operatingsystem_parameter_envp,operatingsystem_parameters+0
+        .set operatingsystem_parameter_argc,operatingsystem_parameters+8
+        .set operatingsystem_parameter_argv,operatingsystem_parameters+16
+
+
 	.comm	environ,8,8
 	.weak	_DYNAMIC
 	.section	.eh_frame,"a",@progbits
@@ -140,3 +160,4 @@ _start:
 	.p2align 3
 .LEFDE1:
 	.ident	"GCC: (GNU) 3.3.3 [FreeBSD] 20031106"
+

@@ -1,5 +1,4 @@
 {
-    $Id: profile.pp,v 1.4 2005/02/14 17:13:22 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Pierre Muller,
     member of the Free Pascal development team.
@@ -196,7 +195,7 @@ var
   doublecall,
   reload          : longint; {=0}
 
-function mcount_tick(x : longint) : longint;
+function mcount_tick(x : longint) : longint;cdecl;
 var
   bin : longint;
 begin
@@ -221,7 +220,7 @@ end;
 var
   ___djgpp_timer_countdown:longint;external name '___djgpp_timer_countdown';
 
-function timer(x : longint) : longint;
+function timer(x : longint) : longint;cdecl;
 begin
    if reload>0 then
     ___djgpp_timer_countdown:=RELOAD;
@@ -326,9 +325,3 @@ end;
 begin
   mcount_init;
 end.
-{
-  $Log: profile.pp,v $
-  Revision 1.4  2005/02/14 17:13:22  peter
-    * truncate log
-
-}

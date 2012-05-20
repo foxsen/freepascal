@@ -1,5 +1,4 @@
 {
-    $Id: strings.inc,v 1.29 2005/04/28 18:22:34 olle Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2000 by Jonas Maebe, member of the
     Free Pascal development team
@@ -51,7 +50,7 @@ asm
         subi    r4,r4,3
         subi    r9,r9,3
         { setup magic constants }
-        {$ifdef macos}
+        {$if defined(macos) or defined(aix)}
         {  load constant 0xfefefeff }
         lis     r8,0xfefe
         ori     r8,r8,0xfeff
@@ -125,7 +124,7 @@ asm
         subi    r4,r4,3
         subi    r3,r3,3
         { setup magic constants }
-        {$ifdef macos}
+        {$if defined(macos) or defined(aix)}
         {  load constant 0xfefefeff }
         lis     r8,0xfefe
         ori     r8,r8,0xfeff
@@ -497,12 +496,3 @@ end;
 {$endif FPC_UNIT_HAS_STRLOWER}
 
 
-{
-  $Log: strings.inc,v $
-  Revision 1.29  2005/04/28 18:22:34  olle
-    * Fixed loding of magic constant for macos
-
-  Revision 1.28  2005/02/14 17:13:31  peter
-    * truncate log
-
-}

@@ -1,5 +1,4 @@
 {
-    $Id: sysctlh.inc,v 1.2 2005/02/14 17:13:22 peter Exp $
 }
 
 {$PACKRECORDS C}
@@ -533,9 +532,3 @@
     { number of valid user ids  }
        USER_MAXID = 21;
 
-{
-  $Log: sysctlh.inc,v $
-  Revision 1.2  2005/02/14 17:13:22  peter
-    * truncate log
-
-}

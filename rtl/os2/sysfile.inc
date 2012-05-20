@@ -1,5 +1,4 @@
 {
-    $Id: sysfile.inc,v 1.1 2005/02/06 16:57:18 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2001 by Free Pascal development team
 
@@ -20,14 +19,6 @@
 
 ****************************************************************************}
 
-procedure allowslash(p:Pchar);
-{Allow slash as backslash.}
-var i:longint;
-begin
-    for i:=0 to strlen(p) do
-        if p[i]='/' then p[i]:='\';
-end;
-
 procedure do_close(h:thandle);
 begin
 { Only three standard handles under real OS/2 }
@@ -42,14 +33,14 @@ end;
 
 procedure do_erase(p:Pchar);
 begin
-  allowslash(p);
+  DoDirSeparators(p);
   inoutres:=DosDelete(p);
 end;
 
 procedure do_rename(p1,p2:Pchar);
 begin
-  allowslash(p1);
-  allowslash(p2);
+  DoDirSeparators(p1);
+  DoDirSeparators(p2);
   inoutres:=DosMove(p1, p2);
 end;
 
@@ -81,51 +72,53 @@ begin
 {$endif}
 end;
 
-function do_filepos(handle:thandle): longint;
+function Do_FilePos (Handle: THandle): int64;
 var
-  PosActual: cardinal;
+  PosActual: int64;
 begin
-  InOutRes:=DosSetFilePtr(Handle, 0, 1, PosActual);
-  do_filepos:=longint (PosActual);
+  InOutRes := Sys_DosSetFilePtrL (Handle, 0, 1, PosActual);
+  Do_FilePos := PosActual;
 {$ifdef IODEBUG}
   writeln('do_filepos: handle=', Handle, ', actual_pos=', PosActual, ', InOutRes=', InOutRes);
 {$endif}
 end;
 
-procedure do_seek(handle:thandle;pos:longint);
+procedure Do_Seek (Handle: THandle; Pos: int64);
 var
-  PosActual: cardinal;
+  PosActual: int64;
 begin
-  InOutRes:=DosSetFilePtr(Handle, Pos, 0 {ZeroBased}, PosActual);
+  InOutRes:=Sys_DosSetFilePtrL(Handle, Pos, 0 {ZeroBased}, PosActual);
 {$ifdef IODEBUG}
   writeln('do_seek: handle=', Handle, ', pos=', pos, ', actual_pos=', PosActual, ', InOutRes=', InOutRes);
 {$endif}
 end;
 
-function do_seekend(handle:thandle):longint;
+function Do_SeekEnd (Handle: THandle): int64;
 var
-  PosActual: cardinal;
+  PosActual: int64;
 begin
-  InOutRes:=DosSetFilePtr(Handle, 0, 2 {EndBased}, PosActual);
-  do_seekend:=longint (PosActual);
+  InOutRes := Sys_DosSetFilePtrL (Handle, 0, 2 {EndBased}, PosActual);
+  Do_SeekEnd := PosActual;
 {$ifdef IODEBUG}
   writeln('do_seekend: handle=', Handle, ', actual_pos=', PosActual, ', InOutRes=', InOutRes);
 {$endif}
 end;
 
-function do_filesize(handle:thandle):longint;
-var aktfilepos: cardinal;
+function Do_FileSize (Handle: THandle): int64;
+var
+  AktFilePos: int64;
 begin
-  aktfilepos:=do_filepos(handle);
-  do_filesize:=do_seekend(handle);
-  do_seek(handle,aktfilepos);
+  AktFilePos := Do_FilePos (Handle);
+  Do_FileSize := Do_SeekEnd (Handle);
+  Do_Seek (Handle, AktFilePos);
 end;
 
-procedure do_truncate(handle:thandle;pos:longint);
+procedure Do_Truncate (Handle: THandle; Pos: int64);
 begin
-  InOutRes:=DosSetFileSize(Handle, Pos);
-  do_seekend(handle);
+  InOutRes := Sys_DosSetFileSizeL (Handle, Pos);
+  Do_SeekEnd (Handle);
 end;
+
 
 const
     FileHandleCount: cardinal = 20;
@@ -161,7 +154,7 @@ var
   Action, Attrib, OpenFlags, FM: Cardinal;
 begin
   // convert unix slashes to normal slashes
-  allowslash(p);
+  DoDirSeparators(p);
 
   // close first if opened
   if ((flags and $10000)=0) then
@@ -220,12 +213,12 @@ begin
 
   Attrib:=32 {faArchive};
 
-  InOutRes:=DosOpen(p, FileRec(F).Handle, Action, 0, Attrib, OpenFlags, FM, nil);
+  InOutRes:=Sys_DosOpenL(p, FileRec(F).Handle, Action, 0, Attrib, OpenFlags, FM, nil);
 
   // If too many open files try to set more file handles and open again
   if (InOutRes = 4) then
     if Increase_File_Handle_Count then
-      InOutRes:=DosOpen(p, FileRec(F).Handle, Action, 0, Attrib, OpenFlags, FM, nil);
+      InOutRes:=Sys_DosOpenL(p, FileRec(F).Handle, Action, 0, Attrib, OpenFlags, FM, nil);
 
   If InOutRes<>0 then FileRec(F).Handle:=UnusedHandle;
 
@@ -256,18 +249,3 @@ begin
   if ht=1 then do_isdevice:=true;
 end;
 {$ASMMODE ATT}
-
-
-
-
-{
-   $Log: sysfile.inc,v $
-   Revision 1.1  2005/02/06 16:57:18  peter
-     * threads for go32v2,os,emx,netware
-
-   Revision 1.1  2005/02/06 13:06:20  peter
-     * moved file and dir functions to sysfile/sysdir
-     * win32 thread in systemunit
-
-}
-

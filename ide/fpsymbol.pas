@@ -1,5 +1,4 @@
 {
-    $Id: fpsymbol.pas,v 1.9 2005/02/14 17:13:18 peter Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 1998 by Berczi Gabor
 
@@ -127,26 +126,37 @@ type
       function    GetPalette: PPalette; virtual;
     end;
 
-{$ifdef HASOUTLINE}
     PSymbolInheritanceView = ^TSymbolInheritanceView;
+{$ifdef HASOUTLINE}
     TSymbolInheritanceView = object(TOutlineViewer)
+{$else notHASOUTLINE}
+    TSymbolInheritanceView = object(TLocalMenuListBox)
+{$endif HASOUTLINE}
       constructor  Init(var Bounds: TRect; AHScrollBar, AVScrollBar: PScrollBar; ARoot: PObjectSymbol);
       destructor   Done; virtual;
       function     GetRoot: Pointer; virtual;
       function     HasChildren(Node: Pointer): Boolean; virtual;
-      function     GetChild(Node: Pointer; I: Integer): Pointer; virtual;
-      function     GetNumChildren(Node: Pointer): Integer; virtual;
-      function     GetText(Node: Pointer): String; virtual;
+      function     GetChild(Node: Pointer; I: sw_Integer): Pointer; virtual;
+      function     GetNumChildren(Node: Pointer): sw_Integer; virtual;
+      function     GetNumChildrenExposed(Node: Pointer) : sw_Integer; virtual;
       procedure    Adjust(Node: Pointer; Expand: Boolean); virtual;
       function     IsExpanded(Node: Pointer): Boolean; virtual;
-      procedure    Selected(I: Integer); virtual;
+{$ifdef HASOUTLINE}
+      function     GetText(Node: Pointer): String; virtual;
+{$else not HASOUTLINE}
+      procedure    ExpandAll(Node: Pointer);
+      function     GetNode(I : sw_Integer) : Pointer; virtual;
+      function     GetLineNode(Item : sw_Integer) : Pointer; virtual;
+      function     GetText(Item,MaxLen: Sw_Integer): String; virtual;
+{$endif HASOUTLINE}
+      procedure    NodeSelected(P: pointer); virtual;
+      procedure    Selected(I: sw_Integer); virtual;
       procedure    HandleEvent(var Event: TEvent); virtual;
       function     GetPalette: PPalette; virtual;
     private
       Root         : PObjectSymbol;
       MyBW         : PBrowserWindow;
     end;
-{$endif HASOUTLINE}
 
     PBrowserTabItem = ^TBrowserTabItem;
     TBrowserTabItem = record
@@ -195,9 +205,7 @@ type
       Sym           : PSymbol;
       ScopeView     : PSymbolScopeView;
       ReferenceView : PSymbolReferenceView;
-{$ifdef HASOUTLINE}
       InheritanceView: PSymbolInheritanceView;
-{$endif HASOUTLIEN}
       MemInfoView   : PSymbolMemInfoView;
       UnitInfoText  : PSymbolMemoView;
       UnitInfoUsed  : PSymbolScopeView;
@@ -234,10 +242,49 @@ uses App,Strings,
      symconst,
 {$endif BROWSERCOL}
      WUtils,WEditor,
-     FPConst,FPString,FPUtils,FPVars,{$ifndef FPDEBUG}FPDebug{$endif},FPIDE;
+     FPConst,FPUtils,FPVars,{$ifndef FPDEBUG}FPDebug{$endif},FPIDE;
+
+{$ifdef USERESSTRINGS}
+resourcestring
+{$else}
+const
+{$endif}
+                msg_symbolnotfound = #3'Symbol %s not found';
+                msg_nobrowserinfoavailable = 'No Browser info available';
+                msg_cantfindfile = 'Can''t find %s';
+
+                menu_local_gotosource = '~G~oto source';
+                menu_local_tracksource = '~T~rack source';
+                menu_local_options = '~O~ptions...';
+                menu_local_clear = '~C~lear';
+                menu_local_saveas = 'Save ~a~s';
+
+                { Symbol view local menu items }
+                menu_symlocal_browse = '~B~rowse';
+                menu_symlocal_gotosource = '~G~oto source';
+                menu_symlocal_tracksource = '~T~rack source';
+                menu_symlocal_options = '~O~ptions...';
+
+                { Symbol browser meminfo page }
+                msg_sizeinmemory = 'Size in memory';
+                msg_sizeonstack = 'Size on stack';
+
+                msg_usedfirstin = 'Used first in';
+                msg_mainsource = 'Main source';
+                msg_sourcefiles = 'Source files';
+
+                dialog_browse = 'Browse: %s';
+
+const           { Symbol browser tabs }
+                { must be char constants (so cannot be resourcestring)}
+                label_browsertab_scope = 'S';
+                label_browsertab_reference = 'R';
+                label_browsertab_inheritance = 'I';
+                label_browsertab_memory = 'M';
+                label_browsertab_unit = 'U';
 
 procedure CloseAllBrowsers;
-  procedure SendCloseIfBrowser(P: PView); {$ifndef FPC}far;{$endif}
+  procedure SendCloseIfBrowser(P: PView);
   begin
     if assigned(P) and
        ((TypeOf(P^)=TypeOf(TBrowserWindow)) or
@@ -245,9 +292,7 @@ procedure CloseAllBrowsers;
        (TypeOf(P^)=TypeOf(TSymbolScopeView)) or
        (TypeOf(P^)=TypeOf(TSymbolReferenceView)) or
        (TypeOf(P^)=TypeOf(TSymbolMemInfoView)) or
-{$ifdef HASOUTLINE}
        (TypeOf(P^)=TypeOf(TSymbolInheritanceView)) or
-{$endif HASOUTLINE}
        (TypeOf(P^)=TypeOf(TSymbolMemoView))) then
       Message(P,evCommand,cmClose,nil);
   end;
@@ -330,7 +375,7 @@ begin
            if (not assigned(symbols) or (symbols^.count=0)) and
               assigned(S^.Ancestor) then
              Symbols:=S^.Ancestor^.Items;
-           if (S^.Flags and sfObject)=0 then
+           if (S^.Flags and (sfObject or sfClass))=0 then
              Anc:=nil
            else if S^.Ancestor=nil then
              Anc:=ObjectTree
@@ -500,7 +545,7 @@ begin
     exit;
   if not Debugger^.IsRunning then
     exit;
-  if (S^.typ in [fieldvarsym,globalvarsym,localvarsym,paravarsym]) or (GDBI=Debugger^.RunCount) then
+  if (S^.typ in [fieldvarsym,staticvarsym,localvarsym,paravarsym]) or (GDBI=Debugger^.RunCount) then
     exit;
   If Assigned(St) then
     DisposeStr(St);
@@ -691,7 +736,7 @@ end;
 
 function LastBrowserWindow: PBrowserWindow;
 var BW: PBrowserWindow;
-procedure IsBW(P: PView); {$ifndef FPC}far;{$endif}
+procedure IsBW(P: PView);
 begin
   if (P^.HelpCtx=hcBrowserWindow) then
     BW:=pointer(P);
@@ -1026,7 +1071,7 @@ function AddrStr(Addr: longint): string;
 type TLongint = record LoW,HiW: word; end;
 begin
   with TLongint(Addr) do
-  AddrStr:='$'+IntToHex(HiW,4)+IntToHex(LoW,4);
+  AddrStr:='$'+hexstr(HiW,4)+hexstr(LoW,4);
 end;
 begin
   ClearFormatParams;
@@ -1061,15 +1106,23 @@ end;
                           TSymbolInheritanceView
 ****************************************************************************}
 
-{$ifdef HASOUTLINE}
 constructor TSymbolInheritanceView.Init(var Bounds: TRect; AHScrollBar, AVScrollBar: PScrollBar; ARoot: PObjectSymbol);
 begin
+{$ifdef HASOUTLINE}
   inherited Init(Bounds,AHScrollBar,AVScrollBar);
+{$else not HASOUTLINE}
+  inherited Init(Bounds,1,AVScrollBar);
+  HScrollBar:=AHScrollBar;
+{$endif not HASOUTLINE}
   Options:=Options or (ofSelectable+ofTopSelect);
   Root:=ARoot;
   MyBW:=nil;
-  ExpandAll(GetRoot);
+  ExpandAll(Root);
+{$ifdef HASOUTLINE}
   Update;
+{$else not HASOUTLINE}
+  SetRange(GetNumChildrenExposed(Root));
+{$endif not HASOUTLINE}
 end;
 
 destructor TSymbolInheritanceView.Done;
@@ -1091,20 +1144,41 @@ begin
   HasChildren:=GetNumChildren(Node)>0;
 end;
 
-function TSymbolInheritanceView.GetChild(Node: Pointer; I: Integer): Pointer;
+function TSymbolInheritanceView.GetChild(Node: Pointer; I: sw_Integer): Pointer;
 begin
   GetChild:=PObjectSymbol(Node)^.GetDescendant(I);
 end;
 
-function TSymbolInheritanceView.GetNumChildren(Node: Pointer): Integer;
+function TSymbolInheritanceView.GetNumChildren(Node: Pointer): sw_Integer;
 begin
   GetNumChildren:=PObjectSymbol(Node)^.GetDescendantCount;
 end;
 
-function TSymbolInheritanceView.GetText(Node: Pointer): String;
+function TSymbolInheritanceView.GetNumChildrenExposed(Node: Pointer) : sw_Integer;
+var
+  Nb : integer;
+  P : PObjectSymbol;
+    Procedure AddCount(P : PObjectSymbol);
+    var
+      i,count : integer;
+      D : PObjectSymbol;
+    begin
+      if not assigned(P) then
+        exit;
+      Count:=P^.GetDescendantCount;
+      Inc(Nb,Count);
+      for I:=0 to Count-1 do
+        begin
+          D:=P^.GetDescendant(I);
+          AddCount(D);
+        end;
+    end;
 begin
-  GetText:=PObjectSymbol(Node)^.GetName;
+  Nb:=0;
+  AddCount(Node);
+  GetNumChildrenExposed:=Nb;
 end;
+
 
 procedure TSymbolInheritanceView.Adjust(Node: Pointer; Expand: Boolean);
 begin
@@ -1118,12 +1192,19 @@ end;
 
 procedure TSymbolInheritanceView.HandleEvent(var Event: TEvent);
 var DontClear: boolean;
+{$ifndef HASOUTLINE}
+        P: TPoint;
+{$endif HASOUTLINE}
 begin
   case Event.What of
     evKeyDown :
       begin
         DontClear:=false;
         case Event.KeyCode of
+{$ifndef HASOUTLINE}
+          kbEnter:
+            NodeSelected(GetLineNode(Cursor.Y-Origin.Y));
+{$endif HASOUTLINE}
           kbLeft,kbRight,
           kbCtrlLeft,kbCtrlRight :
             if Assigned(HScrollBar) then
@@ -1136,6 +1217,10 @@ begin
       end;
     evMouseDown :
       begin
+{$ifndef HASOUTLINE}
+        MakeLocal(Event.Where,P);
+        SetCursor(P.X,P.Y);
+{$endif HASOUTLINE}
         if Event.double then
           begin
             Message(@Self,evKeyDown,kbEnter,nil);
@@ -1152,13 +1237,151 @@ begin
   GetPalette:=@P;
 end;
 
-procedure TSymbolInheritanceView.Selected(I: Integer);
+{$ifdef HASOUTLINE}
+function TSymbolInheritanceView.GetText(Node: Pointer): String;
+begin
+  GetText:=PObjectSymbol(Node)^.GetName;
+end;
+
+{$else not HASOUTLINE}
+function TSymbolInheritanceView.GetNode(I : sw_Integer) : Pointer;
+var
+  P : PObjectSymbol;
+begin
+  P:=Root;
+  If Assigned(P) then
+    P:=P^.GetDescendant(I);
+  GetNode:=Pointer(P);
+end;
+
+procedure TSymbolInheritanceView.ExpandAll(Node: Pointer);
+var
+  i : integer;
+  P : Pointer;
+begin
+  Adjust(Node,true);
+  For i:=0 to GetNumChildren(Node)-1 do
+    begin
+      P:=GetChild(Node,I);
+      if Assigned(P) then
+        ExpandAll(P);
+    end;
+end;
+
+function TSymbolInheritanceView.GetLineNode(Item : sw_Integer) : Pointer;
+var
+  P : PObjectSymbol;
+  NT: Integer;
+    procedure FindSymbol(var P:PObjectSymbol);
+    var
+      Q : PObjectSymbol;
+      Nc,Des : integer;
+    begin
+      if not assigned(P) then
+         exit;
+      Des:=0;
+      While (NT<Item) and (Des<GetNumChildren(P)) do
+        begin
+          Q:=P^.GetDescendant(Des);
+          Inc(NT);
+          if NT=Item then
+            begin
+              P:=Q;
+              exit;
+            end;
+          Nc:=GetNumChildrenExposed(Q);
+          If NT+Nc<Item then
+            Inc(NT,Nc)
+          else
+            begin
+              FindSymbol(Q);
+              P:=Q;
+              exit;
+            end;
+          Inc(Des);
+        end;
+    end;
+
+begin
+  P:=Root;
+  NT:=0;
+  FindSymbol(P);
+  GetLineNode:=P;
+end;
+
+function TSymbolInheritanceView.GetText(Item,MaxLen: Sw_Integer): String;
+var
+  P,Ans : PObjectSymbol;
+  NC,NT,NumParents : Integer;
+  S : String;
+    procedure FindSymbol(var P:PObjectSymbol);
+    var
+      Q : PObjectSymbol;
+      Des : integer;
+    begin
+      if not assigned(P) then
+         exit;
+      Des:=0;
+      While (NT<Item) and (Des<GetNumChildren(P)) do
+        begin
+          Q:=P^.GetDescendant(Des);
+          Inc(NT);
+          if NT=Item then
+            begin
+              P:=Q;
+              exit;
+            end;
+          Nc:=GetNumChildrenExposed(Q);
+          If NT+Nc<Item then
+            Inc(NT,Nc)
+          else
+            begin
+              FindSymbol(Q);
+              P:=Q;
+              exit;
+            end;
+          Inc(Des);
+        end;
+    end;
+
+begin
+  P:=Root;
+  NT:=0;
+  FindSymbol(P);
+
+  if assigned(P) then
+    begin
+      S:=P^.GetName;
+      Ans:=P^.Parent;
+      NumParents:=0;
+      While Assigned(Ans) do
+        begin
+          Inc(NumParents);
+          Ans:=Ans^.Parent;
+        end;
+      S:=CharStr('-',NumParents)+S;
+      GetText:=Copy(S,1,MaxLen);
+    end
+  else
+    GetText:='';
+end;
+
+{$endif HASOUTLINE}
+
+
+procedure TSymbolInheritanceView.Selected(I: sw_Integer);
 var P: pointer;
+begin
+  P:=GetNode(I);
+  NodeSelected(P);
+end;
+
+procedure TSymbolInheritanceView.NodeSelected(P: pointer);
+var
     S: PSymbol;
     St : String;
     Anc: PObjectSymbol;
 begin
-  P:=GetNode(I);
   if P=nil then Exit;
 
   S:=PObjectSymbol(P)^.Symbol;
@@ -1171,12 +1394,16 @@ begin
     Anc:=ObjectTree
   else
     Anc:=SearchObjectForSymbol(S^.Ancestor);
-  OpenSymbolBrowser(Origin.X-1,FOC-Delta.Y+1,
+  OpenSymbolBrowser(Origin.X-1,
+{$ifdef HASOUTLINE}
+    FOC-Delta.Y+1,
+{$else not HASOUTLINE}
+    Origin.Y+1,
+{$endif not HASOUTLINE}
     st,
     S^.GetText,S,nil,
     S^.Items,S^.References,Anc,S^.MemInfo);
 end;
-{$endif HASOUTLINE}
 
 
 {****************************************************************************
@@ -1224,7 +1451,8 @@ function TBrowserTab.GetItem(Index: sw_integer): PBrowserTabItem;
 var Counter: integer;
     P: PBrowserTabItem;
 begin
-  P:=Items; Counter:=0;
+  P:=Items;
+  Counter:=0;
   while (P<>nil) and (Counter<Index) do
     begin
       P:=P^.Next;
@@ -1295,7 +1523,8 @@ begin
       begin
         DontClear:=false; Idx:=-1;
         for I:=0 to GetItemCount-1 do
-          if GetCtrlCode(GetItem(I)^.Sign)=Event.KeyCode then
+          if (GetCtrlCode(GetItem(I)^.Sign)=Event.KeyCode){ or
+             (GetItem(I)^.Sign=UpCase(Event.CharCode))}  then
            if (Flags and (1 shl I))<>0 then
             begin
               Idx:=I;
@@ -1368,7 +1597,7 @@ begin
   GetExtent(R); R.Grow(-1,-1); R.B.Y:=R.A.Y+1;
 {$ifndef NODEBUG}
   if {assigned(Debugger) and Debugger^.IsRunning and}
-     assigned(Sym) and (Sym^.typ in [fieldvarsym,globalvarsym,localvarsym,paravarsym]) then
+     assigned(Sym) and (Sym^.typ in [fieldvarsym,staticvarsym,localvarsym,paravarsym]) then
     begin
       New(DebuggerValue,Init(ATitle,Sym));
       New(ST, Init(R, ' '+DebuggerValue^.GetText));
@@ -1412,12 +1641,10 @@ begin
       Insert(HSB);
       VSB:=CreateVSB(R);
       Insert(VSB);
-{$ifdef HASOUTLINE}
       New(InheritanceView, Init(R, HSB,VSB, AInheritance));
       InheritanceView^.GrowMode:=gfGrowHiX+gfGrowHiY;
       Insert(InheritanceView);
       InheritanceView^.MyBW:=@Self;
-{$endif HASOUTLINE}
     end;
   if assigned(AMemInfo) then
     begin
@@ -1508,30 +1735,22 @@ begin
   New(PageTab, Init(R,
     NewBrowserTabItem(label_browsertab_scope,ScopeView,
     NewBrowserTabItem(label_browsertab_reference,ReferenceView,
-{$ifdef HASOUTLINE}
     NewBrowserTabItem(label_browsertab_inheritance,InheritanceView,
-{$endif HASOUTLINE}
     NewBrowserTabItem(label_browsertab_memory,MemInfoView,
     NewBrowserTabItem(label_browsertab_unit,UnitInfo,
-    nil))
-{$ifdef HASOUTLINE}
-    )
-{$endif HASOUTLINE}
-    ))));
+    nil)))))));
   PageTab^.GrowMode:=gfGrowHiX;
   Insert(PageTab);
 
   if assigned(ScopeView) then
    SelectTab(btScope)
-  else
-   if assigned(ReferenceView) then
+  else if assigned(ReferenceView) then
     SelectTab(btReferences)
-{$ifdef HASOUTLINE}
+  else if assigned(MemInfoView) then
+    SelectTab(btMemInfo)
   else
    if assigned(InheritanceView) then
-    SelectTab(btInheritance)
-{$endif HASOUTLINE}
-  ;
+    SelectTab(btInheritance);
 end;
 
 destructor  TBrowserWindow.Done;
@@ -1570,7 +1789,7 @@ begin
         cmDebuggerStopped :
           begin
             if Assigned(DebuggerValue) and
-               (DebuggerValue^.GDBI<>Event.InfoLong) then
+               (DebuggerValue^.GDBI<>PtrInt(Event.InfoPtr)) then
               begin
                 If Assigned(ST^.Text) then
                   DisposeStr(ST^.Text);
@@ -1701,17 +1920,23 @@ end;
 
 procedure TBrowserWindow.SelectTab(BrowserTab: Sw_integer);
 var Tabs: Sw_integer;
-{    PB : PBreakpoint;
+{$ifndef NODEBUG}
+    PB : PBreakpoint;
+{$endif}
     PS :PString;
-    l : longint; }
+    l : longint;
 begin
-(*  case BrowserTab of
+  case BrowserTab of
     btScope :
       if assigned(ScopeView) then
         ScopeView^.Select;
     btReferences :
       if assigned(ReferenceView) then
         ReferenceView^.Select;
+    btMemInfo:
+      if assigned(MemInfoView) then
+        MemInfoView^.Select;
+{$ifndef NODEBUG}
     btBreakWatch :
       begin
         if Assigned(Sym) then
@@ -1768,22 +1993,22 @@ begin
             end;
         end;
       end;
-
-  end;*)
+{$endif NODEBUG}
+  end;
   Tabs:=0;
   if assigned(ScopeView) then
     Tabs:=Tabs or (1 shl btScope);
   if assigned(ReferenceView) then
     Tabs:=Tabs or (1 shl btReferences);
-{$ifdef HASOUTLINE}
   if assigned(InheritanceView) then
     Tabs:=Tabs or (1 shl btInheritance);
-{$endif HASOUTLINE}
   if assigned(MemInfoView) then
     Tabs:=Tabs or (1 shl btMemInfo);
+{$ifndef NODEBUG}
   if Assigned(Sym) then
     if (Pos('proc',Sym^.GetText)>0) or (Pos('var',Sym^.GetText)>0) then
       Tabs:=Tabs or (1 shl btBreakWatch);
+{$endif NODEBUG}
   if assigned(UnitInfo) then
     Tabs:=Tabs or (1 shl btUnitInfo);
   if PageTab<>nil then PageTab^.SetParams(Tabs,BrowserTab);
@@ -1830,7 +2055,7 @@ begin
   PB:=New(PBrowserWindow, Init(R,
     st2,SearchFreeWindowNo,S,Line,st,
     Symbols,References,Inheritance,MemInfo));
-  if (assigned(S) and (S^.typ in [fieldvarsym,globalvarsym,localvarsym,paravarsym])) or
+  if (assigned(S) and (S^.typ in [fieldvarsym,staticvarsym,localvarsym,paravarsym])) or
      (assigned(ParentBrowser) and ParentBrowser^.IsValid) then
     PB^.IsValid:=true;
 
@@ -1838,9 +2063,3 @@ begin
 end;
 
 END.
-{
-  $Log: fpsymbol.pas,v $
-  Revision 1.9  2005/02/14 17:13:18  peter
-    * truncate log
-
-}

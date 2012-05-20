@@ -1,5 +1,4 @@
 {
-    $Id: i_macos.pas,v 1.20 2005/03/20 22:36:45 olle Exp $
     Copyright (c) 1998-2002 by Peter Vreman
 
     This unit implements support information structures for MacOS
@@ -22,6 +21,8 @@
 { This unit implements support information structures for MacOS. }
 unit i_macos;
 
+{$i fpcdefs.inc}
+
   interface
 
     uses
@@ -32,7 +33,7 @@ unit i_macos;
             system       : system_powerpc_MACOS;
             name         : 'Mac OS for PowerPC';
             shortname    : 'MacOS';
-            flags        : [];
+            flags        : [tf_p_ext_support,tf_files_case_aware];
             cpu          : cpu_powerpc;
             unit_env     : '';
             extradefines : '';
@@ -54,17 +55,18 @@ unit i_macos;
             staticClibext : 'Lib';
             staticClibprefix : '';
             sharedClibprefix : '';
-            p_ext_support : true;
+            importlibprefix : 'imp';
+            importlibext : 'Lib';
             Cprefix      : '';
             newline      : #13;
             dirsep       : ':';
-            files_case_relevent : false;
             assem        : as_powerpc_mpw;
             assemextern  : as_powerpc_mpw;
             link         : nil;
             linkextern   : nil;
             ar           : ar_mpw_ar;
             res          : res_powerpc_mpw;
+            dbg          : dbg_stabs;
             script       : script_mpw;
             endian       : endian_big;
             alignment    :
@@ -84,8 +86,6 @@ unit i_macos;
               );
             first_parm_offset : 8;
             stacksize    : 262144;
-            DllScanSupported:false;
-            use_function_relative_addresses : true;
             abi : abi_powerpc_aix;
           );
 
@@ -98,13 +98,3 @@ initialization
   {$endif macos}
 {$endif cpupowerpc}
 end.
-{
-  $Log: i_macos.pas,v $
-  Revision 1.20  2005/03/20 22:36:45  olle
-    * Cleaned up handling of source file extension.
-    + Added support for .p extension for macos and darwin
-
-  Revision 1.19  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

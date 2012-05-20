@@ -7,15 +7,16 @@ main=rtl
 
 [target]
 loaders=prt0
-units=$(SYSTEMUNIT) ctypes objpas macpas strings \
+units=$(SYSTEMUNIT) uuchar ctypes objpas macpas iso7185 strings \
       ports os2def doscalls moncalls kbdcalls moucalls viocalls \
       pmbitmap pmwin pmgpi pmstddlg pmhelp pmdev pmspl pmshl pmwp pmwsock pmbidi \
       dos crt objects printer matrix \
-      sysutils classes math typinfo varutils winsock \
-      charset ucomplex cpu mmx getopts heaptrc lineinfo dynlibs \
+      sysutils fgl classes math typinfo varutils winsock \
+      charset ucomplex cpu mmx getopts heaptrc lineinfo lnfodwrf dynlibs \
       video mouse keyboard variants types rtlconst sysconst dateutil \
-      strutils convutil
-rsts=math varutils typinfo variants pmhelp classes sysconst dateutil
+      strutils convutil stdconvs fmtbcd so32dll sockets
+rsts=math varutils typinfo variants pmhelp classes sysconst dateutil stdconvs
+implicitunits=exeinfo
 
 [require]
 nortl=y
@@ -30,12 +31,13 @@ cpu=i386
 
 [compiler]
 includedir=$(INC) $(PROCINC)
-sourcedir=$(INC) $(PROCINC)
+sourcedir=$(INC) $(PROCINC) $(COMMON)
 
 
 [prerules]
 RTL=..
 INC=$(RTL)/inc
+COMMON=$(RTL)/common
 PROCINC=$(RTL)/$(CPU_TARGET)
 
 UNITPREFIX=rtl
@@ -58,6 +60,7 @@ OBJPASDIR=$(RTL)/objpas
 GRAPHDIR=$(INC)/graph
 
 [rules]
+.NOTPARALLEL:
 # Get the system independent include file names.
 # This will set the following variables :
 # SYSINCNAMES
@@ -87,6 +90,8 @@ SYSDEPS=$(SYSINCDEPS) $(SYSCPUDEPS)
 
 $(SYSTEMUNIT)$(PPUEXT) : $(SYSTEMUNIT).pas $(SYSDEPS)
         $(COMPILER) -Us -Sg $(SYSTEMUNIT).pas
+
+uuchar$(PPUEXT): $(SYSTEMUNIT)$(PPUEXT) $(INC)/uuchar.pp
 
 objpas$(PPUEXT): $(OBJPASDIR)/objpas.pp $(INC)/except.inc $(SYSTEMUNIT)$(PPUEXT)
         $(COMPILER) -Fi$(OBJPASDIR) $(OBJPASDIR)/objpas.pp
@@ -133,9 +138,13 @@ pmwsock$(PPUEXT) : pmwsock.pas os2def$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
 
 winsock$(PPUEXT) : winsock.pas pmwsock$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
 
+so32dll$(PPUEXT) : so32dll.pas $(SYSTEMUNIT)$(PPUEXT)
+
+sockets$(PPUEXT) : sockets.pas so32dll$(PPUEXT) ctypes$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
+
 pmbidi$(PPUEXT) : pmbidi.pas os2def$(PPUEXT) pmwin$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
 
-dynlibs$(PPUEXT) : $(INC)/dynlibs.pp doscalls$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
+dynlibs$(PPUEXT) : $(INC)/dynlibs.pas doscalls$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
 
 #
 # TP7 Compatible RTL Units
@@ -157,12 +166,16 @@ printer$(PPUEXT) : printer.pas $(INC)/textrec.inc $(SYSTEMUNIT)$(PPUEXT)
 #
 
 sysutils$(PPUEXT) : sysutils.pp $(wildcard $(OBJPASDIR)/sysutils/*.inc) \
-                    objpas$(PPUEXT) dos$(PPUEXT) sysconst$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
+                    objpas$(PPUEXT) doscalls$(PPUEXT) sysconst$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
         $(COMPILER) -Fi$(OBJPASDIR)/sysutils sysutils.pp
 
 classes$(PPUEXT) : classes.pp $(wildcard $(OBJPASDIR)/classes/*.inc) \
-                   sysutils$(PPUEXT) typinfo$(PPUEXT) rtlconst$(PPUEXT) types$(PPUEXT) objpas$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
+                   sysutils$(PPUEXT) typinfo$(PPUEXT) rtlconst$(PPUEXT) types$(PPUEXT) \
+		   objpas$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT) fgl$(PPUEXT)
         $(COMPILER) -Fi$(OBJPASDIR)/classes classes.pp
+
+fgl$(PPUEXT) : $(OBJPASDIR)/fgl.pp objpas$(PPUEXT) types$(PPUEXT) system$(PPUEXT) sysutils$(PPUEXT)
+        $(COMPILER) $(OBJPASDIR)/fgl.pp
 
 math$(PPUEXT): $(OBJPASDIR)/math.pp objpas$(PPUEXT) sysutils$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
         $(COMPILER) $(OBJPASDIR)/math.pp
@@ -195,11 +208,18 @@ convutil$(PPUEXT) : $(OBJPASDIR)/convutil.pp objpas$(PPUEXT) $(SYSTEMUNIT)$(PPUE
 strutils$(PPUEXT) : $(OBJPASDIR)/strutils.pp sysutils$(PPUEXT) objpas$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
         $(COMPILER) $(OBJPASDIR)/strutils.pp
 
+stdconvs$(PPUEXT) : $(OBJPASDIR)/stdconvs.pp objpas$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT) \
+                    sysutils$(PPUEXT)
+        $(COMPILER) $(OBJPASDIR)/stdconvs.pp
+
+fmtbcd$(PPUEXT) : $(OBJPASDIR)/fmtbcd.pp objpas$(PPUEXT) sysutils$(PPUEXT) variants$(PPUEXT) classes$(PPUEXT) system$(PPUEXT)
+        $(COMPILER) $(OBJPASDIR)/fmtbcd.pp
+
 #
 # Mac Pascal Model
 #
 
-macpas$(PPUEXT) : $(INC)/macpas.pp $(SYSTEMUNIT)$(PPUEXT)
+macpas$(PPUEXT) : $(INC)/macpas.pp objpas$(PPUEXT) math$(PPUEXT)
         $(COMPILER) $(INC)/macpas.pp $(REDIR)
 
 #
@@ -219,9 +239,13 @@ heaptrc$(PPUEXT) : $(INC)/heaptrc.pp $(SYSTEMUNIT)$(PPUEXT)
 
 lineinfo$(PPUEXT) : $(INC)/lineinfo.pp $(SYSTEMUNIT)$(PPUEXT)
 
+lnfodwrf$(PPUEXT) : $(INC)/lnfodwrf.pp $(SYSTEMUNIT)$(PPUEXT)
+
 charset$(PPUEXT) : $(INC)/charset.pp $(SYSTEMUNIT)$(PPUEXT)
 
 ctypes$(PPUEXT) :  $(INC)/ctypes.pp $(SYSTEMUNIT)$(PPUEXT)
+
+
 #
 # Other system-dependent RTL Units
 #

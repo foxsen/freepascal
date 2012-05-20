@@ -1,5 +1,4 @@
 {
-    $Id: systhrd.inc,v 1.2 2005/02/14 17:13:30 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2002 by Peter Vreman,
     member of the Free Pascal development team.
@@ -28,7 +27,6 @@
                              Threadvar support
 *****************************************************************************}
 
-{$ifdef HASTHREADVAR}
     const
       threadvarblocksize : dword = 0;
       thredvarsmainthread: pointer = nil; // to free the threadvars in the signal handler
@@ -83,7 +81,6 @@
       pthread_setspecific(tlskey,newPtr);
     end;
 
-{$endif HASTHREADVAR}
 
 
 {*****************************************************************************
@@ -98,26 +95,14 @@
         stklen : cardinal;
       end;
 
-    procedure DoneThread;
-      begin
-        { Release Threadvars }
-{$ifdef HASTHREADVAR}
-        WRITE_DEBUG('DoneThread, releasing threadvars'#13#10);
-        SysReleaseThreadVars;
-{$endif HASTHREADVAR}
-      end;
-
-
     function ThreadMain(param : pointer) : pointer;cdecl;
       var
         ti : tthreadinfo;
       begin
         WRITE_DEBUG('New thread started, initing threadvars'#13#10);
-{$ifdef HASTHREADVAR}
         { Allocate local thread vars, this must be the first thing,
           because the exception management and io depends on threadvars }
         SysAllocateThreadVars;
-{$endif HASTHREADVAR}
         { Copy parameter to local data }
         WRITE_DEBUG('New thread started, initialising ...'#13#10);
         ti:=pthreadinfo(param)^;
@@ -127,13 +112,14 @@
         { Start thread function }
         WRITE_DEBUG('Jumping to thread function'#13#10);
         ThreadMain:=pointer(ti.f(ti.p));
+        WRITE_DEBUG('DoneThread, releasing threadvars'#13#10);
         DoneThread;
         //pthread_detach(pointer(pthread_self));
         pthread_exit (nil);
       end;
 
 
-    function SysBeginThread(sa : Pointer;stacksize : dword;
+    function SysBeginThread(sa : Pointer;stacksize : SizeUInt;
                          ThreadFunction : tthreadfunc;p : pointer;
                          creationFlags : dword; var ThreadId : THandle) : DWord;
       var
@@ -144,11 +130,9 @@
         { Initialize multithreading if not done }
         if not IsMultiThread then
          begin
-{$ifdef HASTHREADVAR}
           { We're still running in single thread mode, setup the TLS }
            pthread_key_create(@TLSKey,nil);
            InitThreadVars(@SysRelocateThreadvar);
-{$endif HASTHREADVAR}
            IsMultiThread:=true;
          end;
         { the only way to pass data to the newly created thread
@@ -269,46 +253,6 @@
       end;
 
 
-{*****************************************************************************
-                           Heap Mutex Protection
-*****************************************************************************}
-
-    var
-      HeapMutex : pthread_mutex_t;
-
-    procedure PThreadHeapMutexInit;
-      begin
-         pthread_mutex_init(@heapmutex,nil);
-      end;
-
-    procedure PThreadHeapMutexDone;
-      begin
-         pthread_mutex_destroy(@heapmutex);
-      end;
-
-    procedure PThreadHeapMutexLock;
-      begin
-         pthread_mutex_lock(@heapmutex);
-      end;
-
-    procedure PThreadHeapMutexUnlock;
-      begin
-         pthread_mutex_unlock(@heapmutex);
-      end;
-
-    const
-      PThreadMemoryMutexManager : TMemoryMutexManager = (
-        MutexInit : @PThreadHeapMutexInit;
-        MutexDone : @PThreadHeapMutexDone;
-        MutexLock : @PThreadHeapMutexLock;
-        MutexUnlock : @PThreadHeapMutexUnlock;
-      );
-
-    procedure InitHeapMutexes;
-      begin
-        SetMemoryMutexManager(PThreadMemoryMutexManager);
-      end;
-
 type
      Tbasiceventstate=record
          FSem: Pointer;
@@ -424,12 +368,10 @@ begin
     DoneCriticalSection    :=@SysDoneCriticalSection;
     EnterCriticalSection   :=@SysEnterCriticalSection;
     LeaveCriticalSection   :=@SysLeaveCriticalSection;
-{$ifdef hasthreadvar}
     InitThreadVar          :=@SysInitThreadVar;
     RelocateThreadVar      :=@SysRelocateThreadVar;
     AllocateThreadVars     :=@SysAllocateThreadVars;
     ReleaseThreadVars      :=@SysReleaseThreadVars;
-{$endif}
     BasicEventCreate       :=@intBasicEventCreate;
     BasicEventDestroy      :=@intBasicEventDestroy;
     BasicEventResetEvent   :=@intBasicEventResetEvent;
@@ -437,27 +379,11 @@ begin
     BasiceventWaitFor      :=@intBasiceventWaitFor;
     end;
   SetThreadManager(NWThreadManager);
-  InitHeapMutexes;
-  {$ifdef HASTHREADVAR}
   ThVarAllocResourceTag := AllocateResourceTag(getnlmhandle,'Threadvar Memory',AllocSignature);
-  {$endif}
   NWSysSetThreadFunctions (@SysAllocateThreadVars,
                            @SysReleaseThreadVars,
                            @SysSetThreadDataAreaPtr);
 end;
 
 
-{
-  $Log: systhrd.inc,v $
-  Revision 1.2  2005/02/14 17:13:30  peter
-    * truncate log
-
-  Revision 1.1  2005/02/06 16:57:18  peter
-    * threads for go32v2,os,emx,netware
-
-  Revision 1.1  2005/02/06 13:06:20  peter
-    * moved file and dir functions to sysfile/sysdir
-    * win32 thread in systemunit
-
-}
 

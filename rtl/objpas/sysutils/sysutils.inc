@@ -1,5 +1,4 @@
 {
-    $Id: sysutils.inc,v 1.20 2005/02/26 14:38:14 florian Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Florian Klaempfl
     member of the Free Pascal development team
@@ -16,18 +15,24 @@
   { Read filename handling functions implementation }
   {$i fina.inc}
 
-    Function FileSearch (Const Name, DirList : String) : String;
+  { variant error codes }
+  {$i varerror.inc}
+
+    Function FileSearch (Const Name, DirList : String; Options : TFileSearchoptions = [sfoImplicitCurrentDir]) : String;
     Var
       I : longint;
       Temp : String;
 
     begin
-      Result:='';
-      temp:=Dirlist;
-      repeat
-        While (Length(Temp)>0) and (Temp[1]=PathSeparator) do
-          Delete(Temp,1,1);
-        I:=pos(PathSep,Temp);
+      Result:=Name;
+      temp:=SetDirSeparators(DirList);
+      // Start with checking the file in the current directory
+      If (sfoImplicitCurrentDir in Options) and (Result <> '') and FileExists(Result) Then
+        exit;
+      while True do begin
+        If Temp = '' then
+          Break; // No more directories to search - fail
+        I:=pos(PathSeparator,Temp);
         If I<>0 then
           begin
             Result:=Copy (Temp,1,i-1);
@@ -38,12 +43,43 @@
             Result:=Temp;
             Temp:='';
           end;
-        If (Length(Result)>0) and (result[length(result)]<>DirectorySeparator) then
-          Result:=Result+DirectorySeparator;
-        Result:=Result+name;
-        If not FileExists(Result) Then
-         Result:='';
-      until (length(temp)=0) or (length(result)<>0);
+        If Result<>'' then
+          begin
+          If (sfoStripQuotes in Options) and (Result[1]='"') and (Result[Length(Result)]='"') then
+            Result:=Copy(Result,2,Length(Result)-2);
+          if (Result<>'') then
+            Result:=IncludeTrailingPathDelimiter(Result)+name;
+          end;
+        If (Result <> '') and FileExists(Result) Then
+          exit;
+      end;
+      result:='';
+    end;
+
+    Function FileSearch (Const Name, DirList : String; ImplicitCurrentDir : Boolean) : String;
+
+    begin
+      if ImplicitCurrentDir then
+        Result:=FileSearch(Name,DirList,[sfoImplicitCurrentDir])
+      else  
+        Result:=FileSearch(Name,DirList,[]);
+    end;
+    
+    Function ExeSearch (Const Name : String; Const DirList : String ='' ) : String;
+    
+    Var
+      D : String;
+      O : TFileSearchOptions;
+    begin
+      D:=DirList;
+      if (D='') then
+        D:=GetEnvironmentVariable('PATH');
+    {$ifdef unix}
+      O:=[];
+    {$else unix}
+      O:=[sfoImplicitCurrentDir,sfoStripQuotes];
+    {$endif unix}
+      Result := FileSearch(Name, D, O);
     end;
 
   {$ifndef OS_FILEISREADONLY}
@@ -55,11 +91,35 @@
   {$endif OS_FILEISREADONLY}
 
 
+  {$ifndef OS_FILESETDATEBYNAME}
+  Function FileSetDate (Const FileName : String;Age : Longint) : Longint;
+  Var
+    fd : THandle;
+  begin
+    { at least windows requires fmOpenWrite here }
+    fd:=FileOpen(FileName,fmOpenWrite);
+    If (Fd<>feInvalidHandle) then
+      try
+        Result:=FileSetDate(fd,Age);
+      finally
+        FileClose(fd);
+      end
+    else
+  {$ifdef HAS_OSERROR}
+      Result:=GetLastOSError;
+  {$else}
+      Result:=-1;
+  {$endif}
+  end;
+  {$endif}
+
   { Read String Handling functions implementation }
   {$i sysstr.inc}
 
   { Read date & Time function implementations }
+{$ifndef FPUNONE}
   {$i dati.inc}
+{$endif}
 
   { Read pchar handling functions implementation }
   {$i syspch.inc}
@@ -69,14 +129,19 @@
 
   { MCBS functions }
   {$i sysansi.inc}
+  {$i syscodepages.inc}
 
-{$ifndef VER1_0}
   { wide string functions }
   {$i syswide.inc}
-{$endif VER1_0}
 
-  { CPU Specific code }
-  {$i sysutilp.inc}
+{$ifdef FPC_HAS_UNICODESTRING}
+  { unicode string functions }
+  {$i sysuni.inc}
+  {$i sysencoding.inc}
+{$endif FPC_HAS_UNICODESTRING}
+  
+  { threading stuff }
+  {$i sysuthrd.inc}
 
   { OS utility code }
   {$i osutil.inc}
@@ -90,10 +155,8 @@
         temp.free;
       end;
 
-{$ifdef HASINTF}
   { Interfaces support }
   {$i sysuintf.inc}
-{$endif HASINTF}
 
     constructor Exception.Create(const msg : string);
 
@@ -172,125 +235,207 @@
     end;
 
 
-{$ifopt S+}
-{$define STACKCHECK_WAS_ON}
-{$S-}
-{$endif OPT S }
-Procedure CatchUnhandledException (Obj : TObject; Addr: Pointer; FrameCount: Longint; Frames: PPointer);[public,alias:'FPC_BREAK_UNHANDLED_EXCEPTION'];
-Var
-  Message : String;
-  {$IFDEF VIRTUALPASCAL}
-  stdout:text absolute output;
-  {$ENDIF}
-  i : longint;
-begin
-  Writeln(stdout,'An unhandled exception occurred at $',HexStr(Ptrint(Addr),sizeof(PtrInt)*2),' :');
-  if Obj is exception then
-   begin
-     Message:=Exception(Obj).ClassName+' : '+Exception(Obj).Message;
-     Writeln(stdout,Message);
-   end
-  else
-   Writeln(stdout,'Exception object ',Obj.ClassName,' is not of class Exception.');
-  if (FrameCount>0) then
+    Constructor EVariantError.CreateCode (Code : longint);
     begin
-      Writeln(stdout,BackTraceStrFunc(Addr));
-      for i:=0 to FrameCount-1 do
-        Writeln(stdout,BackTraceStrFunc(Frames[i]));
+       case Code of
+         VAR_OK:
+           Create(SNoError);
+         VAR_PARAMNOTFOUND:
+           Create(SVarParamNotFound);
+         VAR_TYPEMISMATCH:
+           Create(SInvalidVarCast);
+         VAR_BADVARTYPE:
+           Create(SVarBadType);
+         VAR_OVERFLOW:
+           Create(SVarOverflow);
+         VAR_BADINDEX:
+           Create(SVarArrayBounds);
+         VAR_ARRAYISLOCKED:
+           Create(SVarArrayLocked);
+         VAR_NOTIMPL:
+           Create(SVarNotImplemented);
+         VAR_OUTOFMEMORY:
+           Create(SVarOutOfMemory);
+         VAR_INVALIDARG:
+           Create(SVarInvalid);
+         VAR_UNEXPECTED,
+         VAR_EXCEPTION:
+           Create(SVarUnexpected);
+         else
+           CreateFmt(SUnknownErrorCode,[Code]);
+       end;
+       ErrCode:=Code;
     end;
-  Halt(217);
+
+{$ifdef windows}
+function EExternal.GetExceptionRecord: PExceptionRecord;
+begin
+  result:=@FExceptionRecord;
 end;
 
+{$endif windows}
+
+{$push}
+{$S-}
+Procedure CatchUnhandledException (Obj : TObject; Addr: Pointer; FrameCount: Longint; Frames: PPointer);[public,alias:'FPC_BREAK_UNHANDLED_EXCEPTION'];
+Var
+  i : longint;
+  hstdout : ^text;
+begin
+  hstdout:=@stdout;
+  Writeln(hstdout^,'An unhandled exception occurred at $',HexStr(Addr),':');
+  if Obj is exception then
+    Writeln(hstdout^,Obj.ClassName,': ',Exception(Obj).Message)
+  else
+    Writeln(hstdout^,'Exception object ',Obj.ClassName,' is not of class Exception.');
+  Writeln(hstdout^,BackTraceStrFunc(Addr));
+  if (FrameCount>0) then
+    begin
+      for i:=0 to FrameCount-1 do
+        Writeln(hstdout^,BackTraceStrFunc(Frames[i]));
+    end;
+  Writeln(hstdout^,'');
+end;
+
+type
+  PExceptMapEntry=^TExceptMapEntry;
+  TExceptMapEntry=record
+    code: byte;
+    cls:  ExceptClass;
+{$IFDEF FPC_HAS_FEATURE_RESOURCES}  // This is necessary for 2.4.4, which does not have reasources as a separate feature
+    msg:  PResStringRec;
+{$else FPC_HAS_FEATURE_RESOURCES}
+    msg:  PString;
+{$endif FPC_HAS_FEATURE_RESOURCES}
+  end;
+
+const
+  exceptmap: array[0..27] of TExceptMapEntry = (
+    (code: 200; cls: EDivByZero;     msg: @SDivByZero),
+    (code: 201; cls: ERangeError;    msg: @SRangeError),
+    (code: 202; cls: EStackOverflow; msg: @SStackOverflow),
+    (code: 205; cls: EOverflow;      msg: @SOverflow),
+    (code: 206; cls: EUnderflow;     msg: @SUnderflow),
+    (code: 207; cls: EInvalidOp;     msg: @SInvalidOp),
+    { Delphi distinguishes reDivByZero from reZeroDivide, but maps both to code 200. }
+    (code: 208; cls: EZeroDivide;    msg: @SZeroDivide),
+    (code: 211; cls: EAbstractError; msg: @SAbstractError),
+    (code: 212; cls: EExternalException; msg: @SExternalException),
+    (code: 214; cls: EBusError;      msg: @SBusError),
+    (code: 215; cls: EIntOverflow;   msg: @SIntOverflow),
+    (code: 216; cls: EAccessViolation; msg: @SAccessViolation),
+    (code: 217; cls: EControlC;      msg: @SControlC),
+    (code: 218; cls: EPrivilege;     msg: @SPrivilege),
+    (code: 219; cls: EInvalidCast;   msg: @SInvalidCast),
+    (code: 220; cls: EVariantError;  msg: @SInvalidVarCast),
+    (code: 221; cls: EVariantError;  msg: @SInvalidVarOp),
+    (code: 222; cls: EVariantError;  msg: @SDispatchError),
+    (code: 223; cls: EVariantError;  msg: @SVarArrayCreate),
+    (code: 224; cls: EVariantError;  msg: @SVarNotArray),
+    (code: 225; cls: EVariantError;  msg: @SVarArrayBounds),
+    (code: 227; cls: EAssertionFailed; msg: @SAssertionFailed),
+    (code: 228; cls: EIntfCastError; msg: @SIntfCastError),
+    (code: 229; cls: ESafecallException; msg: @SSafecallException),
+    (code: 231; cls: EConvertError;  msg: @SiconvError),
+    (code: 232; cls: ENoThreadSupport; msg: @SNoThreadSupport),
+    (code: 233; cls: ENoWideStringSupport; msg: @SSigQuit),
+    (code: 234; cls: ENoWideStringSupport; msg: @SMissingWStringManager)
+  );
+
+function FindExceptMapEntry(err: longint): PExceptMapEntry;
+var
+  i: longint;
+begin
+  for i:=low(exceptmap) to high(exceptmap) do
+    if err=exceptmap[i].code then
+    begin
+      result:=@exceptmap[i];
+      exit;
+    end;
+  result:=nil;
+end;
 
 Var OutOfMemory : EOutOfMemory;
     InValidPointer : EInvalidPointer;
 
 
 Procedure RunErrorToExcept (ErrNo : Longint; Address,Frame : Pointer);
-
-Var E : Exception;
-    S : String;
-
+var
+  E: Exception;
+  HS: PString;
+  Entry: PExceptMapEntry;
 begin
   Case Errno of
    1,203 : E:=OutOfMemory;
    204 : E:=InvalidPointer;
-   2,3,4,5,6,100,101,102,103,105,106 : { I/O errors }
-     begin
-     Case Errno of
-       2 : S:=SFileNotFound;
-       3 : S:=SInvalidFileName;
-       4 : S:=STooManyOpenFiles;
-       5 : S:=SAccessDenied;
-       6 : S:=SInvalidFileHandle;
-       15 : S:=SInvalidDrive;
-       100 : S:=SEndOfFile;
-       101 : S:=SDiskFull;
-       102 : S:=SFileNotAssigned;
-       103 : S:=SFileNotOpen;
-       104 : S:=SFileNotOpenForInput;
-       105 : S:=SFileNotOpenForOutput;
-       106 : S:=SInvalidInput;
-     end;
-     E:=EinOutError.Create (S);
-     EInoutError(E).ErrorCode:=IOresult; // Clears InOutRes !!
-     end;
-  // We don't set abstracterrorhandler, but we do it here.
-  // Unless the use sets another handler we'll get here anyway...
-  200 : E:=EDivByZero.Create(SDivByZero);
-  201 : E:=ERangeError.Create(SRangeError);
-  205 : E:=EOverflow.Create(SOverflow);
-  206 : E:=EOverflow.Create(SUnderflow);
-  207 : E:=EInvalidOp.Create(SInvalidOp);
-  211 : E:=EAbstractError.Create(SAbstractError);
-  215 : E:=EIntOverflow.Create(SIntOverflow);
-  216 : E:=EAccessViolation.Create(SAccessViolation);
-  217 : E:=EPrivilege.Create(SPrivilege);
-  218 : E:=EControlC.Create(SControlC);
-  219 : E:=EInvalidCast.Create(SInvalidCast);
-  220 : E:=EVariantError.Create(SInvalidVarCast);
-  221 : E:=EVariantError.Create(SInvalidVarOp);
-  222 : E:=EVariantError.Create(SDispatchError);
-  223 : E:=EVariantError.Create(SVarArrayCreate);
-  224 : E:=EVariantError.Create(SVarNotArray);
-  225 : E:=EVariantError.Create(SVarArrayBounds);
-  227 : E:=EAssertionFailed.Create(SAssertionFailed);
-  228 : E:=EExternalException.Create(SExternalException);
-  229 : E:=EIntfCastError.Create(SIntfCastError);
-  230 : E:=ESafecallException.Create(SSafecallException);
-  232 : E:=ENoThreadSupport.Create(SNoThreadSupport);
   else
-   E:=Exception.CreateFmt (SUnKnownRunTimeError,[Errno]);
+    Entry:=FindExceptMapEntry(ErrNo);
+    if Assigned(Entry) then
+      E:=Entry^.cls.CreateRes(Entry^.msg)
+    else
+    begin
+     HS:=nil;
+     Case Errno of
+       2 : HS:=@SFileNotFound;
+       3 : HS:=@SInvalidFileName;
+       4 : HS:=@STooManyOpenFiles;
+       5 : HS:=@SAccessDenied;
+       6 : HS:=@SInvalidFileHandle;
+       15 : HS:=@SInvalidDrive;
+       100 : HS:=@SEndOfFile;
+       101 : HS:=@SDiskFull;
+       102 : HS:=@SFileNotAssigned;
+       103 : HS:=@SFileNotOpen;
+       104 : HS:=@SFileNotOpenForInput;
+       105 : HS:=@SFileNotOpenForOutput;
+       106 : HS:=@SInvalidInput;
+     end;
+     if Assigned(HS) then
+       E:=EInOutError.CreateRes(HS)
+     else
+       E:=EInOutError.CreateResFmt(@SUnknownRunTimeError,[errno]);
+     // this routine can be called from FPC_IOCHECK,
+     // which clears inoutres and then passes its
+     // original value to HandleErrorFrame() (which calls
+     // us). So use errno rather than IOResult, and clear
+     // InOutRes explicitly in case we can also be called
+     // from a place that does not clear InOutRes explicitly
+     EInoutError(E).ErrorCode:=errno;
+     inoutres:=0;
+     end;
   end;
-{$ifdef VER1_0}
-  Raise E at longint(Address){$ifdef ENHANCEDRAISE},longint(Frame){$endif};
-{$else VER1_0}
   Raise E at Address,Frame;
-{$endif VER1_0}
 end;
 
 {$IFDEF HAS_OSERROR}
-Procedure RaiseLastOSError;
-
-var
-  ECode: Cardinal;
-  E : EOSError;
-
+Procedure RaiseLastOSError;overload;
 begin
-  ECode := GetLastOSError;
-  If (ECode<>0) then
-    E:=EOSError.CreateFmt(SOSError, [ECode, SysErrorMessage(ECode)])
+  RaiseLastOSError(GetLastOSError);
+end;
+
+Procedure RaiseLastOSError(LastError: Integer);overload;
+var
+  E : EOSError;
+begin
+  If (LastError<>0) then
+    E:=EOSError.CreateFmt(SOSError, [LastError, SysErrorMessage(LastError)])
   else
     E:=EOSError.Create(SUnkOSError);
-  E.ErrorCode:=ECode;
+  E.ErrorCode:=LastError;
   Raise E;
 end;
-{$else}
-Procedure RaiseLastOSError;
 
+{$else}
+Procedure RaiseLastOSError;overload;
 begin
   Raise Exception.Create('RaiseLastOSError not implemented on this platform.');
 end;
+
+Procedure RaiseLastOSError(LastError: Integer);overload;
+begin
+  RaiseLastOSError;
+end;
+
 {$endif}
 Procedure AssertErrorHandler (Const Msg,FN : ShortString;LineNo:longint; TheAddr : pointer);
 Var
@@ -300,12 +445,10 @@ begin
     S:=SAssertionFailed
   else
     S:=Msg;
-  Raise EAssertionFailed.Createfmt(SAssertError,[S,Fn,LineNo]); // at Pointer(theAddr);
+  Raise EAssertionFailed.Createfmt(SAssertError,[S,Fn,LineNo]) at get_caller_addr(theAddr), get_caller_frame(theAddr);
 end;
 
-{$ifdef STACKCHECK_WAS_ON}
-{$S+}
-{$endif}
+{$pop} //{$S-} for Error handling functions
 
 Procedure InitExceptions;
 {
@@ -314,6 +457,7 @@ Procedure InitExceptions;
   (e.g: SIGSEGV -> ESegFault or so.)
 }
 begin
+  ExceptionClass := Exception;
   ExceptProc:=@CatchUnhandledException;
   // Create objects that may have problems when there is no memory.
   OutOfMemory:=EOutOfMemory.Create(SOutOfMemory);
@@ -340,29 +484,37 @@ end;
 function ExceptObject: TObject;
 
 begin
-  {$IFDEF VIRTUALPASCAL}
-  // vpascal does exceptions more the delphi way...
-  // this needs to be written from scratch.
-  {$ELSE}
   If RaiseList=Nil then
     Result:=Nil
   else
     Result:=RaiseList^.FObject;
-  {$ENDIF}
 end;
 
 function ExceptAddr: Pointer;
 
 begin
-  {$IFDEF VIRTUALPASCAL}
-  // vpascal does exceptions more the delphi way...
-  // this needs to be written from scratch.
-  {$ELSE}
   If RaiseList=Nil then
     Result:=Nil
   else
     Result:=RaiseList^.Addr;
-  {$ENDIF}
+end;
+
+function ExceptFrameCount: Longint;
+
+begin
+  If RaiseList=Nil then
+    Result:=0
+  else
+    Result:=RaiseList^.Framecount;
+end;
+
+function ExceptFrames: PPointer;
+
+begin
+  If RaiseList=Nil then
+    Result:=Nil
+  else
+    Result:=RaiseList^.Frames;
 end;
 
 function ExceptionErrorMessage(ExceptObject: TObject; ExceptAddr: Pointer;
@@ -408,14 +560,7 @@ end;
 procedure Abort;
 
 begin
-{$ifdef VER1_0}
-  Raise EAbort.Create(SAbortError) at Longint(Get_Caller_addr(Get_Frame));
-{$else VER1_0}
-  Raise EAbort.Create(SAbortError)
-  {$IFNDEF VIRTUALPASCAL}
-    at Pointer(Get_Caller_addr(Get_Frame));
-  {$ENDIF}
-{$endif VER1_0}
+  Raise EAbort.Create(SAbortError) at Pointer(Get_Caller_addr(Get_Frame));
 end;
 
 procedure OutOfMemoryError;
@@ -472,63 +617,147 @@ end;
     Diskh functions, OS independent.
   ---------------------------------------------------------------------}
 
-
 function ForceDirectories(Const Dir: string): Boolean;
 
 var
   E: EInOutError;
-  ADir : String;
+  ADrv : String;
 
+function DoForceDirectories(Const Dir: string): Boolean;
+var
+  ADir : String;
+  APath: String;
 begin
   Result:=True;
   ADir:=ExcludeTrailingPathDelimiter(Dir);
-  if (ADir='') then
-    begin
-    E:=EInOutError.Create(SCannotCreateEmptyDir);
-    E.ErrorCode:=3;
-    Raise E;
-    end;
+  if (ADir='') then Exit;
   if Not DirectoryExists(ADir) then
     begin
-    Result:=ForceDirectories(ExtractFilePath(ADir));
+      APath := ExtractFilePath(ADir);
+      //this can happen on Windows if user specifies Dir like \user\name/test/
+      //and would, if not checked for, cause an infinite recusrsion and a stack overflow
+      if (APath = ADir) then Result := False
+        else Result:=DoForceDirectories(APath);
     If Result then
-      CreateDir(ADir);
+      Result := CreateDir(ADir);
+    end;
+end;
+
+function IsUncDrive(const Drv: String): Boolean;
+begin
+  Result := (Length(Drv) > 2) and (Drv[1] = PathDelim) and (Drv[2] = PathDelim);
+end;
+
+begin
+  Result := False;
+  ADrv := ExtractFileDrive(Dir);
+  if (ADrv<>'') and (not DirectoryExists(ADrv))
+  {$IFNDEF FORCEDIR_NO_UNC_SUPPORT} and (not IsUncDrive(ADrv)){$ENDIF} then Exit;
+  if Dir='' then
+    begin
+      E:=EInOutError.Create(SCannotCreateEmptyDir);
+      E.ErrorCode:=3;
+      Raise E;
+    end;
+  Result := DoForceDirectories(SetDirSeparators(Dir));
+end;
+
+Var
+  GUIDCalledRandomize : Boolean = False;
+
+Procedure GetRandomBytes(Var Buf; NBytes : Integer);
+
+Var
+  I : Integer;
+  P : PByte;
+
+begin
+  P:=@Buf;
+  If Not GUIDCalledRandomize then
+    begin
+    Randomize;
+    GUIDCalledRandomize:=True;
+    end;
+  For I:=0 to NBytes-1 do
+    P[i]:=Random(256);
+end;
+
+{$IFDEF HASCREATEGUID}
+Function SysCreateGUID(out GUID : TGUID) : Integer; forward;
+{$ENDIF}
+
+Function CreateGUID(out GUID : TGUID) : Integer;
+begin
+  If Assigned(OnCreateGUID) then
+    Result:=OnCreateGUID(GUID)
+  else
+    begin
+    {$IFDEF HASCREATEGUID}
+    Result:=SysCreateGUID(GUID);
+    {$ELSE}
+    GetRandomBytes(GUID,SizeOf(Guid));
+    guid.clock_seq_hi_and_reserved:=(guid.clock_seq_hi_and_reserved and $3F) + 64;
+    guid.time_hi_and_version      :=(guid.time_hi_and_version and $0FFF)+ $4000;
+    Result:=0;
+    {$ENDIF}
     end;
 end;
 
 
-{
-  Revision 1.1  2003/10/06 21:01:06  peter
-    * moved classes unit to rtl
+function SafeLoadLibrary(const FileName: AnsiString;
+  ErrorMode: DWord = {$ifdef windows}SEM_NOOPENFILEERRORBOX{$else windows}0{$endif windows}): HMODULE;
+{$if defined(cpui386) or defined(cpux86_64)}
+  var
+    mode : DWord;
+    fpucw : Word;
+    ssecw : DWord;
+{$endif}
+  begin
+{$if defined(win64) or defined(win32)}
+    mode:=SetErrorMode(ErrorMode);
+{$endif}
+    try
+{$if defined(cpui386) or defined(cpux86_64)}
+      fpucw:=Get8087CW;
+{$ifdef cpui386}
+      if has_sse_support then
+{$endif cpui386}
+        ssecw:=GetSSECSR;
+{$endif}
+{$if defined(windows) or defined(win32)}
+      Result:=LoadLibraryA(PChar(Filename));
+{$else}
+      Result:=0;
+{$endif}
+      finally
+{$if defined(cpui386) or defined(cpux86_64)}
+      Set8087CW(fpucw);
+{$ifdef cpui386}
+      if has_sse_support then
+{$endif cpui386}
+        SetSSECSR(ssecw);
+{$endif}
+{$if defined(win64) or defined(win32)}
+      SetErrorMode(mode);
+{$endif}
+    end;
+  end;
 
-  Revision 1.17  2003/09/06 20:46:07  marco
-   * 3 small VP fixes from Noah Silva. One (OutOfMemory error) failed.
+function GetModuleName(Module: HMODULE): string;
 
-  Revision 1.16  2003/04/06 11:06:39  michael
-  + Added exception classname to output of unhandled exception for better identification
+begin
+{$ifdef MSWINDOWS}
+  SetLength(Result,MAX_PATH);
+  SetLength(Result,GetModuleFileName(Module, Pchar(Result),Length(Result)));
+{$ELSE}
+  Result:='';
+{$ENDIF}
+end;
 
-  Revision 1.15  2003/03/18 08:28:23  michael
-  Patch from peter for Abort routine
+{ Beep support }
 
-  Revision 1.14  2003/03/17 15:11:51  armin
-  + someone AssertErrorHandler, BackTraceFunc and Dump_Stack so that pointer instead of longint is needed
-
-  Revision 1.13  2003/01/01 20:58:07  florian
-    + added invalid instruction exception
-
-  Revision 1.12  2002/10/07 19:43:24  florian
-    + empty prototypes for the AnsiStr* multi byte functions added
-
-  Revision 1.11  2002/09/07 16:01:22  peter
-    * old logs removed and tabs fixed
-
-  Revision 1.10  2002/07/16 13:57:39  florian
-    * raise takes now a void pointer as at and frame address
-      instead of a longint, fixed
-
-  Revision 1.9  2002/01/25 17:42:03  peter
-    * interface helpers
-
-  Revision 1.8  2002/01/25 16:23:03  peter
-    * merged filesearch() fix
-}
+procedure Beep;
+begin
+  If Assigned(OnBeep) then
+    OnBeep;
+end;

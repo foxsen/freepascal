@@ -1,5 +1,4 @@
 {
-    $Id: n386cal.pas,v 1.104 2005/02/14 17:13:09 peter Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl
 
     Generate i386 assembler for in call nodes
@@ -29,10 +28,10 @@ interface
 { $define AnsiStrRef}
 
     uses
-      ncgcal;
+      nx86cal;
 
     type
-       ti386callnode = class(tcgcallnode)
+       ti386callnode = class(tx86callnode)
        protected
           procedure pop_parasize(pop_size:longint);override;
           procedure extra_interrupt_code;override;
@@ -44,9 +43,9 @@ implementation
     uses
       globtype,systems,
       cutils,verbose,globals,
-      cgbase,
+      cgbase,cgutils,
       cpubase,paramgr,
-      aasmtai,aasmcpu,
+      aasmtai,aasmdata,aasmcpu,
       ncal,nbas,nmem,nld,ncnv,
       cga,cgobj,cpuinfo;
 
@@ -58,8 +57,11 @@ implementation
 
     procedure ti386callnode.extra_interrupt_code;
       begin
-        emit_none(A_PUSHF,S_L);
-        emit_reg(A_PUSH,S_L,NR_CS);
+        if not(target_info.system in [system_i386_darwin,system_i386_iphonesim]) then
+          begin
+            emit_none(A_PUSHF,S_L);
+            emit_reg(A_PUSH,S_L,NR_CS);
+          end;
       end;
 
 
@@ -67,36 +69,52 @@ implementation
       var
         hreg : tregister;
       begin
+        if (paramanager.use_fixed_stack) then
+          begin
+            { very weird: in this case the callee does a "ret $4" and the }
+            { caller immediately a "subl $4,%esp". Possibly this is for   }
+            { use_fixed_stack code to be able to transparently call       }
+            { old-style code (JM)                                         }
+            dec(pop_size,pushedparasize);
+            if (pop_size < 0) then
+              current_asmdata.CurrAsmList.concat(taicpu.op_const_reg(A_SUB,S_L,-pop_size,NR_ESP));
+            exit;
+          end;
+
+        { on win32, the caller is responsible for removing the funcret     }
+        { pointer from the stack, unlike on Linux. Don't know about        }
+        { elsewhere (except Darwin, handled above), but since the default  }
+        { was "callee removes funcret pointer from stack" until now, we'll }
+        { keep that default for everyone else (ncgcal decreases popsize by }
+        { sizeof(aint) in case of ret_in_param())                          }
+        if (target_info.system = system_i386_win32) and
+            paramanager.ret_in_param(procdefinition.returndef,procdefinition.proccalloption) then
+          inc(pop_size,sizeof(aint));
+
         { better than an add on all processors }
         if pop_size=4 then
           begin
-            hreg:=cg.getintregister(exprasmlist,OS_INT);
-            exprasmlist.concat(taicpu.op_reg(A_POP,S_L,hreg));
+            hreg:=cg.getintregister(current_asmdata.CurrAsmList,OS_INT);
+            current_asmdata.CurrAsmList.concat(taicpu.op_reg(A_POP,S_L,hreg));
           end
         { the pentium has two pipes and pop reg is pairable }
         { but the registers must be different!        }
         else
           if (pop_size=8) and
-             not(cs_littlesize in aktglobalswitches) and
-             (aktoptprocessor=ClassPentium) then
+             not(cs_opt_size in current_settings.optimizerswitches) and
+             (current_settings.optimizecputype=cpu_Pentium) then
             begin
-               hreg:=cg.getintregister(exprasmlist,OS_INT);
-               exprasmlist.concat(taicpu.op_reg(A_POP,S_L,hreg));
-               hreg:=cg.getintregister(exprasmlist,OS_INT);
-               exprasmlist.concat(taicpu.op_reg(A_POP,S_L,hreg));
+               hreg:=cg.getintregister(current_asmdata.CurrAsmList,OS_INT);
+               current_asmdata.CurrAsmList.concat(taicpu.op_reg(A_POP,S_L,hreg));
+               hreg:=cg.getintregister(current_asmdata.CurrAsmList,OS_INT);
+               current_asmdata.CurrAsmList.concat(taicpu.op_reg(A_POP,S_L,hreg));
             end
         else
           if pop_size<>0 then
-            exprasmlist.concat(taicpu.op_const_reg(A_ADD,S_L,pop_size,NR_ESP));
+            current_asmdata.CurrAsmList.concat(taicpu.op_const_reg(A_ADD,S_L,pop_size,NR_ESP));
       end;
 
 
 begin
    ccallnode:=ti386callnode;
 end.
-{
-  $Log: n386cal.pas,v $
-  Revision 1.104  2005/02/14 17:13:09  peter
-    * truncate log
-
-}

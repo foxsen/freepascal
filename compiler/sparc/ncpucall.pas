@@ -1,5 +1,4 @@
 {
-    $Id: ncpucall.pas,v 1.16 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl
 
     Generate sparc assembler for in call nodes
@@ -39,7 +38,7 @@ implementation
 
     uses
       cpubase,
-      aasmtai,
+      aasmtai,aasmdata,
       aasmcpu,
       paramgr,
       ncal;
@@ -47,21 +46,11 @@ implementation
 
     procedure tsparccallnode.extra_post_call_code;
       begin
-        if paramanager.ret_in_param(procdefinition.rettype.def,procdefinition.proccalloption) then
-          exprasmlist.concat(taicpu.op_const(A_UNIMP,procdefinition.rettype.def.size and $fff));
+        if paramanager.ret_in_param(procdefinition.returndef,procdefinition.proccalloption) then
+          current_asmdata.CurrAsmList.concat(taicpu.op_const(A_UNIMP,procdefinition.returndef.size and $fff));
       end;
 
 
 begin
   ccallnode:=TSparcCallNode;
 end.
-{
-  $Log: ncpucall.pas,v $
-  Revision 1.16  2005/02/14 17:13:10  peter
-    * truncate log
-
-  Revision 1.15  2005/01/07 16:22:54  florian
-    + implemented abi compliant handling of strucutured functions results on sparc platform
-
-}
-

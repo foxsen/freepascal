@@ -1,5 +1,4 @@
 {
-    $Id: wconstsh.inc,v 1.3 2005/02/14 17:13:18 peter Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 2000 by Berczi Gabor
 
@@ -11,7 +10,7 @@
 
  **********************************************************************}
 
-{$undef USERESSTRINGS} { this doesn't compile under FP!!! why? }
+{ $undef USERESSTRINGS} { this doesn't compile under FP!!! why? }
 
 {$ifdef USERESSTRINGS}
     resourcestring
@@ -101,9 +100,3 @@
                                  #3+'nincs kidolgozva...'#13+
                                  #3+'';
 
-{
-  $Log: wconstsh.inc,v $
-  Revision 1.3  2005/02/14 17:13:18  peter
-    * truncate log
-
-}

@@ -10,7 +10,7 @@ rsts=fpcmmain
 units=fpcmmain fpcmdic fpcmwr fpcmpkg
 
 [require]
-packages=fcl
+packages=fcl-base
 tools=data2inc
 
 [install]
@@ -20,6 +20,7 @@ fpcpackage=y
 fpcdir=../..
 
 [rules]
+.NOTPARALLEL:
 ifneq ($(DATA2INC),)
 fpcmake.inc: fpcmake.ini
         $(DATA2INC) -b -s fpcmake.ini fpcmake.inc fpcmakeini

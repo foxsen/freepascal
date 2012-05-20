@@ -1,5 +1,4 @@
 {
-    $Id: system.pp,v 1.35 2005/05/12 20:29:04 michael Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2004 by Karoly Balogh for Genesi S.a.r.l.
 
@@ -20,7 +19,7 @@
 
  **********************************************************************}
 
-unit {$ifdef VER1_0}SysMorph{$else}System{$endif};
+unit System;
 
 interface
 
@@ -33,10 +32,14 @@ const
   LFNSupport = True;
   DirectorySeparator = '/';
   DriveSeparator = ':';
+  ExtensionSeparator = '.';
   PathSeparator = ';';
+  AllowDirectorySeparators : set of char = ['\','/'];
+  AllowDriveSeparators : set of char = [':'];
   maxExitCode = 255;
   MaxPathLen = 256;
-  
+  AllFilesMask = '#?';
+
 const
   UnusedHandle    : LongInt = -1;
   StdInputHandle  : LongInt = 0;
@@ -44,9 +47,10 @@ const
   StdErrorHandle  : LongInt = 0;
 
   FileNameCaseSensitive : Boolean = False;
-  CtrlZMarksEOF: boolean = false; (* #26 not considered as end of file *)
+  FileNameCasePreserving: boolean = true;
+  CtrlZMarksEOF: boolean = false; { #26 not considered as end of file }
 
-  sLineBreak : string[1] = LineEnding;
+  sLineBreak = LineEnding;
   DefaultTextLineBreakStyle : TTextLineBreakStyle = tlbsLF;
 
   BreakOn : Boolean = True;
@@ -71,6 +75,14 @@ var
 implementation
 
 {$I system.inc}
+
+{$IFDEF MOSFPC_FILEDEBUG}
+{$WARNING Compiling with file debug enabled!}
+{$ENDIF}
+
+{$IFDEF MOSFPC_MEMDEBUG}
+{$WARNING Compiling with memory debug enabled!}
+{$ENDIF}
 
 
 {*****************************************************************************
@@ -97,9 +109,19 @@ begin
     CurrentDir(MOS_origDir);
   end;
 
+  { Closing CON: when in Ambient mode }
+  if MOS_ConHandle<>0 then dosClose(MOS_ConHandle);
+
   if MOS_UtilityBase<>nil then CloseLibrary(MOS_UtilityBase);
   if MOS_DOSBase<>nil then CloseLibrary(MOS_DOSBase);
   if MOS_heapPool<>nil then DeletePool(MOS_heapPool);
+
+  { If in Ambient mode, replying WBMsg }
+  if MOS_ambMsg<>nil then begin
+    Forbid;
+    ReplyMsg(MOS_ambMsg);
+  end;
+
   haltproc(ExitCode);
 end;
 
@@ -141,11 +163,10 @@ begin
   argv[0][length(temp)]:=#0;
 
   { check if we're started from Ambient }
-  if MOS_ambMsg<>nil then
-    begin
-      argc:=0;
-      exit;
-    end;
+  if MOS_ambMsg<>nil then begin
+    argc:=0;
+    exit;
+  end;
 
   { Handle the other args }
   count:=0;
@@ -211,6 +232,68 @@ begin
   end;
 end;
 
+function GetArgv0Ambient: String;
+{ Returns program full path+name, when in Ambient mode }
+{ Required for paramstr(0) support in Ambient mode }
+type
+  pWBArg = ^tWBArg;
+  tWBArg = record
+    wa_Lock: longint;
+    wa_Name: PChar;
+  end;
+
+  pWBStartup = ^tWBStartup;
+  tWBStartup = packed record
+    sm_Message   : tMessage;
+    sm_Process   : pMsgPort;
+    sm_Segment   : longint;
+    sm_NumArgs   : longint;
+    sm_ToolWindow: PChar;
+    sm_ArgList   : pWBArg;
+  end;
+
+var
+  tmpbuf  : String;
+  counter : longint;
+  progname: PChar;
+  dlock   : longint;
+
+begin
+  GetArgv0Ambient:='';
+
+  if MOS_ambMsg<>nil then begin
+    dlock:=pWBStartup(MOS_ambMsg)^.sm_argList^.wa_Lock;
+    if dlock<>0 then begin
+      FillDWord(tmpbuf,256 div 4,0);
+      if NameFromLock(dlock,@tmpbuf[1],255) then begin
+        counter:=1;
+        while tmpbuf[counter]<>#0 do
+          inc(counter);
+        tmpbuf[0]:=Char(counter-1);
+        GetArgv0Ambient:=tmpbuf;
+        { Append slash,if we're not in root directory of a volume }
+        if tmpbuf[counter-1]<>':' then
+          GetArgv0Ambient:=GetArgv0Ambient+'/';
+      end;
+    end;
+
+    { Fetch the progname, and copy it to the buffer }
+    progname:=pWBStartup(MOS_ambMsg)^.sm_argList^.wa_Name;
+    if progname<>nil then begin
+      FillDWord(tmpbuf,256 div 4,0);
+      counter:=0;
+      while (progname[counter]<>#0) do begin
+        tmpbuf[counter+1]:=progname[counter];
+        inc(counter);
+      end;
+      tmpbuf[0]:=Char(counter);
+      GetArgv0Ambient:=GetArgv0Ambient+tmpbuf;
+    end;
+  end;
+end;
+
+
+
 
 {*****************************************************************************
                              ParamStr/Randomize
@@ -231,7 +314,13 @@ var
   s1: String;
 begin
   paramstr:='';
-  if MOS_ambMsg<>nil then exit;
+  if MOS_ambMsg<>nil then begin
+    if l=0 then begin
+      paramstr:=GetArgv0Ambient;
+      exit;
+    end else
+      exit;
+  end;
 
   if l=0 then begin
     s1:=GetProgDir;
@@ -272,6 +361,7 @@ begin
  if MOS_heapPool=nil then Halt(1);
 
  if MOS_ambMsg=nil then begin
+   MOS_ConHandle:=0;
    StdInputHandle:=dosInput;
    StdOutputHandle:=dosOutput;
  end else begin
@@ -302,12 +392,19 @@ begin
  GetProcessID:=SizeUInt(FindTask(NIL));
 end;
 
+function CheckInitialStkLen(stklen : SizeUInt) : SizeUInt;
+begin
+  result := stklen;
+end;
+
 
 begin
   IsConsole := TRUE;
-  IsLibrary := FALSE;
-  StackLength := InitialStkLen;
+  StackLength := CheckInitialStkLen(InitialStkLen);
   StackBottom := Sptr - StackLength;
+  SysResetFPU;
+  if not(IsLibrary) then
+    SysInitFPU;
 { OS specific startup }
   MOS_ambMsg:=nil;
   MOS_origDir:=0;
@@ -319,6 +416,7 @@ begin
 { Setup heap }
   InitHeap;
   SysInitExceptions;
+  initunicodestringmanager;
 { Setup stdin, stdout and stderr }
   SysInitStdIO;
 { Reset IO Error }
@@ -326,38 +424,5 @@ begin
 { Arguments }
   GenerateArgs;
   InitSystemThreads;
-{$ifdef HASVARIANT}
   initvariantmanager;
-{$endif HASVARIANT}
-{$ifdef HASWIDESTRING}
-  initwidestringmanager;
-{$endif HASWIDESTRING}
 end.
-
-{
-  $Log: system.pp,v $
-  Revision 1.35  2005/05/12 20:29:04  michael
-  + Added maxpathlen constant (maximum length of filename path)
-
-  Revision 1.34  2005/05/10 21:45:08  hajny
-    * fix for potential SIGSEGV during argv allocation
-
-  Revision 1.33  2005/04/03 21:10:59  hajny
-    * EOF_CTRLZ conditional define replaced with CtrlZMarksEOF, #26 handling made more consistent (fix for bug 2453)
-
-  Revision 1.32  2005/02/14 17:13:30  peter
-    * truncate log
-
-  Revision 1.31  2005/02/07 21:30:12  peter
-    * system unit updated
-
-  Revision 1.30  2005/02/01 20:22:49  florian
-    * improved widestring infrastructure manager
-
-  Revision 1.29  2005/01/12 08:03:42  karoly
-    * Few more Sysutils functions implemented
-
-  Revision 1.28  2005/01/11 17:43:14  karoly
-    * some cleanup, more sanity checks and updates for sysutils
-
-}

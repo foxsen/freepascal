@@ -2,7 +2,6 @@
 { Submitted by "Sergey Kosarevsky" on  2003-05-01 }
 { e-mail: netsurfer@au.ru }
 {$mode objfpc}
-{$static on}
 
 Type tSingleton=Class
        Private
@@ -12,7 +11,7 @@ Type tSingleton=Class
         Class Function Instance:tSingleton;
      End;
 
-Function tSingleton.Instance:tSingleton;
+class Function tSingleton.Instance:tSingleton;
 Begin
    If _Instance=Nil Then _Instance:=tSingleton.Init;
    Exit(_Instance);

@@ -1,7 +1,7 @@
 {
-    $Id: system.pp,v 1.38 2005/05/12 20:29:04 michael Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team.
+    Copyright (c) 2001-2011 by Armin Diehl.
 
     See the file COPYING.FPC, included in this distribution,
     for details about the copyright.
@@ -20,6 +20,7 @@ interface
 {$define StdErrToConsole}
 {$define useLongNamespaceByDefault}
 {$define autoHeapRelease}
+{$define DISABLE_NO_THREAD_MANAGER}
 
 {$ifdef SYSTEMDEBUG}
   {$define SYSTEMEXCEPTIONDEBUG}
@@ -39,10 +40,14 @@ const
  LFNSupport : boolean = false;
  DirectorySeparator = '/';
  DriveSeparator = ':';
+ ExtensionSeparator = '.';
  PathSeparator = ';';
-{ FileNameCaseSensitive is defined separately below!!! }
+ AllowDirectorySeparators : set of char = ['\','/'];
+ AllowDriveSeparators : set of char = [':'];
+{ FileNameCaseSensitive and FileNameCasePreserving are defined separately below!!! }
  maxExitCode = 255;
  MaxPathLen = 256;
+ AllFilesMask = '*';
 
 CONST
   { Default filehandles }
@@ -52,6 +57,7 @@ CONST
    StdErrorHandle  : THandle = 0;
 
    FileNameCaseSensitive : boolean = false;
+   FileNameCasePreserving: boolean = true; (* Not really correct on older Netware versions without the LFN support switched on... *)
    CtrlZMarksEOF: boolean = false; (* #26 not considered as end of file *)
 
    sLineBreak = LineEnding;
@@ -65,7 +71,6 @@ VAR
    ArgV   : ppchar;
    NetwareCheckFunction    : TNWCheckFunction;
    NetwareMainThreadGroupID: longint;
-   NetwareCodeStartAddress : dword;
    NetwareUnloadProc       : pointer = nil;  {like exitProc but for nlm unload only}
 
 CONST
@@ -93,6 +98,7 @@ procedure NWSysSetThreadFunctions (crs:TSysCloseAllRemainingSemaphores;
 
 function NWGetCodeStart : pointer;  // needed for lineinfo
 
+
 implementation
 { Indicate that stack checking is taken care by OS}
 {$DEFINE NO_GENERIC_STACK_CHECK}
@@ -111,26 +117,21 @@ procedure fpc_do_exit;external name 'FPC_DO_EXIT';
                          Startup
 *****************************************************************************}
 
-    function __GetBssStart : pointer; external name '__getBssStart';
-    function __getUninitializedDataSize : longint; external name '__getUninitializedDataSize';
-    //function __getDataStart : longint; external name '__getDataStart';
-    function __GetTextStart : longint; external name '__getTextStart';
 
 PROCEDURE nlm_main (_ArgC : LONGINT; _ArgV : ppchar); CDECL; [public,alias: '_nlm_main'];
 BEGIN
-  // Initialize BSS
-  if __getUninitializedDataSize > 0 then
-    fillchar (__getBssStart^,__getUninitializedDataSize,0);
-  NetwareCodeStartAddress := __GetTextStart;
+  // Initialize of BSS now done in nwpre
   ArgC := _ArgC;
   ArgV := _ArgV;
   fpc_threadvar_relocate_proc := nil;
   PASCALMAIN;
 END;
 
+var dottext : ptruint; external name '__text_start__';
+
 function NWGetCodeStart : pointer;  // needed for lineinfo
 begin
-  NWGetCodeStart := pointer(NetwareCodeStartAddress);
+  NWGetCodeStart := @dottext;
 end;
 
 
@@ -215,8 +216,7 @@ begin
     paramstr:=strpas(argv[l]);
     if l = 0 then  // fix nlm path
     begin
-      for l := 1 to length (paramstr) do
-        if paramstr[l] = '\' then paramstr[l] := '/';
+      DoDirSeparators(paramstr);
     end;
   end else
    paramstr:='';
@@ -233,14 +233,6 @@ end;
 {*****************************************************************************
                              Thread Handling
 *****************************************************************************}
-
-procedure InitFPU;assembler;
-
-  asm
-     fninit
-     fldcw   fpucw
-  end;
-
 
 { if return-value is <> 0, netware shows the message
   Unload Anyway ?
@@ -436,11 +428,16 @@ begin
 end;
 
 
+function CheckInitialStkLen(stklen : SizeUInt) : SizeUInt;
+begin
+  result := stklen;
+end;
 {*****************************************************************************
                          SystemUnit Initialization
 *****************************************************************************}
 
 Begin
+  StackLength := CheckInitialStkLen(initialstklen);
   StackBottom := SPtr - StackLength;
   SigTermHandlerActive := false;
   NetwareCheckFunction := nil;
@@ -473,35 +470,12 @@ Begin
   ConsolePrintf (#13'Start system, ThreadID: %x'#13#10,ThreadID);
   {$endif}
 
+  initunicodestringmanager;
   SysInitStdIO;
 
 {Delphi Compatible}
-  IsLibrary := FALSE;
   IsConsole := TRUE;
   ExitCode  := 0;
   InitSystemThreads;
-{$ifdef HASVARIANT}
   initvariantmanager;
-{$endif HASVARIANT}
-{$ifdef HASWIDESTRING}
-  initwidestringmanager;
-{$endif HASWIDESTRING}
 End.
-{
-  $Log: system.pp,v $
-  Revision 1.38  2005/05/12 20:29:04  michael
-  + Added maxpathlen constant (maximum length of filename path)
-
-  Revision 1.37  2005/04/03 21:10:59  hajny
-    * EOF_CTRLZ conditional define replaced with CtrlZMarksEOF, #26 handling made more consistent (fix for bug 2453)
-
-  Revision 1.36  2005/02/14 17:13:30  peter
-    * truncate log
-
-  Revision 1.35  2005/02/06 16:57:18  peter
-    * threads for go32v2,os,emx,netware
-
-  Revision 1.34  2005/02/01 20:22:49  florian
-    * improved widestring infrastructure manager
-
-}

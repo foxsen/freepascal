@@ -1,5 +1,4 @@
 {
-    $Id: cresstr.pas,v 1.28 2005/02/14 17:13:06 peter Exp $
     Copyright (c) 1998-2002 by Michael van Canneyt
 
     Handles resourcestrings
@@ -26,274 +25,302 @@ unit cresstr;
 
 interface
 
-uses
-  cclasses;
-
-Type
-  { These are used to form a singly-linked list, ordered by hash value }
-  TResourceStringItem = class(TLinkedListItem)
-    Name  : String;
-    Value : Pchar;
-    Len   : Longint;
-    hash  : Cardinal;
-    constructor Create(const AName:string;AValue:pchar;ALen:longint);
-    destructor  Destroy;override;
-    procedure CalcHash;
-  end;
-
-  TResourceStrings=class
-  private
-    List : TLinkedList;
-  public
-    ResStrCount : longint;
-    constructor Create;
-    destructor  Destroy;override;
-    function  Register(Const name : string;p : pchar;len : longint) : longint;
-    procedure CreateResourceStringList;
-    Procedure WriteResourceFile(const FileName : String);
-  end;
-
-var
-  ResourceStrings : TResourceStrings;
+    Procedure GenerateResourceStrings;
 
 
 implementation
 
 uses
-   cutils,globtype,globals,
-   symdef,
-   verbose,fmodule,
-   aasmbase,aasmtai,
-   aasmcpu;
+   SysUtils,
+   cclasses,
+   cutils,globtype,globals,systems,
+   symconst,symtype,symdef,symsym,
+   verbose,fmodule,ppu,
+   aasmbase,aasmtai,aasmdata,
+   aasmcpu,
+{$if FPC_FULLVERSION<20700}
+   ccharset,
+{$endif}
+   asmutils;
+
+    Type
+      { These are used to form a singly-linked list, ordered by hash value }
+      TResourceStringItem = class(TLinkedListItem)
+        Sym   : TConstSym;
+        Name  : String;
+        Value : Pchar;
+        Len   : Longint;
+        hash  : Cardinal;
+        constructor Create(asym:TConstsym);
+        destructor  Destroy;override;
+        procedure CalcHash;
+      end;
+
+      Tresourcestrings=class
+      private
+        List : TLinkedList;
+        procedure ConstSym_Register(p:TObject;arg:pointer);
+      public
+        constructor Create;
+        destructor  Destroy;override;
+        procedure CreateResourceStringData;
+        Procedure WriteResourceFile;
+        procedure RegisterResourceStrings;
+      end;
 
 
-{ ---------------------------------------------------------------------
-   Calculate hash value, based on the string
-  ---------------------------------------------------------------------}
 
 { ---------------------------------------------------------------------
                           TRESOURCESTRING_ITEM
   ---------------------------------------------------------------------}
 
-constructor TResourceStringItem.Create(const AName:string;AValue:pchar;ALen:longint);
-begin
-  inherited Create;
-  Name:=AName;
-  Len:=ALen;
-  GetMem(Value,Len);
-  Move(AValue^,Value^,Len);
-  CalcHash;
-end;
-
-
-destructor TResourceStringItem.Destroy;
-begin
-  FreeMem(Value,Len);
-end;
-
-{$ifdef ver1_0}
-  {$R-}
-{$endif}
-
-procedure TResourceStringItem.CalcHash;
-Var
-  g : Cardinal;
-  I : longint;
-begin
-  hash:=0;
-  For I:=0 to Len-1 do { 0 terminated }
-   begin
-     hash:=hash shl 4;
-     inc(Hash,Ord(Value[i]));
-     g:=hash and ($f shl 28);
-     if g<>0 then
+    constructor TResourceStringItem.Create(asym:TConstsym);
       begin
-        hash:=hash xor (g shr 24);
-        hash:=hash xor g;
+        inherited Create;
+        Sym:=Asym;
+        Name:=lower(asym.owner.name^+'.'+asym.Name);
+        Len:=asym.value.len;
+        GetMem(Value,Len);
+        Move(asym.value.valueptr^,Value^,Len);
+        CalcHash;
       end;
-   end;
-  If Hash=0 then
-    Hash:=$ffffffff;
-end;
 
 
-{ ---------------------------------------------------------------------
-                          TRESOURCESTRINGS
-  ---------------------------------------------------------------------}
-
-Constructor TResourceStrings.Create;
-begin
-  List:=TStringList.Create;
-  ResStrCount:=0;
-end;
-
-
-Destructor TResourceStrings.Destroy;
-begin
-  List.Free;
-end;
-
-
-{ ---------------------------------------------------------------------
-    Create the full asmlist for resourcestrings.
-  ---------------------------------------------------------------------}
-
-procedure TResourceStrings.CreateResourceStringList;
-
-  Procedure AppendToAsmResList (P : TResourceStringItem);
-  Var
-    l1 : tasmlabel;
-    s : pchar;
-    l : longint;
-  begin
-    With P Do
-     begin
-       if (Value=nil) or (len=0) then
-         resourcestringlist.concat(tai_const.create_sym(nil))
-       else
-         begin
-            objectlibrary.getdatalabel(l1);
-            resourcestringlist.concat(tai_const.create_sym(l1));
-            consts.concat(tai_align.Create(const_align(sizeof(aint))));
-            consts.concat(tai_const.create_aint(-1));
-            consts.concat(tai_const.create_aint(len));
-            consts.concat(tai_label.create(l1));
-            getmem(s,len+1);
-            move(Value^,s^,len);
-            s[len]:=#0;
-            consts.concat(tai_string.create_length_pchar(s,len));
-            consts.concat(tai_const.create_8bit(0));
-         end;
-       { append Current value (nil) and hash...}
-       resourcestringlist.concat(tai_const.create_sym(nil));
-       resourcestringlist.concat(tai_const.create_32bit(longint(hash)));
-       { Append the name as a ansistring. }
-       objectlibrary.getdatalabel(l1);
-       L:=Length(Name);
-       resourcestringlist.concat(tai_const.create_sym(l1));
-       consts.concat(tai_align.Create(const_align(sizeof(aint))));
-       consts.concat(tai_const.create_aint(-1));
-       consts.concat(tai_const.create_aint(l));
-       consts.concat(tai_label.create(l1));
-       getmem(s,l+1);
-       move(Name[1],s^,l);
-       s[l]:=#0;
-       consts.concat(tai_string.create_length_pchar(s,l));
-       consts.concat(tai_const.create_8bit(0));
-     end;
-  end;
-
-Var
-  R : tresourceStringItem;
-begin
-  if not(assigned(resourcestringlist)) then
-    resourcestringlist:=taasmoutput.create;
-  resourcestringlist.insert(tai_const.create_32bit(resstrcount));
-  resourcestringlist.insert(tai_symbol.createname_global(make_mangledname('RESOURCESTRINGLIST',current_module.localsymtable,''),AT_DATA,0));
-  resourcestringlist.insert(tai_align.Create(const_align(sizeof(aint))));
-  R:=TResourceStringItem(List.First);
-  While assigned(R) do
-   begin
-     AppendToAsmResList(R);
-     R:=TResourceStringItem(R.Next);
-   end;
-  resourcestringlist.concat(tai_symbol_end.createname(current_module.modulename^+'_'+'RESOURCESTRINGLIST'));
-end;
-
-
-{ ---------------------------------------------------------------------
-    Insert 1 resource string in all tables.
-  ---------------------------------------------------------------------}
-
-function  TResourceStrings.Register(const name : string;p : pchar;len : longint) : longint;
-begin
-  List.Concat(tResourceStringItem.Create(lower(current_module.modulename^+'.'+Name),p,len));
-  Register:=ResStrCount;
-  inc(ResStrCount);
-end;
-
-
-Procedure TResourceStrings.WriteResourceFile(const FileName : String);
-Type
-  TMode = (quoted,unquoted);
-Var
-  F : Text;
-  Mode : TMode;
-  R : TResourceStringItem;
-  C : char;
-  Col,i : longint;
-
-  Procedure Add(Const S : String);
-  begin
-    Write(F,S);
-    Col:=Col+length(s);
-  end;
-
-begin
-  If List.Empty then
-    exit;
-  message1 (general_i_writingresourcefile,SplitFileName(filename));
-  Assign(F,Filename);
-  {$i-}
-  Rewrite(f);
-  {$i+}
-  If IOresult<>0 then
-    begin
-      message1(general_e_errorwritingresourcefile,filename);
-      exit;
-    end;
-  R:=TResourceStringItem(List.First);
-  While assigned(R) do
-   begin
-     writeln(f);
-     Writeln(f,'# hash value = ',R.hash);
-     col:=0;
-     Add(R.Name+'=');
-     Mode:=unquoted;
-     For I:=0 to R.Len-1 do
+    destructor TResourceStringItem.Destroy;
       begin
-        C:=R.Value[i];
-        If (ord(C)>31) and (Ord(c)<=128) and (c<>'''') then
-         begin
-           If mode=Quoted then
-            Add(c)
-           else
-            begin
-              Add(''''+c);
-              mode:=quoted
-            end;
-         end
-        else
-         begin
-           If Mode=quoted then
-            begin
-              Add('''');
-              mode:=unquoted;
-            end;
-           Add('#'+tostr(ord(c)));
-         end;
-        If Col>72 then
-         begin
-           if mode=quoted then
-            Write (F,'''');
-           Writeln(F,'+');
-           Col:=0;
-           Mode:=unQuoted;
-         end;
+        FreeMem(Value);
       end;
-     if mode=quoted then
-      writeln (f,'''');
-     Writeln(f);
-     R:=TResourceStringItem(R.Next);
-   end;
-  close(f);
-end;
 
+
+    procedure TResourceStringItem.CalcHash;
+      Var
+        g : Cardinal;
+        I : longint;
+      begin
+        hash:=0;
+        For I:=0 to Len-1 do { 0 terminated }
+         begin
+           hash:=hash shl 4;
+           inc(Hash,Ord(Value[i]));
+           g:=hash and ($f shl 28);
+           if g<>0 then
+            begin
+              hash:=hash xor (g shr 24);
+              hash:=hash xor g;
+            end;
+         end;
+        If Hash=0 then
+          Hash:=$ffffffff;
+      end;
+
+
+{ ---------------------------------------------------------------------
+                          Tresourcestrings
+  ---------------------------------------------------------------------}
+
+    Constructor Tresourcestrings.Create;
+      begin
+        List:=TLinkedList.Create;
+      end;
+
+
+    Destructor Tresourcestrings.Destroy;
+      begin
+        List.Free;
+      end;
+
+
+    procedure Tresourcestrings.CreateResourceStringData;
+      Var
+        namelab,
+        valuelab : tasmlabofs;
+        resstrlab : tasmsymbol;
+        endsymlab : tasmsymbol;
+        R : TResourceStringItem;
+      begin
+        { Put resourcestrings in a new objectfile. Putting it in multiple files
+	  makes the linking too dependent on the linker script requiring a SORT(*) for
+	  the data sections }
+        maybe_new_object_file(current_asmdata.asmlists[al_const]);
+        new_section(current_asmdata.asmlists[al_const],sec_data,make_mangledname('RESSTRTABLE',current_module.localsymtable,''),sizeof(pint));
+
+        maybe_new_object_file(current_asmdata.asmlists[al_resourcestrings]);
+        new_section(current_asmdata.asmlists[al_resourcestrings],sec_data,make_mangledname('RESSTR',current_module.localsymtable,'1_START'),sizeof(pint));
+        current_asmdata.AsmLists[al_resourcestrings].concat(tai_symbol.createname_global(
+          make_mangledname('RESSTR',current_module.localsymtable,'START'),AT_DATA,0));
+
+        { Write unitname entry }
+        namelab:=emit_ansistring_const(current_asmdata.asmlists[al_const],@current_module.localsymtable.name^[1],length(current_module.localsymtable.name^),getansistringcodepage,False);
+        current_asmdata.asmlists[al_resourcestrings].concat(tai_const.Create_sym_offset(namelab.lab,namelab.ofs));
+        current_asmdata.asmlists[al_resourcestrings].concat(tai_const.create_sym(nil));
+        current_asmdata.asmlists[al_resourcestrings].concat(tai_const.create_sym(nil));
+        current_asmdata.asmlists[al_resourcestrings].concat(tai_const.create_32bit(0));
+{$ifdef cpu64bitaddr}
+        current_asmdata.asmlists[al_resourcestrings].concat(tai_const.create_32bit(0));
+{$endif cpu64bitaddr}
+
+        { Add entries }
+        R:=TResourceStringItem(List.First);
+        while assigned(R) do
+          begin
+            new_section(current_asmdata.asmlists[al_const],sec_rodata,make_mangledname('RESSTR',current_module.localsymtable,'d_'+r.name),sizeof(pint));
+            { Write default value }
+            if assigned(R.value) and (R.len<>0) then
+              valuelab:=emit_ansistring_const(current_asmdata.asmlists[al_const],R.Value,R.Len,getansistringcodepage,False)
+            else
+              begin
+                valuelab.lab:=nil;
+                valuelab.ofs:=0;
+              end;
+            { Append the name as a ansistring. }
+            current_asmdata.asmlists[al_const].concat(cai_align.Create(const_align(sizeof(pint))));
+            namelab:=emit_ansistring_const(current_asmdata.asmlists[al_const],@R.Name[1],length(R.name),getansistringcodepage,False);
+
+            {
+              Resourcestring index:
+                  TResourceStringRecord = Packed Record
+                     Name,
+                     CurrentValue,
+                     DefaultValue : AnsiString;
+                     HashValue    : LongWord;
+                   end;
+            }
+            new_section(current_asmdata.asmlists[al_resourcestrings],sec_data,make_mangledname('RESSTR',current_module.localsymtable,'2_'+r.name),sizeof(pint));
+            resstrlab:=current_asmdata.DefineAsmSymbol(make_mangledname('RESSTR',R.Sym.owner,R.Sym.name),AB_GLOBAL,AT_DATA);
+            current_asmdata.asmlists[al_resourcestrings].concat(tai_symbol.Create_global(resstrlab,0));
+            current_asmdata.asmlists[al_resourcestrings].concat(tai_const.Create_sym_offset(namelab.lab,namelab.ofs));
+            current_asmdata.asmlists[al_resourcestrings].concat(tai_const.Create_sym_offset(valuelab.lab,valuelab.ofs));
+            current_asmdata.asmlists[al_resourcestrings].concat(tai_const.Create_sym_offset(valuelab.lab,valuelab.ofs));
+            current_asmdata.asmlists[al_resourcestrings].concat(tai_const.create_32bit(longint(R.Hash)));
+{$ifdef cpu64bitaddr}
+            current_asmdata.asmlists[al_resourcestrings].concat(tai_const.create_32bit(0));
+{$endif cpu64bitaddr}
+            current_asmdata.asmlists[al_resourcestrings].concat(tai_symbol_end.create(resstrlab));
+            R:=TResourceStringItem(R.Next);
+          end;
+        new_section(current_asmdata.asmlists[al_resourcestrings],sec_data,make_mangledname('RESSTR',current_module.localsymtable,'3_END'),sizeof(pint));
+        endsymlab:=current_asmdata.DefineAsmSymbol(make_mangledname('RESSTR',current_module.localsymtable,'END'),AB_GLOBAL,AT_DATA);
+        current_asmdata.AsmLists[al_resourcestrings].concat(tai_symbol.create_global(endsymlab,0));
+        { The darwin/ppc64 assembler or linker seems to have trouble       }
+        { if a section ends with a global label without any data after it. }
+        { So for safety, just put a dummy value here.                      }
+        { Further, the regular linker also kills this symbol when turning  }
+        { on smart linking in case no value appears after it, so put the   }
+        { dummy byte there always                                          }
+        { Update: the Mac OS X 10.6 linker orders data that needs to be    }
+        { relocated before all other data, so make this data relocatable,  }
+        { otherwise the end label won't be moved with the rest             }
+        if (target_info.system in (systems_darwin+systems_aix)) then
+          current_asmdata.asmlists[al_resourcestrings].concat(Tai_const.create_sym(endsymlab));
+      end;
+
+
+    Procedure Tresourcestrings.WriteResourceFile;
+      Type
+        TMode = (quoted,unquoted);
+      Var
+        F : Text;
+        Mode : TMode;
+        R : TResourceStringItem;
+        C : char;
+        Col,i : longint;
+        ResFileName : string;
+
+        Procedure Add(Const S : String);
+        begin
+          Write(F,S);
+          inc(Col,length(s));
+        end;
+
+      begin
+        ResFileName:=ChangeFileExt(current_module.ppufilename,'.rst');
+        message1 (general_i_writingresourcefile,ExtractFileName(ResFileName));
+        Assign(F,ResFileName);
+        {$push}{$i-}
+        Rewrite(f);
+        {$pop}
+        If IOresult<>0 then
+          begin
+            message1(general_e_errorwritingresourcefile,ResFileName);
+            exit;
+          end;
+        R:=TResourceStringItem(List.First);
+        while assigned(R) do
+          begin
+            writeln(f);
+            Writeln(f,'# hash value = ',R.Hash);
+            col:=0;
+            Add(R.Name+'=');
+            Mode:=unquoted;
+            For I:=0 to R.Len-1 do
+             begin
+               C:=R.Value[i];
+               If (ord(C)>31) and (Ord(c)<=128) and (c<>'''') then
+                begin
+                  If mode=Quoted then
+                   Add(c)
+                  else
+                   begin
+                     Add(''''+c);
+                     mode:=quoted
+                   end;
+                end
+               else
+                begin
+                  If Mode=quoted then
+                   begin
+                     Add('''');
+                     mode:=unquoted;
+                   end;
+                  Add('#'+tostr(ord(c)));
+                end;
+               If Col>72 then
+                begin
+                  if mode=quoted then
+                   Write (F,'''');
+                  Writeln(F,'+');
+                  Col:=0;
+                  Mode:=unQuoted;
+                end;
+             end;
+            if mode=quoted then
+             writeln (f,'''');
+            Writeln(f);
+            R:=TResourceStringItem(R.Next);
+          end;
+        close(f);
+      end;
+
+
+    procedure Tresourcestrings.ConstSym_Register(p:TObject;arg:pointer);
+      begin
+        if (tsym(p).typ=constsym) and
+           (tconstsym(p).consttyp=constresourcestring) then
+          List.Concat(tResourceStringItem.Create(TConstsym(p)));
+      end;
+
+
+    procedure Tresourcestrings.RegisterResourceStrings;
+      begin
+        if assigned(current_module.globalsymtable) then
+          current_module.globalsymtable.SymList.ForEachCall(@ConstSym_Register,nil);
+        current_module.localsymtable.SymList.ForEachCall(@ConstSym_Register,nil);
+      end;
+
+
+    Procedure GenerateResourceStrings;
+      var
+        resstrs : Tresourcestrings;
+      begin
+        resstrs:=Tresourcestrings.Create;
+        resstrs.RegisterResourceStrings;
+        if not resstrs.List.Empty then
+          begin
+            current_module.flags:=current_module.flags or uf_has_resourcestrings;
+            resstrs.CreateResourceStringData;
+            resstrs.WriteResourceFile;
+          end;
+        resstrs.Free;
+      end;
 
 end.
-{
-  $Log: cresstr.pas,v $
-  Revision 1.28  2005/02/14 17:13:06  peter
-    * truncate log
-
-}

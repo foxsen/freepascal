@@ -1,5 +1,4 @@
 {
-    $Id: i_emx.pas,v 1.8 2005/03/20 22:36:45 olle Exp $
     Copyright (c) 1998-2002 by Peter Vreman
 
     This unit implements support information structures for OS/2 via EMX
@@ -22,18 +21,23 @@
 { This unit implements support information structures for OS/2 via EMX. }
 unit i_emx;
 
+{$i fpcdefs.inc}
+
   interface
 
     uses
        systems;
 
     const
-       res_emxbind_info : tresinfo =
+       res_wrc_os2_info : tresinfo =
           (
-            id     : res_emxbind;
-            resbin : 'emxbind';
-            rescmd : '-b -r $RES $OBJ'
-            (* Not really used - see TLinkerEMX.SetDefaultInfo in t_emx.pas. *)
+             id     : res_watcom_wrc_os2;
+             resbin : '';
+             rescmd : '';
+             rcbin  : 'wrc';
+             rccmd  : '-r -zm -q -bt=os2 -fo=$RES $RC';
+             resourcefileclass : nil;
+             resflags : [res_single_file];
           );
 
        system_i386_emx_info : tsysteminfo =
@@ -57,23 +61,24 @@ unit i_emx;
             resobjext    : '.or';
             sharedlibext : '.dll';
             staticlibext : '.a';
-            staticlibprefix : '';
+            staticlibprefix : 'libp';
             sharedlibprefix : '';
             sharedClibext : '.dll';
             staticClibext : '.a';
             staticClibprefix : '';
             sharedClibprefix : '';
-            p_ext_support : false;
+            importlibprefix : '';
+            importlibext : '.a';
             Cprefix      : '_';
             newline      : #13#10;
             dirsep       : '\';
-            files_case_relevent : false;
             assem        : as_i386_as_aout;
             assemextern  : as_i386_as_aout;
             link         : nil;
             linkextern   : nil;
             ar           : ar_gnu_ar;
-            res          : res_emxbind;
+            res          : res_watcom_wrc_os2;
+            dbg          : dbg_stabs;
             script       : script_dos;
             endian       : endian_little;
             alignment    :
@@ -93,8 +98,7 @@ unit i_emx;
               );
             first_parm_offset : 8;
             stacksize    : 256*1024;
-            DllScanSupported: false;
-            use_function_relative_addresses : false
+            abi          : abi_default;
           );
 
 
@@ -112,13 +116,3 @@ initialization
   {$endif EMX}
 {$endif CPU86}
 end.
-{
-  $Log: i_emx.pas,v $
-  Revision 1.8  2005/03/20 22:36:45  olle
-    * Cleaned up handling of source file extension.
-    + Added support for .p extension for macos and darwin
-
-  Revision 1.7  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

@@ -1,5 +1,4 @@
 {
-    $Id: fpmfile.inc,v 1.10 2005/02/14 17:13:18 peter Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 1998 by Berczi Gabor
 
@@ -94,10 +93,6 @@ begin
          else
            DriveNumber:=Ord(FileDir[1])-ord('A')+1;
          GetDir(DriveNumber,StoreDir2);
-{$ifndef FPC}
-         ChDir(Copy(FileDir,1,2));
-           { sets InOutRes in win32 PM }
-{$endif not FPC}
        end;
      if (FileDir<>'') and ExistsDir(FileDir) then
        ChDir(TrimEndSlash(FileDir));
@@ -118,18 +113,22 @@ begin
      Dispose(D, Done);
      if DriveNumber<>0 then
        ChDir(TrimEndSlash(StoreDir2));
-{$ifndef FPC}
-     if (Length(StoreDir)>1) and (StoreDir[2]=':') then
-       ChDir(Copy(StoreDir,1,2));
-{$endif not FPC}
      ChDir(TrimEndSlash(StoreDir));
    end;
   if OpenIt then
    begin
      FileName:=FExpand(LocatePasFile(FileName));
      if ExistsFile(FileName) then
+       begin
      { like for BP unexistant files should  be created PM }
-       OpenEditorWindow(nil,FileName,0,0)
+         OpenEditorWindow(nil,FileName,0,0);
+         if (MiscOptions and moChangeDirOnOpen)<>0 then
+          begin
+            ChDir(DirOf(filename)); 
+            CurDirChanged;
+            GetDir(0,StartUpDir);
+          end;
+       end
      else
        {ErrorBox(FormatStrStr(msg_cantfindfile,FileName),nil);}
        begin
@@ -189,7 +188,7 @@ begin
 end;
 
 function TIDEApp.AskSaveAll: boolean;
-function CanClose(P: PView): boolean; {$ifndef FPC}far;{$endif}
+function CanClose(P: PView): boolean;
 begin
   CanClose:=not P^.Valid(cmAskSaveAll);
 end;
@@ -199,7 +198,7 @@ end;
 
 function TIDEApp.SaveAll: boolean;
 
-  procedure SendSave(P: PView); {$ifndef FPC}far;{$endif}
+  procedure SendSave(P: PView);
   begin
     Message(P,evCommand,cmSave,nil);
   end;
@@ -223,9 +222,69 @@ begin
   GetDir(0,StartUpDir);
 end;
 
-{
-  $Log: fpmfile.inc,v $
-  Revision 1.10  2005/02/14 17:13:18  peter
-    * truncate log
 
-}
+procedure TIDEApp.PrinterSetup;
+var R,R2: TRect;
+    D: PCenterDialog;
+    IL: PEditorInputLine;
+begin
+  R.Assign(0,0,round(ScreenWidth*54/80),4);
+  New(D, Init(R, dialog_setupprinter));
+  with D^ do
+  begin
+    GetExtent(R); R.Grow(-2,-1); Inc(R.A.Y); R.B.Y:=R.A.Y+1;
+    R2.Copy(R); R2.A.X:=16; Dec(R2.B.X,4);
+    New(IL, Init(R2, 255));
+    IL^.Data^:=GetPrinterDevice;
+    Insert(IL);
+    R2.Copy(R); R2.A.X:=R2.B.X-3; R2.B.X:=R2.A.X+3;
+    Insert(New(PHistory, Init(R2, IL, hidPrinterDevice)));
+    R2.Copy(R); R2.B.X:=16;
+    Insert(New(PLabel, Init(R2, label_setupprinter_device, IL)));
+  end;
+  InsertButtons(D);
+  IL^.Select;
+  if Desktop^.ExecView(D)=cmOK then
+    SetPrinterDevice(IL^.Data^);
+  Dispose(D, Done);
+end;
+
+
+procedure TIDEApp.Print;
+  var
+    d : string;
+    P : PSourceWindow;
+    i : longint;
+    f : text;
+  begin
+    d:=GetPrinterDevice;
+    { sanity check }
+    if d='' then
+      d:='prn';
+
+    P:=Message(Desktop,evBroadcast,cmSearchWindow,nil);
+    if assigned(P) then
+      begin
+        assign(f,d);
+{$I-}
+        rewrite(f);
+{$I+}
+        if ioresult<>0 then
+          begin
+            MessageBox(#3+msg_printernotopened,nil,mferror+mfokbutton);
+            exit;
+          end;
+        for i:=0 to P^.Editor^.Core^.GetLineCount-1 do
+          begin
+            writeln(f,P^.Editor^.Core^.GetLineText(i));
+            if ioresult<>0 then
+              begin
+                MessageBox(#3+msg_PrintError,nil,mferror+mfokbutton);
+                close(f);
+                exit;
+              end;
+          end;
+        write(f,#12);
+        close(f);
+      end;
+  end;

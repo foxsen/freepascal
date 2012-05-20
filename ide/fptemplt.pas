@@ -1,5 +1,4 @@
 {
-    $Id: fptemplt.pas,v 1.6 2005/02/14 17:13:18 peter Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 1998 by Berczi Gabor
 
@@ -25,6 +24,13 @@ const
       tsTime         = '$TIME';
       tsPrompt       = '$PROMPT(';
 
+{$ifdef useresstrings}
+resourcestring
+{$else}
+const
+{$endif}
+      dialog_fillintemplateparameter = 'Fill in template parameter';
+
 function  GetTemplateCount: integer;
 function  GetTemplateName(Index: integer): string;
 function  StartTemplate(Index: integer; Editor: PSourceEditor): boolean;
@@ -40,7 +46,7 @@ uses
   MsgBox,
   WUtils,
   WEditor,
-  FPConst,FPVars,FPString,FPUtils;
+  FPConst,FPVars,FPUtils;
 
 type
     PTemplate = ^TTemplate;
@@ -263,9 +269,7 @@ procedure InitTemplates;
         DisposeTemplate(PT);
       FindNext(SR);
     end;
-  {$ifdef FPC}
     FindClose(SR);
-  {$endif def FPC}
   end;
 
 begin
@@ -285,9 +289,3 @@ begin
 end;
 
 END.
-{
-  $Log: fptemplt.pas,v $
-  Revision 1.6  2005/02/14 17:13:18  peter
-    * truncate log
-
-}

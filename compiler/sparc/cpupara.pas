@@ -1,5 +1,4 @@
 {
-    $Id: cpupara.pas,v 1.55 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl
 
     Calling conventions for the SPARC
@@ -27,9 +26,9 @@ interface
     uses
       globtype,
       cclasses,
-      aasmtai,
+      aasmtai,aasmdata,
       cpubase,cpuinfo,
-      symconst,symbase,symsym,symtype,symdef,paramgr,parabase,cgbase;
+      symconst,symbase,symsym,symtype,symdef,paramgr,parabase,cgbase,cgutils;
 
     type
       TSparcParaManager=class(TParaManager)
@@ -42,6 +41,7 @@ interface
         procedure getintparaloc(calloption : tproccalloption; nr : longint;var cgpara : TCGPara);override;
         function  create_paraloc_info(p : TAbstractProcDef; side: tcallercallee):longint;override;
         function  create_varargs_paraloc_info(p : TAbstractProcDef; varargspara:tvarargsparalist):longint;override;
+        function  get_funcretloc(p : tabstractprocdef; side: tcallercallee; def: tdef): tcgpara;override;
       private
         procedure create_funcretloc_info(p : tabstractprocdef; side: tcallercallee);
         procedure create_paraloc_info_intern(p : tabstractprocdef; side: tcallercallee; paras: tparalist;
@@ -53,7 +53,7 @@ implementation
     uses
       cutils,verbose,systems,
       defutil,
-      cgutils,cgobj;
+      cgobj;
 
     type
       tparasupregs = array[0..5] of tsuperregister;
@@ -82,8 +82,8 @@ implementation
         if nr<1 then
           InternalError(2002100806);
         cgpara.reset;
-        cgpara.size:=OS_INT;
-        cgpara.intsize:=tcgsize2size[OS_INT];
+        cgpara.size:=OS_ADDR;
+        cgpara.intsize:=sizeof(pint);
         cgpara.alignment:=std_param_align;
         paraloc:=cgpara.add_location;
         with paraloc^ do
@@ -111,92 +111,120 @@ implementation
     function tsparcparamanager.push_addr_param(varspez:tvarspez;def : tdef;calloption : tproccalloption) : boolean;
       begin
         result:=false;
-        { var,out always require address }
-        if varspez in [vs_var,vs_out] then
+        { var,out,constref always require address }
+        if varspez in [vs_var,vs_out,vs_constref] then
           begin
             result:=true;
             exit;
           end;
-        case def.deftype of
+        case def.typ of
+          arraydef:
+            result:=(tarraydef(def).highrange>=tarraydef(def).lowrange) or
+                             is_open_array(def) or
+                             is_array_of_const(def) or
+                             is_array_constructor(def);
           recorddef,
-          arraydef,
           variantdef,
           formaldef :
-            push_addr_param:=true;
+            result:=true;
           objectdef :
             result:=is_object(def);
           stringdef :
-            result:=(tstringdef(def).string_typ in [st_shortstring,st_longstring]);
+            result:=(tstringdef(def).stringtype in [st_shortstring,st_longstring]);
           procvardef :
-            result:=(po_methodpointer in tprocvardef(def).procoptions);
+            result:=not tprocvardef(def).is_addressonly;
           setdef :
-            result:=(tsetdef(def).settype<>smallset);
+            result:=not is_smallset(def);
         end;
       end;
 
 
     procedure tsparcparamanager.create_funcretloc_info(p : tabstractprocdef; side: tcallercallee);
+      begin
+        p.funcretloc[side]:=get_funcretloc(p,side,p.returndef);
+      end;
+
+
+    function tsparcparamanager.get_funcretloc(p : tabstractprocdef; side: tcallercallee; def: tdef): tcgpara;
       var
+        paraloc : pcgparalocation;
         retcgsize  : tcgsize;
       begin
+        result.init;
+        result.alignment:=get_para_align(p.proccalloption);
+        { void has no location }
+        if is_void(def) then
+          begin
+            paraloc:=result.add_location;
+            result.size:=OS_NO;
+            result.intsize:=0;
+            paraloc^.size:=OS_NO;
+            paraloc^.loc:=LOC_VOID;
+            exit;
+          end;
         { Constructors return self instead of a boolean }
         if (p.proctypeoption=potype_constructor) then
-          retcgsize:=OS_ADDR
-        else
-          retcgsize:=def_cgsize(p.rettype.def);
-
-        location_reset(p.funcretloc[side],LOC_INVALID,OS_NO);
-        p.funcretloc[side].size:=retcgsize;
-        { void has no location }
-        if is_void(p.rettype.def) then
           begin
-            p.funcretloc[side].loc:=LOC_VOID;
+            retcgsize:=OS_ADDR;
+            result.intsize:=sizeof(pint);
+          end
+        else
+          begin
+            retcgsize:=def_cgsize(def);
+            result.intsize:=def.size;
+          end;
+        result.size:=retcgsize;
+        { Return is passed as var parameter }
+        if ret_in_param(def,p.proccalloption) then
+          begin
+            paraloc:=result.add_location;
+            paraloc^.loc:=LOC_REFERENCE;
+            paraloc^.size:=retcgsize;
             exit;
           end;
 
+        paraloc:=result.add_location;
         { Return in FPU register? }
-        if p.rettype.def.deftype=floatdef then
+        if def.typ=floatdef then
           begin
-            p.funcretloc[side].loc:=LOC_FPUREGISTER;
-            p.funcretloc[side].register:=NR_FPU_RESULT_REG;
+            paraloc^.loc:=LOC_FPUREGISTER;
+            paraloc^.register:=NR_FPU_RESULT_REG;
             if retcgsize=OS_F64 then
-              setsubreg(p.funcretloc[side].register,R_SUBFD);
-            p.funcretloc[side].size:=retcgsize;
+              setsubreg(paraloc^.register,R_SUBFD);
+            paraloc^.size:=retcgsize;
           end
         else
-         { Return in register? }
-         if not ret_in_param(p.rettype.def,p.proccalloption) then
+         { Return in register }
           begin
-{$ifndef cpu64bit}
+{$ifndef cpu64bitaddr}
             if retcgsize in [OS_64,OS_S64] then
              begin
-               p.funcretloc[side].loc:=LOC_REGISTER;
+               paraloc^.loc:=LOC_REGISTER;
                { high }
-               if (side=callerside)  or (p.proccalloption=pocall_inline)then
-                 p.funcretloc[side].register64.reghi:=NR_FUNCTION_RESULT64_HIGH_REG
+               if side=callerside then
+                 paraloc^.register:=NR_FUNCTION_RESULT64_HIGH_REG
                else
-                 p.funcretloc[side].register64.reghi:=NR_FUNCTION_RETURN64_HIGH_REG;
+                 paraloc^.register:=NR_FUNCTION_RETURN64_HIGH_REG;
+               paraloc^.size:=OS_32;
                { low }
-               if (side=callerside) or (p.proccalloption=pocall_inline) then
-                 p.funcretloc[side].register64.reglo:=NR_FUNCTION_RESULT64_LOW_REG
+               paraloc:=result.add_location;
+               paraloc^.loc:=LOC_REGISTER;
+               if side=callerside then
+                 paraloc^.register:=NR_FUNCTION_RESULT64_LOW_REG
                else
-                 p.funcretloc[side].register64.reglo:=NR_FUNCTION_RETURN64_LOW_REG;
+                 paraloc^.register:=NR_FUNCTION_RETURN64_LOW_REG;
+               paraloc^.size:=OS_32;
              end
             else
-{$endif cpu64bit}
+{$endif not cpu64bitaddr}
              begin
-               p.funcretloc[side].loc:=LOC_REGISTER;
-               p.funcretloc[side].size:=retcgsize;
-               if (side=callerside)  or (p.proccalloption=pocall_inline)then
-                 p.funcretloc[side].register:=newreg(R_INTREGISTER,RS_FUNCTION_RESULT_REG,cgsize2subreg(retcgsize))
+               paraloc^.loc:=LOC_REGISTER;
+               paraloc^.size:=retcgsize;
+               if (side=callerside) then
+                 paraloc^.register:=newreg(R_INTREGISTER,RS_FUNCTION_RESULT_REG,cgsize2subreg(R_INTREGISTER,retcgsize))
                else
-                 p.funcretloc[side].register:=newreg(R_INTREGISTER,RS_FUNCTION_RETURN_REG,cgsize2subreg(retcgsize));
+                 paraloc^.register:=newreg(R_INTREGISTER,RS_FUNCTION_RETURN_REG,cgsize2subreg(R_INTREGISTER,retcgsize));
              end;
-          end
-        else
-          begin
-            p.funcretloc[side].loc:=LOC_REFERENCE;
-            p.funcretloc[side].size:=retcgsize;
           end;
       end;
 
@@ -221,7 +249,7 @@ implementation
             { currently only support C-style array of const,
               there should be no location assigned to the vararg array itself }
             if (p.proccalloption in [pocall_cdecl,pocall_cppdecl]) and
-               is_array_of_const(hp.vartype.def) then
+               is_array_of_const(hp.vardef) then
               begin
                 paraloc:=hp.paraloc[side].add_location;
                 { hack: the paraloc must be valid, but is not actually used }
@@ -231,17 +259,20 @@ implementation
                 break;
               end;
 
-            if push_addr_param(hp.varspez,hp.vartype.def,p.proccalloption) then
+            if push_addr_param(hp.varspez,hp.vardef,p.proccalloption) then
               paracgsize:=OS_ADDR
             else
               begin
-                paracgsize:=def_cgSize(hp.vartype.def);
+                paracgsize:=def_cgSize(hp.vardef);
                 if paracgsize=OS_NO then
                   paracgsize:=OS_ADDR;
               end;
             hp.paraloc[side].reset;
             hp.paraloc[side].size:=paracgsize;
-            hp.paraloc[side].Alignment:=std_param_align;
+            if (side = callerside) then
+              hp.paraloc[side].Alignment:=std_param_align
+            else
+              hp.paraloc[side].Alignment:=hp.vardef.alignment;
             paralen:=tcgsize2size[paracgsize];
             hp.paraloc[side].intsize:=paralen;
             while paralen>0 do
@@ -263,7 +294,11 @@ implementation
                       paraloc^.reference.index:=NR_FRAME_POINTER_REG;
                     paraloc^.reference.offset:=64;
                   end
-                else if (intparareg<=high(tparasupregs)) then
+                { In case of po_delphi_nested_cc, the parent frame pointer
+                  is always passed on the stack. }
+                else if (intparareg<=high(tparasupregs)) and
+                   (not(vo_is_parentfp in hp.varoptions) or
+                    not(po_delphi_nested_cc in p.procoptions)) then
                   begin
                     paraloc^.loc:=LOC_REGISTER;
                     paraloc^.register:=newreg(R_INTREGISTER,hparasupregs^[intparareg],R_SUBWHOLE);
@@ -278,7 +313,7 @@ implementation
                       paraloc^.reference.index:=NR_FRAME_POINTER_REG;
                     paraloc^.reference.offset:=target_info.first_parm_offset+parasize;
                     { Parameters are aligned at 4 bytes }
-                    inc(parasize,align(tcgsize2size[paraloc^.size],sizeof(aint)));
+                    inc(parasize,align(tcgsize2size[paraloc^.size],sizeof(pint)));
                   end;
                 dec(paralen,tcgsize2size[paraloc^.size]);
               end;
@@ -320,20 +355,3 @@ implementation
 begin
    ParaManager:=TSparcParaManager.create;
 end.
-{
-  $Log: cpupara.pas,v $
-  Revision 1.55  2005/02/14 17:13:10  peter
-    * truncate log
-
-  Revision 1.54  2005/01/20 17:47:01  peter
-    * remove copy_value_on_stack and a_param_copy_ref
-
-  Revision 1.53  2005/01/10 21:50:05  jonas
-    + support for passing records in registers under darwin
-    * tcgpara now also has an intsize field, which contains the size in
-      bytes of the whole parameter
-
-  Revision 1.52  2005/01/07 16:22:54  florian
-    + implemented abi compliant handling of strucutured functions results on sparc platform
-
-}

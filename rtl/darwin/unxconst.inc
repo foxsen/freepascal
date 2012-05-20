@@ -1,5 +1,4 @@
 {
-    $Id: unxconst.inc,v 1.2 2005/02/14 17:13:22 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Michael Van Canneyt,
     member of the Free Pascal development team.
@@ -37,7 +36,7 @@ Const
   Open_Creat    = $200;       {Linux convention}
   Open_Trunc    = $400;
   Open_Excl     = $800;
-  Open_NoCTTY   = $8000;
+  Open_NoCTTY   = $20000;
 
   { The waitpid uses the following options:}
   Wait_NoHang   = 1;
@@ -72,48 +71,5 @@ Const
   STAT_IWUSR = STAT_IWOTH shl 6;
   STAT_IXUSR = STAT_IXOTH shl 6;
 
-  { Constants to test the type of filesystem }
-  fs_old_ext2 = $ef51;
-  fs_ext2     = $ef53;
-  fs_ext      = $137d;
-  fs_iso      = $9660;
-  fs_minix    = $137f;
-  fs_minix_30 = $138f;
-  fs_minux_V2 = $2468;
-  fs_msdos    = $4d44;
-  fs_nfs      = $6969;
-  fs_proc     = $9fa0;
-  fs_xia      = $012FD16D;
-
   {Constansts Termios/Ioctl (used in Do_IsDevice) }
-  IOCtl_TCGETS=$5401; // TCGETS is also in termios.inc, but the sysunix needs only this
-
-  {Checked for BSD using Linuxthreads port}
-  { cloning flags }
-  CSIGNAL       = $000000ff; // signal mask to be sent at exit
-  CLONE_VM      = $00000100; // set if VM shared between processes
-  CLONE_FS      = $00000200; // set if fs info shared between processes
-  CLONE_FILES   = $00000400; // set if open files shared between processes
-  CLONE_SIGHAND = $00000800; // set if signal handlers shared
-  CLONE_PID     = $00001000; // set if pid shared
-
-  ITimer_Real    =0;
-  ITimer_Virtual =1;
-  ITimer_Prof    =2;
-
-type
-  TCloneFunc=function(args:pointer):longint;cdecl;
-
-
-{
-  $Log: unxconst.inc,v $
-  Revision 1.2  2005/02/14 17:13:22  peter
-    * truncate log
-
-  Revision 1.1  2005/02/13 21:47:56  peter
-    * include file cleanup part 2
-
-  Revision 1.2  2005/02/06 12:16:52  peter
-    * bsd thread updates
-
-}
+  IOCtl_TCGETS=$40000000+$2C7400+19; // TCGETS is also in termios.inc (as TIOCGETA), but the sysunix needs only this

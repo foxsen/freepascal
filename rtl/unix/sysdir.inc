@@ -1,5 +1,4 @@
 {
-    $Id: sysdir.inc,v 1.3 2005/02/14 17:13:31 peter Exp $
     This file is part of the Free Pascal run time library.
 
     Main OS dependant body of the system unit, loosely modelled
@@ -19,53 +18,44 @@
                            Directory Handling
 *****************************************************************************}
 
-Procedure MkDir(Const s: String);[IOCheck];
+Procedure MkDir(s: pchar;len:sizeuint);[IOCheck, public, alias : 'FPC_SYS_MKDIR'];
 const
   { read/write search permission for everyone }
   MODE_MKDIR = S_IWUSR OR S_IRUSR OR
                S_IWGRP OR S_IRGRP OR
                S_IWOTH OR S_IROTH OR
                S_IXUSR OR S_IXGRP OR S_IXOTH;
-Var
-  Buffer: Array[0..255] of Char;
+
+// len is not passed to the *nix functions because the unix API doesn't 
+// use length safeguards for these functions. (probably because there
+// already is a length limit due to PATH_MAX)
+
 Begin
-  If (s='') or (InOutRes <> 0) then
-   exit;
-  Move(s[1], Buffer, Length(s));
-  Buffer[Length(s)] := #0;
-  If Fpmkdir(@buffer, MODE_MKDIR)<0 Then
+  If not assigned(s) or (len=0) or (InOutRes <> 0) then
+    exit;
+  If Fpmkdir(s, MODE_MKDIR)<0 Then
    Errno2Inoutres
   Else
    InOutRes:=0;
 End;
 
-
-Procedure RmDir(Const s: String);[IOCheck];
-Var
-  Buffer: Array[0..255] of Char;
+Procedure RmDir(s: pchar;len:sizeuint);[IOCheck, public, alias : 'FPC_SYS_RMDIR'];
 Begin
-  if (s = '.') then
+  if (len=1) and (s^ = '.') then
     InOutRes := 16;
-  If (s='') or (InOutRes <> 0) then
-   exit;
-  Move(s[1], Buffer, Length(s));
-  Buffer[Length(s)] := #0;
-  If Fprmdir(@buffer)<0 Then
+  If not assigned(s) or (len=0) or (InOutRes <> 0) then
+    exit;
+  If Fprmdir(s)<0 Then
    Errno2Inoutres
   Else
    InOutRes:=0;
 End;
 
-
-Procedure ChDir(Const s: String);[IOCheck];
-Var
-  Buffer: Array[0..255] of Char;
+Procedure ChDir(s: pchar;len:sizeuint);[IOCheck, public, alias : 'FPC_SYS_CHDIR'];
 Begin
-  If (s='') or (InOutRes <> 0) then
+  If not assigned(s) or (len=0) or (InOutRes <> 0) then
    exit;
-  Move(s[1], Buffer, Length(s));
-  Buffer[Length(s)] := #0;
-  If Fpchdir(@buffer)<0 Then
+  If Fpchdir(s)<0 Then
    Errno2Inoutres
   Else
    InOutRes:=0;
@@ -74,13 +64,15 @@ Begin
    InOutRes:=3;
 End;
 
-{ // $define usegetcwd}
-
+// !! for now we use getcwd, unless we are fpc_use_libc.
+// !! the old code  is _still needed_ since the syscall sometimes doesn't work
+// !! on special filesystems like NFS etc.
+// !! In the libc versions, the alt code is already integrated in the libc code.
+// !! Also significantly boosted buffersize. This will make failure of the 
+// !! dos legacy api's better visibile due to cut-off path, instead of "empty"
 procedure getdir(drivenr : byte;var dir : shortstring);
 var
-{$ifdef usegetcwd}
-  buf          : array[0..254] of char;
-{$else}
+  buf          : array[0..2047] of char;
   cwdinfo      : stat;
   rootinfo     : stat;
   thedir,dummy : string[255];
@@ -89,14 +81,14 @@ var
   name         : string[255];
   thisdir      : stat;
   tmp          : string[255];
-{$endif}
 
 begin
   dir:='';
-{$ifdef usegetcwd}
- if Fpgetcwd(@buf,sizeof(buf))<>nil then
-   dir:=strpas(buf);
-{$else}
+ if Fpgetcwd(@buf[0],sizeof(buf))<>nil then
+   dir:=strpas(buf)
+{$ifndef FPC_USE_LIBC}
+ else 
+  begin
   thedir:='';
   dummy:='';
 
@@ -148,22 +140,7 @@ begin
         exit;
       end;
   until false;
+  end;
  {$endif}
 end;
 
-{
-  $Log: sysdir.inc,v $
-  Revision 1.3  2005/02/14 17:13:31  peter
-    * truncate log
-
-  Revision 1.2  2005/02/13 20:01:38  peter
-    * include file cleanup
-
-  Revision 1.1  2005/02/07 22:04:55  peter
-    * moved to unix
-
-  Revision 1.1  2005/02/06 13:06:20  peter
-    * moved file and dir functions to sysfile/sysdir
-    * win32 thread in systemunit
-
-}

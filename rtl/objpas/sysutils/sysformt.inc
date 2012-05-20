@@ -4,11 +4,7 @@ Var ChPos,OldPos,ArgPos,DoArg,Len : SizeInt;
     Width,Prec : Longint;
     Left : Boolean;
     Fchar : char;
-{$ifdef ver1_0}
-    vl : int64;
-{$else}
     vq : qword;
-{$endif}
 
   {
     ReadFormat reads the format string. It returns the type character in
@@ -23,35 +19,48 @@ Var ChPos,OldPos,ArgPos,DoArg,Len : SizeInt;
 
     Procedure ReadInteger;
 
-{$IFDEF VIRTUALPASCAL}
-var Code: longint;
-{$ELSE}
-var Code: word;
-{$ENDIF}
-
+    var
+      Code: Word;
+      ArgN: SizeInt;
     begin
       If Value<>-1 then exit; // Was already read.
-      OldPos:=chPos;
-      While (Chpos<=Len) and
-            (Pos(Fmt[chpos],'1234567890')<>0) do inc(chpos);
-      If Chpos>len then
-        DoFormatError(feInvalidFormat);
-      If Fmt[Chpos]='*' then
+      OldPos:=ChPos;
+      While (ChPos<=Len) and
+            (Fmt[ChPos]<='9') and (Fmt[ChPos]>='0') do inc(ChPos);
+      If ChPos>len then
+        DoFormatError(feInvalidFormat,Fmt);
+      If Fmt[ChPos]='*' then
         begin
-        If (Chpos>OldPos) or (ArgPos>High(Args))
-           or (Args[ArgPos].Vtype<>vtInteger) then
-          DoFormatError(feInvalidFormat);
-        Value:=Args[ArgPos].VInteger;
-        Inc(ArgPos);
-        Inc(chPos);
+
+        if Index=-1 then
+          ArgN:=Argpos
+        else
+        begin
+          ArgN:=Index;
+          Inc(Index);
+        end;
+
+        If (ChPos>OldPos) or (ArgN>High(Args)) then
+          DoFormatError(feInvalidFormat,Fmt);
+
+        ArgPos:=ArgN+1;
+
+        case Args[ArgN].Vtype of
+          vtInteger: Value := Args[ArgN].VInteger;
+          vtInt64: Value := Args[ArgN].VInt64^;
+          vtQWord: Value := Args[ArgN].VQWord^;
+        else
+          DoFormatError(feInvalidFormat,Fmt);
+        end;
+        Inc(ChPos);
         end
       else
         begin
-        If (OldPos<chPos) Then
+        If (OldPos<ChPos) Then
           begin
           Val (Copy(Fmt,OldPos,ChPos-OldPos),value,code);
           // This should never happen !!
-          If Code>0 then DoFormatError (feInvalidFormat);
+          If Code>0 then DoFormatError (feInvalidFormat,Fmt);
           end
         else
           Value:=-1;
@@ -61,13 +70,16 @@ var Code: word;
     Procedure ReadIndex;
 
     begin
-      ReadInteger;
+      If Fmt[ChPos]<>':' then
+        ReadInteger
+      else
+        value:=0; // Delphi undocumented behaviour, assume 0, #11099
       If Fmt[ChPos]=':' then
         begin
-        If Value=-1 then DoFormatError(feMissingArgument);
+        If Value=-1 then DoFormatError(feMissingArgument,fmt);
         Index:=Value;
         Value:=-1;
-        Inc(Chpos);
+        Inc(ChPos);
         end;
 {$ifdef fmtdebug}
       Log ('Read index');
@@ -77,10 +89,10 @@ var Code: word;
     Procedure ReadLeft;
 
     begin
-      If Fmt[chpos]='-' then
+      If Fmt[ChPos]='-' then
         begin
         left:=True;
-        Inc(chpos);
+        Inc(ChPos);
         end
       else
         Left:=False;
@@ -106,10 +118,10 @@ var Code: word;
     Procedure ReadPrec;
 
     begin
-      If Fmt[chpos]='.' then
+      If Fmt[ChPos]='.' then
         begin
-        inc(chpos);
-        ReadInteger;
+        inc(ChPos);
+          ReadInteger;
         If Value=-1 then
          Value:=0;
         prec:=Value;
@@ -132,8 +144,8 @@ var Code: word;
     Width:=-1;
     Prec:=-1;
     Value:=-1;
-    inc(chpos);
-    If Fmt[Chpos]='%' then
+    inc(ChPos);
+    If Fmt[ChPos]='%' then
       begin
         Result:='%';
         exit;                           // VP fix
@@ -143,7 +155,11 @@ var Code: word;
     ReadWidth;
     ReadPrec;
 {$ifdef INWIDEFORMAT}
+{$ifdef VER2_2}
     FormatChar:=UpCase(Fmt[ChPos])[1];
+{$else VER2_2}
+    FormatChar:=UpCase(UnicodeChar(Fmt[ChPos]));
+{$endif VER2_2}
     if word(FormatChar)>255 then
       ReadFormat:=#255
     else
@@ -186,27 +202,25 @@ begin
   If (Doarg>High(Args)) or (Args[Doarg].Vtype<>AT) then
    begin
      if err then
-      DoFormatError(feInvalidArgindex);
+      DoFormatError(feInvalidArgindex,Fmt);
      dec(ArgPos);
      exit;
    end;
   result:=true;
 end;
 
-Const Zero = '000000000000000000000000000000000000000000000000000000000000000';
-
 begin
   Result:='';
   Len:=Length(Fmt);
-  Chpos:=1;
+  ChPos:=1;
   OldPos:=1;
   ArgPos:=0;
-  While chpos<=len do
+  While ChPos<=len do
     begin
-    While (ChPos<=Len) and (Fmt[chpos]<>'%') do
-      inc(chpos);
+    While (ChPos<=Len) and (Fmt[ChPos]<>'%') do
+      inc(ChPos);
     If ChPos>OldPos Then
-      Result:=Result+Copy(Fmt,OldPos,Chpos-Oldpos);
+      Result:=Result+Copy(Fmt,OldPos,ChPos-Oldpos);
     If ChPos<Len then
       begin
       FChar:=ReadFormat;
@@ -217,11 +231,10 @@ begin
         'D' : begin
               if Checkarg(vtinteger,false) then
                 Str(Args[Doarg].VInteger,ToAdd)
-              {$IFNDEF VIRTUALPASCAL}
-              else if CheckArg(vtInt64,true) then
+              else if CheckArg(vtInt64,false) then
                 Str(Args[DoArg].VInt64^,toadd)
-              {$ENDIF}
-              ;
+              else if CheckArg(vtQWord,true) then
+                Str(int64(Args[DoArg].VQWord^),toadd);
               Width:=Abs(width);
               Index:=Prec-Length(ToAdd);
               If ToAdd[1]<>'-' then
@@ -233,37 +246,49 @@ begin
         'U' : begin
               if Checkarg(vtinteger,false) then
                 Str(cardinal(Args[Doarg].VInteger),ToAdd)
-              {$IFNDEF VIRTUALPASCAL}
               else if CheckArg(vtInt64,false) then
                 Str(qword(Args[DoArg].VInt64^),toadd)
               else if CheckArg(vtQWord,true) then
                 Str(Args[DoArg].VQWord^,toadd);
-              {$ENDIF}
-              ;
               Width:=Abs(width);
               Index:=Prec-Length(ToAdd);
               ToAdd:=StringOfChar('0',Index)+ToAdd
               end;
+{$ifndef FPUNONE}
         'E' : begin
-              CheckArg(vtExtended,true);
-              ToAdd:=FloatToStrF(Args[doarg].VExtended^,ffexponent,Prec,3);
+              if CheckArg(vtCurrency,false) then
+                ToAdd:=FloatToStrF(Args[doarg].VCurrency^,ffexponent,Prec,3,FormatSettings)
+              else if CheckArg(vtExtended,true) then
+                ToAdd:=FloatToStrF(Args[doarg].VExtended^,ffexponent,Prec,3,FormatSettings);
               end;
         'F' : begin
-              CheckArg(vtExtended,true);
-              ToAdd:=FloatToStrF(Args[doarg].VExtended^,ffFixed,9999,Prec);
+              if CheckArg(vtCurrency,false) then
+                ToAdd:=FloatToStrF(Args[doarg].VCurrency^,ffFixed,9999,Prec,FormatSettings)
+              else if CheckArg(vtExtended,true) then
+                ToAdd:=FloatToStrF(Args[doarg].VExtended^,ffFixed,9999,Prec,FormatSettings);
               end;
         'G' : begin
-              CheckArg(vtExtended,true);
-              ToAdd:=FloatToStrF(Args[doarg].VExtended^,ffGeneral,Prec,3);
+              if CheckArg(vtCurrency,false) then
+                ToAdd:=FloatToStrF(Args[doarg].VCurrency^,ffGeneral,Prec,3,FormatSettings)
+              else if CheckArg(vtExtended,true) then
+                ToAdd:=FloatToStrF(Args[doarg].VExtended^,ffGeneral,Prec,3,FormatSettings);
               end;
         'N' : begin
-              CheckArg(vtExtended,true);
-              ToAdd:=FloatToStrF(Args[doarg].VExtended^,ffNumber,9999,Prec);
+              if CheckArg(vtCurrency,false) then
+                ToAdd:=FloatToStrF(Args[doarg].VCurrency^,ffNumber,9999,Prec,FormatSettings)
+              else if CheckArg(vtExtended,true) then
+                ToAdd:=FloatToStrF(Args[doarg].VExtended^,ffNumber,9999,Prec,FormatSettings);
               end;
         'M' : begin
-              CheckArg(vtExtended,true);
-              ToAdd:=FloatToStrF(Args[doarg].VExtended^,ffCurrency,9999,Prec);
+              if CheckArg(vtExtended,false) then
+                ToAdd:=FloatToStrF(Args[doarg].VExtended^,ffCurrency,9999,Prec,FormatSettings)
+              else if CheckArg(vtCurrency,true) then
+                ToAdd:=FloatToStrF(Args[doarg].VCurrency^,ffCurrency,9999,Prec,FormatSettings);
               end;
+{$else}
+        'E','F','G','N','M':
+              RunError(207);
+{$endif}
         'S' : begin
                 if CheckArg(vtString,false) then
                   hs:=Args[doarg].VString^
@@ -274,7 +299,6 @@ begin
                   if CheckArg(vtPChar,false) then
                     hs:=Args[doarg].VPChar
                 else
-{$ifndef VER1_0}
                   if CheckArg(vtPWideChar,false) then
                     hs:=WideString(Args[doarg].VPWideChar)
                 else
@@ -284,9 +308,14 @@ begin
                   if CheckArg(vtWidestring,false) then
                     hs:=WideString(Args[doarg].VWideString)
                 else
-{$endif VER1_0}
-                  if CheckArg(vtAnsiString,true) then
-                    hs:=ansistring(Args[doarg].VAnsiString);
+                  if CheckArg(vtAnsiString,false) then
+                    hs:=ansistring(Args[doarg].VAnsiString)
+                else
+                  if CheckArg(vtUnicodeString,false) then
+                    hs:=UnicodeString(Args[doarg].VUnicodeString)
+                else
+                  if CheckArg(vtVariant,true) then
+                    hs:=Args[doarg].VVariant^;
                 Index:=Length(hs);
                 If (Prec<>-1) and (Index>Prec) then
                   Index:=Prec;
@@ -294,41 +323,22 @@ begin
               end;
         'P' : Begin
               CheckArg(vtpointer,true);
-              ToAdd:=HexStr(ptrint(Args[DoArg].VPointer),sizeof(Ptrint)*2);
+              ToAdd:=HexStr(ptruint(Args[DoArg].VPointer),sizeof(Ptruint)*2);
               // Insert ':'. Is this needed in 32 bit ? No it isn't.
               // Insert(':',ToAdd,5);
               end;
         'X' : begin
-{$ifdef ver1_0}
-              if Checkarg(vtinteger,false) then
-                 begin
-                   vl:=Args[Doarg].VInteger and int64($ffffffff);
-                   index:=16;
-                 end
-              else
-                 begin
-                   CheckArg(vtInt64,true);
-                   vl:=Args[DoArg].VInt64^;
-                   index:=31;
-                 end;
-              If Prec>index then
-                ToAdd:=HexStr(vl,index)
-              else
-                begin
-                // determine minimum needed number of hex digits.
-                Index:=1;
-                 While (DWord(1 shl (Index*4))<=DWord(Args[DoArg].VInteger)) and (index<8) do
-                  inc(Index);
-                If Index>Prec then
-                  Prec:=Index;
-                ToAdd:=HexStr(int64(vl),Prec);
-                end;
-{$else}
               if Checkarg(vtinteger,false) then
                  begin
                    vq:=Cardinal(Args[Doarg].VInteger);
                    index:=16;
                  end
+              else
+                 if CheckArg(vtQWord, false) then
+                   begin
+                     vq:=Qword(Args[DoArg].VQWord^);
+                     index:=31;
+                   end
               else
                  begin
                    CheckArg(vtInt64,true);
@@ -336,7 +346,7 @@ begin
                    index:=31;
                  end;
               If Prec>index then
-                ToAdd:=HexStr(vq,index)
+                ToAdd:=HexStr(int64(vq),index)
               else
                 begin
                 // determine minimum needed number of hex digits.
@@ -345,9 +355,8 @@ begin
                   inc(Index);
                 If Index>Prec then
                   Prec:=Index;
-                ToAdd:=HexStr(vq,Prec);
+                ToAdd:=HexStr(int64(vq),Prec);
                 end;
-{$endif}
               end;
         '%': ToAdd:='%';
       end;
@@ -359,7 +368,7 @@ begin
             ToAdd:=ToAdd+space(Width-Length(ToAdd));
       Result:=Result+ToAdd;
       end;
-    inc(chpos);
-    Oldpos:=chpos;
+    inc(ChPos);
+    Oldpos:=ChPos;
     end;
 end;

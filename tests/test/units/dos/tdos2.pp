@@ -39,6 +39,9 @@ Uses Dos;
 {$IFDEF ATARI}
         {$DEFINE EXTATTR}
 {$ENDIF}
+{$IFDEF WINCE}
+        {$DEFINE EXTATTR}
+{$ENDIF}
 
 
 
@@ -65,11 +68,14 @@ Uses Dos;
 
 CONST
 { what is the root path }
-{$IFDEF EXTATTR}
-  RootPath = 'C:\';
-{$ENDIF}
-{$IFDEF UNIX}
+{$ifdef UNIX}
   RootPath = '/';
+{$else UNIX}
+  {$ifdef WINCE}
+    RootPath = '\';
+  {$else WINCE}
+    RootPath = 'C:\';
+  {$endif WINCE}
 {$ENDIF}
  Week:Array[0..6] of String =
  ('Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday');
@@ -239,8 +245,18 @@ Begin
  WriteLn('----------------------------------------------------------------------');
  WriteLn(' Note: GetTime should return the same value as the previous test.     ');
  WriteLn('----------------------------------------------------------------------');
+{$ifndef beos}
+ {This should be disabled under BeOS : maybe this is a BeOS bug (or a feature ?) 
+  in stime function.
+  When you set 36 hours, the time AND the date are changed
+  It seems it is a valid value under BeOS, but you have jump in the future :
+  36 hours in the future from the begining of the starting day, more or less
+  depending on your timezone.
+  For example in Paris, in summer (2 hours from GMT time zone),
+  this call set the clock to 14:<Minute>:<Second>:<Sec100> the next day !}
  SetTime(36,Minute,Second,Sec100);
  CheckDosError(0);
+{$endif}
  GetTime(Hour1,Minute1,Second1,Sec1001);
  CheckDosError(0);
  WriteLn('HH:MIN:SEC ',Hour1,':',Minute1,':',Second1);
@@ -524,78 +540,80 @@ Begin
 {$IFDEF FPC}
  FindClose(Search);
 {$ENDIF}
+
  if not FoundDir then
    WriteLn(s+'FAILURE. Did not find '+TestDir+' directory')
  else
+{$ifndef wince}
  if not FoundDot then
    WriteLn(s+'FAILURE. Did not find special ''''.'''' directory')
  else
  if not FoundDotDot then
    WriteLn(s+'FAILURE. Did not find special ''''..'''' directory')
  else
+{$endif wince}
  if Failure then
    WriteLn(s+'FAILURE. Did not find special '+TestFName1+' directory')
  else
    WriteLn(s+'Success.');
 
-{$IFDEF FPC}
- FindClose(Search);
-{$ENDIF}
-
 {$ifdef go32v2}
- s:='Searching using ??? wildcard (normal files + all special files)...';
- FindFirst('???',AnyFile,Search);
- FoundDot := False;
- FoundDotDot := False;
- WriteLn(#9'Resources found (full path should not be displayed):');
- while DosError = 0 do
- Begin
-    If Search.Name = '.' then
-    Begin
-      If Search.Attr and Directory <> 0 then
-         FoundDot := TRUE;
-    End;
-    if Search.Name = '..' then
-    Begin
-      If Search.Attr and Directory <> 0 then
-         FoundDotDot := TRUE;
-    End;
-    WriteLn(#9+Search.Name);
-    FindNext(Search);
- end;
- if not FoundDot then
-   WriteLn(s+'FAILURE. Did not find special ''''.'''' directory')
- else
- if not FoundDotDot then
-   WriteLn(s+'FAILURE. Did not find special ''''..'''' directory')
- else
-   WriteLn(s+'Success.');
-{$IFDEF FPC}
-  FindClose(Search);
-{$ENDIF}
- { search for volume ID }
- s:='Searching using * wildcard in ROOT (normal files + volume ID)...';
- FindFirst(RootPath+'*',Directory+VolumeID,Search);
- Failure := TRUE;
- WriteLn(#9'Resources found (full path should not be displayed):');
- while DosError = 0 do
- Begin
-    If Search.Attr and VolumeID <> 0 then
-    Begin
-      Failure := FALSE;
-      WriteLn(#9'Volume ID: '+Search.Name);
-    End
-    else
+ if not LFNSupport then
+ begin
+   s:='Searching using ??? wildcard (normal files + all special files)...';
+   FindFirst('???',AnyFile,Search);
+   FoundDot := False;
+   FoundDotDot := False;
+   WriteLn(#9'Resources found (full path should not be displayed):');
+   while DosError = 0 do
+   Begin
+      If Search.Name = '.' then
+      Begin
+        If Search.Attr and Directory <> 0 then
+           FoundDot := TRUE;
+      End;
+      if Search.Name = '..' then
+      Begin
+        If Search.Attr and Directory <> 0 then
+           FoundDotDot := TRUE;
+      End;
       WriteLn(#9+Search.Name);
-    FindNext(Search);
+      FindNext(Search);
+   end;
+   if not FoundDot then
+     WriteLn(s+'FAILURE. Did not find special ''''.'''' directory')
+   else
+   if not FoundDotDot then
+     WriteLn(s+'FAILURE. Did not find special ''''..'''' directory')
+   else
+     WriteLn(s+'Success.');
+  {$IFDEF FPC}
+    FindClose(Search);
+  {$ENDIF}
+   { search for volume ID }
+   s:='Searching using *.* wildcard in ROOT (normal files + volume ID)...';
+   FindFirst(RootPath+'*.*',Directory+VolumeID,Search);
+   Failure := TRUE;
+   WriteLn(#9'Resources found (full path should not be displayed):');
+   while DosError = 0 do
+   Begin
+      If Search.Attr and VolumeID <> 0 then
+      Begin
+        Failure := FALSE;
+        WriteLn(#9'Volume ID: '+Search.Name);
+      End
+      else
+        WriteLn(#9+Search.Name);
+      FindNext(Search);
+   end;
+   If Failure then
+     WriteLn(s+'FAILURE. Did not find volume name')
+   else
+     WriteLn(s+'Success.');
+  {$IFDEF FPC}
+    FindClose(Search);
+  {$ENDIF}
  end;
- If Failure then
-   WriteLn(s+'FAILURE. Did not find volume name')
- else
-   WriteLn(s+'Success.');
-{$IFDEF FPC}
-  FindClose(Search);
-{$ENDIF}
 {$endif}
 
 end;
@@ -645,13 +663,16 @@ Begin
  WriteLn('PARAMSTR(0) = ', ParamStr(0));
  WriteLn('DRIVE + NAME + EXT = ',d+n+e);
 {$ifdef go32v2}
- Write('Testing invalid path (..)...');
- P:='..';
- FSPlit(P,D,N,E);
- IF (length(D) <> 0) OR (length(N) <>0) OR (E <> P) THEN
-   WriteLn('FAILURE. Length of drive and name should be zero and Ext should return Path')
- else
-   WriteLn('Success.');
+ if not LFNSupport then
+ begin
+   Write('Testing invalid path (..)...');
+   P:='..';
+   FSPlit(P,D,N,E);
+   IF (length(D) <> 0) OR (length(N) <>0) OR (E <> P) THEN
+     WriteLn('FAILURE. Length of drive and name should be zero and Ext should return Path')
+   else
+     WriteLn('Success.');
+ end;
 {$endif}
  Write('Testing invalid path (*)...');
  P:='*';
@@ -662,7 +683,25 @@ Begin
    WriteLn('Success.');
 end;
 
-
+{$ifdef go32v2}
+procedure TestWithLFN;
+begin
+ WriteLn('----------------------------------------------------------------------');
+ WriteLn('                           Running LFN tests                          ');
+ WriteLn('----------------------------------------------------------------------');
+ TestFind;
+ PauseScreen;
+ TestSplit;
+ //Force RTL to use non-LFN calls
+ FileNameCaseSensitive:=false;
+ FileNameCasePreserving:=false;
+ AllFilesMask := '*.*';
+ LFNSupport:=false;
+ WriteLn('----------------------------------------------------------------------');
+ WriteLn('                         Running non-LFN tests                        ');
+ WriteLn('----------------------------------------------------------------------');
+end;
+{$endif}
 
 var
  F: File;
@@ -685,6 +724,9 @@ Begin
  Close(F);
  MkDir(TestDir);
  TestFTime;
+ {$ifdef go32v2}
+ TestWithLFN;
+ {$endif}
  TestFind;
  PauseScreen;
  TestSplit;
@@ -703,13 +745,3 @@ Begin
  if has_errors then
    halt(1);
 end.
-
-{
-  $Log: tdos2.pp,v $
-  Revision 1.14  2005/04/03 20:56:43  olle
-    * adapted to MacOS
-
-  Revision 1.13  2005/02/14 17:13:37  peter
-    * truncate log
-
-}

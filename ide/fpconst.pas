@@ -1,5 +1,4 @@
 {
-    $Id: fpconst.pas,v 1.22 2005/03/06 13:48:59 florian Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 1998 by Berczi Gabor
 
@@ -22,7 +21,7 @@ uses Views,App,
      WViews,WEditor,WHTMLHlp;
 
 const
-     VersionStr           = '1.0.4';
+     VersionStr           = '1.0.12';
 
      MaxRecentFileCount   = 9;
      MaxToolCount         = 16;
@@ -80,13 +79,9 @@ const
      NGExt                = '.ng';
      INFExt               = '.inf';
      WinHelpExt           = '.hlp';
-     HelpFileExts         = '*.tph;*.htm*;*'+HTMLIndexExt+';*'+NGExt+';*'+WinHelpExt+';*'+INFExt;
+     HelpFileExts         = '*.tph;*.htm*;*'+HTMLIndexExt+';*'+NGExt+';*'+WinHelpExt+';*'+INFExt+';*'+ExtChm;
 
-{$ifdef UNIX}
-     EnterSign            = '<'+#196#217;
-{$else}
      EnterSign            = #17#196#217;
-{$endif}
 
      { Main menu submenu indexes }
      menuFile             = 0;
@@ -144,6 +139,8 @@ const
      hidBreakpointDialogName = 208;
      hidRunDir            = 209;
      hidBreakpointDialogCond = 210;
+     hidPrinterDevice      = 211;
+     hidEvaluate           = 212;
 
      { Command constants }
      cmShowClipboard     = 201;
@@ -183,16 +180,27 @@ const
      cmUntilReturn       = 239;
      { WARNING these two are also defined in weditor.pas PM }
      { and why aren't these defines then removed? Gabor }
+     { commented out, now in wviews.pas FK
      cmCopyWin           = 240;
      cmPasteWin          = 241;
+     }
      cmRegisters         = 242;
      cmFPURegisters      = 243;
      cmDoReload          = 244;
      cmVectorRegisters   = 245;
 
+
+     { in wviews.pas defined
+     cmSelectAll         = 246;
+     cmUnselect          = 247;
+     }
+
+     cmPrint             = 248;
+
      cmNotImplemented    = 1000;
      cmNewFromTemplate   = 1001;
      cmShowReadme        = 1002;
+     cmPrinterSetup      = 1003;
 
      cmSearchWindow      = 1500;
      cmSourceWndClosing  = 1601;
@@ -247,6 +255,7 @@ const
      cmHelpUsingHelp     = 2104;
      cmHelpFiles         = 2105;
      cmAbout             = 2106;
+     cmHelpDebug         = 2107;
 
      cmEditorOptions     = 2202;
      cmBrowserOptions    = 2203;
@@ -267,6 +276,7 @@ const
 
      cmDebuggerStopped   = 2600;
      cmDisassemble       = 2601;
+     cmContinue          = 2602;
 
      cmSymBrowse         = 2700;
      cmSymGotoSource     = 2701;
@@ -356,6 +366,8 @@ const
      hcShowClipboard     = hcShift+cmShowClipboard;
      hcCopyWin           = hcShift+cmCopyWin;
      hcPasteWin          = hcShift+cmPasteWin;
+     hcSelectAll         = hcShift+cmSelectAll;
+     hcUnselect          = hcShift+cmUnselect;
 
      hcFindProcedure     = hcShift+cmFindProcedure;
      hcObjects           = hcShift+cmObjects;
@@ -385,6 +397,7 @@ const
      hcHelpPrevTopic     = hcShift+cmHelpPrevTopic;
      hcHelpUsingHelp     = hcShift+cmHelpUsingHelp;
      hcHelpFiles         = hcShift+cmHelpFiles;
+     hcHelpDebug         = hcShift+cmHelpDebug;
      hcUpdate            = hcShift+cmUpdate;
      hcMsgClear          = hcShift+cmMsgClear;
      hcMsgGotoSource     = hcShift+cmMsgGotoSource;
@@ -407,6 +420,8 @@ const
      hcRegistersWindow   = hcShift+cmRegisters;
      hcFPURegisters      = hcShift+cmFPURegisters;
      hcVectorRegisters   = hcShift+cmVectorRegisters;
+     hcPrint             = hcShift+cmPrint;
+     hcPrinterSetup      = hcShift+cmPrinterSetup;
 
      hcOpenAtCursor      = hcShift+cmOpenAtCursor;
      hcBrowseAtCursor    = hcShift+cmBrowseAtCursor;
@@ -472,19 +487,3 @@ const
 implementation
 
 END.
-{
-  $Log: fpconst.pas,v $
-  Revision 1.22  2005/03/06 13:48:59  florian
-    + Units & Exe dir may now contain $fpc... valus
-    * version to 1.0.4 increased
-
-  Revision 1.21  2005/02/14 17:13:18  peter
-    * truncate log
-
-  Revision 1.20  2005/01/08 13:43:44  florian
-    * updated version and copyright
-
-  Revision 1.19  2005/01/08 11:43:18  florian
-    + vector unit window
-
-}

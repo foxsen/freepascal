@@ -1,5 +1,4 @@
 {
-    $Id: math.inc,v 1.14 2005/02/14 17:13:31 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2000 by Jonas Maebe and other members of the
     Free Pascal development team
@@ -15,7 +14,6 @@
 
  **********************************************************************}
 
-{$ifdef INTERNCONSTINTF}
 
 {$ifndef FPC_SYSTEM_HAS_ABS}
     {$define FPC_SYSTEM_HAS_ABS}
@@ -47,25 +45,3 @@
     end;
 {$endif}
 
-{$else}
-
-    {$define FPC_SYSTEM_HAS_ABS}
-    function abs(d : extended) : extended;[internproc:fpc_in_abs_real];
-
-    {$define FPC_SYSTEM_HAS_SQR}
-    function sqr(d : extended) : extended;[internproc:fpc_in_sqr_real];
-
-    {$define FPC_SYSTEM_HAS_SQRT}
-    function sqrt(d : extended) : extended;[internproc:fpc_in_sqrt_real];
-
-{$endif}
-
-{
-  $Log: math.inc,v $
-  Revision 1.14  2005/02/14 17:13:31  peter
-    * truncate log
-
-  Revision 1.13  2005/02/14 16:32:41  peter
-    * solaris updates
-
-}

@@ -1,5 +1,4 @@
 {
-    $Id: cpupi.pas,v 1.29 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 2002 by Florian Klaempfl
 
     This unit contains the CPU specific part of tprocinfo
@@ -35,7 +34,6 @@ interface
     TSparcProcInfo=class(tcgprocinfo)
     public
       constructor create(aparent:tprocinfo);override;
-      procedure allocate_push_parasize(size:longint);override;
       function calc_stackframe_size:longint;override;
     end;
 
@@ -49,13 +47,6 @@ implementation
       begin
         inherited create(aparent);
         maxpushedparasize:=0;
-      end;
-
-
-    procedure tsparcprocinfo.allocate_push_parasize(size:longint);
-      begin
-        if size>maxpushedparasize then
-          maxpushedparasize:=size;
       end;
 
 
@@ -76,16 +67,10 @@ implementation
           Alignment must be the max available, as doubles require
           8 byte alignment
         }
-        result:=Align(tg.direction*tg.lasttemp+maxpushedparasize+target_info.first_parm_offset,aktalignment.localalignmax);
+        result:=Align(tg.direction*tg.lasttemp+maxpushedparasize+target_info.first_parm_offset,current_settings.alignment.localalignmax);
       end;
 
 
 begin
   cprocinfo:=TSparcProcInfo;
 end.
-{
-  $Log: cpupi.pas,v $
-  Revision 1.29  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

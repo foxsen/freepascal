@@ -1,5 +1,4 @@
 {
-    $Id: aopt.pas,v 1.10 2005/02/26 01:26:59 jonas Exp $
     Copyright (c) 1998-2004 by Jonas Maebe, member of the Free Pascal
     Development Team
 
@@ -29,14 +28,14 @@ Unit aopt;
   Interface
 
     Uses
-      aasmbase,aasmtai,aasmcpu,
+      aasmbase,aasmtai,aasmdata,aasmcpu,
       aoptobj;
 
     Type
       TAsmOptimizer = class(TAoptObj)
 
         { _AsmL is the PAasmOutpout list that has to be optimized }
-        Constructor create(_AsmL: taasmoutput);
+        Constructor create(_AsmL: TAsmList); virtual; reintroduce;
 
         { call the necessary optimizer procedures }
         Procedure Optimize;
@@ -48,19 +47,26 @@ Unit aopt;
         procedure clear;
         procedure pass_1;
       End;
+      TAsmOptimizerClass = class of TAsmOptimizer;
 
     var
-      casmoptimizer : class of tasmoptimizer;
+      casmoptimizer : TAsmOptimizerClass;
+      cpreregallocscheduler : TAsmOptimizerClass;
 
-    procedure Optimize(AsmL:taasmoutput);
+    procedure Optimize(AsmL:TAsmList);
+    procedure PreRegallocSchedule(AsmL:TAsmList);
 
   Implementation
 
     uses
+      cutils,
       globtype, globals,
+      verbose,
+      cpubase,
+      cgbase,
       aoptda,aoptcpu,aoptcpud;
 
-    Constructor TAsmOptimizer.create(_AsmL: taasmoutput);
+    Constructor TAsmOptimizer.create(_AsmL: TAsmList);
       Begin
         inherited create(_asml,nil,nil,nil);
       {setup labeltable, always necessary}
@@ -71,37 +77,33 @@ Unit aopt;
       { Walks through the paasmlist to find the lowest and highest label number.  }
       { Returns the last Pai object of the current block                          }
       Var LabelFound: Boolean;
-          p, prev: tai;
+          p: tai;
       Begin
-        LabelInfo^.LowLabel := High(AWord);
+        LabelInfo^.LowLabel := High(longint);
         LabelInfo^.HighLabel := 0;
         LabelInfo^.LabelDif := 0;
         LabelInfo^.LabelTable:=nil;
         LabelFound := False;
         P := BlockStart;
-        prev := p;
         With LabelInfo^ Do
           Begin
             While Assigned(P) And
                   ((P.typ <> Ait_Marker) Or
-                   (tai_Marker(P).Kind <> AsmBlockStart)) Do
+                   (tai_Marker(P).Kind <> mark_AsmBlockStart)) Do
               Begin
-                If (p.typ = ait_label) Then
-                  If (tai_Label(p).l.is_used) Then
-                    Begin
-                      LabelFound := True;
-                      If (tai_Label(p).l.labelnr < LowLabel) Then
-                        LowLabel := tai_Label(p).l.labelnr;
-                      If (tai_Label(p).l.labelnr > HighLabel) Then
-                        HighLabel := tai_Label(p).l.labelnr
-                    End;
-                prev := p;
+                If (p.typ = ait_label) and
+                   (tai_Label(p).labsym.labeltype=alt_jump) and
+                   (tai_Label(p).labsym.is_used) Then
+                  Begin
+                    LabelFound := True;
+                    If (tai_Label(p).labsym.labelnr < LowLabel) Then
+                      LowLabel := tai_Label(p).labsym.labelnr;
+                    If (tai_Label(p).labsym.labelnr > HighLabel) Then
+                      HighLabel := tai_Label(p).labsym.labelnr
+                  End;
                 GetNextInstruction(p, p)
               End;
-            if (prev.typ = ait_marker) and
-               (tai_marker(prev).kind = asmblockstart) then
-              blockend := prev
-            else blockend := nil;
+            blockend:=p;
             If LabelFound
               Then LabelDif := HighLabel-LowLabel+1
               Else LabelDif := 0
@@ -109,82 +111,124 @@ Unit aopt;
       End;
 
     Procedure TAsmOptimizer.BuildLabelTableAndFixRegAlloc;
-    { Builds a table with the locations of the labels in the taasmoutput.       }
+    { Builds a table with the locations of the labels in the TAsmList.       }
     { Also fixes some RegDeallocs like "# %eax released; push (%eax)"           }
-    Var p, hp1, hp2: tai;
-        UsedRegs: TRegSet;
+    Var p,hp1, hp2: tai;
+        Regs: TAllUsedRegs;
+        LabelIdx : longint;
     Begin
-      UsedRegs := [];
+      CreateUsedRegs(Regs);
       With LabelInfo^ Do
-        If (LabelDif <> 0) Then
-          Begin
-            GetMem(LabelTable, LabelDif*SizeOf(TLabelTableItem));
-            FillChar(LabelTable^, LabelDif*SizeOf(TLabelTableItem), 0);
-            p := BlockStart;
-            While (P <> BlockEnd) Do
-              Begin
-                Case p.typ Of
-                  ait_Label:
-                    If tai_label(p).l.is_used Then
-                      LabelTable^[tai_label(p).l.labelnr-LowLabel].PaiObj := p;
-                  ait_regAlloc:
-                    begin
-                    {!!!!!!!!!
-                      if tai_regalloc(p).ratype=ra_alloc then
-                        Begin
-                          If Not(tai_regalloc(p).Reg in UsedRegs) Then
-                            UsedRegs := UsedRegs + [tai_regalloc(p).Reg]
-                          Else
-                            Begin
-                              hp1 := p;
-                              hp2 := nil;
-                              While GetLastInstruction(hp1, hp1) And
-                                    Not(RegInInstruction(tai_regalloc(p).Reg, hp1)) Do
-                                hp2:=hp1;
-                              If hp2<>nil Then
-                                Begin
-                                  hp1:=tai_regalloc.DeAlloc(tai_regalloc(p).Reg,hp2);
-                                  InsertLLItem(tai(hp2.previous), hp2, hp1);
-                                End;
-                            End;
-                        End
-                      else
-                        Begin
-                          UsedRegs := UsedRegs - [tai_regalloc(p).Reg];
-                          hp1 := p;
-                          hp2 := nil;
-                          While Not(FindRegAlloc(tai_regalloc(p).Reg, tai(hp1.Next))) And
-                                GetNextInstruction(hp1, hp1) And
-                                RegInInstruction(tai_regalloc(p).Reg, hp1) Do
-                            hp2 := hp1;
-                          If hp2 <> nil Then
-                            Begin
-                              hp1 := tai(p.previous);
-                              AsmL.Remove(p);
-                              InsertLLItem(hp2, tai(hp2.Next), p);
-                              p := hp1;
-                            End
-                        End
-                    };
-                    End
-                End;
-                P := tai(p.Next);
-                While Assigned(p) and
-                      (p <> blockend) and
-                      (p.typ in (SkipInstr - [ait_regalloc])) Do
-                  P := tai(P.Next)
+        begin
+          If (LabelDif <> 0) Then
+            Begin
+              GetMem(LabelTable, LabelDif*SizeOf(TLabelTableItem));
+              FillChar(LabelTable^, LabelDif*SizeOf(TLabelTableItem), 0);
+            end;
+          p := BlockStart;
+          While (P <> BlockEnd) Do
+            Begin
+              Case p.typ Of
+                ait_Label:
+                  begin
+                    If tai_label(p).labsym.is_used and
+                       (tai_Label(p).labsym.labeltype=alt_jump) then
+                      begin
+                        LabelIdx:=tai_label(p).labsym.labelnr-LowLabel;
+                        if LabelIdx>int64(LabelDif) then
+                          internalerror(200604202);
+                        LabelTable^[LabelIdx].PaiObj := p;
+                      end;
+                  end;
+                ait_regAlloc:
+                  begin
+                    if tai_regalloc(p).ratype=ra_alloc then
+                      Begin
+                        If Not(RegInUsedRegs(tai_regalloc(p).Reg,Regs)) Then
+                          IncludeRegInUsedRegs(tai_regalloc(p).Reg,Regs)
+                        Else
+                          Begin
+                            hp1 := tai(p.previous);
+{$ifdef DEBUG_OPTALLOC}
+                            AsmL.InsertAfter(tai_comment.Create(strpnew('Removed allocation of '+std_regname(tai_regalloc(p).Reg))),p);
+{$endif DEBUG_OPTALLOC}
+                            AsmL.remove(p);
+                            p.free;
+                            p := hp1;
+                            { not sure if this is useful, it even skips previous deallocs of the register (FK)
+                            hp1 := p;
+                            hp2 := nil;
+                            While GetLastInstruction(hp1, hp1) And
+                                  Not(RegInInstruction(tai_regalloc(p).Reg, hp1)) Do
+                              hp2:=hp1;
+                            If hp2<>nil Then
+                              Begin
+                                hp1:=tai_regalloc.DeAlloc(tai_regalloc(p).Reg,hp2);
+                                InsertLLItem(tai(hp2.previous), hp2, hp1);
+                              End;
+                            }
+                          End;
+                      End
+                    else if tai_regalloc(p).ratype=ra_dealloc then
+                      Begin
+                        ExcludeRegFromUsedRegs(tai_regalloc(p).Reg,Regs);
+                        hp1 := p;
+                        hp2 := nil;
+                        While Not(FindRegAlloc(tai_regalloc(p).Reg, tai(hp1.Next))) And
+                              GetNextInstruction(hp1, hp1) And
+                              RegInInstruction(tai_regalloc(p).Reg, hp1) Do
+                          hp2 := hp1;
+                        If hp2 <> nil Then
+                          Begin
+                            hp1 := tai(p.previous);
+{$ifdef DEBUG_OPTALLOC}
+                            AsmL.InsertAfter(tai_comment.Create(strpnew('Moved deallocation of '+std_regname(tai_regalloc(p).Reg))),p);
+{$endif DEBUG_OPTALLOC}
+                            AsmL.Remove(p);
+                            InsertLLItem(hp2, tai(hp2.Next), p);
+{$ifdef DEBUG_OPTALLOC}
+                            AsmL.InsertAfter(tai_comment.Create(strpnew('Moved deallocation of '+std_regname(tai_regalloc(p).Reg)+' here')),hp2);
+{$endif DEBUG_OPTALLOC}
+                            p := hp1;
+                          End
+                        else if findregalloc(tai_regalloc(p).reg, tai(p.next))
+                          and getnextinstruction(p,hp1) then
+                          begin
+                            hp1 := tai(p.previous);
+{$ifdef DEBUG_OPTALLOC}
+                            AsmL.InsertAfter(tai_comment.Create(strpnew('Removed deallocation of '+std_regname(tai_regalloc(p).Reg))),p);
+{$endif DEBUG_OPTALLOC}
+                            AsmL.remove(p);
+                            p.free;
+                            p := hp1;
+      //                      don't include here, since then the allocation will be removed when it's processed
+      //                      include(usedregs,supreg);
+                          end;
+                      End
+                  End
               End;
-          End
+              P := tai(p.Next);
+              While Assigned(p) and
+                    (p <> blockend) and
+                    (p.typ in (SkipInstr - [ait_regalloc])) Do
+                P := tai(P.Next)
+            End;
+        end;
+      ReleaseUsedRegs(Regs);
     End;
 
     procedure tasmoptimizer.clear;
       begin
-        if LabelInfo^.labeldif <> 0 then
+        if assigned(LabelInfo^.labeltable) then
           begin
             freemem(LabelInfo^.labeltable);
             LabelInfo^.labeltable := nil;
           end;
+        LabelInfo^.labeldif:=0;
+        LabelInfo^.lowlabel:=high(longint);
+        LabelInfo^.highlabel:=0;
       end;
+
 
     procedure tasmoptimizer.pass_1;
       begin
@@ -210,7 +254,7 @@ Unit aopt;
             { Only perform them twice in the first pass }
              if pass = 0 then
                PeepHoleOptPass1;
-            If (cs_slowoptimize in aktglobalswitches) Then
+            If (cs_opt_asmcse in current_settings.optimizerswitches) Then
               Begin
 //                DFA:=TAOptDFACpu.Create(AsmL,BlockStart,BlockEnd,LabelInfo);
                 { data flow analyzer }
@@ -219,24 +263,26 @@ Unit aopt;
       {          CSE;}
               End;
             { more peephole optimizations }
-      {      PeepHoleOptPass2;}
-            { free memory }
+            PeepHoleOptPass2;
+            { if pass = last_pass then }
+            PostPeepHoleOpts;
+            { free memory }
             clear;
             { continue where we left off, BlockEnd is either the start of an }
             { assembler block or nil}
             BlockStart := BlockEnd;
             While Assigned(BlockStart) And
                   (BlockStart.typ = ait_Marker) And
-                  (tai_Marker(BlockStart).Kind = AsmBlockStart) Do
+                  (tai_Marker(BlockStart).Kind = mark_AsmBlockStart) Do
               Begin
                { we stopped at an assembler block, so skip it    }
                While GetNextInstruction(BlockStart, BlockStart) And
                      ((BlockStart.Typ <> Ait_Marker) Or
-                      (tai_Marker(Blockstart).Kind <> AsmBlockEnd)) Do;
-               { blockstart now contains a tai_marker(asmblockend) }
+                      (tai_Marker(Blockstart).Kind <> mark_AsmBlockEnd)) Do;
+               { blockstart now contains a tai_marker(mark_AsmBlockEnd) }
                If GetNextInstruction(BlockStart, HP) And
                   ((HP.typ <> ait_Marker) Or
-                   (Tai_Marker(HP).Kind <> AsmBlockStart)) Then
+                   (Tai_Marker(HP).Kind <> mark_AsmBlockStart)) Then
                { There is no assembler block anymore after the current one, so }
                { optimize the next block of "normal" instructions              }
                  pass_1
@@ -247,13 +293,16 @@ Unit aopt;
           End;
       End;
 
+
     Destructor TAsmOptimizer.Destroy;
       Begin
+        if assigned(LabelInfo^.LabelTable) then
+          Freemem(LabelInfo^.LabelTable);
         Dispose(LabelInfo)
       End;
 
 
-    procedure Optimize(AsmL:taasmoutput);
+    procedure Optimize(AsmL:TAsmList);
       var
         p : TAsmOptimizer;
       begin
@@ -263,23 +312,14 @@ Unit aopt;
       end;
 
 
-begin
-  casmoptimizer:=TAsmOptimizer;
+    procedure PreRegallocSchedule(AsmL:TAsmList);
+      var
+        p : TAsmOptimizer;
+      begin
+        p:=cpreregallocscheduler.Create(AsmL);
+        p.Optimize;
+        p.free
+      end;
+
+
 end.
-
-{Virtual methods, most have to be overridden by processor dependent methods}
-
-{
- $Log: aopt.pas,v $
- Revision 1.10  2005/02/26 01:26:59  jonas
-   * fixed generic jumps optimizer and enabled it for ppc (the label table
-     was not being initialised -> getfinaldestination always failed, which
-     caused wrong optimizations in some cases)
-   * changed the inverse_cond into a function, because tasmcond is a record
-     on ppc
-   + added a compare_conditions() function for the same reason
-
- Revision 1.9  2005/02/14 17:13:06  peter
-   * truncate log
-
-}

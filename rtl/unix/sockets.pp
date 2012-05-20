@@ -1,5 +1,4 @@
 {
-    $Id: sockets.pp,v 1.11 2005/02/14 17:13:31 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team
 
@@ -15,12 +14,21 @@ unit Sockets;
 Interface
 
 {$ifdef Unix}
-Uses UnixType;
+Uses baseunix,UnixType;
 {$endif}
 
-{$ifdef FreeBSD}
-{$DEFINE SOCK_HAS_SINLEN}               // BSD definition of scoketaddr
+{$i osdefs.inc}       { Compile time defines }
+
+{$if 
+     defined(FreeBSD) or 
+     defined(Darwin) or 
+     defined(Haiku)
+}
+{$DEFINE SOCK_HAS_SINLEN}               // BSD definition of socketaddr
 {$endif}
+
+Type 
+ TSockLen = BaseUnix.TSocklen;
 
 {$i unxsockh.inc}
 {$i socketsh.inc}
@@ -34,14 +42,32 @@ type
                   path:array[0..107] of char;    //104 total for freebsd.
                   end;
 
+const
+  EsockEINTR            = EsysEINTR;   
+  EsockEBADF            = EsysEBADF;
+  EsockEFAULT           = EsysEFAULT;
+  EsockEINVAL           = EsysEINVAL;
+  EsockEACCESS          = ESysEAcces;
+  EsockEMFILE           = ESysEmfile;
+{$ifndef beos}
+  EsockEMSGSIZE         = ESysEMsgSize;
+{$endif beos}
+  EsockENOBUFS          = ESysENoBufs;
+  EsockENOTCONN         = ESysENotConn;
+{$ifndef beos}  
+  EsockENOTSOCK         = ESysENotSock;
+{$endif beos}
+  EsockEPROTONOSUPPORT  = ESysEProtoNoSupport;
+  EsockEWOULDBLOCK      = ESysEWouldBlock;
+
 
 { unix socket specific functions }
-Procedure Str2UnixSockAddr(const addr:string;var t:TUnixSockAddr;var len:longint);
-Function Bind(Sock:longint;const addr:string):boolean;
-Function Connect(Sock:longint;const addr:string;var SockIn,SockOut:text):Boolean;
-Function Connect(Sock:longint;const addr:string;var SockIn,SockOut:file):Boolean;
-Function Accept(Sock:longint;var addr:string;var SockIn,SockOut:text):Boolean;
-Function Accept(Sock:longint;var addr:string;var SockIn,SockOut:File):Boolean;
+Procedure Str2UnixSockAddr(const addr:string;var t:TUnixSockAddr;var len:longint); deprecated;
+Function Bind(Sock:longint;const addr:string):boolean; deprecated;
+Function Connect(Sock:longint;const addr:string;var SockIn,SockOut:text):Boolean; deprecated;
+Function Connect(Sock:longint;const addr:string;var SockIn,SockOut:file):Boolean; deprecated;
+Function Accept(Sock:longint;var addr:string;var SockIn,SockOut:text):Boolean;    deprecated;
+Function Accept(Sock:longint;var addr:string;var SockIn,SockOut:File):Boolean;    deprecated;
 
 //function  fpaccept      (s:cint; addrx : psockaddr; addrlen : psocklen):cint; maybelibc
 //function  fpbind      (s:cint; addrx : psockaddr; addrlen : tsocklen):cint;  maybelibc
@@ -49,7 +75,9 @@ Function Accept(Sock:longint;var addr:string;var SockIn,SockOut:File):Boolean;
 
 Implementation
 
-Uses BaseUnix,{$ifndef FPC_USE_LIBC}SysCall{$else}initc{$endif};
+Uses {$ifndef FPC_USE_LIBC}SysCall{$else}initc{$endif};
+
+threadvar internal_socketerror : cint;
 
 { Include filerec and textrec structures }
 {$i filerec.inc}
@@ -58,6 +86,12 @@ Uses BaseUnix,{$ifndef FPC_USE_LIBC}SysCall{$else}initc{$endif};
                           Kernel Socket Callings
 ******************************************************************************}
 
+function socketerror:cint;
+
+begin
+  socketerror:=internal_socketerror;
+end;
+
 {$ifndef FPC_USE_LIBC}
 {$i unixsock.inc}
 {$else}
@@ -65,12 +99,4 @@ Uses BaseUnix,{$ifndef FPC_USE_LIBC}SysCall{$else}initc{$endif};
 {$endif}
 {$i sockovl.inc}
 {$i sockets.inc}
-
 end.
-
-{
-  $Log: sockets.pp,v $
-  Revision 1.11  2005/02/14 17:13:31  peter
-    * truncate log
-
-}

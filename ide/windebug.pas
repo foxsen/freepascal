@@ -1,9 +1,8 @@
 {
-    $Id: windebug.pas,v 1.3 2004/11/11 15:20:52 florian Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 2000 by Pierre Muller
 
-    Win32 specific debugger routines for the IDE
+    Windows specific debugger routines for the IDE
 
     See the file COPYING.FPC, included in this distribution,
     for details about the copyright.

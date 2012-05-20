@@ -1,4 +1,5 @@
 { %fail }
+{ %cpu=i386 }
 
 {$ifdef fpc}
   {$mode delphi}
@@ -39,4 +40,3 @@ testobj := ttestobj.create;
 testobj.testasmcall;
 testobj.destroy;
 end.
-

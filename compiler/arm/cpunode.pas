@@ -1,5 +1,4 @@
 {
-    $Id: cpunode.pas,v 1.11 2005/02/14 17:13:09 peter Exp $
     Copyright (c) 2000-2003 by Florian Klaempfl
 
     This unit includes the ARM code generator into the compiler
@@ -30,7 +29,7 @@ unit cpunode;
 
     uses
        { generic nodes }
-       ncgbas,ncgld,ncgflw,ncgcnv,ncgmem,ncgcon,ncgcal,ncgset,ncginl,ncgopt,ncgmat,
+       ncgbas,ncgld,ncgflw,ncgcnv,ncgmem,ncgcon,ncgcal,ncgset,ncginl,ncgopt,ncgmat,ncgobjc,
        { to be able to only parts of the generic code,
          the processor specific nodes must be included
          after the generic one (FK)
@@ -39,16 +38,10 @@ unit cpunode;
        narmcal,
        narmmat,
        narminl,
-       narmcnv
+       narmcnv,
+       narmcon,
+       narmset
        ;
 
+
 end.
-{
-  $Log: cpunode.pas,v $
-  Revision 1.11  2005/02/14 17:13:09  peter
-    * truncate log
-
-  Revision 1.10  2005/01/30 14:43:40  florian
-    * fixed compilation of arm compiler
-
-}

@@ -1,5 +1,4 @@
 {
-    $Id: cputarg.pas,v 1.10 2005/02/26 01:27:00 jonas Exp $
     Copyright (c) 2001-2002 by Peter Vreman
 
     Includes the powerpc dependent target units
@@ -48,6 +47,15 @@ implementation
     {$ifndef NOTARGETMORPHOS}
       ,t_morph
     {$endif}
+    {$ifndef NOTARGETAMIGA}
+      ,t_amiga
+    {$endif}
+    {$ifndef NOTARGETWII}
+      ,t_wii
+    {$endif}
+    {$ifndef NOTARGETAIX}
+      ,t_aix
+    {$endif}
 
 {**************************************
              Assemblers
@@ -59,8 +67,32 @@ implementation
     {$ifndef NOAGPPPCMPW}
       ,agppcmpw
     {$endif}
-    
-    
+    {$ifndef NOAGPPCVASM}
+      ,agppcvasm
+    {$endif}
+
+{**************************************
+        Assembler Readers
+**************************************}
+
+  {$ifndef NoRaPPCGas}
+       ,rappcgas
+  {$endif NoRaPPCGas}
+
+{**************************************
+             Debuginfo
+**************************************}
+
+  {$ifndef NoDbgStabs}
+      ,dbgstabs
+  {$endif NoDbgStabs}
+  {$ifndef NoDbgStabx}
+      ,dbgstabx
+  {$endif NoDbgStabx}
+  {$ifndef NoDbgDwarf}
+      ,dbgdwarf
+  {$endif NoDbgDwarf}
+
 {**************************************
              Optimizer
 **************************************}
@@ -71,17 +103,3 @@ implementation
       ;
 
 end.
-{
-  $Log: cputarg.pas,v $
-  Revision 1.10  2005/02/26 01:27:00  jonas
-    * fixed generic jumps optimizer and enabled it for ppc (the label table
-      was not being initialised -> getfinaldestination always failed, which
-      caused wrong optimizations in some cases)
-    * changed the inverse_cond into a function, because tasmcond is a record
-      on ppc
-    + added a compare_conditions() function for the same reason
-
-  Revision 1.9  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

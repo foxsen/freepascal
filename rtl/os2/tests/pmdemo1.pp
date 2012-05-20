@@ -1,6 +1,5 @@
 {****************************************************************************
 
-    $Id: pmdemo1.pp,v 1.4 2005/02/14 17:13:31 peter Exp $
 
                    Copyright (c) 1999-2000 by Florian Klaempfl
 
@@ -73,9 +72,3 @@ program pmdemo1;
     WinDestroyMsgQueue(mq);
     WinTerminate(ab);
  end.
-{
-  $Log: pmdemo1.pp,v $
-  Revision 1.4  2005/02/14 17:13:31  peter
-    * truncate log
-
-}

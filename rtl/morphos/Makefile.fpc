@@ -7,13 +7,18 @@ main=rtl
 
 [target]
 loaders=prt0
-units=$(SYSTEMUNIT) objpas macpas strings \
-      dos \
-      sysutils classes math typinfo varutils \
-      charset ucomplex getopts matrix \
-      variants types rtlconsts sysconst dateutil \
-      exec timer doslib utility hardware inputevent graphics layers \
-      intuition clipboard asl ahi get9
+units=$(SYSTEMUNIT) uuchar objpas macpas iso7185 strings \
+      dos heaptrc ctypes \
+      sysutils classes fgl strutils math typinfo varutils \
+      charset ucomplex getopts matrix fmtbcd \
+      variants types rtlconsts sysconst dateutil objects \
+      exec timer doslib utility hardware inputevent keymap graphics layers \
+      intuition aboxlib mui \
+# these units are here, because they depend on system interface units above
+      kvm video mouse keyboard sockets \
+# these can be moved to packages later
+      clipboard datatypes asl ahi tinygl get9 muihelper
+#implicitunits=exeinfo
 rsts=math rtlconsts varutils typinfo variants classes sysconst dateutil
 
 [require]
@@ -29,12 +34,13 @@ cpu=powerpc
 
 [compiler]
 includedir=$(INC) $(PROCINC)
-sourcedir=$(INC) $(PROCINC)
+sourcedir=$(INC) $(PROCINC) $(COMMON)
 
 
 [prerules]
 RTL=..
 INC=$(RTL)/inc
+COMMON=$(RTL)/common
 PROCINC=$(RTL)/$(CPU_TARGET)
 UNITPREFIX=rtl
 SYSTEMUNIT=system
@@ -51,6 +57,7 @@ OBJPASDIR=$(RTL)/objpas
 GRAPHDIR=$(INC)/graph
 
 [rules]
+.NOTPARALLEL:
 # Get the system independent include file names.
 # This will set the following variables :
 # SYSINCNAMES
@@ -120,8 +127,15 @@ sysutils$(PPUEXT) : sysutils.pp $(wildcard $(OBJPASDIR)/sysutils/*.inc) \
         $(COMPILER) -Fi$(OBJPASDIR)/sysutils sysutils.pp
 
 classes$(PPUEXT) : classes.pp $(wildcard $(OBJPASDIR)/classes/*.inc) \
-                   sysutils$(PPUEXT) typinfo$(PPUEXT) rtlconsts$(PPUEXT) types$(PPUEXT)
+                   sysutils$(PPUEXT) rtlconsts$(PPUEXT) typinfo$(PPUEXT) types$(PPUEXT) fgl$(PPUEXT)
         $(COMPILER) -Fi$(OBJPASDIR)/classes classes.pp
+
+fgl$(PPUEXT) : $(OBJPASDIR)/fgl.pp objpas$(PPUEXT) types$(PPUEXT) system$(PPUEXT) sysutils$(PPUEXT)
+        $(COMPILER) $(OBJPASDIR)/fgl.pp
+
+strutils$(PPUEXT) : $(OBJPASDIR)/strutils.pp objpas$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT) \
+                    sysutils$(PPUEXT)
+        $(COMPILER) $(OBJPASDIR)/strutils.pp
 
 typinfo$(PPUEXT): $(OBJPASDIR)/typinfo.pp objpas$(PPUEXT)
         $(COMPILER) -Sg $(OBJPASDIR)/typinfo.pp $(REDIR)
@@ -132,6 +146,9 @@ math$(PPUEXT): $(OBJPASDIR)/math.pp objpas$(PPUEXT) sysutils$(PPUEXT)
 varutils$(PPUEXT) : $(OBJPASDIR)/cvarutil.inc $(OBJPASDIR)/varutils.inc \
                     $(OBJPASDIR)/varutilh.inc varutils.pp
         $(COMPILER) -I$(OBJPASDIR) varutils.pp $(REDIR)
+
+fmtbcd$(PPUEXT) : $(OBJPASDIR)/fmtbcd.pp objpas$(PPUEXT) sysutils$(PPUEXT) variants$(PPUEXT) classes$(PPUEXT) system$(PPUEXT)
+        $(COMPILER) $(OBJPASDIR)/fmtbcd.pp
 
 types$(PPUEXT) : $(OBJPASDIR/types.pp objpas$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
         $(COMPILER) $(OBJPASDIR)/types.pp
@@ -149,7 +166,7 @@ dateutil$(PPUEXT) : $(OBJPASDIR)/dateutil.pp
 # Mac Pascal Model
 #
 
-macpas$(PPUEXT) : $(INC)/macpas.pp system$(PPUEXT)
+macpas$(PPUEXT) : $(INC)/macpas.pp objpas$(PPUEXT) math$(PPUEXT)
         $(COMPILER) $(INC)/macpas.pp $(REDIR)
 
 #
@@ -164,6 +181,7 @@ heaptrc$(PPUEXT) : $(INC)/heaptrc.pp $(SYSTEMUNIT)$(PPUEXT)
         $(COMPILER) -Sg $(INC)/heaptrc.pp $(REDIR)
 
 #lineinfo$(PPUEXT) : $(INC)/lineinfo.pp $(SYSTEMUNIT)$(PPUEXT)
+#lnfodwrf$(PPUEXT) : $(INC)/lnfodwrf.pp $(SYSTEMUNIT)$(PPUEXT)
 
 charset$(PPUEXT) : $(INC)/charset.pp $(SYSTEMUNIT)$(PPUEXT)
 
@@ -190,10 +208,38 @@ layers$(PPUEXT)  : layers.pas exec$(PPUEXT) graphics$(PPUEXT) utility$(PPUEXT)
 intuition$(PPUEXT): intuition.pas exec$(PPUEXT) graphics$(PPUEXT) utility$(PPUEXT) \
                     inputevent$(PPUEXT) timer$(PPUEXT) layers$(PPUEXT)
 
+aboxlib$(PPUEXT): aboxlib.pas
+
 clipboard$(PPUEXT): clipboard.pas exec$(PPUEXT)
+
+datatype$(PPUEXT): datatypes.pas exec$(PPUEXT) doslib$(PPUEXT) intuition$(PPUEXT) \
+                   utility$(PPUEXT) graphics$(PPUEXT)
 
 asl$(PPUEXT): asl.pas exec$(PPUEXT) graphics$(PPUEXT) utility$(PPUEXT)
 
 ahi$(PPUEXT): ahi.pas exec$(PPUEXT) utility$(PPUEXT)
 
+mui$(PPUEXT): mui.pas exec$(PPUEXT) utility$(PPUEXT) intuition$(PPUEXT) graphics$(PPUEXT)
+
+tinygl$(PPUEXT): tinygl.pp exec$(PPUEXT)
+
 get9$(PPUEXT): get9.pas exec$(PPUEXT)
+
+muihelper$(PPUEXT): muihelper.pas intuition$(PPUEXT) mui$(PPUEXT) doslib$(PPUEXT) utility$(PPUEXT)
+
+
+kvm$(PPUEXT) : kvm.pp
+
+video$(PPUEXT) : video.pp 
+#windows$(PPUEXT) dos$(PPUEXT)
+
+mouse$(PPUEXT) : mouse.pp 
+#windows$(PPUEXT) dos$(PPUEXT) winevent$(PPUEXT)
+
+keyboard$(PPUEXT) : keyboard.pp 
+#windows$(PPUEXT) dos$(PPUEXT) winevent$(PPUEXT)
+
+ctypes$(PPUEXT) :  $(INC)/ctypes.pp $(SYSTEMUNIT)$(PPUEXT)
+
+sockets$(PPUEXT) : sockets.pp $(INC)/textrec.inc $(INC)/filerec.inc \
+                   ctypes$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)

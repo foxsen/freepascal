@@ -1,10 +1,8 @@
 {
-    $Id: sysdir.inc,v 1.2 2005/02/14 17:13:30 peter Exp $
     This file is part of the Free Pascal run time library.
-    Copyright (c) 1999-2000 by Florian Klaempfl and Pavel Ozerski
-    member of the Free Pascal development team.
+    Copyright (c) 2006 by Free Pascal development team
 
-    FPC Pascal system unit for the Win32 API.
+    Low level directory functions
 
     See the file COPYING.FPC, included in this distribution,
     for details about the copyright.
@@ -19,14 +17,14 @@
 {*****************************************************************************
                            Directory Handling
 *****************************************************************************}
-procedure mkdir(const s : string);[IOCheck];
+Procedure MkDir(s: pchar;len:sizeuint);[IOCheck, public, alias : 'FPC_SYS_MKDIR'];
 var
   tmpStr : array[0..255] of char;
   tmpLock: LongInt;
 begin
   checkCTRLC;
-  if (s='') or (InOutRes<>0) then exit;
-  tmpStr:=PathConv(s)+#0;
+  if not assigned(s) or (len=0) or (InOutRes<>0) then exit;
+  tmpStr:=PathConv(strpas(s))+#0;
   tmpLock:=dosCreateDir(@tmpStr);
   if tmpLock=0 then begin
     dosError2InOut(IoErr);
@@ -35,27 +33,28 @@ begin
   UnLock(tmpLock);
 end;
 
-procedure rmdir(const s : string);[IOCheck];
+Procedure RmDir(s: pchar;len:sizeuint);[IOCheck, public, alias : 'FPC_SYS_RMDIR'];
 var
   tmpStr : array[0..255] of Char;
 begin
   checkCTRLC;
+  if not assigned(s) or (len=0) then exit;
   if (s='.') then InOutRes:=16;
   If (s='') or (InOutRes<>0) then exit;
-  tmpStr:=PathConv(s)+#0;
+  tmpStr:=PathConv(strpas(s))+#0;
   if not dosDeleteFile(@tmpStr) then
     dosError2InOut(IoErr);
 end;
 
-procedure chdir(const s : string);[IOCheck];
+Procedure ChDir(s: pchar;len:sizeuint);[IOCheck, public, alias : 'FPC_SYS_CHDIR'];
 var
   tmpStr : array[0..255] of Char;
   tmpLock: LongInt;
   FIB    : PFileInfoBlock;
 begin
   checkCTRLC;
-  If (s='') or (InOutRes<>0) then exit;
-  tmpStr:=PathConv(s)+#0;
+  if not assigned(s) or (len=0) or (InOutRes<>0) then exit;
+  tmpStr:=PathConv(strpas(s))+#0;
   tmpLock:=0;
 
   { Changing the directory is a pretty complicated affair }
@@ -76,6 +75,8 @@ begin
       MOS_OrigDir:=tmpLock;
       tmpLock:=0;
     end;
+  end else begin
+    dosError2InOut(ERROR_DIR_NOT_FOUND);
   end;
 
   if tmpLock<>0 then Unlock(tmpLock);
@@ -92,22 +93,3 @@ begin
   else
     Dir:=strpas(tmpbuf);
 end;
-
-
-
-{
-  $Log: sysdir.inc,v $
-  Revision 1.2  2005/02/14 17:13:30  peter
-    * truncate log
-
-  Revision 1.1  2005/02/07 21:30:12  peter
-    * system unit updated
-
-  Revision 1.1  2005/02/06 16:57:18  peter
-    * threads for go32v2,os,emx,netware
-
-  Revision 1.1  2005/02/06 13:06:20  peter
-    * moved file and dir functions to sysfile/sysdir
-    * win32 thread in systemunit
-
-}

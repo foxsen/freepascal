@@ -1,5 +1,4 @@
 {
-    $Id: osdefs.inc,v 1.2 2005/02/14 17:13:31 peter Exp $
     Copyright (c) 2000-2002 by Marco van de Voort
 
     Target dependent defines used when compileing the baseunix unit
@@ -23,15 +22,3 @@
 {$define usedomain}             // Allow uname with "domain" entry.
                                 // (which is a GNU extension)
 
-{
-  $Log: osdefs.inc,v $
-  Revision 1.2  2005/02/14 17:13:31  peter
-    * truncate log
-
-  Revision 1.1  2005/02/13 22:14:36  peter
-    * new files
-
-  Revision 1.1  2005/02/13 20:01:38  peter
-    * include file cleanup
-
-}

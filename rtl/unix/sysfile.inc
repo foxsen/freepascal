@@ -1,5 +1,4 @@
 {
-    $Id: sysfile.inc,v 1.1 2005/02/07 22:04:55 peter Exp $
     This file is part of the Free Pascal run time library.
 
     Main OS dependant body of the system unit, loosely modelled
@@ -15,8 +14,12 @@
  **********************************************************************}
 
 Procedure Do_Close(Handle:thandle);
+var
+  res: cint;
 Begin
-  Fpclose(cint(Handle));
+  repeat
+    res:=Fpclose(cint(Handle));
+  until (res<>-1) or (geterrno<>ESysEINTR);
 End;
 
 Procedure Do_Erase(p:pchar);
@@ -100,7 +103,7 @@ Begin
    InOutRes:=0;
 End;
 
-function Do_FilePos(Handle: thandle):longint;
+function Do_FilePos(Handle: thandle):Int64;
 Begin
   do_FilePos:=Fplseek(Handle, 0, SEEK_CUR);
   If Do_FilePos<0 Then
@@ -109,7 +112,7 @@ Begin
    InOutRes:=0;
 End;
 
-Procedure Do_Seek(Handle:thandle;Pos:Longint);
+Procedure Do_Seek(Handle:thandle;Pos:Int64);
 Begin
   If Fplseek(Handle, pos, SEEK_SET)<0 Then
    Errno2Inoutres
@@ -117,7 +120,7 @@ Begin
    InOutRes:=0;
 End;
 
-Function Do_SeekEnd(Handle:thandle): Longint;
+Function Do_SeekEnd(Handle:thandle):Int64;
 begin
   Do_SeekEnd:=Fplseek(Handle,0,SEEK_END);
   If Do_SeekEnd<0 Then
@@ -126,7 +129,7 @@ begin
    InOutRes:=0;
 end;
 
-Function Do_FileSize(Handle:thandle): Longint;
+Function Do_FileSize(Handle:thandle):Int64;
 var
   Info : Stat;
   Ret  : Longint;
@@ -211,12 +214,16 @@ Begin
      exit;
    end;
 { real open call }
-  FileRec(f).Handle:=Fpopen(p,oflags,MODE_OPEN);
+  repeat
+    FileRec(f).Handle:=Fpopen(p,oflags,MODE_OPEN);
+  until (FileRec(f).Handle<>-1) or (geterrno<>ESysEINTR);
   if (FileRec(f).Handle<0) and
     (getErrNo=ESysEROFS) and ((OFlags and O_RDWR)<>0) then
    begin
      Oflags:=Oflags and not(O_RDWR);
-     FileRec(f).Handle:=Fpopen(p,oflags,MODE_OPEN);
+     repeat
+       FileRec(f).Handle:=Fpopen(p,oflags,MODE_OPEN);
+     until (FileRec(f).Handle<>-1) or (geterrno<>ESysEINTR);
    end;
   If Filerec(f).Handle<0 Then
    Errno2Inoutres
@@ -225,13 +232,3 @@ Begin
 End;
 
 
-{
-  $Log: sysfile.inc,v $
-  Revision 1.1  2005/02/07 22:04:55  peter
-    * moved to unix
-
-  Revision 1.1  2005/02/06 13:06:20  peter
-    * moved file and dir functions to sysfile/sysdir
-    * win32 thread in systemunit
-
-}

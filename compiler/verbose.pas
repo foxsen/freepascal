@@ -1,5 +1,4 @@
 {
-    $Id: verbose.pas,v 1.41 2005/04/24 21:01:37 peter Exp $
     Copyright (c) 1998-2002 by Peter Vreman
 
     This unit handles the verbose management
@@ -27,11 +26,13 @@ unit verbose;
 interface
 
     uses
-{$IFNDEF MACOS_USE_FAKE_SYSUTILS}
+{$IFNDEF USE_FAKE_SYSUTILS}
       sysutils,
+{$ELSE}
+      fksysutl,
 {$ENDIF}
       cutils,
-      globals,finput,
+      globtype,finput,
       cmsgs;
 
 {$ifndef EXTERN_MSG}
@@ -66,6 +67,10 @@ interface
 
     var
       msg : pmessage;
+      paraprintnodetree : byte;
+
+    type
+      tmsgqueueevent = procedure(const s:TMsgStr;v,w:longint) of object;
 
     const
       msgfilename : string = '';
@@ -75,34 +80,40 @@ interface
     procedure PrepareReport;
 
     function  CheckVerbosity(v:longint):boolean;
-    procedure SetCompileModule(p:tmodulebase);
+    function  SetMessageVerbosity(v:longint;state:tmsgstate):boolean;
+    procedure RestoreLocalVerbosity(pstate : pmessagestaterecord);
+    procedure FreeLocalVerbosity(var fstate : pmessagestaterecord);
+
+    function ChangeMessageVerbosity(s: string; var i: integer;state:tmsgstate): boolean;
     procedure ShowStatus;
     function  ErrorCount:longint;
     procedure SetErrorFlags(const s:string);
     procedure GenerateError;
     procedure Internalerror(i:longint);
-    procedure Comment(l:longint;s:string);
+    procedure Comment(l:longint;s:ansistring);
     function  MessagePchar(w:longint):pchar;
-    procedure Message(w:longint);
-    procedure Message1(w:longint;const s1:string);
-    procedure Message2(w:longint;const s1,s2:string);
-    procedure Message3(w:longint;const s1,s2,s3:string);
-    procedure Message4(w:longint;const s1,s2,s3,s4:string);
-    procedure MessagePos(const pos:tfileposinfo;w:longint);
-    procedure MessagePos1(const pos:tfileposinfo;w:longint;const s1:string);
-    procedure MessagePos2(const pos:tfileposinfo;w:longint;const s1,s2:string);
-    procedure MessagePos3(const pos:tfileposinfo;w:longint;const s1,s2,s3:string);
-    procedure MessagePos4(const pos:tfileposinfo;w:longint;const s1,s2,s3,s4:string);
+    procedure Message(w:longint;onqueue:tmsgqueueevent=nil);
+    procedure Message1(w:longint;const s1:TMsgStr;onqueue:tmsgqueueevent=nil);
+    procedure Message2(w:longint;const s1,s2:TMsgStr;onqueue:tmsgqueueevent=nil);
+    procedure Message3(w:longint;const s1,s2,s3:TMsgStr;onqueue:tmsgqueueevent=nil);
+    procedure Message4(w:longint;const s1,s2,s3,s4:TMsgStr;onqueue:tmsgqueueevent=nil);
+    procedure MessagePos(const pos:tfileposinfo;w:longint;onqueue:tmsgqueueevent=nil);
+    procedure MessagePos1(const pos:tfileposinfo;w:longint;const s1:TMsgStr;onqueue:tmsgqueueevent=nil);
+    procedure MessagePos2(const pos:tfileposinfo;w:longint;const s1,s2:TMsgStr;onqueue:tmsgqueueevent=nil);
+    procedure MessagePos3(const pos:tfileposinfo;w:longint;const s1,s2,s3:TMsgStr;onqueue:tmsgqueueevent=nil);
+    procedure MessagePos4(const pos:tfileposinfo;w:longint;const s1,s2,s3,s4:TMsgStr;onqueue:tmsgqueueevent=nil);
 
     { message calls with codegenerror support }
     procedure cgmessage(t : longint);
-    procedure cgmessage1(t : longint;const s : string);
-    procedure cgmessage2(t : longint;const s1,s2 : string);
-    procedure cgmessage3(t : longint;const s1,s2,s3 : string);
+    procedure cgmessage1(t : longint;const s : TMsgStr);
+    procedure cgmessage2(t : longint;const s1,s2 : TMsgStr);
+    procedure cgmessage3(t : longint;const s1,s2,s3 : TMsgStr);
     procedure CGMessagePos(const pos:tfileposinfo;t:longint);
-    procedure CGMessagePos1(const pos:tfileposinfo;t:longint;const s1:string);
-    procedure CGMessagePos2(const pos:tfileposinfo;t:longint;const s1,s2:string);
-    procedure CGMessagePos3(const pos:tfileposinfo;t:longint;const s1,s2,s3:string);
+    procedure CGMessagePos1(const pos:tfileposinfo;t:longint;const s1:TMsgStr);
+    procedure CGMessagePos2(const pos:tfileposinfo;t:longint;const s1,s2:TMsgStr);
+    procedure CGMessagePos3(const pos:tfileposinfo;t:longint;const s1,s2,s3:TMsgStr);
+
+    procedure FlushOutput;
 
     procedure InitVerbose;
     procedure DoneVerbose;
@@ -112,11 +123,7 @@ interface
 implementation
 
     uses
-      comphook;
-
-var
-  compiling_module : tmodulebase;
-
+      comphook,fmodule,constexp,globals,cfileutl,switches;
 
 {****************************************************************************
                        Extra Handlers for default compiler
@@ -139,12 +146,19 @@ var
 
     procedure SetRedirectFile(const fn:string);
       begin
+        { close old redirection file because FileRedirection is handled in both passes }
+        if status.use_redir then
+          close(status.redirfile);
+
         assign(status.redirfile,fn);
-        {$I-}
-         append(status.redirfile);
-         if ioresult <> 0 then
-          rewrite(status.redirfile);
-        {$I+}
+      {$push}{$I-}
+        append(status.redirfile);
+        if ioresult <> 0 then
+          begin
+            assign(status.redirfile,fn);
+            rewrite(status.redirfile);
+          end;
+      {$pop}
         status.use_redir:=(ioresult=0);
       end;
 
@@ -157,25 +171,77 @@ var
          exit;
         fn:='fpcdebug.txt';
         assign(status.reportbugfile,fn);
-        {$I-}
+        {$push}{$I-}
          append(status.reportbugfile);
          if ioresult <> 0 then
           rewrite(status.reportbugfile);
-        {$I+}
+        {$pop}
         status.use_bugreport:=(ioresult=0);
         if status.use_bugreport then
          writeln(status.reportbugfile,'FPC bug report file');
       end;
 
+    procedure RestoreLocalVerbosity(pstate : pmessagestaterecord);
+      begin
+        msg^.ResetStates;
+        while assigned(pstate) do
+          begin
+            SetMessageVerbosity(pstate^.value,pstate^.state);
+            pstate:=pstate^.next;
+          end;
+      end;
+
+    procedure FreeLocalVerbosity(var fstate : pmessagestaterecord);
+    var pstate : pmessagestaterecord;
+      begin
+        pstate:=unaligned(fstate);
+        while assigned(pstate) do
+          begin
+            unaligned(fstate):=pstate^.next;
+            freemem(pstate);
+            pstate:=unaligned(fstate);
+          end;
+      end;
+
+    function ChangeMessageVerbosity(s: string; var i : integer;state:tmsgstate): boolean;
+      var
+        tok  : string;
+        msgnr, code : longint;
+      begin
+        { delete everything up to and including 'm' }
+        delete(s,1,i);
+        { the rest of the string must be message numbers }
+        inc(i,length(s)+1);
+        result:=false;
+        repeat
+          tok:=GetToken(s,',');
+          if (tok='') then
+            break;
+          val(tok, msgnr, code);
+          if (code<>0) then
+            exit;
+          if not msg^.setverbosity(msgnr,state) then
+            exit
+          else
+            recordpendingmessagestate(msgnr, state);
+        until false;
+        result:=true;
+      end;
+
+    function SetMessageVerbosity(v:longint;state:tmsgstate):boolean;
+      begin
+        result:=msg^.setverbosity(v,state);
+      end;
 
     function CheckVerbosity(v:longint):boolean;
       begin
-        CheckVerbosity:=status.use_bugreport or
-                        ((status.verbosity and (v and V_LevelMask))=(v and V_LevelMask));
+        result:=do_checkverbosity(v);
       end;
 
 
     function SetVerbosity(const s:string):boolean;
+      const
+        message_verbosity:array[boolean] of tmsgstate=(ms_off_global,ms_on_global);
       var
         m : Longint;
         i : Integer;
@@ -205,13 +271,30 @@ var
                 { handle switch }
                 case c of
                 { Special cases }
-                 'A' : status.verbosity:=V_All;
                  '0' : status.verbosity:=V_Default;
+                 'A' : status.verbosity:=V_All;
+                 'B' : begin
+                          if inverse then
+                            status.print_source_path:=false
+                          else
+                            status.print_source_path:=true;
+                       end;
+                 'M' : if not ChangeMessageVerbosity(s,i,message_verbosity[inverse]) then
+                         begin
+                           result:=false;
+                           exit
+                         end;
                  'P' : begin
                          if inverse then
                           paraprintnodetree:=0
                          else
                           paraprintnodetree:=1;
+                       end;
+                 'Q' : begin
+                          if inverse then
+                            status.showmsgnrs:=false
+                          else
+                            status.showmsgnrs:=true;
                        end;
                  'R' : begin
                           if inverse then
@@ -225,6 +308,7 @@ var
                                status.use_stderr:=true;
                             end;
                        end;
+                 'V' : PrepareReport;
                  'Z' : begin
                           if inverse then
                             status.use_stderr:=false
@@ -232,38 +316,6 @@ var
                             status.use_stderr:=true;
                        end;
                 { Normal cases - do an or }
-                 'E' : if inverse then
-                         status.verbosity:=status.verbosity and (not V_Error)
-                       else
-                         status.verbosity:=status.verbosity or V_Error;
-                 'I' : if inverse then
-                         status.verbosity:=status.verbosity and (not V_Info)
-                       else
-                         status.verbosity:=status.verbosity or V_Info;
-                 'W' : if inverse then
-                         status.verbosity:=status.verbosity and (not V_Warning)
-                       else
-                         status.verbosity:=status.verbosity or V_Warning;
-                 'N' : if inverse then
-                         status.verbosity:=status.verbosity and (not V_Note)
-                       else
-                         status.verbosity:=status.verbosity or V_Note;
-                 'H' : if inverse then
-                         status.verbosity:=status.verbosity and (not V_Hint)
-                       else
-                         status.verbosity:=status.verbosity or V_Hint;
-                 'L' : if inverse then
-                         status.verbosity:=status.verbosity and (not V_Status)
-                       else
-                         status.verbosity:=status.verbosity or V_Status;
-                 'U' : if inverse then
-                         status.verbosity:=status.verbosity and (not V_Used)
-                       else
-                         status.verbosity:=status.verbosity or V_Used;
-                 'T' : if inverse then
-                         status.verbosity:=status.verbosity and (not V_Tried)
-                       else
-                         status.verbosity:=status.verbosity or V_Tried;
                  'C' : if inverse then
                          status.verbosity:=status.verbosity and (not V_Conditional)
                        else
@@ -272,11 +324,46 @@ var
                          status.verbosity:=status.verbosity and (not V_Debug)
                        else
                          status.verbosity:=status.verbosity or V_Debug;
+                 'E' : if inverse then
+                         status.verbosity:=status.verbosity and (not V_Error)
+                       else
+                         status.verbosity:=status.verbosity or V_Error;
+                 'H' : if inverse then
+                         status.verbosity:=status.verbosity and (not V_Hint)
+                       else
+                         status.verbosity:=status.verbosity or V_Hint;
+                 'I' : if inverse then
+                         status.verbosity:=status.verbosity and (not V_Info)
+                       else
+                         status.verbosity:=status.verbosity or V_Info;
+                 'L' : if inverse then
+                         status.verbosity:=status.verbosity and (not V_Status)
+                       else
+                         status.verbosity:=status.verbosity or V_Status;
+                 'N' : if inverse then
+                         status.verbosity:=status.verbosity and (not V_Note)
+                       else
+                         status.verbosity:=status.verbosity or V_Note;
+                 'S' : if inverse then
+                         status.verbosity:=status.verbosity and (not V_TimeStamps)
+                       else
+                         status.verbosity:=status.verbosity or V_TimeStamps;
+                 'T' : if inverse then
+                         status.verbosity:=status.verbosity and (not V_Tried)
+                       else
+                         status.verbosity:=status.verbosity or V_Tried;
+                 'U' : if inverse then
+                         status.verbosity:=status.verbosity and (not V_Used)
+                       else
+                         status.verbosity:=status.verbosity or V_Used;
+                 'W' : if inverse then
+                         status.verbosity:=status.verbosity and (not V_Warning)
+                       else
+                         status.verbosity:=status.verbosity or V_Warning;
                  'X' : if inverse then
                          status.verbosity:=status.verbosity and (not V_Executable)
                        else
                          status.verbosity:=status.verbosity or V_Executable;
-                 'V' : PrepareReport;
                  end;
                 inc(i);
              end;
@@ -344,38 +431,42 @@ var
       end;
 
 
-    procedure SetCompileModule(p:tmodulebase);
-      begin
-        compiling_module:=p;
-      end;
+    var
+      lastfileidx,
+      lastmoduleidx : longint;
 
 
-      var
-        lastfileidx,
-        lastmoduleidx : longint;
     Procedure UpdateStatus;
+      var
+        module : tmodulebase;
       begin
       { fix status }
-        status.currentline:=aktfilepos.line;
-        status.currentcolumn:=aktfilepos.column;
-        if assigned(compiling_module) and
-           assigned(compiling_module.sourcefiles) and
-           ((compiling_module.unit_index<>lastmoduleidx) or
-            (aktfilepos.fileindex<>lastfileidx)) then
-         begin
-           { update status record }
-           status.currentmodule:=compiling_module.modulename^;
-           status.currentsource:=compiling_module.sourcefiles.get_file_name(aktfilepos.fileindex);
-           status.currentsourcepath:=compiling_module.sourcefiles.get_file_path(aktfilepos.fileindex);
-           { update lastfileidx only if name known PM }
-           if status.currentsource<>'' then
-             lastfileidx:=aktfilepos.fileindex
-           else
-             lastfileidx:=0;
-           lastmoduleidx:=compiling_module.unit_index;
-         end;
-        if assigned(compiling_module) then
-          status.compiling_current:=(compiling_module.state in [ms_compile,ms_second_compile]);
+        status.currentline:=current_filepos.line;
+        status.currentcolumn:=current_filepos.column;
+        if (current_filepos.moduleindex <> lastmoduleidx) or
+           (current_filepos.fileindex <> lastfileidx) then
+        begin
+          module:=get_module(current_filepos.moduleindex);
+          if assigned(module) and assigned(module.sourcefiles) then
+            begin
+              { update status record }
+              status.currentmodule:=module.modulename^;
+              status.currentmodulestate:=ModuleStateStr[module.state];
+              status.currentsource:=module.sourcefiles.get_file_name(current_filepos.fileindex);
+              status.currentsourcepath:=module.sourcefiles.get_file_path(current_filepos.fileindex);
+              { if currentsourcepath is relative, make it absolute }
+              if not path_absolute(status.currentsourcepath) then
+                status.currentsourcepath:=GetCurrentDir+status.currentsourcepath;
+
+              { update lastfileidx only if name known PM }
+              if status.currentsource<>'' then
+                lastfileidx:=current_filepos.fileindex
+              else
+                lastfileidx:=0;
+
+              lastmoduleidx:=module.unit_index;
+            end;
+        end;
       end;
 
 
@@ -418,7 +509,7 @@ var
                   if code<>0 then
                    l:=1;
                   status.maxerrorcount:=l;
-                  i:=j;
+                  i:=j-1;
                 end;
               'w','W' :
                 status.errorwarning:=true;
@@ -446,16 +537,26 @@ var
       end;
 
 
-    procedure Comment(l:longint;s:string);
+    procedure Comment(l:longint;s:ansistring);
       var
         dostop : boolean;
       begin
         dostop:=((l and V_Fatal)<>0);
         if ((l and V_Error)<>0) or
+           ((l and V_Fatal)<>0) or
            (status.errorwarning and ((l and V_Warning)<>0)) or
            (status.errornote and ((l and V_Note)<>0)) or
            (status.errorhint and ((l and V_Hint)<>0)) then
-         inc(status.errorcount);
+         inc(status.errorcount)
+        else
+         if l and V_Warning <> 0 then
+          inc(status.countWarnings)
+         else
+          if l and V_Note <> 0 then
+           inc(status.countNotes)
+          else
+           if l and V_Hint <> 0 then
+            inc(status.countHints);
       { check verbosity level }
         if not CheckVerbosity(l) then
           exit;
@@ -476,56 +577,93 @@ var
          end;
       end;
 
+    function GetMessageState(m:longint):tmsgstate;
+      var
+        i: integer;
+      begin
+        i:=m div 1000;
+        { get the default state }
+        Result:=msg^.msgstates[i]^[m mod 1000];
 
-    Procedure Msg2Comment(s:string);
+        { and search at the current unit settings }
+        { todo }
+      end;
+
+    Procedure Msg2Comment(s:ansistring;w:longint;onqueue:tmsgqueueevent);
       var
         idx,i,v : longint;
         dostop  : boolean;
+        doqueue : boolean;
+        st      : tmsgstate;
+        ch      : char;
       begin
       {Reset}
         dostop:=false;
+        doqueue:=false;
         v:=0;
       {Parse options}
         idx:=pos('_',s);
         if idx=0 then
-         v:=V_Normal
+         v:=V_None
         else
          if (idx >= 1) And (idx <= 5) then
           begin
             for i:=1 to idx do
              begin
-               case upcase(s[i]) of
+               ch:=upcase(s[i]);
+               case ch of
                 'F' :
                   begin
                     v:=v or V_Fatal;
                     inc(status.errorcount);
                     dostop:=true;
                   end;
-                'E' :
+                'E','W','N','H':
                   begin
-                    v:=v or V_Error;
-                    inc(status.errorcount);
+                    if ch='E' then
+                      st:=ms_error
+                    else
+                      st:=GetMessageState(w);
+                    { We only want to know about local value }
+                    st:= tmsgstate(ord(st) and ms_local_mask);
+                    if st=ms_error then
+                      begin
+                        v:=v or V_Error;
+                        inc(status.errorcount);
+                      end
+                    else if st<>ms_off then
+                      case ch of
+                       'W':
+                         begin
+                           v:=v or V_Warning;
+                           if CheckVerbosity(V_Warning) then
+                             if status.errorwarning then
+                              inc(status.errorcount)
+                             else
+                              inc(status.countWarnings);
+                         end;
+                       'N' :
+                         begin
+                           v:=v or V_Note;
+                           if CheckVerbosity(V_Note) then
+                             if status.errornote then
+                              inc(status.errorcount)
+                             else
+                              inc(status.countNotes);
+                         end;
+                       'H' :
+                         begin
+                           v:=v or V_Hint;
+                           if CheckVerbosity(V_Hint) then
+                             if status.errorhint then
+                              inc(status.errorcount)
+                             else
+                              inc(status.countHints);
+                         end;
+                      end;
                   end;
                 'O' :
                   v:=v or V_Normal;
-                'W':
-                  begin
-                    v:=v or V_Warning;
-                    if status.errorwarning then
-                     inc(status.errorcount);
-                  end;
-                'N' :
-                  begin
-                    v:=v or V_Note;
-                    if status.errornote then
-                     inc(status.errorcount);
-                  end;
-                'H' :
-                  begin
-                    v:=v or V_Hint;
-                    if status.errorhint then
-                     inc(status.errorcount);
-                  end;
                 'I' :
                   v:=v or V_Info;
                 'L' :
@@ -549,22 +687,33 @@ var
         Delete(s,1,idx);
       { check verbosity level }
         if not CheckVerbosity(v) then
-          exit;
+          begin
+            doqueue := onqueue <> nil;
+            if not doqueue then
+              exit;
+          end;
         if (v and V_LineInfoMask)<>0 then
           v:=v or V_LineInfo;
       { fix status }
         UpdateStatus;
       { Fix replacements }
         DefaultReplacements(s);
+        if status.showmsgnrs then
+          s:='('+tostr(w)+') '+s;
+        if doqueue then
+          begin
+            onqueue(s,v,w);
+            exit;
+          end;
       { show comment }
         if do_comment(v,s) or dostop then
           raise ECompilerAbort.Create;
         if (status.errorcount>=status.maxerrorcount) and not status.skip_error then
-         begin
-           Message1(unit_f_errors_in_unit,tostr(status.errorcount));
-           status.skip_error:=true;
-           raise ECompilerAbort.Create;
-         end;
+          begin
+            Message1(unit_f_errors_in_unit,tostr(status.errorcount));
+            status.skip_error:=true;
+            raise ECompilerAbort.Create;
+          end;
       end;
 
 
@@ -575,148 +724,99 @@ var
       end;
 
 
-    procedure Message(w:longint);
+    procedure Message(w:longint;onqueue:tmsgqueueevent=nil);
       begin
         MaybeLoadMessageFile;
-        Msg2Comment(msg^.Get(w,[]));
+        Msg2Comment(msg^.Get(w,[]),w,onqueue);
       end;
 
 
-    procedure Message1(w:longint;const s1:string);
-{$ifdef ver1_0}
-      var
-        hs1 : string;
-{$endif ver1_0}
+    procedure Message1(w:longint;const s1:TMsgStr;onqueue:tmsgqueueevent=nil);
+
       begin
         MaybeLoadMessageFile;
-{$ifdef ver1_0}
-        { 1.0.x is broken, it uses concatcopy instead of shortstring
-          copy when passing array of shortstring. (PFV) }
-        hs1:=s1;
-        Msg2Comment(msg^.Get(w,[hs1]));
-{$else ver1_0}
-        Msg2Comment(msg^.Get(w,[s1]));
-{$endif ver1_0}
+        Msg2Comment(msg^.Get(w,[s1]),w,onqueue);
       end;
 
 
-    procedure Message2(w:longint;const s1,s2:string);
-{$ifdef ver1_0}
-      var
-        hs1,hs2 : string;
-{$endif ver1_0}
+    procedure Message2(w:longint;const s1,s2:TMsgStr;onqueue:tmsgqueueevent=nil);
       begin
         MaybeLoadMessageFile;
-{$ifdef ver1_0}
-        { 1.0.x is broken, it uses concatcopy instead of shortstring
-          copy when passing array of shortstring. (PFV) }
-        hs1:=s1;
-        hs2:=s2;
-        Msg2Comment(msg^.Get(w,[hs1,hs2]));
-{$else ver1_0}
-        Msg2Comment(msg^.Get(w,[s1,s2]));
-{$endif ver1_0}
+        Msg2Comment(msg^.Get(w,[s1,s2]),w,onqueue);
       end;
 
 
-    procedure Message3(w:longint;const s1,s2,s3:string);
-{$ifdef ver1_0}
-      var
-        hs1,hs2,hs3 : string;
-{$endif ver1_0}
+    procedure Message3(w:longint;const s1,s2,s3:TMsgStr;onqueue:tmsgqueueevent=nil);
       begin
         MaybeLoadMessageFile;
-{$ifdef ver1_0}
-        { 1.0.x is broken, it uses concatcopy instead of shortstring
-          copy when passing array of shortstring. (PFV) }
-        hs1:=s1;
-        hs2:=s2;
-        hs3:=s3;
-        Msg2Comment(msg^.Get(w,[hs1,hs2,hs3]));
-{$else ver1_0}
-        Msg2Comment(msg^.Get(w,[s1,s2,s3]));
-{$endif ver1_0}
+        Msg2Comment(msg^.Get(w,[s1,s2,s3]),w,onqueue);
       end;
 
 
-    procedure Message4(w:longint;const s1,s2,s3,s4:string);
-{$ifdef ver1_0}
-      var
-        hs1,hs2,hs3,hs4 : string;
-{$endif ver1_0}
+    procedure Message4(w:longint;const s1,s2,s3,s4:TMsgStr;onqueue:tmsgqueueevent=nil);
       begin
         MaybeLoadMessageFile;
-{$ifdef ver1_0}
-        { 1.0.x is broken, it uses concatcopy instead of shortstring
-          copy when passing array of shortstring. (PFV) }
-        hs1:=s1;
-        hs2:=s2;
-        hs3:=s3;
-        hs4:=s4;
-        Msg2Comment(msg^.Get(w,[hs1,hs2,hs3,hs4]));
-{$else ver1_0}
-        Msg2Comment(msg^.Get(w,[s1,s2,s3,s4]));
-{$endif ver1_0}
+        Msg2Comment(msg^.Get(w,[s1,s2,s3,s4]),w,onqueue);
       end;
 
 
-    procedure MessagePos(const pos:tfileposinfo;w:longint);
+    procedure MessagePos(const pos:tfileposinfo;w:longint;onqueue:tmsgqueueevent=nil);
       var
         oldpos : tfileposinfo;
       begin
-        oldpos:=aktfilepos;
-        aktfilepos:=pos;
+        oldpos:=current_filepos;
+        current_filepos:=pos;
         MaybeLoadMessageFile;
-        Msg2Comment(msg^.Get(w,[]));
-        aktfilepos:=oldpos;
+        Msg2Comment(msg^.Get(w,[]),w,onqueue);
+        current_filepos:=oldpos;
       end;
 
 
-    procedure MessagePos1(const pos:tfileposinfo;w:longint;const s1:string);
+    procedure MessagePos1(const pos:tfileposinfo;w:longint;const s1:TMsgStr;onqueue:tmsgqueueevent=nil);
       var
         oldpos : tfileposinfo;
       begin
-        oldpos:=aktfilepos;
-        aktfilepos:=pos;
+        oldpos:=current_filepos;
+        current_filepos:=pos;
         MaybeLoadMessageFile;
-        Msg2Comment(msg^.Get(w,[s1]));
-        aktfilepos:=oldpos;
+        Msg2Comment(msg^.Get(w,[s1]),w,onqueue);
+        current_filepos:=oldpos;
       end;
 
 
-    procedure MessagePos2(const pos:tfileposinfo;w:longint;const s1,s2:string);
+    procedure MessagePos2(const pos:tfileposinfo;w:longint;const s1,s2:TMsgStr;onqueue:tmsgqueueevent=nil);
       var
         oldpos : tfileposinfo;
       begin
-        oldpos:=aktfilepos;
-        aktfilepos:=pos;
+        oldpos:=current_filepos;
+        current_filepos:=pos;
         MaybeLoadMessageFile;
-        Msg2Comment(msg^.Get(w,[s1,s2]));
-        aktfilepos:=oldpos;
+        Msg2Comment(msg^.Get(w,[s1,s2]),w,onqueue);
+        current_filepos:=oldpos;
       end;
 
 
-    procedure MessagePos3(const pos:tfileposinfo;w:longint;const s1,s2,s3:string);
+    procedure MessagePos3(const pos:tfileposinfo;w:longint;const s1,s2,s3:TMsgStr;onqueue:tmsgqueueevent=nil);
       var
         oldpos : tfileposinfo;
       begin
-        oldpos:=aktfilepos;
-        aktfilepos:=pos;
+        oldpos:=current_filepos;
+        current_filepos:=pos;
         MaybeLoadMessageFile;
-        Msg2Comment(msg^.Get(w,[s1,s2,s3]));
-        aktfilepos:=oldpos;
+        Msg2Comment(msg^.Get(w,[s1,s2,s3]),w,onqueue);
+        current_filepos:=oldpos;
       end;
 
 
-    procedure MessagePos4(const pos:tfileposinfo;w:longint;const s1,s2,s3,s4:string);
+    procedure MessagePos4(const pos:tfileposinfo;w:longint;const s1,s2,s3,s4:TMsgStr;onqueue:tmsgqueueevent=nil);
       var
         oldpos : tfileposinfo;
       begin
-        oldpos:=aktfilepos;
-        aktfilepos:=pos;
+        oldpos:=current_filepos;
+        current_filepos:=pos;
         MaybeLoadMessageFile;
-        Msg2Comment(msg^.Get(w,[s1,s2,s3,s4]));
-        aktfilepos:=oldpos;
+        Msg2Comment(msg^.Get(w,[s1,s2,s3,s4]),w,onqueue);
+        current_filepos:=oldpos;
       end;
 
 
@@ -736,7 +836,7 @@ var
            end;
       end;
 
-    procedure cgmessage1(t : longint;const s : string);
+    procedure cgmessage1(t : longint;const s : TMsgStr);
       var
          olderrorcount : longint;
       begin
@@ -748,7 +848,7 @@ var
            end;
       end;
 
-    procedure cgmessage2(t : longint;const s1,s2 : string);
+    procedure cgmessage2(t : longint;const s1,s2 : TMsgStr);
       var
          olderrorcount : longint;
       begin
@@ -760,7 +860,7 @@ var
            end;
       end;
 
-    procedure cgmessage3(t : longint;const s1,s2,s3 : string);
+    procedure cgmessage3(t : longint;const s1,s2,s3 : TMsgStr);
       var
          olderrorcount : longint;
       begin
@@ -785,7 +885,7 @@ var
            end;
       end;
 
-    procedure cgmessagepos1(const pos:tfileposinfo;t : longint;const s1 : string);
+    procedure cgmessagepos1(const pos:tfileposinfo;t : longint;const s1 : TMsgStr);
       var
          olderrorcount : longint;
       begin
@@ -797,7 +897,7 @@ var
            end;
       end;
 
-    procedure cgmessagepos2(const pos:tfileposinfo;t : longint;const s1,s2 : string);
+    procedure cgmessagepos2(const pos:tfileposinfo;t : longint;const s1,s2 : TMsgStr);
       var
          olderrorcount : longint;
       begin
@@ -809,7 +909,7 @@ var
            end;
       end;
 
-    procedure cgmessagepos3(const pos:tfileposinfo;t : longint;const s1,s2,s3 : string);
+    procedure cgmessagepos3(const pos:tfileposinfo;t : longint;const s1,s2,s3 : TMsgStr);
       var
          olderrorcount : longint;
       begin
@@ -819,6 +919,18 @@ var
               verbose.MessagePos3(pos,t,s1,s2,s3);
               codegenerror:=olderrorcount<>Errorcount;
            end;
+      end;
+
+
+    procedure FlushOutput;
+      begin
+        if not (Status.Use_StdErr) then (* StdErr is flushed after every line *)
+          begin
+            if Status.Use_Redir then
+              Flush(Status.RedirFile)
+            else
+              Flush(Output);
+          end;
       end;
 
 
@@ -843,14 +955,14 @@ var
         FillChar(Status,sizeof(TCompilerStatus),0);
         status.verbosity:=V_Default;
         Status.MaxErrorCount:=50;
+        Status.codesize:=aword(-1);
+        Status.datasize:=aword(-1);
         Loadprefixes;
         lastfileidx:=-1;
         lastmoduleidx:=-1;
         status.currentmodule:='';
         status.currentsource:='';
         status.currentsourcepath:='';
-        status.compiling_current:=false;
-        compiling_module:=nil;
         { Register internalerrorproc for cutils/cclasses }
         internalerrorproc:=@internalerror;
       end;
@@ -868,29 +980,8 @@ var
 
 
 initialization
+  constexp.internalerror:=@internalerror;
 finalization
   { Be sure to close the redirect files to flush all data }
   DoneRedirectFile;
 end.
-{
-  $Log: verbose.pas,v $
-  Revision 1.41  2005/04/24 21:01:37  peter
-    * always use exceptions to stop the compiler
-    - remove stop, do_stop
-
-  Revision 1.40  2005/02/16 22:39:25  olle
-    * made macos compile
-
-  Revision 1.39  2005/02/15 19:15:45  peter
-    * Handle Control-C exception more cleanly
-
-  Revision 1.38  2005/02/14 17:13:09  peter
-    * truncate log
-
-  Revision 1.37  2005/02/07 17:25:28  peter
-  -vz for output to stderr
-
-  Revision 1.36  2005/01/20 17:29:07  peter
-    * fixed -vv
-
-}

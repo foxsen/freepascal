@@ -1,5 +1,4 @@
 {
-    $Id: fpini.pas,v 1.13 2005/02/14 17:13:18 peter Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 1998 by Berczi Gabor
 
@@ -27,6 +26,8 @@ procedure CheckINIFile;
 function  ReadINIFile: boolean;
 function  WriteINIFile(FromSaveAs : boolean) : boolean;
 
+function GetPrinterDevice: string;
+procedure SetPrinterDevice(const Device: string);
 
 implementation
 
@@ -39,7 +40,38 @@ uses
 {$endif USE_EXTERNAL_COMPILER}
   WConsts,WUtils,WINI,WViews,WEditor,WCEdit,
   {$ifndef NODEBUG}FPDebug,{$endif}FPConst,FPVars,
-  FPIntf,FPTools,FPSwitch,FPString;
+  FPIntf,FPTools,FPSwitch,fpccrc;
+
+const
+  PrinterDevice : string = 'prn';
+
+{$ifdef useresstrings}
+resourcestring
+{$else}
+const
+{$endif}
+      btn_config_copyexisting = 'Copy ~e~xisting';
+      btn_config_createnew = ' Create ~n~ew  ';
+      msg_doyouwanttocreatelocalconfigfile =
+        'The Free Pascal IDE was never started in this directory before. '+
+         'Do you want to create a new config file in this directory? '{#13+
+         '(If you answer with "No", the IDE will use '+
+         'the config file located in "%s")'};
+      msg_configcopyexistingorcreatenew =
+        'Do you want to copy the existing configuration or '+
+        'create a new one from scratch?';
+
+function GetPrinterDevice: string;
+begin
+  GetPrinterDevice:=PrinterDevice;
+end;
+
+
+procedure SetPrinterDevice(const Device: string);
+begin
+  PrinterDevice:=Device;
+end;
+
 
 const
   { INI file sections }
@@ -52,6 +84,7 @@ const
   secBreakpoint  = 'Breakpoints';
   secWatches     = 'Watches';
   secHighlight   = 'Highlight';
+  secKeyboard    = 'Keyboard';
   secMouse       = 'Mouse';
   secSearch      = 'Search';
   secTools       = 'Tools';
@@ -61,6 +94,7 @@ const
 
   { INI file tags }
   ieRecentFile       = 'RecentFile';
+  iePrinterDevice    = 'PrinterDevice';
 (*  ieOpenFile         = 'OpenFile';
   ieOpenFileCount    = 'OpenFileCount'; *)
   ieRunDir           = 'RunDirectory';
@@ -109,6 +143,7 @@ const
   ieDesktopFlags     = 'DesktopFileFlags';
   ieCenterDebuggerRow= 'CenterCurrentLineWhileDebugging';
   ieShowReadme       = 'ShowReadme';
+  ieEditKeys         = 'EditKeys';
 
 
 Procedure InitDirs;
@@ -116,8 +151,32 @@ begin
   StartupDir:=CompleteDir(FExpand('.'));
 {$ifndef unix}
   IDEDir:=CompleteDir(DirOf(system.Paramstr(0)));
+{$ifdef WINDOWS}
+  SystemIDEDir:=IDEDir;
+  if GetEnv('APPDATA')<>'' then
+    begin
+      IDEdir:=CompleteDir(FExpand(GetEnv('APPDATA')+'/fp'));
+      If Not ExistsDir(IDEdir) Then
+        begin
+          IDEDir:=SystemIDEDir;
+          if Not ExistsDir(IDEDir) then
+            begin
+              if DirOf(system.paramstr(0))<>'' then
+                IDEDir:=CompleteDir(DirOf(system.ParamStr(0)))
+              else
+                IDEDir:=StartupDir;
+            end;
+        end;
+   end;
+{$endif WINDOWS}
 {$else}
-  SystemIDEDir:='/usr/lib/fpc/'+version_string+'/ide/text';
+  SystemIDEDir:=FExpand(DirOf(system.paramstr(0))+'../lib/fpc/'+version_string+'/ide/text');
+  If Not ExistsDir(SystemIDEdir) Then
+    begin
+    SystemIDEDir:=FExpand(DirOf(system.paramstr(0))+'../lib64/fpc/'+version_string+'/ide/text');
+    If Not ExistsDir(SystemIDEdir) Then
+      SystemIDEDir:='/usr/lib/fpc/'+version_string+'/ide/text';
+    end;
   IDEdir:=CompleteDir(FExpand('~/.fp'));
   If Not ExistsDir(IDEdir) Then
     begin
@@ -189,39 +248,39 @@ var C: string;
 begin
   C:='';
   for I:=1 to length(S) do
-    begin
-      Insert('#$'+IntToHex(ord(S[I]),2),C,Length(C)+1);
-    end;
+    Insert('#$'+hexstr(ord(S[I]),2),C,Length(C)+1);
   PaletteToStr:=C;
 end;
 
-function StrToPalette(S: string): string;
-var I,P,X: integer;
-    C: string;
-    Hex: boolean;
-    OK: boolean;
+function strtopalette(S: string): string;
+
+{Converts a string in palette string format, i.e #$41#$42#$43 or
+#65#66#67 to an actual format.}
+
+var i: integer;
+    p,x,len:byte;
+    code:integer;
+
 begin
-  C:=''; I:=1;
-  OK:=S<>'';
-  while OK and (I<=length(S)) and (S[I]='#') do
-  begin
-    Inc(I); Hex:=false;
-    if S[I]='$' then begin Inc(I); Hex:=true; end;
-    P:=Pos('#',copy(S,I,High(S))); if P>0 then P:=I+P-1 else P:=length(S)+1;
-    if Hex=false then
-      begin
-        X:=StrToInt(copy(S,I,P-I));
-        OK:=(LastStrToIntResult=0) and (0<=X) and (X<=High(S));
-      end
-    else
-      begin
-        X:=HexToInt(copy(S,I,P-I));
-        OK:=(LastHexToIntResult=0) and (0<=X) and (X<=255);
-      end;
-    if OK then C:=C+chr(X);
-    Inc(I,P-I);
-  end;
-  StrToPalette:=C;
+  i:=1;
+  len:=0;
+  while (i<=length(S)) and (s[i]='#') do
+    begin
+      s[i]:=#0;
+      inc(i);
+      p:=pos('#',s);
+      if p=0 then
+        p:=length(s)
+      else
+        p:=p-i;
+      val(copy(s,i,p),x,code); {Val supports hexadecimal.}
+      if code<>0 then
+        break;
+      inc(len);
+      strtopalette[len]:=char(X);
+      inc(i,p);
+    end;
+  strtopalette[0]:=char(len);
 end;
 
 {$ifndef NODEBUG}
@@ -327,6 +386,7 @@ var INIFile: PINIFile;
     OK: boolean;
     ts : TSwitchMode;
     W: word;
+    crcv:cardinal;
 begin
   OK:=ExistsFile(IniFileName);
   if OK then
@@ -352,6 +412,7 @@ begin
   { Run }
   SetRunDir(INIFile^.GetEntry(secRun,ieRunDir,GetRunDir));
   SetRunParameters(INIFile^.GetEntry(secRun,ieRunParameters,GetRunParameters));
+  SetPrinterDevice(INIFile^.GetEntry(secFiles,iePrinterDevice,GetPrinterDevice));
   { First read the primary file, which can also set the parameters which can
     be overruled with the parameter loading }
   SetPrimaryFile(INIFile^.GetEntry(secCompile,iePrimaryFile,PrimaryFile));
@@ -394,6 +455,18 @@ begin
   MouseReverse:=boolean(INIFile^.GetIntEntry(secMouse,ieReverseButtons,byte(MouseReverse)));
   AltMouseAction:=INIFile^.GetIntEntry(secMouse,ieAltClickAction,AltMouseAction);
   CtrlMouseAction:=INIFile^.GetIntEntry(secMouse,ieCtrlClickAction,CtrlMouseAction);
+  {Keyboard}
+  S:=upcase(INIFile^.GetEntry(secKeyboard,ieEditKeys,''));
+  crcv := UpdateCrc32(0,s[1],Length(s)) ;
+  case crcv of
+    $795B3767  : {crc32 for 'MICROSOFT'}
+      EditKeys:=ekm_microsoft;
+    $4DF4784C
+       : {crc32 for 'BORLAND'}
+      EditKeys:=ekm_borland;
+    else
+      EditKeys:=ekm_default;
+  end;
   { Search }
   FindFlags:=INIFile^.GetIntEntry(secSearch,ieFindFlags,FindFlags);
   { Breakpoints }
@@ -470,7 +543,7 @@ begin
   { Desktop }
   DesktopFileFlags:=INIFile^.GetIntEntry(secPreferences,ieDesktopFlags,DesktopFileFlags);
   { Debugger }
-  IniCenterDebuggerRow:=INIFile^.GetIntEntry(secPreferences,ieCenterDebuggerRow,1)<>0;
+  IniCenterDebuggerRow:=tcentre(INIFile^.GetIntEntry(secPreferences,ieCenterDebuggerRow,1));
   { Preferences }
   AutoSaveOptions:=INIFile^.GetIntEntry(secPreferences,ieAutoSave,AutoSaveOptions);
   MiscOptions:=INIFile^.GetIntEntry(secPreferences,ieMiscOptions,MiscOptions);
@@ -491,7 +564,7 @@ var INIFile: PINIFile;
     I(*,OpenFileCount*): integer;
     OK: boolean;
 
-procedure ConcatName(P: PString); {$ifndef FPC}far;{$endif}
+procedure ConcatName(P: PString);
 begin
   if (S<>'') then S:=S+';';
   S:=S+P^;
@@ -505,6 +578,15 @@ begin
         MkDir(FExpand('~/.fp'));
    end;
 {$endif Unix}
+{$ifdef WINDOWS}
+  if not FromSaveAs and (DirOf(IniFileName)=DirOf(SystemIDEDir)) and
+    (GetEnv('APPDATA')<>'') then
+    begin
+      IniFileName:=FExpand(GetEnv('APPDATA')+'/fp/'+IniName);
+      If not ExistsDir(DirOf(IniFileName)) then
+        MkDir(FExpand(GetEnv('APPDATA')+'/fp'));
+   end;
+{$endif WINDOWS}
   New(INIFile, Init(IniFileName));
   { Files }
   { avoid keeping old files }
@@ -549,6 +631,7 @@ begin
   { Run }
   INIFile^.SetEntry(secRun,ieRunDir,GetRunDir);
   INIFile^.SetEntry(secRun,ieRunParameters,GetRunParameters);
+  INIFile^.SetEntry(secFiles,iePrinterDevice,GetPrinterDevice);
   { If DebuggeeTTY<>'' then }
     INIFile^.SetEntry(secRun,ieDebuggeeRedir,DebuggeeTTY);
 {$ifdef SUPPORT_REMOTE}
@@ -581,6 +664,11 @@ begin
   INIFile^.SetIntEntry(secMouse,ieReverseButtons,byte(MouseReverse));
   INIFile^.SetIntEntry(secMouse,ieAltClickAction,AltMouseAction);
   INIFile^.SetIntEntry(secMouse,ieCtrlClickAction,CtrlMouseAction);
+  { Keyboard }
+  if EditKeys=ekm_microsoft then
+    INIFile^.SetEntry(secKeyboard,ieEditKeys,'microsoft')
+  else
+    INIFile^.SetEntry(secKeyboard,ieEditKeys,'borland');
   { Search }
   INIFile^.SetIntEntry(secSearch,ieFindFlags,FindFlags);
   { Breakpoints }
@@ -637,9 +725,3 @@ begin
 end;
 
 end.
-{
-  $Log: fpini.pas,v $
-  Revision 1.13  2005/02/14 17:13:18  peter
-    * truncate log
-
-}

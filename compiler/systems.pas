@@ -1,13 +1,12 @@
 {
-    $Id: systems.pas,v 1.104 2005/03/20 22:36:45 olle Exp $
-    Copyright (c) 1998-2002 by Florian Klaempfl
+    Copyright (c) 1998-2008 by Florian Klaempfl
 
     This unit contains information about the target systems supported
     (these are not processor specific)
 
     This program is free software; you can redistribute it and/or modify
     iu under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 3 of the License, or
+    the Free Software Foundation; either version 2 of the License, or
     (at your option) any later version.
 
     This program is distributed in the hope that it will be useful,
@@ -27,133 +26,7 @@ unit systems;
 
 interface
 
-
-   type
-       tendian = (endian_little,endian_big);
-
-     (*
-       IMPORTANT NOTE:
-       The value of this enumeration is stored in PPU files.
-       Therefore adding new CPU targets should not change the
-       values of the pre-existing targets. (CEC)
-       FURTHERMORE : Make sure that this branch values, are
-       consistant with the main branch version always.
-     *)
-       tsystemcpu=
-       (
-             cpu_no,                       { 0 }
-             cpu_i386,                     { 1 }
-             cpu_m68k,                     { 2 }
-             cpu_alpha,                    { 3 }
-             cpu_powerpc,                  { 4 }
-             cpu_sparc,                    { 5 }
-             cpu_vm,                       { 6 }
-             cpu_iA64,                     { 7 }
-             cpu_x86_64,                   { 8 }
-             cpu_mips,                     { 9 }
-             cpu_arm                       { 10 }
-       );
-
-       tasmmode= (asmmode_none
-            { standard assembler (cpu dependant) with full parsing }
-            ,asmmode_standard
-            ,asmmode_i386_att
-            ,asmmode_i386_intel
-            ,asmmode_ppc_gas
-            ,asmmode_ppc_motorola
-            ,asmmode_arm_gas
-            ,asmmode_sparc_gas
-            ,asmmode_x86_64_gas
-            ,asmmode_m68k_mot
-       );
-
-     (* IMPORTANT NOTE:
-       the integer value of this enum is stored in PPU
-       files to recognize the target, so if you add new targets
-       allways add them at end PM
-       FURTHERMORE : Make sure that this branch values are
-       consistant with the main branch version always. (CEC)
-       *)
-     type
-       tsystem =
-       (
-             system_none,               { 0 }
-             obsolete_system_i386_GO32V1,{ 1 }
-             system_i386_GO32V2,        { 2 }
-             system_i386_linux,         { 3 }
-             system_i386_OS2,           { 4 }
-             system_i386_Win32,         { 5 }
-             system_i386_freebsd,       { 6 }
-             system_m68k_Amiga,         { 7 }
-             system_m68k_Atari,         { 8 }
-             system_m68k_Mac,           { 9 }
-             system_m68k_linux,         { 10 }
-             system_m68k_PalmOS,        { 11 }
-             system_alpha_linux,        { 12 }
-             system_powerpc_linux,      { 13 }
-             system_powerpc_macos,      { 14 }
-             system_i386_solaris,       { 15 }
-             system_i386_beos,          { 16 }
-             system_i386_netbsd,        { 17 }
-             system_m68k_netbsd,        { 18 }
-             system_i386_Netware,       { 19 }
-             system_i386_qnx,           { 20 }
-             system_i386_wdosx,         { 21 }
-             system_sparc_solaris,      { 22 }
-             system_sparc_linux,        { 23 }
-             system_i386_openbsd,       { 24 }
-             system_m68k_openbsd,       { 25 }
-             system_x86_64_linux,       { 26 }
-             system_powerpc_darwin,     { 27 }
-             system_i386_EMX,           { 28 }
-             system_powerpc_netbsd,     { 29 }
-             system_powerpc_openbsd,    { 30 }
-             system_arm_linux,          { 31 }
-             system_i386_watcom,        { 32 }
-             system_powerpc_MorphOS,    { 33 }
-             system_x86_64_freebsd,     { 34 }
-             system_i386_netwlibc       { 35 }
-       );
-
-       tasm = (as_none
-             ,as_gas                   { standard gnu assembler }
-             ,as_i386_as_aout
-             ,as_i386_nasmcoff
-             ,as_i386_nasmwin32
-             ,as_i386_nasmwdosx
-             ,as_i386_nasmelf
-             ,as_i386_nasmobj
-             ,as_i386_nasmbeos
-             ,as_i386_tasm
-             ,as_i386_masm
-             ,as_i386_wasm
-             ,as_i386_coff
-             ,as_i386_pecoff
-             ,as_i386_elf32
-             ,as_i386_pecoffwdosx
-             ,as_m68k_mit
-             ,as_powerpc_mpw
-             ,as_darwin
-       );
-
-       tar = (ar_none
-            ,ar_gnu_ar,ar_mpw_ar
-       );
-
-       tres = (res_none
-            ,res_gnu_windres,res_emxbind
-            ,res_m68k_palmos,res_m68k_mpw
-            ,res_powerpc_mpw
-       );
-
-       tscripttype = (script_none
-            ,script_dos,script_unix,script_amiga,
-            script_mpw
-       );
-
-       tabi = (abi_default
-            ,abi_powerpc_sysv,abi_powerpc_aix
-       );
+{$i systems.inc}
 
 {*****************************************************************************
                                Structures
@@ -174,8 +47,15 @@ interface
        TAbstractAssemblerClass = class of TAbstractAssembler;
 
 
+       TAbstractResourceFile = class
+         constructor create(const fn : ansistring);virtual;abstract;
+       end;
+       TAbstractResourceFileClass = class of TAbstractResourceFile;
+
+
        palignmentinfo = ^talignmentinfo;
-       talignmentinfo = record
+       { this is written to ppus during token recording for generics so it must be packed }
+       talignmentinfo = packed record
          procalign,
          loopalign,
          jumpalign,
@@ -194,44 +74,86 @@ interface
          af_outputbinary,af_allowdirect,
          af_needar,af_smartlink_sections,
          af_labelprefix_only_inside_procedure,
-         af_supports_dwarf
+         af_supports_dwarf,
+         af_no_debug,
+         af_stabs_use_function_absolute_addresses
        );
 
        pasminfo = ^tasminfo;
        tasminfo = record
           id          : tasm;
-          idtxt       : string[9];
+          idtxt       : string[12];
           asmbin      : string[8];
           asmcmd      : string[50];
-          supported_target : tsystem;
+          supported_targets : set of tsystem;
           flags        : set of tasmflags;
           labelprefix : string[3];
           comment     : string[3];
+          { set to '$' if that character is allowed in symbol names, otherwise
+            to alternate character by which '$' should be replaced }
+          dollarsign  : char;
        end;
 
        parinfo = ^tarinfo;
        tarinfo = record
-          id      : tar;
-          arcmd   : string[50];
+          id          : tar;
+          arcmd       : string[50];
+          arfinishcmd : string[10];
        end;
 
        presinfo = ^tresinfo;
        tresinfo = record
           id      : tres;
-          resbin  : string[8];
+          { Compiler for resource (.rc or .res) to obj }
+          resbin  : string[10];
           rescmd  : string[50];
+          { Optional compiler for resource script (.rc) to binary resource (.res). }
+          { If it is not provided resbin and rescmd will be used.                 }
+          rcbin   : string[10];
+          rccmd   : string[50];
+          resourcefileclass : TAbstractResourceFileClass;
+          resflags : set of tresinfoflags;
+       end;
+
+       pdbginfo = ^tdbginfo;
+       tdbginfo = record
+          id      : tdbg;
+          idtxt   : string[12];
        end;
 
        tsystemflags = (tf_none,
             tf_under_development,
-            tf_need_export,tf_needs_isconsole,
-            tf_code_small,tf_static_reg_based,
+            tf_need_export,
+            tf_needs_isconsole,
+            tf_code_small,
+            tf_static_reg_based,
             tf_needs_symbol_size,
             tf_smartlink_sections,
+            tf_smartlink_library,
             tf_needs_dwarf_cfi,
             tf_use_8_3,
             tf_pic_uses_got,
-            tf_library_needs_pic
+            tf_library_needs_pic,
+            tf_needs_symbol_type,
+            tf_section_threadvars,
+            tf_files_case_sensitive,
+            tf_files_case_aware,
+            tf_p_ext_support,
+            tf_has_dllscanner,
+            tf_use_function_relative_addresses,
+            tf_winlikewidestring,
+            tf_dwarf_relative_addresses,         // use offsets where the Dwarf spec requires this instead of absolute addresses (the latter is needed by Linux binutils)
+            tf_dwarf_only_local_labels,          // only use local labels inside the Dwarf debug_info section (needed for e.g. Darwin)
+            tf_requires_proper_alignment,
+            tf_no_pic_supported,
+            tf_pic_default,
+            { the os does some kind of stack checking and it can be converted into a rte 202 }
+            tf_no_generic_stackcheck,
+            tf_has_winlike_resources,
+            tf_safecall_clearstack,             // With this flag set, after safecall calls the caller cleans up the stack
+            tf_safecall_exceptions,             // Exceptions in safecall calls are not raised, but passed to the caller as an ordinal (hresult) in the function result.
+                                                // The original result (if it exists) is passed as an extra parameter
+            tf_no_backquote_support
        );
 
        psysteminfo = ^tsysteminfo;
@@ -243,17 +165,17 @@ interface
           flags        : set of tsystemflags;
           cpu          : tsystemcpu;
           unit_env     : string[16];
-          extradefines : string[40]; 
+          extradefines : string[40];
           exeext,
           defext,
           scriptext,
           smartext,
           unitext,
           unitlibext,
-          asmext,
-          objext,
-          resext,
-          resobjext    : string[4];
+          asmext       : string[4];
+          objext       : string[6];
+          resext       : string[4];
+          resobjext    : string[7];
           sharedlibext : string[10];
           staticlibext,
           staticlibprefix : string[4];
@@ -262,17 +184,18 @@ interface
           staticClibext,
           staticClibprefix : string[4];
           sharedClibprefix : string[4];
-          p_ext_support:Boolean; {Whether extension .p is supported by default}
+          importlibprefix : string[10];
+          importlibext : string[4];
           Cprefix      : string[2];
           newline      : string[2];
           dirsep       : char;
-          files_case_relevent : boolean;
           assem        : tasm;
           assemextern  : tasm; { external assembler, used by -a }
           link         : tabstractlinkerclass;
           linkextern   : tabstractlinkerclass;  { external linker, used by -s }
           ar           : tar;
           res          : tres;
+          dbg          : tdbg;
           script       : tscripttype;
           endian       : tendian;
           alignment    : talignmentinfo;
@@ -283,25 +206,168 @@ interface
             (see also FIRST_PARM_OFFSET in GCC source)
           }
           first_parm_offset : longint;
-          stacksize       : longint;
-          DllScanSupported : boolean;
-          use_function_relative_addresses : boolean;
-          abi : tabi;
+          stacksize    : longint;
+          abi          : tabi;
        end;
 
     const
        { alias for supported_target field in tasminfo }
        system_any = system_none;
 
-       cpu2str : array[TSystemCpu] of string =
+       systems_wince = [system_arm_wince,system_i386_wince];
+       systems_linux = [system_i386_linux,system_x86_64_linux,system_powerpc_linux,system_powerpc64_linux,
+                       system_arm_linux,system_sparc_linux,system_alpha_linux,system_m68k_linux,
+                       system_x86_6432_linux,system_mips_linux,system_mipsel_linux];
+       systems_freebsd = [system_i386_freebsd,
+                          system_x86_64_freebsd];
+       systems_netbsd  = [system_i386_netbsd,
+                          system_m68k_netbsd,
+                          system_powerpc_netbsd,
+                          system_x86_64_netbsd];
+       systems_openbsd = [system_i386_openbsd,
+                          system_m68k_openbsd,
+                          system_x86_64_openbsd];
+
+       systems_bsd = systems_freebsd + systems_netbsd + systems_openbsd;
+
+       systems_aix = [system_powerpc_aix,system_powerpc64_aix];
+
+       { all real windows systems, no cripple ones like wince, wdosx et. al. }
+       systems_windows = [system_i386_win32,system_x86_64_win64,system_ia64_win64];
+
+       { all windows systems }
+       systems_all_windows = [system_i386_win32,system_x86_64_win64,system_ia64_win64,
+                             system_arm_wince,system_i386_wince];
+
+       { all darwin systems }
+       systems_darwin = [system_powerpc_darwin,system_i386_darwin,
+                         system_powerpc64_darwin,system_x86_64_darwin,
+                         system_arm_darwin,system_i386_iphonesim];
+
+       {all solaris systems }
+       systems_solaris = [system_sparc_solaris, system_i386_solaris,
+			  system_x86_64_solaris];
+
+       { all embedded systems }
+       systems_embedded = [system_i386_embedded,system_m68k_embedded,
+                           system_alpha_embedded,system_powerpc_embedded,
+                           system_sparc_embedded,system_vm_embedded,
+                           system_iA64_embedded,system_x86_64_embedded,
+                           system_mips_embedded,system_arm_embedded,
+                           system_powerpc64_embedded,system_avr_embedded,
+                           system_jvm_java32];
+
+       { all systems that allow section directive }
+       systems_allow_section = systems_embedded;
+
+       { systems that uses dotted function names as descriptors }
+       systems_dotted_function_names = [system_powerpc64_linux]+systems_aix;
+
+       systems_allow_section_no_semicolon = systems_allow_section
+{$ifndef DISABLE_TLS_DIRECTORY}
+       + systems_windows
+{$endif not DISABLE_TLS_DIRECTORY}
+       ;
+
+       { all symbian systems }
+       systems_symbian = [system_i386_symbian,system_arm_symbian];
+
+       { all classic Mac OS targets }
+       systems_macos = [system_m68k_Mac,system_powerpc_Macos];
+
+       { all OS/2 targets }
+       systems_os2 = [system_i386_OS2,system_i386_emx];
+
+       { all native nt systems }
+       systems_nativent = [system_i386_nativent];
+
+       { systems supporting Objective-C }
+       systems_objc_supported = systems_darwin;
+
+       { systems using the non-fragile Objective-C ABI }
+       systems_objc_nfabi = [system_powerpc64_darwin,system_x86_64_darwin,system_arm_darwin,system_i386_iphonesim];
+
+       { all systems supporting exports from programs or units }
+       systems_unit_program_exports = [system_i386_win32,
+                                         system_i386_wdosx,
+                                         system_i386_Netware,
+                                         system_i386_netwlibc,
+                                         system_arm_wince,
+                                         system_x86_64_win64,
+                                         system_ia64_win64]+systems_linux;
+
+       { all systems for which weak linking has been tested/is supported }
+       systems_weak_linking = systems_darwin + systems_solaris;
+
+       systems_internal_sysinit = [system_i386_linux,system_i386_win32];
+
+       {$ifdef FPC_HAS_SYSTEMS_INTERRUPT_TABLE}
+       { If anyone wants to use interrupt for
+         a specific target, add a
+         $define FPC_HAS_SYSTEMS_INTERRUPT_TABLE
+         to fpcdefs.inc to reactivate
+         the corresponding code }
+       systems_interrupt_table = [{system_arm_embedded}];
+       {$endif FPC_HAS_SYSTEMS_INTERRUPT_TABLE}
+
+       { all systems for which istack must be at a 16 byte boundary
+         when calling a function }
+       systems_need_16_byte_stack_alignment = [
+      	system_i386_darwin,
+      	system_i386_iphonesim,
+        system_x86_64_darwin,
+        system_x86_64_win64,
+        system_x86_64_linux,
+        system_x86_64_freebsd,
+        system_x86_64_solaris];
+
+       { all systems that use garbage collection for reference-counted types }
+       systems_garbage_collected_managed_types = [
+         system_jvm_java32,
+         system_jvm_android32
+       ];
+
+       { all systems that use a managed vm (-> no real pointers, internal VMT
+         format, ...) }
+       systems_managed_vm = [
+         system_jvm_java32,
+         system_jvm_android32
+       ];
+
+       { all systems based on the JVM }
+       systems_jvm = [
+         system_jvm_java32,
+         system_jvm_android32
+       ];
+
+       { all systems where typed constants have to be translated into node
+         trees that initialise the data instead of into data sections }
+       systems_typed_constants_node_init = [
+         system_jvm_java32,
+         system_jvm_android32
+       ];
+
+       { all systems that don't use a built-in framepointer for accessing nested
+         variables, but emulate it by wrapping nested variables in records
+         whose address is passed around }
+       systems_fpnestedstruct = [
+         system_jvm_java32,
+         system_jvm_android32
+       ];
+
+       cpu2str : array[TSystemCpu] of string[10] =
             ('','i386','m68k','alpha','powerpc','sparc','vm','ia64','x86_64',
-             'mips','arm');
+             'mips','arm', 'powerpc64', 'avr', 'mipsel','jvm');
+
+       abi2str : array[tabi] of string[10] =
+         ('DEFAULT','SYSV','AIX','EABI','ARMEB','EABIHF');
 
     var
        targetinfos   : array[tsystem] of psysteminfo;
        arinfos       : array[tar] of parinfo;
        resinfos      : array[tres] of presinfo;
        asminfos      : array[tasm] of pasminfo;
+       dbginfos      : array[tdbg] of pdbginfo;
 
        source_info : tsysteminfo;
        target_cpu  : tsystemcpu;
@@ -309,6 +375,7 @@ interface
        target_asm  : tasminfo;
        target_ar   : tarinfo;
        target_res  : tresinfo;
+       target_dbg  : tdbginfo;
        target_cpu_string,
        target_os_string   : string[12]; { for rtl/<X>/,fcl/<X>/, etc. }
        target_full_string : string[24];
@@ -317,16 +384,18 @@ interface
     function set_target_asm(t:tasm):boolean;
     function set_target_ar(t:tar):boolean;
     function set_target_res(t:tres):boolean;
+    function set_target_dbg(t:tdbg):boolean;
 
-    function set_target_by_string(const s : string) : boolean;
-    function set_target_asm_by_string(const s : string) : boolean;
+    function find_system_by_string(const s : string) : tsystem;
+    function find_asm_by_string(const s : string) : tasm;
+    function find_dbg_by_string(const s : string) : tdbg;
 
     procedure set_source_info(const ti : tsysteminfo);
 
-    procedure UpdateAlignment(var d:talignmentinfo;const s:talignmentinfo);
+    function UpdateAlignment(var d:talignmentinfo;const s:talignmentinfo) : boolean;
 
     procedure RegisterTarget(const r:tsysteminfo);
-    procedure RegisterRes(const r:tresinfo);
+    procedure RegisterRes(const r:tresinfo; rcf : TAbstractResourceFileClass);
     procedure RegisterAr(const r:tarinfo);
     { Register the external linker. This routine is called to setup the
       class to use for the linker. It returns the tsysteminfo structure
@@ -376,7 +445,7 @@ Begin
         mib[1] := KERN_OSRELDATE;
         len    := 4;
         oerrno:= fpgeterrno;
-        if (FPsysctl(@mib, 2, pchar(@v), @len, NIL, 0) = -1) Then
+        if (FPsysctl(pChar(@mib), 2, pchar(@v), @len, NIL, 0) = -1) Then
            Begin
                 if (fpgeterrno = ESysENOMEM) Then
                         fpseterrno(oerrno);
@@ -401,6 +470,7 @@ begin
      set_target_asm(target_info.assem);
      set_target_ar(target_info.ar);
      set_target_res(target_info.res);
+     set_target_dbg(target_info.dbg);
      target_cpu:=target_info.cpu;
      target_os_string:=lower(target_info.shortname);
      target_cpu_string:=cpu2str[target_cpu];
@@ -415,8 +485,8 @@ function set_target_asm(t:tasm):boolean;
 begin
   set_target_asm:=false;
   if assigned(asminfos[t]) and
-    ((asminfos[t]^.supported_target=target_info.system) or
-     (asminfos[t]^.supported_target=system_any)) then
+    ((target_info.system in asminfos[t]^.supported_targets) or
+     (system_any in asminfos[t]^.supported_targets)) then
    begin
      target_asm:=asminfos[t]^;
      set_target_asm:=true;
@@ -427,11 +497,11 @@ end;
 
 function set_target_ar(t:tar):boolean;
 begin
-  set_target_ar:=false;
+  result:=false;
   if assigned(arinfos[t]) then
    begin
      target_ar:=arinfos[t]^;
-     set_target_ar:=true;
+     result:=true;
      exit;
    end;
 end;
@@ -439,65 +509,101 @@ end;
 
 function set_target_res(t:tres):boolean;
 begin
-  set_target_res:=false;
+  result:=false;
   if assigned(resinfos[t]) then
    begin
      target_res:=resinfos[t]^;
-     set_target_res:=true;
+     result:=true;
+     exit;
+   end
+  else
+   FillByte(target_res,sizeof(target_res),0);
+end;
+
+
+function set_target_dbg(t:tdbg):boolean;
+begin
+  result:=false;
+  if assigned(dbginfos[t]) then
+   begin
+     target_dbg:=dbginfos[t]^;
+     result:=true;
      exit;
    end;
 end;
 
 
-function set_target_by_string(const s : string) : boolean;
+function find_system_by_string(const s : string) : tsystem;
 var
   hs : string;
   t  : tsystem;
 begin
-  set_target_by_string:=false;
-  { this should be case insensitive !! PM }
+  result:=system_none;
   hs:=upper(s);
   for t:=low(tsystem) to high(tsystem) do
    if assigned(targetinfos[t]) and
       (upper(targetinfos[t]^.shortname)=hs) then
     begin
-      set_target_by_string:=set_target(t);
+      result:=t;
       exit;
     end;
 end;
 
 
-function set_target_asm_by_string(const s : string) : boolean;
+function find_asm_by_string(const s : string) : tasm;
 var
   hs : string;
   t  : tasm;
 begin
-  set_target_asm_by_string:=false;
-  { this should be case insensitive !! PM }
+  result:=as_none;
   hs:=upper(s);
   for t:=low(tasm) to high(tasm) do
    if assigned(asminfos[t]) and
       (asminfos[t]^.idtxt=hs) then
     begin
-      set_target_asm_by_string:=set_target_asm(t);
+      result:=t;
       exit;
     end;
 end;
 
 
-procedure UpdateAlignment(var d:talignmentinfo;const s:talignmentinfo);
+function find_dbg_by_string(const s : string) : tdbg;
+var
+  hs : string;
+  t  : tdbg;
 begin
+  result:=dbg_none;
+  hs:=upper(s);
+  for t:=low(tdbg) to high(tdbg) do
+   if assigned(dbginfos[t]) and
+      (dbginfos[t]^.idtxt=hs) then
+    begin
+      result:=t;
+      exit;
+    end;
+end;
+
+
+function UpdateAlignment(var d:talignmentinfo;const s:talignmentinfo) : boolean;
+begin
+  result:=true;
   with d do
    begin
+     if (s.procalign in [1,2,4,8,16,32,64,128]) or (s.procalign=256) then
+       procalign:=s.procalign
+     else if s.procalign<>0 then
+       result:=false;
+     if (s.loopalign in [1,2,4,8,16,32,64,128]) or (s.loopalign=256) then
+       loopalign:=s.loopalign
+     else if s.loopalign<>0 then
+       result:=false;
+     if (s.jumpalign in [1,2,4,8,16,32,64,128]) or (s.jumpalign=256) then
+       jumpalign:=s.jumpalign
+     else if s.jumpalign<>0 then
+       result:=false;
      { general update rules:
        minimum: if higher then update
        maximum: if lower then update or if undefined then update }
-     if s.procalign>procalign then
-      procalign:=s.procalign;
-     if s.loopalign>loopalign then
-      loopalign:=s.loopalign;
-     if s.jumpalign>jumpalign then
-      jumpalign:=s.jumpalign;
      if s.constalignmin>constalignmin then
       constalignmin:=s.constalignmin;
      if (constalignmax=0) or
@@ -542,16 +648,15 @@ begin
 end;
 
 
-procedure RegisterRes(const r:tresinfo);
+procedure RegisterRes(const r:tresinfo; rcf : TAbstractResourceFileClass);
 var
   t : tres;
 begin
   t:=r.id;
-  if assigned(resinfos[t]) then
-    writeln('Warning: resourcecompiler is already registered!')
-  else
+  if not assigned(resinfos[t]) then
     Getmem(resinfos[t],sizeof(tresinfo));
   resinfos[t]^:=r;
+  resinfos[t]^.resourcefileclass:=rcf;
 end;
 
 
@@ -585,6 +690,7 @@ var
   target  : tsystem;
   ar      : tar;
   res     : tres;
+  dbg     : tdbg;
 begin
   for target:=low(tsystem) to high(tsystem) do
    if assigned(targetinfos[target]) then
@@ -609,6 +715,12 @@ begin
     begin
       freemem(resinfos[res],sizeof(tresinfo));
       resinfos[res]:=nil;
+    end;
+  for dbg:=low(tdbg) to high(tdbg) do
+   if assigned(dbginfos[dbg]) then
+    begin
+      freemem(dbginfos[dbg],sizeof(tdbginfo));
+      dbginfos[dbg]:=nil;
     end;
 end;
 
@@ -642,34 +754,69 @@ begin
 {$ifdef i386}
   {$ifdef cpu86}
     default_target(source_info.system);
+    {$define default_target_set}
   {$else cpu86}
    {$ifdef linux}
     default_target(system_i386_linux);
+    {$define default_target_set}
    {$endif}
    {$ifdef freebsd}
     default_target(system_i386_freebsd);
+    {$define default_target_set}
+   {$endif}
+   {$ifdef openbsd}
+    default_target(system_i386_openbsd);
+    {$define default_target_set}
+   {$endif}
+   {$ifdef darwin}
+    default_target(system_i386_darwin);
+    {$define default_target_set}
    {$endif}
   {$endif cpu86}
+  { default is linux }
+  {$ifndef default_target_set}
+   default_target(system_i386_linux);
+  {$endif default_target_set}
 {$endif i386}
 
 {$ifdef x86_64}
   {$ifdef cpux86_64}
     default_target(source_info.system);
-    {$define source_system_set}
+    {$define default_target_set}
   {$else cpux86_64}
+   {$ifdef MSWindows}
+    default_target(system_x86_64_win64);
+    {$define default_target_set}
+   {$endif}
    {$ifdef linux}
     default_target(system_x86_64_linux);
-    {$define source_system_set}
+    {$define default_target_set}
    {$endif}
    {$ifdef freebsd}
     default_target(system_x86_64_freebsd);
-    {$define source_system_set}
+    {$define default_target_set}
    {$endif}
-   { default is linux }
-   {$ifndef source_system_set}
-    default_target(system_x86_64_linux);
-   {$endif source_system_set}
+   {$ifdef openbsd}
+    default_target(system_x86_64_openbsd);
+    {$define default_target_set}
+   {$endif}
+   {$ifdef netbsd}
+    default_target(system_x86_64_netbsd);
+    {$define default_target_set}
+   {$endif}
+   {$ifdef solaris}
+    default_target(system_x86_64_solaris);
+    {$define default_target_set}
+   {$endif}
+   {$ifdef darwin}
+    default_target(system_x86_64_darwin);
+    {$define default_target_set}
+   {$endif}
   {$endif cpux86_64}
+  { default is linux }
+  {$ifndef default_target_set}
+   default_target(system_x86_64_linux);
+  {$endif default_target_set}
 {$endif x86_64}
 
 {$ifdef m68k}
@@ -679,6 +826,7 @@ begin
     default_target(system_m68k_linux);
   {$endif cpu68}
 {$endif m68k}
+
 {$ifdef alpha}
   {$ifdef cpualpha}
     default_target(source_info.system);
@@ -686,13 +834,54 @@ begin
     default_target(system_alpha_linux);
   {$endif cpualpha}
 {$endif alpha}
+
 {$ifdef powerpc}
   {$ifdef cpupowerpc}
     default_target(source_info.system);
+    {$define default_target_set}
   {$else cpupowerpc}
+   {$ifdef linux}
     default_target(system_powerpc_linux);
+    {$define default_target_set}
+   {$endif}
+   {$ifdef darwin}
+    default_target(system_powerpc_darwin);
+    {$define default_target_set}
+   {$endif}
   {$endif cpupowerpc}
+  {$ifdef aix}
+   default_target(system_powerpc_aix);
+   {$define default_target_set}
+  {$endif}
+  {$ifndef default_target_set}
+    default_target(system_powerpc_linux);
+  {$endif default_target_set}
 {$endif powerpc}
+
+{$ifdef POWERPC64}
+  {$ifdef cpupowerpc64}
+    default_target(source_info.system);
+    {$define default_target_set}
+  {$else cpupowerpc64}
+    {$ifdef darwin}
+     default_target(system_powerpc64_darwin);
+     {$define default_target_set}
+    {$endif}
+    {$ifdef linux}
+     default_target(system_powerpc64_linux);
+     {$define default_target_set}
+    {$endif}
+    {$ifdef aix}
+     default_target(system_powerpc64_aix);
+     {$define default_target_set}
+    {$endif}
+  {$endif cpupowerpc64}
+  {$ifndef default_target_set}
+    default_target(system_powerpc64_linux);
+    {$define default_target_set}
+  {$endif}
+{$endif POWERPC64}
+
 {$ifdef sparc}
   {$ifdef cpusparc}
     default_target(source_info.system);
@@ -700,13 +889,45 @@ begin
     default_target(system_sparc_linux);
   {$endif cpusparc}
 {$endif sparc}
+
 {$ifdef arm}
   {$ifdef cpuarm}
     default_target(source_info.system);
   {$else cpuarm}
-    default_target(system_arm_linux);
+    {$ifdef WINDOWS}
+      {$define default_target_set}
+      default_target(system_arm_wince);
+    {$endif}
+    {$ifdef linux}
+      {$define default_target_set}
+      default_target(system_arm_linux);
+    {$endif}
+    {$ifdef darwin}
+      {$define default_target_set}
+      default_target(system_arm_darwin);
+    {$endif}
+    {$ifndef default_target_set}
+      default_target(system_arm_linux);
+      {$define default_target_set}
+    {$endif}
   {$endif cpuarm}
 {$endif arm}
+
+{$ifdef avr}
+  default_target(system_avr_embedded);
+{$endif avr}
+
+{$ifdef mips}
+{$ifdef mipsel}
+  default_target(system_mipsel_linux);
+{$else mipsel}
+  default_target(system_mips_linux);
+{$endif mipsel}
+{$endif mips}
+
+{$ifdef jvm}
+  default_target(system_jvm_java32);
+{$endif jvm}
 end;
 
 
@@ -715,22 +936,3 @@ initialization
 finalization
   DeregisterInfos;
 end.
-{
-  $Log: systems.pas,v $
-  Revision 1.104  2005/03/20 22:36:45  olle
-    * Cleaned up handling of source file extension.
-    + Added support for .p extension for macos and darwin
-
-  Revision 1.103  2005/02/14 17:13:09  peter
-    * truncate log
-
-  Revision 1.102  2005/02/13 20:11:16  peter
-    * sunos to solaris
-
-  Revision 1.101  2005/02/06 00:05:56  florian
-    + x86_64 pic draft
-
-  Revision 1.100  2005/01/25 18:48:15  peter
-    * tf_pic_uses_got added
-
-}

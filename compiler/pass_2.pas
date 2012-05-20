@@ -1,5 +1,4 @@
 {
-    $Id: pass_2.pas,v 1.78 2005/04/08 15:18:08 peter Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl
 
     This unit handles the codegeneration pass
@@ -30,7 +29,18 @@ uses
    node;
 
     type
-       tenumflowcontrol = (fc_exit,fc_break,fc_continue);
+       tenumflowcontrol = (
+         fc_exit,
+         fc_break,
+         fc_continue,
+         fc_inflowcontrol,
+         fc_gotolabel,
+         { in try block of try..finally }
+         fc_unwind,
+         { the left side of an expression is already handled, so we are
+           not allowed to do ssl }
+         fc_lefthandled);
+
        tflowcontrol = set of tenumflowcontrol;
 
     var
@@ -38,7 +48,7 @@ uses
 
 { produces the actual code }
 function do_secondpass(var p : tnode) : boolean;
-procedure secondpass(var p : tnode);
+procedure secondpass(p : tnode);
 
 
 implementation
@@ -50,7 +60,7 @@ implementation
      globtype,systems,verbose,
      globals,
      paramgr,
-     aasmtai,
+     aasmtai,aasmdata,
      cgbase,
      nflw,cgobj;
 
@@ -59,6 +69,9 @@ implementation
 *****************************************************************************}
 
 {$ifdef EXTDEBUG}
+     var
+       secondprefix : string;
+
      procedure logsecond(ht:tnodetype; entry: boolean);
        const
          secondnames: array[tnodetype] of string[13] =
@@ -94,6 +107,7 @@ implementation
              'noth-callpar',{callparan}
              'realconst',   {realconstn}
              'unaryminus',  {unaryminusn}
+             'unaryplus',   {unaryplusn}
              'asm',         {asmn}
              'vecn',        {vecn}
              'pointerconst',{pointerconstn}
@@ -123,7 +137,6 @@ implementation
              'on',    {onn}
              'is',    {isn}
              'as',    {asn}
-             'error-caret',       {caretn}
              'add-starstar',  {starstarn}
              'arrayconstruc', {arrayconstructn}
              'noth-arrcnstr',     {arrayconstructrangen}
@@ -135,20 +148,29 @@ implementation
              'loadvmt',      {loadvmtn}
              'guidconstn',
              'rttin',
-             'loadparentfpn'
+             'loadparentfpn',
+             'dataconstn',
+             'objselectorn',
+             'objcprotocoln'
              );
       var
         p: pchar;
       begin
         if entry then
-          p := strpnew('second '+secondnames[ht]+' (entry)')
+          begin
+            secondprefix:=secondprefix+' ';
+            p := strpnew(secondprefix+'second '+secondnames[ht]+' (entry)')
+          end
         else
-          p := strpnew('second '+secondnames[ht]+' (exit)');
-        exprasmlist.concat(tai_comment.create(p));
+          begin
+            p := strpnew(secondprefix+'second '+secondnames[ht]+' (exit)');
+            delete(secondprefix,length(secondprefix),1);
+          end;
+        current_asmdata.CurrAsmList.concat(tai_comment.create(p));
       end;
 {$endif EXTDEBUG}
 
-     procedure secondpass(var p : tnode);
+     procedure secondpass(p : tnode);
       var
          oldcodegenerror  : boolean;
          oldlocalswitches : tlocalswitches;
@@ -159,37 +181,36 @@ implementation
          if not(nf_error in p.flags) then
           begin
             oldcodegenerror:=codegenerror;
-            oldlocalswitches:=aktlocalswitches;
-            oldpos:=aktfilepos;
-            if not inlining_procedure then
-              aktfilepos:=p.fileinfo;
-            aktlocalswitches:=p.localswitches;
+            oldlocalswitches:=current_settings.localswitches;
+            oldpos:=current_filepos;
+            current_filepos:=p.fileinfo;
+            current_settings.localswitches:=p.localswitches;
             codegenerror:=false;
 {$ifdef EXTDEBUG}
             if (p.expectloc=LOC_INVALID) then
               Comment(V_Warning,'ExpectLoc is not set before secondpass: '+nodetype2str[p.nodetype]);
             if (p.location.loc<>LOC_INVALID) then
               Comment(V_Warning,'Location.Loc is already set before secondpass: '+nodetype2str[p.nodetype]);
-            if (cs_asm_nodes in aktglobalswitches) then
+            if (cs_asm_nodes in current_settings.globalswitches) then
               logsecond(p.nodetype,true);
 {$endif EXTDEBUG}
-            p.pass_2;
+            p.pass_generate_code;
 {$ifdef EXTDEBUG}
-            if (cs_asm_nodes in aktglobalswitches) then
+            if (cs_asm_nodes in current_settings.globalswitches) then
               logsecond(p.nodetype,false);
             if (not codegenerror) then
              begin
+               if (p.location.loc<>p.expectloc) then
+                 Comment(V_Warning,'Location ('+tcgloc2str[p.location.loc]+') not equal to expectloc ('+tcgloc2str[p.expectloc]+'): '+nodetype2str[p.nodetype]);
                if (p.location.loc=LOC_INVALID) then
-                 Comment(V_Warning,'Location not set in secondpass: '+nodetype2str[p.nodetype])
-               else if (p.location.loc<>p.expectloc) then
-                 Comment(V_Warning,'Location is different in secondpass: '+nodetype2str[p.nodetype]);
+                 Comment(V_Warning,'Location not set in secondpass: '+nodetype2str[p.nodetype]);
              end;
 {$endif EXTDEBUG}
             if codegenerror then
               include(p.flags,nf_error);
             codegenerror:=codegenerror or oldcodegenerror;
-            aktlocalswitches:=oldlocalswitches;
-            aktfilepos:=oldpos;
+            current_settings.localswitches:=oldlocalswitches;
+            current_filepos:=oldpos;
           end
          else
            codegenerror:=true;
@@ -198,8 +219,8 @@ implementation
 
     function do_secondpass(var p : tnode) : boolean;
       begin
-         { exprasmlist must be empty }
-         if not exprasmlist.empty then
+         { current_asmdata.CurrAsmList must be empty }
+         if not current_asmdata.CurrAsmList.empty then
            internalerror(200405201);
 
          { clear errors before starting }
@@ -211,12 +232,3 @@ implementation
 
 
 end.
-{
-  $Log: pass_2.pas,v $
-  Revision 1.78  2005/04/08 15:18:08  peter
-  remove multiple pass2 calls. It is not supported anymore by all nodes (ttempcreatenode)
-
-  Revision 1.77  2005/02/14 17:13:07  peter
-    * truncate log
-
-}

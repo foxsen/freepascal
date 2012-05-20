@@ -1,5 +1,4 @@
 {
-    $Id: cpubase.pas,v 1.8 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 1998-2002 by the Free Pascal dev. team
 
     Contains the base types for the virtual instruction set
@@ -375,44 +374,9 @@ uses
       LoReg = R_R0;
       HiReg = R_R11;
 
-      {# Table of registers which can be allocated by the code generator
-         internally, when generating the code.
-      }
-      { legend:                                                                }
-      { xxxregs = set of all possibly used registers of that type in the code  }
-      {           generator                                                    }
-      { usableregsxxx = set of all 32bit components of registers that can be   }
-      {           possible allocated to a regvar or using getregisterxxx (this }
-      {           excludes registers which can be only used for parameter      }
-      {           passing on ABI's that define this)                           }
-      { c_countusableregsxxx = amount of registers in the usableregsxxx set    }
-
       maxintregs = 12;
-      intregs    = [R_R0..R_R11];
-      usableregsint = [R_R2..R_R11];
-      c_countusableregsint = 18;
-
       maxfpuregs = 16;
-      fpuregs    = [R_FP0..R_FP15];
-      usableregsfpu = [R_FP1..R_FP15];
-      c_countusableregsfpu = 15;
-
-      mmregs     = [];
-      usableregsmm  = [];
-      c_countusableregsmm  = 0;
-
-      { no distinction on this platform }
       maxaddrregs = 0;
-      addrregs    = [];
-      usableregsaddr = [];
-      c_countusableregsaddr = 0;
-
-      firstsaveintreg = R_R2;
-      lastsaveintreg  = R_R11;
-      firstsavefpureg = R_FP1;
-      lastsavefpureg  = R_FP15;
-      firstsavemmreg  = R_NO;
-      lastsavemmreg   = R_NO;
 
       maxvarregs = 10;
       varregs : Array [1..maxvarregs] of toldregister =
@@ -445,7 +409,8 @@ uses
 
       {# Defines the default address size for a processor, }
       OS_ADDR = OS_32;
-      {# the natural int size for a processor,             }
+      {# the natural int size for a processor,
+         has to match osuinttype/ossinttype as initialized in psystem }
       OS_INT = OS_32;
       {# the maximum float size for a processor,           }
       OS_FLOAT = OS_F64;
@@ -642,9 +607,3 @@ implementation
 
 
 end.
-{
-  $Log: cpubase.pas,v $
-  Revision 1.8  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

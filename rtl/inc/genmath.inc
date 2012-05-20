@@ -1,9 +1,8 @@
 {
-    $Id: genmath.inc,v 1.32 2005/02/14 17:13:22 peter Exp $
     This file is part of the Free Pascal run time library.
-    Copyright (c) 1999-2001 by Several contributors
+    Copyright (c) 1999-2007 by Several contributors
 
-    Generic mathemtical routines (on type real)
+    Generic mathematical routines (on type real)
 
     See the file COPYING.FPC, included in this distribution,
     for details about the copyright.
@@ -39,7 +38,21 @@
 {$goto on}
 
 type
-    TabCoef = array[0..6] of Real;
+  TabCoef = array[0..6] of Real;
+{ also necessary for Int() on systems with 64bit floats (JM) }
+{$ifndef FPC_SYSTEM_HAS_float64}
+{$ifdef ENDIAN_LITTLE}
+  float64 = packed record
+    low: longint;
+    high: longint;
+  end;
+{$else}
+  float64 = packed record
+    high: longint;
+    low: longint;
+  end;
+{$endif}
+{$endif FPC_SYSTEM_HAS_float64}
 
 
 const
@@ -61,6 +74,7 @@ const
       DP2 =   3.77489470793079817668E-8;
       DP3 =   2.69515142907905952645E-15;
 
+{$if not defined(FPC_SYSTEM_HAS_SIN) or not defined(FPC_SYSTEM_HAS_COS)}
 const sincof : TabCoef = (
                 1.58962301576546568060E-10,
                -2.50507477628578072866E-8,
@@ -75,56 +89,90 @@ const sincof : TabCoef = (
                 2.48015872888517045348E-5,
                -1.38888888888730564116E-3,
                 4.16666666666665929218E-2, 0);
-
-
-
-{ also necessary for Int() on systems with 64bit floats (JM) }
-type
-{$ifdef ENDIAN_LITTLE}
-  float64 = packed record
-    low: longint;
-    high: longint;
-  end;
-{$else}
-  float64 = packed record
-    high: longint;
-    low: longint;
-  end;
 {$endif}
 
+{*
+-------------------------------------------------------------------------------
+Raises the exceptions specified by `flags'.  Floating-point traps can be
+defined here if desired.  It is currently not possible for such a trap
+to substitute a result value.  If traps are not implemented, this routine
+should be simply `softfloat_exception_flags |= flags;'.
+-------------------------------------------------------------------------------
+*}
+procedure float_raise(i: shortint);
+var
+  pflags: pbyte;
+  unmasked_flags: byte;
+Begin
+  { taking address of threadvar produces somewhat more compact code }
+  pflags := @softfloat_exception_flags;
+  pflags^ := pflags^ or i;
+  unmasked_flags := pflags^ and (not softfloat_exception_mask);
+  if (unmasked_flags and float_flag_invalid) <> 0 then
+     HandleError(207)
+  else
+  if (unmasked_flags and float_flag_divbyzero) <> 0 then
+     HandleError(200)
+  else
+  if (unmasked_flags and float_flag_overflow) <> 0 then
+     HandleError(205)
+  else
+  if (unmasked_flags and float_flag_underflow) <> 0 then
+     HandleError(206)
+  else
+  if (unmasked_flags and float_flag_inexact) <> 0 then
+     HandleError(207);
+end;
+
+
 {$ifndef FPC_SYSTEM_HAS_TRUNC}
+{$ifndef FPC_SYSTEM_HAS_float32}
 type
   float32 = longint;
+{$endif FPC_SYSTEM_HAS_float32}
+{$ifndef FPC_SYSTEM_HAS_flag}
+type
   flag = byte;
+{$endif FPC_SYSTEM_HAS_flag}
 
+{$ifndef FPC_SYSTEM_HAS_extractFloat64Frac0}
   Function extractFloat64Frac0(const a: float64): longint;
     Begin
       extractFloat64Frac0 := a.high and $000FFFFF;
     End;
+{$endif not FPC_SYSTEM_HAS_extractFloat64Frac0}
 
 
+{$ifndef FPC_SYSTEM_HAS_extractFloat64Frac1}
   Function extractFloat64Frac1(const a: float64): longint;
     Begin
       extractFloat64Frac1 := a.low;
     End;
+{$endif not FPC_SYSTEM_HAS_extractFloat64Frac1}
 
 
+{$ifndef FPC_SYSTEM_HAS_extractFloat64Exp}
   Function extractFloat64Exp(const a: float64): smallint;
     Begin
        extractFloat64Exp:= ( a.high shr 20 ) AND $7FF;
     End;
+{$endif not FPC_SYSTEM_HAS_extractFloat64Exp}
 
 
+{$ifndef FPC_SYSTEM_HAS_extractFloat64Frac}
   Function extractFloat64Frac(const a: float64): int64;
     Begin
       extractFloat64Frac:=int64(a) and $000FFFFFFFFFFFFF;
     End;
+{$endif not FPC_SYSTEM_HAS_extractFloat64Frac}
 
 
+{$ifndef FPC_SYSTEM_HAS_extractFloat64Sign}
   Function extractFloat64Sign(const a: float64) : flag;
     Begin
        extractFloat64Sign := a.high shr 31;
     End;
+{$endif not FPC_SYSTEM_HAS_extractFloat64Sign}
 
 
   Procedure shortShift64Left(a0:longint; a1:longint; count:smallint; VAR z0Ptr:longint; VAR z1Ptr:longint );
@@ -142,6 +190,8 @@ type
        aExp, shiftCount: smallint;
        aSig0, aSig1, absZ, aSigExtra: longint;
        z: longint;
+     label
+       invalid;
      Begin
        aSig1 := extractFloat64Frac1( a );
        aSig0 := extractFloat64Frac0( a );
@@ -151,7 +201,7 @@ type
        if 0<=shiftCount then
        Begin
           if (aExp=$7FF)  and ((aSig0 or aSig1)<>0) then
-            HandleError(207);
+            goto invalid;
           shortShift64Left(aSig0 OR  $00100000, aSig1, shiftCount, absZ, aSigExtra );
        End
        else
@@ -170,12 +220,22 @@ type
        else
          z:=absZ;
        if ((aSign<>0) xor (z<0)) AND  (z<>0) then
-         HandleError(207);
-      float64_to_int32_round_to_zero := z;
+         begin
+invalid:
+           float_raise(float_flag_invalid);
+           if (aSign <> 0) then
+             float64_to_int32_round_to_zero:=$80000000
+           else
+             float64_to_int32_round_to_zero:=$7FFFFFFF;
+           exit;
+         end;
+       if ( aSigExtra <> 0) then
+         float_raise(float_flag_inexact);
+
+       float64_to_int32_round_to_zero := z;
      End;
 
 
-{$ifndef VER1_0}
    function float64_to_int64_round_to_zero(a : float64) : int64;
      var
        aSign : flag;
@@ -194,9 +254,17 @@ type
            if aExp>=$43e then
              begin
                if int64(a)<>$C3E0000000000000 then
-                 HandleError(207);
-               { pascal doesn't know Inf for int64 }
-               HandleError(207);
+                 begin
+                   float_raise(float_flag_invalid);
+                   if (aSign=0) or ((aExp=$7FF) and
+                      (aSig<>$0010000000000000 )) then
+                     begin
+                       result:=$7FFFFFFFFFFFFFFF;
+                       exit;
+                     end;
+                 end;
+               result:=$8000000000000000;
+               exit;
              end;
            z:=aSig shl shiftCount;
          end
@@ -217,24 +285,29 @@ type
          z:=-z;
        result:=z;
      end;
-{$endif VER1_0}
 
+{$ifndef FPC_SYSTEM_HAS_ExtractFloat32Frac}
   Function ExtractFloat32Frac(a : Float32) : longint;
     Begin
        ExtractFloat32Frac := A AND $007FFFFF;
     End;
+{$endif not FPC_SYSTEM_HAS_ExtractFloat32Frac}
 
 
+{$ifndef FPC_SYSTEM_HAS_extractFloat32Exp}
   Function extractFloat32Exp( a: float32 ): smallint;
     Begin
       extractFloat32Exp := (a shr 23) AND $FF;
     End;
+{$endif not FPC_SYSTEM_HAS_extractFloat32Exp}
 
 
+{$ifndef FPC_SYSTEM_HAS_extractFloat32Sign}
   Function extractFloat32Sign( a: float32 ): Flag;
     Begin
       extractFloat32Sign := a shr 31;
     End;
+{$endif not FPC_SYSTEM_HAS_extractFloat32Sign}
 
 
   Function float32_to_int32_round_to_zero( a: Float32 ): longint;
@@ -252,13 +325,14 @@ type
          Begin
            if ( a <> Float32($CF000000) ) then
              Begin
+               float_raise( float_flag_invalid );
                if ( (aSign=0) or ( ( aExp = $FF ) and (aSig<>0) ) ) then
                  Begin
-                   HandleError(207);
+                   float32_to_int32_round_to_zero:=$7fffffff;
                    exit;
                  end;
              End;
-           HandleError(207);
+           float32_to_int32_round_to_zero:=$80000000;
            exit;
          End
        else
@@ -274,15 +348,11 @@ type
     End;
 
 
-{$ifdef INTERNCONSTINTF}
-  function fpc_trunc_real(d : real) : int64;compilerproc;
-{$else}
-  function trunc(d : real) : int64;[internconst:fpc_in_const_trunc];
-{$endif}
+  function fpc_trunc_real(d : ValReal) : int64;compilerproc;
     var
-{$ifdef cpuarm}
+{$ifdef FPC_DOUBLE_HILO_SWAPPED}
      l: longint;
-{$endif cpuarm}
+{$endif FPC_DOUBLE_HILO_SWAPPED}
      f32 : float32;
      f64 : float64;
     Begin
@@ -294,17 +364,13 @@ type
      if sizeof(D)=8 then
        begin
          move(d,f64,sizeof(f64));
-{$ifdef cpuarm}
+{$ifdef FPC_DOUBLE_HILO_SWAPPED}
          { the arm fpu has a strange opinion how a double has to be stored }
          l:=f64.low;
          f64.low:=f64.high;
          f64.high:=l;
-{$endif cpuarm}
-{$ifdef VER1_0}
-         result:=float64_to_int32_round_to_zero(f64);
-{$else VER1_0}
+{$endif FPC_DOUBLE_HILO_SWAPPED}
          result:=float64_to_int64_round_to_zero(f64);
-{$endif VER1_0}
        end
      else
        begin
@@ -312,8 +378,7 @@ type
          result:=float32_to_int32_round_to_zero(f32);
        end;
     end;
-{$endif}
-
+{$endif not FPC_SYSTEM_HAS_TRUNC}
 
 
 {$ifndef FPC_SYSTEM_HAS_INT}
@@ -322,11 +387,7 @@ type
 
     { straight Pascal translation of the code for __trunc() in }
     { the file sysdeps/libm-ieee754/s_trunc.c of glibc (JM)    }
-{$ifdef INTERNCONSTINTF}
-    function fpc_int_real(d: double): double;compilerproc;
-{$else}
-    function int(d: double): double;[internconst:fpc_in_const_int];
-{$endif}
+    function fpc_int_real(d: ValReal): ValReal;compilerproc;
       var
         i0, j0: longint;
         i1: cardinal;
@@ -334,12 +395,12 @@ type
         f64 : float64;
       begin
         f64:=float64(d);
-{$ifdef cpuarm}
+{$ifdef FPC_DOUBLE_HILO_SWAPPED}
         { the arm fpu has a strange opinion how a double has to be stored }
         i0:=f64.low;
         f64.low:=f64.high;
         f64.high:=i0;
-{$endif cpuarm}
+{$endif FPC_DOUBLE_HILO_SWAPPED}
         i0 := f64.high;
         i1 := cardinal(f64.low);
         sx := i0 and $80000000;
@@ -369,75 +430,43 @@ type
             f64.high := i0;
             f64.low := longint(i1 and not(cardinal($ffffffff) shr (j0 - 20)));
           end;
-{$ifdef cpuarm}
+{$ifdef FPC_DOUBLE_HILO_SWAPPED}
         { the arm fpu has a strange opinion how a double has to be stored }
         i0:=f64.low;
         f64.low:=f64.high;
         f64.high:=i0;
-{$endif cpuarm}
+{$endif FPC_DOUBLE_HILO_SWAPPED}
         result:=double(f64);
       end;
 
 {$else SUPPORT_DOUBLE}
 
-{$ifdef INTERNCONSTINTF}
-    function fpc_int_real(d : real) : real;compilerproc;
-{$else}
-    function int(d : real) : real;[internconst:fpc_in_const_int];
-{$endif}
+    function fpc_int_real(d : ValReal) : ValReal;compilerproc;
       begin
         { this will be correct since real = single in the case of }
         { the motorola version of the compiler...                 }
-        result:=real(trunc(d));
+        result:=ValReal(trunc(d));
       end;
 {$endif SUPPORT_DOUBLE}
 
-{$endif}
+{$endif not FPC_SYSTEM_HAS_INT}
 
 
 {$ifndef FPC_SYSTEM_HAS_ABS}
 
-{$ifdef SUPPORT_DOUBLE}
-
-  {$ifdef INTERNCONSTINTF}
-    function fpc_abs_real(d : Double) : Double;compilerproc;
-  {$else}
-    function abs(d : Double) : Double;[public,alias:'FPC_ABS_REAL'];
-  {$endif}
+    function fpc_abs_real(d : ValReal) : ValReal;compilerproc;
     begin
        if (d<0.0) then
          result := -d
       else
          result := d ;
     end;
-
-{$else}
-
-  {$ifdef INTERNCONSTINTF}
-    function fpc_abs_real(d : Double) : Double;compilerproc;
-  {$else}
-    function abs(d : Real) : Real;[public,alias:'FPC_ABS_REAL'];
-  {$endif}
-    begin
-       if (d<0.0) then
-         result := -d
-      else
-         result := d ;
-    end;
-
-{$endif}
-
-{$ifndef INTERNCONSTINTF}
-  {$ifdef hascompilerproc}
-    function fpc_abs_real(d:Real):Real;compilerproc; external name 'FPC_ABS_REAL';
-  {$endif hascompilerproc}
-{$endif}
 
 {$endif not FPC_SYSTEM_HAS_ABS}
 
 
 {$ifndef SYSTEM_HAS_FREXP}
-    function frexp(x:Real; var e:Integer ):Real;
+    function frexp(x:Real; out e:Integer ):Real;
     {*  frexp() extracts the exponent from x.  It returns an integer     *}
     {*  power of two to expnt and the significand between 0.5 and 1      *}
     {*  to y.  Thus  x = y * 2**expn.                                    *}
@@ -548,22 +577,14 @@ type
 
 
 {$ifndef FPC_SYSTEM_HAS_SQR}
-{$ifdef INTERNCONSTINTF}
-    function fpc_sqr_real(d : Real) : Real;compilerproc;{$ifdef MATHINLINE}inline;{$endif}
-{$else}
-    function sqr(d : Real) : Real;[internconst:fpc_in_const_sqr];
-{$endif}
+    function fpc_sqr_real(d : ValReal) : ValReal;compilerproc;{$ifdef MATHINLINE}inline;{$endif}
     begin
       result := d*d;
     end;
 {$endif}
 
 {$ifndef FPC_SYSTEM_HAS_PI}
-{$ifdef INTERNCONSTINTF}
-    function fpc_pi_real : Real;compilerproc;{$ifdef MATHINLINE}inline;{$endif}
-{$else}
-    function pi : Real;[internconst:fpc_in_const_pi];
-{$endif}
+    function fpc_pi_real : ValReal;compilerproc;{$ifdef MATHINLINE}inline;{$endif}
     begin
       result := 3.1415926535897932385;
     end;
@@ -571,14 +592,7 @@ type
 
 
 {$ifndef FPC_SYSTEM_HAS_SQRT}
-  {$ifdef INTERNCONSTINTF}
-    function fpc_sqrt_real(d:Real):Real;compilerproc;
-  {$else}
-    {$ifdef hascompilerproc}
-       function fpc_sqrt_real(d:Real):Real;compilerproc; external name 'FPC_SQRT_REAL';
-    {$endif hascompilerproc}
-    function sqrt(d:Real):Real;[internconst:fpc_in_const_sqrt];[public, alias: 'FPC_SQRT_REAL'];
-  {$endif}
+    function fpc_sqrt_real(d:ValReal):ValReal;compilerproc;
     {*****************************************************************}
     { Square root                                                     }
     {*****************************************************************}
@@ -603,8 +617,10 @@ type
     begin
        if( d <= 0.0 ) then
        begin
-           if( d < 0.0 ) then
-               HandleError(207);
+           if d < 0.0 then begin
+             float_raise(float_flag_invalid);
+             d := 0/0;
+           end;
            result := 0.0;
        end
      else
@@ -639,11 +655,221 @@ type
 
 
 {$ifndef FPC_SYSTEM_HAS_EXP}
-  {$ifdef INTERNCONSTINTF}
-    function fpc_exp_real(d:Real):Real;compilerproc;
-  {$else}
-    function Exp(d:Real):Real;[internconst:fpc_in_const_exp];
-  {$endif}
+{$ifdef SUPPORT_DOUBLE}
+    {
+     This code was translated from uclib code, the original code
+     had the following copyright notice:
+
+     *
+     * ====================================================
+     * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+     *
+     * Developed at SunPro, a Sun Microsystems, Inc. business.
+     * Permission to use, copy, modify, and distribute this
+     * software is freely granted, provided that this notice
+     * is preserved.
+     * ====================================================
+     *}
+
+    {*
+     * Returns the exponential of x.
+     *
+     * Method
+     *   1. Argument reduction:
+     *      Reduce x to an r so that |r| <= 0.5*ln2 ~ 0.34658.
+     *  Given x, find r and integer k such that
+     *
+     *               x = k*ln2 + r,  |r| <= 0.5*ln2.
+     *
+     *      Here r will be represented as r = hi-lo for better
+     *  accuracy.
+     *
+     *   2. Approximation of exp(r) by a special rational function on
+     *  the interval [0,0.34658]:
+     *  Write
+     *      R(r**2) = r*(exp(r)+1)/(exp(r)-1) = 2 + r*r/6 - r**4/360 + ...
+     *      We use a special Reme algorithm on [0,0.34658] to generate
+     *  a polynomial of degree 5 to approximate R. The maximum error
+     *  of this polynomial approximation is bounded by 2**-59. In
+     *  other words,
+     *      R(z) ~ 2.0 + P1*z + P2*z**2 + P3*z**3 + P4*z**4 + P5*z**5
+     *      (where z=r*r, and the values of P1 to P5 are listed below)
+     *  and
+     *      |                  5          |     -59
+     *      | 2.0+P1*z+...+P5*z   -  R(z) | <= 2
+     *      |                             |
+     *  The computation of exp(r) thus becomes
+     *                     2*r
+     *      exp(r) = 1 + -------
+     *                    R - r
+     *                         r*R1(r)
+     *             = 1 + r + ----------- (for better accuracy)
+     *                        2 - R1(r)
+     *  where
+                         2       4             10
+     *     R1(r) = r - (P1*r  + P2*r  + ... + P5*r   ).
+     *
+     *   3. Scale back to obtain exp(x):
+     *  From step 1, we have
+     *     exp(x) = 2^k * exp(r)
+     *
+     * Special cases:
+     *  exp(INF) is INF, exp(NaN) is NaN;
+     *  exp(-INF) is 0, and
+     *  for finite argument, only exp(0)=1 is exact.
+     *
+     * Accuracy:
+     *  according to an error analysis, the error is always less than
+     *  1 ulp (unit in the last place).
+     *
+     * Misc. info.
+     *  For IEEE double
+     *      if x >  7.09782712893383973096e+02 then exp(x) overflow
+     *      if x < -7.45133219101941108420e+02 then exp(x) underflow
+     *
+     * Constants:
+     * The hexadecimal values are the intended ones for the following
+     * constants. The decimal values may be used, provided that the
+     * compiler will convert from decimal to binary accurately enough
+     * to produce the hexadecimal values shown.
+     *
+    }
+    function fpc_exp_real(d: ValReal):ValReal;compilerproc;
+      const
+        one   = 1.0;
+        halF : array[0..1] of double = (0.5,-0.5);
+        huge	= 1.0e+300;
+        twom1000 = 9.33263618503218878990e-302;     { 2**-1000=0x01700000,0}
+        o_threshold =  7.09782712893383973096e+02;  { 0x40862E42, 0xFEFA39EF }
+        u_threshold = -7.45133219101941108420e+02;  { 0xc0874910, 0xD52D3051 }
+        ln2HI  : array[0..1] of double = ( 6.93147180369123816490e-01,  { 0x3fe62e42, 0xfee00000 }
+             -6.93147180369123816490e-01); { 0xbfe62e42, 0xfee00000 }
+        ln2LO : array[0..1] of double = (1.90821492927058770002e-10,  { 0x3dea39ef, 0x35793c76 }
+             -1.90821492927058770002e-10); { 0xbdea39ef, 0x35793c76 }
+        invln2 =  1.44269504088896338700e+00; { 0x3ff71547, 0x652b82fe }
+        P1   =  1.66666666666666019037e-01; { 0x3FC55555, 0x5555553E }
+        P2   = -2.77777777770155933842e-03; { 0xBF66C16C, 0x16BEBD93 }
+        P3   =  6.61375632143793436117e-05; { 0x3F11566A, 0xAF25DE2C }
+        P4   = -1.65339022054652515390e-06; { 0xBEBBBD41, 0xC5D26BF1 }
+        P5   =  4.13813679705723846039e-08; { 0x3E663769, 0x72BEA4D0 }
+      var
+        c,hi,lo,t,y : double;
+        k,xsb : longint;
+        hx,hy,lx : dword;
+      begin
+        hi:=0.0;
+        lo:=0.0;
+        k:=0;
+{$ifdef FPC_DOUBLE_HILO_SWAPPED}
+        hx:=float64(d).low;
+{$else}
+        hx:=float64(d).high;
+{$endif FPC_DOUBLE_HILO_SWAPPED}
+        xsb := (hx shr 31) and 1;               { sign bit of d }
+        hx := hx and $7fffffff;                 { high word of |d| }
+
+        { filter out non-finite argument }
+        if hx >= $40862E42 then
+          begin                  { if |d|>=709.78... }
+            if hx >= $7ff00000 then
+              begin
+{$ifdef FPC_DOUBLE_HILO_SWAPPED}
+                lx:=float64(d).high;
+{$else}
+                lx:=float64(d).low;
+{$endif FPC_DOUBLE_HILO_SWAPPED}
+                if ((hx and $fffff) or lx)<>0 then
+                  begin
+                    result:=d+d; { NaN }
+                    exit;
+                  end
+                else
+                  begin
+                    if xsb=0 then begin
+                      float_raise(float_flag_overflow);
+                      result:=d
+                    end else
+                      result:=0.0;    { exp(+-inf)=begininf,0end }
+                    exit;
+                  end;
+              end;
+            if d > o_threshold then begin
+              float_raise(float_flag_overflow); { overflow }
+              exit;
+            end;
+            if d < u_threshold then begin
+              float_raise(float_flag_underflow); { underflow }
+              result:=0; { Result if underflow masked }
+              exit;
+            end;
+          end;
+        { argument reduction }
+        if hx > $3fd62e42 then
+          begin           { if  |d| > 0.5 ln2 }
+            if hx < $3FF0A2B2 then { and |d| < 1.5 ln2 }
+              begin
+                hi := d-ln2HI[xsb];
+                lo:=ln2LO[xsb];
+                k := 1-xsb-xsb;
+              end
+            else
+              begin
+               k  := round(invln2*d+halF[xsb]);
+               t  := k;
+               hi := d - t*ln2HI[0];    { t*ln2HI is exact here }
+               lo := t*ln2LO[0];
+              end;
+            d  := hi - lo;
+          end
+        else if hx < $3e300000 then
+          begin     { when |d|<2**-28 }
+            if huge+d>one then
+              begin
+                result:=one+d;{ trigger inexact }
+                exit;
+              end;
+          end
+        else
+          k := 0;
+
+        { d is now in primary range }
+        t:=d*d;
+        c:=d - t*(P1+t*(P2+t*(P3+t*(P4+t*P5))));
+        if k=0 then
+          begin
+            result:=one-((d*c)/(c-2.0)-d);
+            exit;
+          end
+        else
+          y := one-((lo-(d*c)/(2.0-c))-hi);
+
+        if k >= -1021 then
+          begin
+{$ifdef FPC_DOUBLE_HILO_SWAPPED}
+            hy:=float64(y).low;
+            float64(y).low:=longint(hy)+(k shl 20);        { add k to y's exponent }
+{$else}
+            hy:=float64(y).high;
+            float64(y).high:=longint(hy)+(k shl 20);        { add k to y's exponent }
+{$endif FPC_DOUBLE_HILO_SWAPPED}
+            result:=y;
+          end
+        else
+          begin
+{$ifdef FPC_DOUBLE_HILO_SWAPPED}
+            hy:=float64(y).low;
+            float64(y).low:=longint(hy)+((k+1000) shl 20); { add k to y's exponent }
+{$else}
+            hy:=float64(y).high;
+            float64(y).high:=longint(hy)+((k+1000) shl 20); { add k to y's exponent }
+{$endif FPC_DOUBLE_HILO_SWAPPED}
+            result:=y*twom1000;
+          end;
+      end;
+
+{$else SUPPORT_DOUBLE}
+
+    function fpc_exp_real(d: ValReal):ValReal;compilerproc;
     {*****************************************************************}
     { Exponential Function                                            }
     {*****************************************************************}
@@ -683,11 +909,12 @@ type
         px, qx, xx : Real;
     begin
       if( d > MAXLOG) then
-          HandleError(205)
+          float_raise(float_flag_overflow)
       else
       if( d < MINLOG ) then
       begin
-        HandleError(205);
+        float_raise(float_flag_underflow);
+        result:=0; { Result if underflow masked }
       end
       else
       begin
@@ -714,100 +941,67 @@ type
         result := d;
       end;
     end;
+{$endif SUPPORT_DOUBLE}
+
 {$endif}
 
 
 {$ifndef FPC_SYSTEM_HAS_ROUND}
-  {$ifdef INTERNCONSTINTF}
-    function fpc_round_real(d : Real) : int64;compilerproc;
-  {$else}
-    {$ifdef hascompilerproc}
-      function round(d : Real) : int64;{$ifndef INTERNCONSTINTF}[internconst:fpc_in_const_round];{$endif} external name 'FPC_ROUND';
-      function fpc_round(d : Real) : int64;[public, alias:'FPC_ROUND'];{$ifdef hascompilerproc}compilerproc;{$endif hascompilerproc}
-   {$else}
-      function round(d : Real) : int64;{$ifndef INTERNCONSTINTF}[internconst:fpc_in_const_round];{$endif}
-   {$endif hascompilerproc}
- {$endif}
+    function fpc_round_real(d : ValReal) : int64;compilerproc;
      var
-      fr: Real;
+      fr: ValReal;
       tr: Int64;
     Begin
-       fr := abs(Frac(d));
-       tr := Trunc(d);
-       if fr > 0.5 then
-         if d >= 0 then
-           result:=tr+1
-         else
-           result:=tr-1
-       else
-       if fr < 0.5 then
-          result:=tr
-       else { fr = 0.5 }
-          { check sign to decide ... }
-          { as in Turbo Pascal...    }
-          if d >= 0.0 then
+      fr := abs(Frac(d));
+      tr := Trunc(d);
+      result:=0;
+      case softfloat_rounding_mode of
+        float_round_nearest_even:
+          begin
+            if fr > 0.5 then
+              if d >= 0 then
+                result:=tr+1
+              else
+                result:=tr-1
+            else
+            if fr < 0.5 then
+               result:=tr
+            else { fr = 0.5 }
+               { check sign to decide ... }
+               { as in Turbo Pascal...    }
+              begin
+                if d >= 0.0 then
+                  result:=tr+1
+                else
+                  result:=tr;
+                { round to even }
+                result:=result and not(1);
+              end;
+          end;
+        float_round_down:
+          if (d >= 0.0) or
+             (fr = 0.0) then
+            result:=tr
+          else
+            result:=tr-1;
+        float_round_up:
+          if (d >= 0.0) and
+             (fr <> 0.0) then
             result:=tr+1
           else
             result:=tr;
+        float_round_to_zero:
+          result:=tr;
+        else
+          { needed for jvm: result must be initialized on all paths }
+          result:=0;
+      end;
     end;
-{$endif}
-
-
-{$ifdef FPC_CURRENCY_IS_INT64}
-
-    function trunc(c : currency) : int64;
-      type
-        tmyrec = record
-          i: int64;
-        end;
-      begin
-        result := int64(tmyrec(c)) div 10000
-      end;
-
-
-    function trunc(c : comp) : int64;
-      begin
-        result := c
-      end;
-
-
-    function round(c : currency) : int64;
-      type
-        tmyrec = record
-          i: int64;
-        end;
-      var
-        rem, absrem: longint;
-      begin
-        { (int64(tmyrec(c))(+/-)5000) div 10000 can overflow }
-        result := int64(tmyrec(c)) div 10000;
-        rem := int64(tmyrec(c)) - result * 10000;
-        absrem := abs(rem);
-        if (absrem > 5000) or
-           ((absrem = 5000) and
-            (rem > 0)) then
-          if (rem > 0) then
-            inc(result)
-          else
-            dec(result);
-      end;
-
-
-    function round(c : comp) : int64;
-      begin
-        result := c
-      end;
-
-{$endif FPC_CURRENCY_IS_INT64}
-
+{$endif FPC_SYSTEM_HAS_ROUND}
 
 
 {$ifndef FPC_SYSTEM_HAS_LN}
-  {$ifdef INTERNCONSTINTF}
-    function fpc_ln_real(d:Real):Real;compilerproc;
-  {$else}
-    function Ln(d:Real):Real;[internconst:fpc_in_const_ln];
-  {$endif}
+    function fpc_ln_real(d:ValReal):ValReal;compilerproc;
     {*****************************************************************}
     { Natural Logarithm                                               }
     {*****************************************************************}
@@ -871,7 +1065,10 @@ type
     Label Ldone;
     begin
        if( d <= 0.0 ) then
-          HandleError(207);
+         begin
+           float_raise(float_flag_invalid);
+           exit;
+         end;
        d := frexp( d, e );
 
     { logarithm using log(x) = z + z**3 P(z)/Q(z),
@@ -931,11 +1128,7 @@ type
 
 
 {$ifndef FPC_SYSTEM_HAS_SIN}
-  {$ifdef INTERNCONSTINTF}
-    function fpc_Sin_real(d:Real):Real;compilerproc;
-  {$else}
-    function Sin(d:Real):Real;[internconst:fpc_in_const_sin];
-  {$endif}
+    function fpc_Sin_real(d:ValReal):ValReal;compilerproc;
     {*****************************************************************}
     { Circular Sine                                                   }
     {*****************************************************************}
@@ -1021,11 +1214,7 @@ type
 
 
 {$ifndef FPC_SYSTEM_HAS_COS}
-  {$ifdef INTERNCONSTINTF}
-    function fpc_Cos_real(d:Real):Real;compilerproc;
-  {$else}
-    function Cos(d:Real):Real;[internconst:fpc_in_const_cos];
-  {$endif}
+    function fpc_Cos_real(d:ValReal):ValReal;compilerproc;
     {*****************************************************************}
     { Circular cosine                                                 }
     {*****************************************************************}
@@ -1108,11 +1297,7 @@ type
 
 
 {$ifndef FPC_SYSTEM_HAS_ARCTAN}
-  {$ifdef INTERNCONSTINTF}
-    function fpc_ArcTan_real(d:Real):Real;compilerproc;
-  {$else}
-    function ArcTan(d:Real):Real;[internconst:fpc_in_const_arctan];
-  {$endif}
+    function fpc_ArcTan_real(d:ValReal):ValReal;compilerproc;
     {*****************************************************************}
     { Inverse circular tangent (arctangent)                           }
     {*****************************************************************}
@@ -1187,11 +1372,7 @@ type
 
 
 {$ifndef FPC_SYSTEM_HAS_FRAC}
-  {$ifdef INTERNCONSTINTF}
-    function fpc_frac_real(d : Real) : Real;compilerproc;
-  {$else}
-    function frac(d : Real) : Real;[internconst:fpc_in_const_frac];
-  {$endif}
+    function fpc_frac_real(d : ValReal) : ValReal;compilerproc;
     begin
        result := d - Int(d);
     end;
@@ -1203,7 +1384,7 @@ type
 {$ifndef FPC_SYSTEM_HAS_QWORD_TO_DOUBLE}
 function fpc_qword_to_double(q : qword): double; compilerproc;
   begin
-     result:=dword(q and $ffffffff)+dword(q shr 32)*4294967296.0;
+     result:=dword(q and $ffffffff)+dword(q shr 32)*double(4294967296.0);
   end;
 {$endif FPC_SYSTEM_HAS_INT64_TO_DOUBLE}
 
@@ -1234,6 +1415,13 @@ function fpc_int64_to_double(i : int64): double; compilerproc;
          exponent : word;
 
       begin
+         { check for zero }
+         if r[0]=0 then
+           begin
+             real2double:=0.0;
+             exit;
+           end;
+
          { copy mantissa }
          res[0]:=0;
          res[1]:=r[1] shl 5;
@@ -1256,13 +1444,84 @@ function fpc_int64_to_double(i : int64): double; compilerproc;
 {$endif FPC_SYSTEM_HAS_REAL2DOUBLE}
 {$endif SUPPORT_DOUBLE}
 
-{
-  $Log: genmath.inc,v $
-  Revision 1.32  2005/02/14 17:13:22  peter
-    * truncate log
+{$ifdef SUPPORT_EXTENDED}
+{ fast 10^n routine }
+function FPower10(val: Extended; Power: Longint): Extended;
+  const
+    pow32 : array[0..31] of extended =
+      (
+        1e0,1e1,1e2,1e3,1e4,1e5,1e6,1e7,1e8,1e9,1e10,
+        1e11,1e12,1e13,1e14,1e15,1e16,1e17,1e18,1e19,1e20,
+        1e21,1e22,1e23,1e24,1e25,1e26,1e27,1e28,1e29,1e30,
+        1e31
+      );
+    pow512 : array[0..15] of extended =
+      (
+        1,1e32,1e64,1e96,1e128,1e160,1e192,1e224,
+        1e256,1e288,1e320,1e352,1e384,1e416,1e448,
+        1e480
+      );
+    pow4096 : array[0..9] of extended =
+      (1,1e512,1e1024,1e1536,
+       1e2048,1e2560,1e3072,1e3584,
+       1e4096,1e4608
+      );
 
-  Revision 1.31  2005/02/08 20:25:28  florian
-    - killed power from system unit
-    * move operator ** to math unit
+    negpow32 : array[0..31] of extended =
+      (
+        1e-0,1e-1,1e-2,1e-3,1e-4,1e-5,1e-6,1e-7,1e-8,1e-9,1e-10,
+        1e-11,1e-12,1e-13,1e-14,1e-15,1e-16,1e-17,1e-18,1e-19,1e-20,
+        1e-21,1e-22,1e-23,1e-24,1e-25,1e-26,1e-27,1e-28,1e-29,1e-30,
+        1e-31
+      );
+    negpow512 : array[0..15] of extended =
+      (
+        0,1e-32,1e-64,1e-96,1e-128,1e-160,1e-192,1e-224,
+        1e-256,1e-288,1e-320,1e-352,1e-384,1e-416,1e-448,
+        1e-480
+      );
+    negpow4096 : array[0..9] of extended =
+      (
+        0,1e-512,1e-1024,1e-1536,
+        1e-2048,1e-2560,1e-3072,1e-3584,
+        1e-4096,1e-4608
+      );
 
-}
+  begin
+    if Power<0 then
+      begin
+        Power:=-Power;
+        result:=val*negpow32[Power and $1f];
+        power:=power shr 5;
+        if power<>0 then
+          begin
+            result:=result*negpow512[Power and $f];
+            power:=power shr 4;
+            if power<>0 then
+              begin
+                if power<=9 then
+                  result:=result*negpow4096[Power]
+                else
+                  result:=1.0/0.0;
+              end;
+          end;
+      end
+    else
+      begin
+        result:=val*pow32[Power and $1f];
+        power:=power shr 5;
+        if power<>0 then
+          begin
+            result:=result*pow512[Power and $f];
+            power:=power shr 4;
+            if power<>0 then
+              begin
+                if power<=9 then
+                  result:=result*pow4096[Power]
+                else
+                  result:=1.0/0.0;
+              end;
+          end;
+      end;
+  end;
+{$endif SUPPORT_EXTENDED}

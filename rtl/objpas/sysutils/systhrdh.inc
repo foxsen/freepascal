@@ -1,5 +1,4 @@
 {
-    $Id: systhrdh.inc,v 1.4 2005/02/14 17:13:31 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2001 by the Free Pascal development team
 
@@ -12,7 +11,6 @@
 
  **********************************************************************}
 
-{$ifdef HASINTF}
 
 type
    IReadWriteSync = interface
@@ -23,19 +21,30 @@ type
      procedure EndWrite;
    end;
 
-{$endif HASINTF}
+   TSimpleRWSync = class(TInterfacedObject,IReadWriteSync)
+   private
+      crit : TRtlCriticalSection;
+   public
+      constructor Create; virtual;
+      destructor  Destroy; override;
+      function Beginwrite : boolean;
+      procedure Endwrite;
+      procedure Beginread;
+      procedure Endread;
+   end;
 
-function InterLockedIncrement (var Target: longint) : longint;
-function InterLockedDecrement (var Target: longint) : longint;
-function InterLockedExchange (var Target: longint;Source : longint) : longint;
-function InterLockedExchangeAdd (var Target: longint;Source : longint) : longint;
-
-{
-  $Log: systhrdh.inc,v $
-  Revision 1.4  2005/02/14 17:13:31  peter
-    * truncate log
-
-  Revision 1.3  2005/02/06 20:31:35  florian
-    + GlobalNameSpace
-
-}
+   TMultiReadExclusiveWriteSynchronizer = class(TInterfacedObject,IReadWriteSync)
+   private
+      freaderqueue: peventstate;
+      fwritelock : TRtlCriticalSection;
+      fwaitingwriterlock: prtlevent;
+      freadercount: cardinal;
+      fwritelocked: longint;
+   public
+      constructor Create; virtual;
+      destructor  Destroy; override;
+      function Beginwrite : boolean;
+      procedure Endwrite;
+      procedure Beginread;
+      procedure Endread;
+   end;

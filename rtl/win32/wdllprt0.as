@@ -3,11 +3,11 @@
      .text
      .globl _mainCRTStartup
 _mainCRTStartup:
-     movb $1,U_SYSTEM_ISCONSOLE
+     movb $1,operatingsystem_isconsole
      jmp .LDLL_Entry
      .globl _WinMainCRTStartup
 _WinMainCRTStartup:
-     movb $0,U_SYSTEM_ISCONSOLE
+     movb $0,operatingsystem_isconsole
 .LDLL_Entry:
      pushl    %ebp
      movl     %esp,%ebp
@@ -15,29 +15,30 @@ _WinMainCRTStartup:
      pushl    %esi
      pushl    %edi
      movl     8(%ebp),%edi
-     movl     %edi,U_SYSTEM_HINSTANCE
+     movl     %edi,SysInstance
      movl     12(%ebp),%edi
-     movl     %edi,U_SYSTEM_DLLREASON
+     movl     %edi,operatingsystem_parameter_dllreason
      movl     16(%ebp),%edi
-     movl     %edi,U_SYSTEM_DLLPARAM
+     movl     %edi,operatingsystem_parameter_dllparam
+     movl     %esp,__stkptr
      call     _FPC_DLL_Entry
      popl     %edi
      popl     %esi
      popl     %ebx
      popl     %ebp
      ret      $12
-     
+
      .globl asm_exit
-asm_exit:     
+asm_exit:
     pushl  %eax
 	call   exitprocess
-	
+
 .text
 .globl	exitprocess
 exitprocess:
 	jmp	*.L10
 	.balign 4,144
-	
+
 .text
 	.balign 4,144
 
@@ -54,7 +55,7 @@ exitprocess:
 
 .section .idata$5
 .L8:
-	
+
 
 .section .idata$5
 .L10:
@@ -70,15 +71,6 @@ exitprocess:
 .section .idata$7
 .L6:
 	.ascii	"kernel32.dll\000"
-     
-     
-//
-// $Log: wdllprt0.as,v $
-// Revision 1.4  2002/12/04 21:36:44  carl
-//   * libraries would no longer compile because of my profiling fix
-//
-// Revision 1.3  2002/07/28 20:43:51  florian
-//   * several fixes for linux/powerpc
-//   * several fixes to MT
-//
-//
+
+.bss
+    .comm   __stkptr,4

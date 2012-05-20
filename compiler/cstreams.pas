@@ -1,5 +1,4 @@
 {
-    $Id: cstreams.pas,v 1.9 2005/02/14 17:13:06 peter Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl and Peter Vreman
 
     This module provides stream classes
@@ -101,23 +100,38 @@ type
     property Size: Longint read GetSize write SetSize;
   end;
 
+{ TCCustomFileStream class }
+
+  TCCustomFileStream = class(TCStream)
+  protected
+    FFileName : String;
+  public
+    constructor Create(const AFileName: string;{shortstring!} Mode: Word); virtual; abstract;
+    function EOF: boolean; virtual; abstract;
+    property FileName : String Read FFilename;
+  end;
+
 { TFileStream class }
 
-  TCFileStream = class(TCStream)
+  TCFileStream = class(TCCustomFileStream)
   Private
-    FFileName : String;
     FHandle: File;
   protected
     procedure SetSize(NewSize: Longint); override;
   public
-    constructor Create(const AFileName: string; Mode: Word);
+    constructor Create(const AFileName: string; Mode: Word); override;
     destructor Destroy; override;
     function Read(var Buffer; Count: Longint): Longint; override;
     function Write(const Buffer; Count: Longint): Longint; override;
     function Seek(Offset: Longint; Origin: Word): Longint; override;
-    property FileName : String Read FFilename;
+    function EOF: boolean; override;
   end;
 
+  TCFileStreamClass = class of TCCustomFileStream;
+var
+  CFileStreamClass: TCFileStreamClass = TCFileStream;
+
+type
 { TCustomMemoryStream abstract class }
 
   TCCustomMemoryStream = class(TCStream)
@@ -189,7 +203,7 @@ implementation
 
     begin
     // We do nothing. Pipe streams don't support this
-    // As wel as possible read-ony streams !!
+    // As well as possible read-ony streams !!
     end;
 
   procedure TCStream.ReadBuffer(var Buffer; Count: Longint);
@@ -350,32 +364,37 @@ implementation
 {****************************************************************************}
 
 constructor TCFileStream.Create(const AFileName: string; Mode: Word);
+var
+  oldfilemode : byte;
 begin
   FFileName:=AFileName;
   If Mode=fmcreate then
     begin
       system.assign(FHandle,AFileName);
-      {$I-}
+      {$push} {$I-}
        system.rewrite(FHandle,1);
-      {$I+}
+      {$pop}
       CStreamError:=IOResult;
     end
   else
     begin
+      oldfilemode:=filemode;
+      filemode:=$40 or Mode;
       system.assign(FHandle,AFileName);
-      {$I-}
+      {$push} {$I-}
        system.reset(FHandle,1);
-      {$I+}
+      {$pop}
       CStreamError:=IOResult;
+      filemode:=oldfilemode;
     end;
 end;
 
 
 destructor TCFileStream.Destroy;
 begin
-  {$I-}
+  {$push} {$I-}
    System.Close(FHandle);
-  {$I+}
+  {$pop}
   CStreamError:=IOResult;
 end;
 
@@ -398,10 +417,10 @@ end;
 
 Procedure TCFileStream.SetSize(NewSize: Longint);
 begin
-  {$I-}
+  {$push} {$I-}
    System.Seek(FHandle,NewSize);
    System.Truncate(FHandle);
-  {$I+}
+  {$pop}
   CStreamError:=IOResult;
 end;
 
@@ -410,10 +429,13 @@ function TCFileStream.Seek(Offset: Longint; Origin: Word): Longint;
 var
   l : longint;
 begin
-  {$I-}
+  {$push} {$I-}
    case Origin of
      soFromBeginning :
-       System.Seek(FHandle,Offset);
+       begin
+         System.Seek(FHandle,Offset);
+         l:=Offset;
+       end;
      soFromCurrent :
        begin
          l:=System.FilePos(FHandle);
@@ -429,9 +451,14 @@ begin
          System.Seek(FHandle,l);
        end;
    end;
-  {$I+}
+  {$pop}
   CStreamError:=IOResult;
-  Result:=CStreamError;
+  Result:=l;
+end;
+
+function TCFileStream.EOF: boolean;
+begin
+  EOF:=system.eof(FHandle);
 end;
 
 
@@ -455,7 +482,7 @@ begin
     begin
     Result:=FSize-FPosition;
     If Result>Count then Result:=Count;
-    Move (Pointer(PtrInt(FMemory)+FPosition)^,Buffer,Result);
+    Move (Pointer(PtrUInt(FMemory)+PtrUInt(FPosition))^,Buffer,Result);
     FPosition:=Fposition+Result;
     end;
 end;
@@ -482,11 +509,11 @@ end;
 
 procedure TCCustomMemoryStream.SaveToFile(const FileName: string);
 
-Var S : TCFileStream;
+Var S : TCCustomFileStream;
 
 begin
   Try
-    S:=TCFileStream.Create (FileName,fmCreate);
+    S:=CFileStreamClass.Create (FileName,fmCreate);
     SaveToStream(S);
   finally
     S.free;
@@ -567,11 +594,11 @@ end;
 
 procedure TCMemoryStream.LoadFromFile(const FileName: string);
 
-Var S : TCFileStream;
+Var S : TCCustomFileStream;
 
 begin
   Try
-    S:=TCFileStream.Create (FileName,fmOpenRead);
+    S:=CFileStreamClass.Create (FileName,fmOpenRead);
     LoadFromStream(S);
   finally
     S.free;
@@ -606,15 +633,9 @@ begin
       SetCapacity (NewPos);
     FSize:=Newpos;
     end;
-  System.Move (Buffer,Pointer(Ptrint(FMemory)+FPosition)^,Count);
+  System.Move (Buffer,Pointer(Ptruint(FMemory)+PtrUInt(FPosition))^,Count);
   FPosition:=NewPos;
   Result:=Count;
 end;
 
 end.
-{
-  $Log: cstreams.pas,v $
-  Revision 1.9  2005/02/14 17:13:06  peter
-    * truncate log
-
-}

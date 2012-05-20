@@ -1,6 +1,5 @@
 {
     *********************************************************************
-    $Id: syspch.inc,v 1.5 2005/02/14 17:13:31 peter Exp $
     Copyright (C) 1997, 1998 Gertjan Schouten
 
     This program is free software; you can redistribute it and/or modify
@@ -23,17 +22,11 @@
 
 {  PChar functions  }
 
-type
-   pbyte = ^byte;
-   CharArray = array[0..0] of char;
-
 { Processor dependent part, shared withs strings unit }
-{$IFNDEF VIRTUALPASCAL}  // in system there
 {$ifdef FPC_USE_LIBC}
 {$i cgenstr.inc}
 {$endif FPC_USE_LIBC}
 {$i strings.inc }
-{$ENDIF}
 
 { Read generic string functions that are not implemented for the processor }
 {$i genstr.inc}
@@ -80,7 +73,7 @@ end;
 
 {  StrPCopy copies the pascal string Source to Dest and returns Dest  }
 
-function StrPCopy(Dest: PChar; Source: string): PChar;
+function StrPCopy(Dest: PChar; Source: string): PChar;overload;
 begin
   result := StrMove(Dest, PChar(Source), length(Source)+1);
 end ;
@@ -88,17 +81,18 @@ end ;
 {  StrPLCopy copies MaxLen or less characters from the pascal string
    Source to Dest and returns Dest  }
 
-function StrPLCopy(Dest: PChar; Source: string; MaxLen: SizeUInt): PChar;
+function StrPLCopy(Dest: PChar; Source: string; MaxLen: SizeUInt): PChar;overload;
 var Count: SizeUInt;
 begin
 result := Dest;
-if (Result <> Nil) and (MaxLen <> 0) then begin
-   Count := Length(Source);
-   if Count > MaxLen then
+if (Result <> Nil) and (MaxLen <> 0) then
+  begin
+    Count := Length(Source);
+    if Count > MaxLen then
       Count := MaxLen;
-   StrMove(Dest, PChar(Source), Count);
-   CharArray(result^)[Count] := #0;  { terminate ! }
-   end ;
+    StrMove(Dest, PChar(Source), Count);
+    result[Count] := #0;  { terminate ! }
+  end ;
 end ;
 
 
@@ -123,9 +117,3 @@ begin
    result := 0;
 end ;
 
-{
-  $Log: syspch.inc,v $
-  Revision 1.5  2005/02/14 17:13:31  peter
-    * truncate log
-
-}

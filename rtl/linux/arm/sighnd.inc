@@ -1,5 +1,4 @@
 {
-    $Id: sighnd.inc,v 1.5 2005/04/24 21:19:22 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Michael Van Canneyt,
     member of the Free Pascal development team.
@@ -17,10 +16,10 @@
  **********************************************************************}
 
 
-procedure SignalToRunerror(Sig: longint; _a2,_a3,_a4 : dword; SigContext: PSigInfo; uContext : PuContext); cdecl;
+procedure SignalToRunerror(Sig: longint; { _a2,_a3,_a4 : dword; } SigContext: PSigInfo; uContext : PuContext); public name '_FPC_DEFAULTSIGHANDLER'; cdecl;
 
 var
-  res,fpustate : word;
+  res : word;
 begin
   res:=0;
   case sig of
@@ -29,30 +28,28 @@ begin
           { don't know how to find the different causes, maybe via xer? }
           res := 207;
         end;
-    SIGILL,
-    SIGBUS,
+    SIGILL:
+        if in_edsp_test then
+          begin
+            res:=0;
+            cpu_has_edsp:=false;
+            inc(uContext^.uc_mcontext.arm_pc,4);
+          end
+        else
+          res:=216;
     SIGSEGV :
         res:=216;
+    SIGBUS:
+        res:=214;
+    SIGINT:
+        res:=217;
+    SIGQUIT:
+        res:=233;
   end;
   reenable_signal(sig);
   { give runtime error at the position where the signal was raised }
   if res<>0 then
-    HandleErrorAddrFrame(res,pointer(uContext^.uc_mcontext.arm_ip),pointer(uContext^.uc_mcontext.arm_fp));
+    HandleErrorAddrFrame(res,pointer(uContext^.uc_mcontext.arm_pc),pointer(uContext^.uc_mcontext.arm_fp));
 end;
 
-{
-  $Log: sighnd.inc,v $
-  Revision 1.5  2005/04/24 21:19:22  peter
-    * unblock signal in signalhandler, remove the sigprocmask call
-      from setjmp
-
-  Revision 1.4  2005/02/14 17:13:30  peter
-    * truncate log
-
-  Revision 1.3  2005/01/30 18:01:15  peter
-    * signal cleanup for linux
-    * sigactionhandler instead of tsigaction for bsds
-    * sigcontext moved to cpu dir
-
-}
 

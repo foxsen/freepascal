@@ -1,5 +1,4 @@
 {
-    $Id: i_os2.pas,v 1.9 2005/03/20 22:36:45 olle Exp $
     Copyright (c) 1998-2002 by Peter Vreman
 
     This unit implements support information structures for OS/2
@@ -22,18 +21,23 @@
 { This unit implements support information structures for OS/2. }
 unit i_os2;
 
+{$i fpcdefs.inc}
+
   interface
 
     uses
        systems;
 
     const
-       res_emxbind_info : tresinfo =
+       res_wrc_os2_info : tresinfo =
           (
-            id     : res_emxbind;
-            resbin : 'emxbind';
-            rescmd : '-b -r $RES $OBJ'
-            (* Not really used - see TLinkeros2.SetDefaultInfo in t_os2.pas. *)
+             id     : res_watcom_wrc_os2;
+             resbin : '';
+             rescmd : '';
+             rcbin  : 'wrc';
+             rccmd  : '-r -zm -q -bt=os2 -fo=$RES $RC';
+             resourcefileclass : nil;
+             resflags : [res_single_file];
           );
 
        system_i386_os2_info : tsysteminfo =
@@ -41,7 +45,7 @@ unit i_os2;
             system       : system_i386_OS2;
             name         : 'OS/2';
             shortname    : 'OS2';
-            flags        : [tf_need_export,tf_use_8_3];
+            flags        : [tf_need_export,tf_files_case_aware,tf_use_8_3];
             cpu          : cpu_i386;
             unit_env     : 'OS2UNITS';
             extradefines : '';
@@ -57,23 +61,24 @@ unit i_os2;
             resobjext    : '.or';
             sharedlibext : '.dll';
             staticlibext : '.a';
-            staticlibprefix : '';
+            staticlibprefix : 'libp';
             sharedlibprefix : '';
             sharedClibext : '.dll';
             staticClibext : '.a';
             staticClibprefix : '';
             sharedClibprefix : '';
-            p_ext_support : false;
+            importlibprefix : '';
+            importlibext : '.a';
             Cprefix      : '_';
             newline      : #13#10;
             dirsep       : '\';
-            files_case_relevent : false;
             assem        : as_i386_as_aout;
             assemextern  : as_i386_as_aout;
             link         : nil;
             linkextern   : nil;
             ar           : ar_gnu_ar;
-            res          : res_emxbind;
+            res          : res_watcom_wrc_os2;
+            dbg          : dbg_stabs;
             script       : script_dos;
             endian       : endian_little;
             alignment    :
@@ -93,8 +98,7 @@ unit i_os2;
               );
             first_parm_offset : 8;
             stacksize    : 256*1024;
-            DllScanSupported: false;
-            use_function_relative_addresses : false
+            abi          : abi_default;
           );
 
 
@@ -112,13 +116,3 @@ initialization
   {$endif os2}
 {$endif CPU86}
 end.
-{
-  $Log: i_os2.pas,v $
-  Revision 1.9  2005/03/20 22:36:45  olle
-    * Cleaned up handling of source file extension.
-    + Added support for .p extension for macos and darwin
-
-  Revision 1.8  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

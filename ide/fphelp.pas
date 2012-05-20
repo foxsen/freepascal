@@ -1,5 +1,4 @@
 {
-    $Id: fphelp.pas,v 1.12 2005/03/13 12:32:41 florian Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 1998 by Berczi Gabor
 
@@ -44,6 +43,7 @@ procedure HelpIndex(Keyword: string);
 procedure HelpTopicSearch(Editor: PEditor);
 procedure HelpTopic(const S: string);
 procedure CloseHelpWindows;
+procedure HelpDebugInfos;
 
 procedure InitHelpSystem;
 procedure DoneHelpSystem;
@@ -65,15 +65,160 @@ implementation
 
 uses Objects,Views,App,MsgBox,
      WUtils,WOAHelp,WHTMLHlp,WNGHelp,WOS2Help,WVPHelp,WWinHelp,
-     FPString,FPConst,FPVars,FPUtils;
+     FPConst,FPVars,FPUtils;
 
 const
-    MaxStatusLevel = {$ifdef FPC}10{$else}1{$endif};
+    MaxStatusLevel = 10;
 
 var StatusStack : array[0..MaxStatusLevel] of string[MaxViewWidth];
 
 const
       StatusStackPtr  : integer = 0;
+
+{$ifdef useresstrings}
+resourcestring
+{$else}
+const
+{$endif}
+      dialog_help = 'Help';
+
+      msg_modalhelpnotimplemented = 'Sorry, modal help not yet implemented.';
+
+      { Help messages }
+      msg_indexingfile = 'Indexing file %s';
+      msg_loadinghelpfiles = 'Loading help files...';
+      msg_loadinghelpfile = 'Loading help file...';
+      msg_buildinghelpindex = 'Building Help Index...';
+      msg_locatingtopic = 'Locating topic...';
+      msg_failedtoloadhelpfile = 'Failed to load help file %s';
+
+      { Menu hints }
+      hint_systemmenu        = 'System menu';
+      hint_update            = 'Refresh and redraw display';
+      hint_about             = 'Show version and copyright information';
+      hint_filemenu          = 'File managment commands (Open, New, Save, etc.)';
+      hint_filenew           = 'Create a new file in a new edit window';
+      hint_filenewfromtemplate='Create a new file using a code template';
+      hint_fileopen          = 'Locate and open a file in an edit window';
+      hint_filesave          = 'Save the file in the active edit window';
+      hint_filesaveas        = 'Save the current file under a different name, directory or drive';
+      hint_filesaveall       = 'Save all modified files';
+      hint_print             = 'Print current file';
+      hint_printersetup      = 'Setup printer output device';
+      hint_changedir         = 'Choose a new default directory';
+      hint_dosshell          = 'Temporarily exit to shell';
+      hint_exit              = 'Exit the IDE';
+      hint_openrecentfile    = 'Open ';
+      hint_editmenu          = 'Clipboard editing commands';
+      hint_editundo          = 'Undo the previous editor operation';
+      hint_editredo          = 'Redo the previously undone editor operation';
+      hint_editcut           = 'Remove the selected text and put it in the clipboard';
+      hint_editcopy          = 'Copy the selected text in the clipboard';
+      hint_editpaste         = 'Insert selected text from the clipboard at the cursor position';
+      hint_editcopywin       = 'Copy the selected text in windows clipboard';
+      hint_editpastewin      = 'Insert selected text from windows clipboard at the cursor position';
+      hint_editclear         = 'Delete the selected text';
+      hint_editselectall     = 'Select the whole text';
+      hint_editunselect      = 'Unselect everything';
+      hint_showclipboard     = 'Open then clipboard window';
+      hint_searchmenu        = 'Text and symbols search commands';
+      hint_searchfind        = 'Search for text';
+      hint_searchreplace     = 'Search for text and replace it with new text';
+      hint_replaceagain      = 'Repeat the last Replace command (%s with %s)';
+      hint_searchagain       = 'Repeat the last Search  command (%s)';
+      hint_gotoline          = 'Move the cursor to a specified line number';
+      hint_objects           = 'Open a browser displaying all objects in the program';
+      hint_modules           = 'Open a browser displaying all modules of the program';
+      hint_globals           = 'Open a browser displaying all global symbols in the program';
+      hint_symbol            = 'Open a browser a current word (not yet scope sensitive)';
+      hint_runmenu           = 'Execution and parameters';
+      hint_run               = 'Run the current program';
+      hint_rundir            = 'Set directory that will be used as current working directory at execution';
+      hint_runparameters     = 'Set command-line parameters passed to program at execution';
+      hint_resetprogram      = 'Reset Program';
+      hint_rununtilcursor    = 'Go on until Cursor position';
+      hint_rununtilreturn    = 'Go on until end of current function';
+      hint_userscreen        = 'Switch to the full-screen user output';
+      hint_compilemenu       = 'Compile, build & make';
+      hint_compile           = 'Compile the current source file';
+      hint_make              = 'Rebuild source file and all other files that have been modified';
+      hint_build             = 'Rebuild program and all available source files';
+      hint_target            = 'Select target platform to compile for';
+      hint_primaryfile       = 'Define the file that is the focus of Make and Build';
+      hint_clearprimaryfile  = 'Clear the file previously set to Primary';
+      hint_information       = 'Show compiler messages and program information';
+      hint_showmessages      = 'Show compiler messages window';
+      hint_debugmenu         = 'Debug Program';
+      hint_togglebreakpoint  = 'Toggles Breakpoint';
+      hint_createnewbreakpoint = 'Create a new breakpoint';
+      hint_editbreakpoint    = 'Edit focused breakpoint';
+      hint_deletebreakpoint  = 'Delete focused breakpoint';
+      hint_opengdbwindow     = 'Open direct window to GDB';
+      hint_addwatch          = 'Add a new expression to watch';
+      hint_watches           = 'Open the Watches Window';
+      hint_callstack         = 'Show call stack';
+      hint_editbreakpoints   = 'Edit breakpoints';
+      hint_toolsmenu         = 'User installed tools';
+      hint_calculator        = 'Show calculator';
+      hint_grep              = 'Run grep';
+      hint_gotosource        = 'Edit source';
+      hint_registers         = 'Open the Registers Window';
+      hint_fpuregisters      = 'Open the FPU Registers Window';
+      hint_vectorregisters   = 'Open the Vector Registers Window';
+      hint_messageswindow    = 'Open the message window';
+      hint_gotonextmsg       = 'Jumps to the next message in the Message Window';
+      hint_gotoprevmsg       = 'Jumps to the previous message in the Message Window';
+      hint_usertool          = 'User installed tool';
+      hint_asciitable        = 'Show ASCII table';
+      hint_optionsmenu       = 'Setting for compiler, editor, mouse, etc.';
+      hint_switchesmode      = 'Select settings for normal, debug or release version';
+      hint_compiler          = 'Set default compiler directives and conditional defines';
+      hint_memorysizes       = 'Set default stack and heap sizes for generated programs';
+      hint_linkeroptions     = 'Set linker options';
+      hint_debugoptions      = 'Set debug information options';
+      hint_remotedialog      = 'Set remote protocol parameters';
+      hint_transferremote    = 'Transfer executable to remote target';
+      hint_directories       = 'Set paths for units, include, object and generated files';
+      hint_browser           = 'Specify global browser settings';
+      hint_reloadmodifiedfile= 'Reload file modified on disk';
+      hint_tools             = 'Create or change tools';
+      hint_environmentmenu   = 'Specify environment settins';
+      hint_preferences       = 'Specify desktop settings';
+      hint_editoroptions     = 'Specify default editor settings';
+      hint_codecomplete      = 'Specify CodeComplete keywords';
+      hint_codetemplates     = 'Specify CodeTemplates';
+      hint_mouseoptions      = 'Specify mouse settings';
+      hint_desktopoptions    = 'Specify desktop settings';
+      hint_startup           = 'Permanently change default startup options';
+      hint_colors            = 'Customize IDE colors for windows, menus, editors, etc.';
+      hint_openini           = 'Load a previously saved options file';
+      hint_saveini           = 'Save all the changes made in the options menu';
+      hint_saveasini         = 'Save all the changes made under a different name';
+      hint_windowmenu        = 'Windows managment commands';
+      hint_tile              = 'Arrange windows on desktop by tiling';
+      hint_cascade           = 'Arrange windows on desktop by cascading';
+      hint_closeall          = 'Close all windows on the desktop';
+      hint_resize            = 'Change the size/postion of the active window';
+      hint_zoom              = 'Enlarge or restore the size of the active window';
+      hint_next              = 'Make the next window active';
+      hint_prev              = 'Make the previous window active';
+      hint_hide              = 'Hide the current window';
+      hint_closewindow       = 'Close the active window';
+      hint_windowlist        = 'Show a list of all open windows';
+      hint_userscreenwindow  = 'Show contents of user screen in a window';
+      hint_helpmenu          = 'Get online help';
+      hint_helpcontents      = 'Show table of contents for Online Help';
+      hint_helpindex         = 'Show index for Online Help';
+      hint_helptopicsearch   = 'Display help on the word at cursor';
+      hint_helpprevtopic     = 'Redisplay the last-viewed Online Help screen';
+      hint_helphowtouse      = 'How to use Online Help';
+      hint_helpfiles         = 'Install or remove installed help files';
+      hint_openatcursor      = 'Attempt to open the file indicated by the word at cursor';
+      hint_browseatcursor    = 'Attempt to browse the symbol at cursor';
+      hint_editoroptionscur  = 'Specify editor settings';
+      hint_rawgdbwindow      = 'Raw GDB communication window';
+      hint_disassemblywindow = 'Show mixed Assembly/Source window';
+      hint_allbreakpoints    = 'All current breakpoints';
 
 procedure TIDEStatusLine.HandleEvent(var Event: TEvent);
 begin
@@ -118,6 +263,8 @@ begin
     hcSave          : S:=hint_filesave;
     hcSaveAs        : S:=hint_filesaveas;
     hcSaveAll       : S:=hint_filesaveall;
+    hcPrint         : S:=hint_print;
+    hcPrinterSetup    : S:=hint_printersetup;
     hcChangeDir     : S:=hint_changedir;
     hcDOSShell      : S:=hint_dosshell;
     hcQuit          : S:=hint_exit;
@@ -130,6 +277,8 @@ begin
     hcCut           : S:=hint_editcut;
     hcCopy          : S:=hint_editcopy;
     hcPaste         : S:=hint_editpaste;
+    hcSelectAll     : S:=hint_editselectall;
+    hcUnselect      : S:=hint_editunselect;
     hcCopyWin       : S:=hint_editcopywin;
     hcPasteWin      : S:=hint_editpastewin;
     hcClear         : S:=hint_editclear;
@@ -138,7 +287,12 @@ begin
     hcSearchMenu    : S:=hint_searchmenu;
     hcFind          : S:=hint_searchfind;
     hcReplace       : S:=hint_searchreplace;
-    hcSearchAgain   : S:=hint_searchagain;
+    hcSearchAgain   : begin
+                        if (FindFlags and ffDoReplace)<>0 then
+                          s:=formatstrstr2(hint_replaceagain,findstr,WEditor.replacestr)
+                        else
+                          s:=formatstrstr(hint_searchagain,findstr);
+                      end;
     hcGotoLine      : S:=hint_gotoline;
     hcObjects       : S:=hint_objects;
     hcModules       : S:=hint_modules;
@@ -307,7 +461,7 @@ begin
   WOS2Help.RegisterHelpType;
   WWinHelp.RegisterHelpType;
   WVPHelp.RegisterHelpType;
-  WHTMLHlp.RegisterHelpType;
+  WHTMLHlp.RegisterHelpType; // Also registers chm and html index (.htx)
 
   PushStatus(msg_LoadingHelpFiles);
   for I:=0 to HelpFiles^.Count-1 do
@@ -407,6 +561,12 @@ begin
   Message(Application,evCommand,cmUpdate,nil);
 end;
 
+procedure HelpDebugInfos;
+begin
+  HelpCreateWindow;
+  HelpWindow^.ShowDebugInfos;
+end;
+
 procedure PushStatus(S: string);
 begin
   if StatusLine=nil then
@@ -504,7 +664,7 @@ begin
 end;
 
 procedure CloseHelpWindows;
-procedure CloseIfHelpWindow(P: PView); {$ifndef FPC}far;{$endif}
+procedure CloseIfHelpWindow(P: PView);
 begin
   if P^.HelpCtx=hcHelpWindow then
     begin
@@ -520,16 +680,3 @@ begin
 end;
 
 END.
-{
-  $Log: fphelp.pas,v $
-  Revision 1.12  2005/03/13 12:32:41  florian
-    * more status line hints fixed
-
-  Revision 1.11  2005/03/13 12:25:02  florian
-    + Recent files write full name now as hint in the status line
-    * Rundir hint in status line fixed
-
-  Revision 1.10  2005/02/14 17:13:18  peter
-    * truncate log
-
-}

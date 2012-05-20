@@ -1,5 +1,4 @@
 {
-    $Id: tthread.inc,v 1.4 2005/02/25 21:41:09 florian Exp $
     This file is part of the Free Component Library (FCL)
     Copyright (c) 1999-2000 by Peter Vreman
 
@@ -219,8 +218,13 @@ begin
   {$ENDIF}
   WRITE_DEBUG('thread initing, parameter = %d'#13#10, LongInt(LThread));
   try
+    // wait until AfterConstruction has been called, so we cannot
+    // free ourselves before TThread.Create has finished
+    // (since that one may check our VTM in case of $R+, and
+    //  will call the AfterConstruction method in all cases)
+    LThread.Suspend;
     if LThread.FInitialSuspended then begin
-      SemaphoreWait(LThread.FSem);
+       LThread.Suspend;
       if not LThread.FInitialSuspended then begin
         WRITE_DEBUG('going into LThread.Execute'#13#10);
         LThread.Execute;
@@ -248,11 +252,13 @@ begin
     LThread.Free;
     WRITE_DEBUG('Thread freed'#13#10);
   end;
-  WRITE_DEBUG('thread func exiting'#13#10);
+  WRITE_DEBUG('thread func calling EndThread'#13#10);
+  EndThread(Result);
 end;
 
 { TThread }
-constructor TThread.Create(CreateSuspended: Boolean);
+constructor TThread.Create(CreateSuspended: Boolean;
+                           const StackSize: SizeUInt = DefaultStackSize);
 begin
   // lets just hope that the user doesn't create a thread
   // via BeginThread and creates the first TThread Object in there!
@@ -260,12 +266,12 @@ begin
   AddThread(self);
   inherited Create;
   FSem := SemaphoreInit;
-  FSuspended :=CreateSuspended;
+  FSuspended := False;
   FSuspendedExternal := false;
   FInitialSuspended := CreateSuspended;
   FFatalException := nil;
   WRITE_DEBUG('creating thread, self = %d'#13#10,longint(self));
-  FHandle:= BeginThread(@ThreadFunc, Pointer(Self), FThreadID);
+  FHandle:= BeginThread(@ThreadFunc, Pointer(Self), FThreadID, StackSize);
   WRITE_DEBUG('TThread.Create done'#13#10);
 end;
 
@@ -398,13 +404,3 @@ begin
   ThreadSetPriority(FHandle, Priorities[Value]);
 end;
 
-{
-  $Log: tthread.inc,v $
-  Revision 1.4  2005/02/25 21:41:09  florian
-    * generic tthread.synchronize
-    * delphi compatible wakemainthread
-
-  Revision 1.3  2005/02/14 17:13:30  peter
-    * truncate log
-
-}

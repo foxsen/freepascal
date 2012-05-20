@@ -1,5 +1,4 @@
 {
-    $Id: syscalls.inc,v 1.9 2005/02/14 17:13:30 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Michael Van Canneyt,
     member of the Free Pascal development team.
@@ -15,9 +14,3 @@
 
 
 
-{
-  $Log: syscalls.inc,v $
-  Revision 1.9  2005/02/14 17:13:30  peter
-    * truncate log
-
-}

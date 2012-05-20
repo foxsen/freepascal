@@ -1,5 +1,4 @@
 {
-    $Id: whelp.pas,v 1.13 2005/02/14 17:13:18 peter Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 1998 by Berczi Gabor
 
@@ -19,11 +18,11 @@ unit WHelp;
 interface
 
 uses
-{$ifdef Win32}
+{$ifdef Windows}
    { placed here to avoid TRect to be found in windows unit
-     for win32 target whereas its found in objects unit for other targets PM }
+     for Windows target whereas its found in objects unit for other targets PM }
      windows,
-{$endif Win32}
+{$endif Windows}
      Objects,
      WUtils;
 
@@ -121,6 +120,7 @@ type
         function    LoadIndex: boolean; virtual;
         function    SearchTopic(HelpCtx: THelpCtx): PTopic; virtual;
         function    ReadTopic(T: PTopic): boolean; virtual;
+        function    GetTopicInfo(T: PTopic) : string; virtual;
       private
         procedure MaintainTopicCache;
       end;
@@ -135,6 +135,7 @@ type
         function    AddFile(const FileName, Param: string): PHelpFile;
         function    AddHelpFile(H: PHelpFile): boolean;
         function    LoadTopic(SourceFileID: word; Context: THelpCtx): PTopic; virtual;
+        function    GetTopicInfo(SourceFileID: word; Context: THelpCtx) : string; virtual;
         function    TopicSearch(Keyword: string; var FileID: word; var Context: THelpCtx): boolean; virtual;
         function    BuildIndexTopic: PTopic; virtual;
         destructor  Done; virtual;
@@ -155,7 +156,7 @@ type
 const TopicCacheSize    : sw_integer = 10;
       HelpStreamBufSize : sw_integer = 4096;
       HelpFacility      : PHelpFacility = nil;
-      MaxHelpTopicSize  : sw_word = {$ifdef FPC}3*65520{$else}65520{$endif};
+      MaxHelpTopicSize  : sw_word = 1024*1024;
 
 function  NewTopic(FileID: byte; HelpCtx: THelpCtx; Pos: longint; Param: string;
           ExtData: pointer; ExtDataSize: longint): PTopic;
@@ -175,22 +176,12 @@ function  GetHelpFileTypeCount: integer;
 procedure GetHelpFileType(Index: sw_integer; var HT: THelpFileType);
 procedure DoneHelpFilesTypes;
 
-{$ifdef ENDIAN_BIG}
-Procedure SwapLong(var x : longint);
-Procedure SwapWord(var x : word);
-{$endif ENDIAN_BIG}
-
-
 implementation
 
 uses
 {$ifdef Unix}
-  {$ifdef VER1_0}
-    linux,
-  {$else}
-    baseunix,
-    unix,
-  {$endif}
+  baseunix,
+  unix,
 {$endif Unix}
 {$IFDEF OS2}
   DosCalls,
@@ -213,32 +204,6 @@ type
 
 const
   HelpFileTypes : PHelpFileTypeCollection = nil;
-
-
-{$ifdef ENDIAN_BIG}
-Procedure SwapLong(var x : longint);
-var
-  y : word;
-  z : word;
-Begin
-  y := (x shr 16) and $FFFF;
-  y := ((y shl 8) and $FFFF) or ((y shr 8) and $ff);
-  z := x and $FFFF;
-  z := ((z shl 8) and $FFFF) or ((z shr 8) and $ff);
-  x := (longint(z) shl 16) or longint(y);
-End;
-
-
-Procedure SwapWord(var x : word);
-var
-  z : byte;
-Begin
-  z := (x shr 8) and $ff;
-  x := x and $ff;
-  x := (x shl 8);
-  x := x or z;
-End;
-{$endif ENDIAN_BIG}
 
 
 function NewHelpFileType(AOpenProc: THelpFileOpenProc): PHelpFileType;
@@ -294,6 +259,9 @@ begin
   HT:=HelpFileTypes^.At(Index)^;
 end;
 
+{$R-}
+{$Q-}
+
 Function GetDosTicks:longint; { returns ticks at 18.2 Hz, just like DOS }
 {$IFDEF OS2}
   const
@@ -310,26 +278,16 @@ Function GetDosTicks:longint; { returns ticks at 18.2 Hz, just like DOS }
     tv : TimeVal;
     tz : TimeZone;
   begin
-    {$ifdef ver1_0}
-    GetTimeOfDay(tv); {Timezone no longer used?}
-    GetDosTicks:=((tv.Sec mod 86400) div 60)*1092+((tv.Sec mod 60)*1000000+tv.USec) div 54945;
-    {$else}
     fpGetTimeOfDay(@tv,@tz);
     GetDosTicks:=((tv.tv_Sec mod 86400) div 60)*1092+((tv.tv_Sec mod 60)*1000000+tv.tv_USec) div 54945;
-    {$endif}
   end;
 {$endif Unix}
-{$ifdef Win32}
+{$ifdef Windows}
   begin
     GetDosTicks:=(Windows.GetTickCount*5484) div 100;
   end;
-{$endif Win32}
+{$endif Windows}
 {$ifdef go32v2}
-  begin
-    GetDosTicks:=MemL[$40:$6c];
-  end;
-{$endif go32v2}
-{$ifdef TP}
   begin
     GetDosTicks:=MemL[$40:$6c];
   end;
@@ -346,6 +304,16 @@ end;
 {$ifdef netware_clib}
 begin
   GetDosTicks := Nwserv.GetCurrentTicks;
+end;
+{$endif}
+{$ifdef amiga}
+begin
+  GetDosTicks := -1;
+end;
+{$endif}
+{$ifdef morphos}
+begin
+  GetDosTicks := -1;
 end;
 {$endif}
 
@@ -386,7 +354,7 @@ begin
     P^.Links:=nil;
     if P^.Param<>nil then DisposeStr(P^.Param); P^.Param:=nil;
     if Assigned(P^.ExtData) then
-      FreeMem(P^.ExtData{$ifndef FPC},P^.ExtDataSize{$endif});
+      FreeMem(P^.ExtData);
     if Assigned(P^.NamedMarks) then Dispose(P^.NamedMarks, Done); P^.NamedMarks:=nil;
     Dispose(P);
   end;
@@ -394,7 +362,7 @@ end;
 
 function CloneTopic(T: PTopic): PTopic;
 var NT: PTopic;
-procedure CloneMark(P: PString); {$ifndef FPC}far;{$endif}
+procedure CloneMark(P: PString);
 begin
   NT^.NamedMarks^.InsertStr(GetStr(P));
 end;
@@ -700,12 +668,18 @@ begin
   ReadTopic:=false; { remove warning }
 end;
 
+function THelpFile.GetTopicInfo(T: PTopic) : string;
+begin
+  Abstract;
+  GetTopicInfo:=''; { remove warning }
+end;
+
 procedure THelpFile.MaintainTopicCache;
 var Count: sw_integer;
     MinLRU: longint;
-procedure CountThem(P: PTopic); {$ifndef FPC}far;{$endif}
+procedure CountThem(P: PTopic);
 begin if (P^.Text<>nil) or (P^.Links<>nil) then Inc(Count); end;
-procedure SearchLRU(P: PTopic); {$ifndef FPC}far;{$endif}
+procedure SearchLRU(P: PTopic);
 begin if P^.LastAccess<MinLRU then begin MinLRU:=P^.LastAccess; end; end;
 var P: PTopic;
 begin
@@ -769,7 +743,7 @@ end;
 function THelpFacility.SearchTopicOwner(SourceFileID: word; Context: THelpCtx): PHelpFile;
 var P: PTopic;
     HelpFile: PHelpFile;
-function Search(F: PHelpFile): boolean; {$ifndef FPC}far;{$endif}
+function Search(F: PHelpFile): boolean;
 begin
   P:=SearchTopicInHelpFile(F,Context); if P<>nil then HelpFile:=F;
   Search:=P<>nil;
@@ -800,9 +774,43 @@ begin
   LoadTopic:=P;
 end;
 
+function THelpFacility.GetTopicInfo(SourceFileID: word; Context: THelpCtx) : string;
+var P: PTopic;
+    H: PHelpFile;
+begin
+  if (SourceFileID=0) and (Context=0) then
+     begin
+       P:=BuildIndexTopic;
+     end
+  else
+    begin
+      H:=SearchTopicOwner(SourceFileID,Context);
+      if (H=nil) then P:=nil else
+         P:=H^.SearchTopic(Context);
+    end;
+  If not assigned(P) then
+    GetTopicInfo:='Not found'
+  else
+    GetTopicInfo:=H^.GetTopicInfo(P);
+end;
+
+
+
 function THelpFacility.TopicSearch(Keyword: string; var FileID: word; var Context: THelpCtx): boolean;
-function ScanHelpFile(H: PHelpFile): boolean; {$ifndef FPC}far;{$endif}
-function Search(P: PIndexEntry): boolean; {$ifndef FPC}far;{$endif}
+function ScanHelpFileExact(H: PHelpFile): boolean;
+function SearchExact(P: PIndexEntry): boolean;
+begin
+  SearchExact:=UpcaseStr(P^.Tag^)=Keyword;
+end;
+var P: PIndexEntry;
+begin
+  H^.LoadIndex;
+  P:=H^.IndexEntries^.FirstThat(@SearchExact);
+  if P<>nil then begin FileID:=H^.ID; Context:=P^.HelpCtx; end;
+  ScanHelpFileExact:=P<>nil;
+end;
+function ScanHelpFile(H: PHelpFile): boolean;
+function Search(P: PIndexEntry): boolean;
 begin
   Search:=copy(UpcaseStr(P^.Tag^),1,length(Keyword))=Keyword;
 end;
@@ -813,17 +821,22 @@ begin
   if P<>nil then begin FileID:=H^.ID; Context:=P^.HelpCtx; end;
   ScanHelpFile:=P<>nil;
 end;
+var
+  PH : PHelpFile;
 begin
   Keyword:=UpcaseStr(Keyword);
-  TopicSearch:=HelpFiles^.FirstThat(@ScanHelpFile)<>nil;
+  PH:=HelpFiles^.FirstThat(@ScanHelpFileExact);
+  if not assigned(PH) then
+    PH:=HelpFiles^.FirstThat(@ScanHelpFile);
+  TopicSearch:=PH<>nil;
 end;
 
 function THelpFacility.BuildIndexTopic: PTopic;
 var T: PTopic;
     Keywords: PIndexEntryCollection;
     Lines: PUnsortedStringCollection;
-procedure InsertKeywordsOfFile(H: PHelpFile); {$ifndef FPC}far;{$endif}
-function InsertKeywords(P: PIndexEntry): boolean; {$ifndef FPC}far;{$endif}
+procedure InsertKeywordsOfFile(H: PHelpFile);
+function InsertKeywords(P: PIndexEntry): boolean;
 begin
   Keywords^.Insert(P);
   InsertKeywords:=Keywords^.Count>=MaxCollectionSize;
@@ -902,7 +915,11 @@ begin
   if HelpFiles^.Count=0 then
     begin
       AddLine('');
-      AddLine(' '+msg_nohelpfilesinstalled)
+      AddLine(msg_nohelpfilesinstalled1);
+      AddLine(msg_nohelpfilesinstalled2);
+      AddLine(msg_nohelpfilesinstalled3);
+      AddLine(msg_nohelpfilesinstalled4);
+      AddLine(msg_nohelpfilesinstalled5);
     end else
   begin
     AddLine(' '+msg_helpindex);
@@ -953,7 +970,7 @@ begin
 end;
 
 function THelpFacility.SearchFile(ID: byte): PHelpFile;
-function Match(P: PHelpFile): boolean; {$ifndef FPC}far;{$endif}
+function Match(P: PHelpFile): boolean;
 begin
   Match:=(P^.ID=ID);
 end;
@@ -976,9 +993,3 @@ begin
 end;
 
 END.
-{
-  $Log: whelp.pas,v $
-  Revision 1.13  2005/02/14 17:13:18  peter
-    * truncate log
-
-}

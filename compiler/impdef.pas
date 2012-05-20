@@ -1,5 +1,4 @@
 {
-    $Id: impdef.pas,v 1.16 2005/02/14 17:13:06 peter Exp $
     Copyright (c) 1998-2002 by Pavel
 
     This unit finds the export defs from PE files
@@ -32,11 +31,7 @@ unit impdef;
 interface
 
    uses
-   {$IFDEF USE_SYSUTILS}
-     SysUtils,
-   {$ELSE USE_SYSUTILS}
-     Dos;
-   {$ENDIF USE_SYSUTILS}
+     SysUtils;
 
    var
      as_name,
@@ -50,6 +45,9 @@ interface
 
 
 implementation
+
+uses
+  cfileutl;
 
 {$IFDEF STANDALONE}
 var
@@ -123,7 +121,7 @@ const
 {$ifdef unix}
   DirSep = '/';
 {$else}
-  {$ifdef amiga}
+  {$if defined(amiga) or defined(morphos)}
   DirSep = '/';
   {$else}
   DirSep = '\';
@@ -166,19 +164,16 @@ procedure CreateTempDir(const s:string);
    end
  else
   begin
-    {$I-}
+    {$push} {$I-}
      mkdir(s);
-    {$I+}
+    {$pop}
     if ioresult<>0 then;
   end;
  end;
 procedure call_as(const name:string);
  begin
-{$IFDEF USE_SYSUTILS}
-  ExecuteProcess(as_name,'-o '+name+'o '+name);
-{$ELSE USE_SYSUTILS}
-  exec(as_name,'-o '+name+'o '+name);
-{$ENDIF USE_SYSUTILS}
+  FlushOutput;
+  RequotedExecuteProcess(as_name,'-o '+name+'o '+name);
  end;
 procedure call_ar;
  var
@@ -193,16 +188,13 @@ procedure call_ar;
   GetFAttr(f,attr);
   If DOSError=0 then
    erase(f);
-{$IFDEF USE_SYSUTILS}
-  ExecuteProcess(ar_name,'rs '+impname+' '+path+dirsep+'*.swo');
-{$ELSE USE_SYSUTILS}
-  exec(ar_name,'rs '+impname+' '+path+dirsep+'*.swo');
-{$ENDIF USE_SYSUTILS}
+  FlushOutput;
+  RequotedExecuteProcess(ar_name,'rs '+impname+' '+path+dirsep+'*.swo');
   cleardir(path,'*.sw');
   cleardir(path,'*.swo');
-  {$i-}
+  {$push} {$I-}
   RmDir(path);
-  {$i+}
+  {$pop}
   if ioresult<>0 then;
  end;
 procedure makeasm(index:cardinal;name:pchar;isData:longbool);
@@ -457,11 +449,11 @@ begin
   impname:=libname;
   lname:=binname;
   OldFileMode:=filemode;
-  {$I-}
+  {$push} {$I-}
    filemode:=0;
    reset(f,1);
    filemode:=OldFileMode;
-  {$I+}
+  {$pop}
   if IOResult<>0 then
    begin
      makedef:=false;
@@ -482,10 +474,3 @@ begin
 end;
 
 end.
-
-{
-  $Log: impdef.pas,v $
-  Revision 1.16  2005/02/14 17:13:06  peter
-    * truncate log
-
-}

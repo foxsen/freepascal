@@ -1,5 +1,4 @@
 {
-   $Id: sockovl.inc,v 1.2 2005/02/14 17:13:26 peter Exp $
    This file is part of the Free Pascal run time library.
    (c) 2000-2003 by Marco van de Voort
    member of the Free Pascal development team.
@@ -19,6 +18,7 @@
                           Basic Socket Functions
 ******************************************************************************}
 
+{$ifdef legacysocket}
 Function socket(Domain,SocketType,Protocol:Longint):Longint;
 begin
   Socket:=fpsocket(domain,sockettype,protocol);
@@ -43,7 +43,7 @@ end;
 Function RecvFrom(Sock : Longint; Var Buf; Buflen,Flags : Longint; Var Addr ; var AddrLen :longint) : longint;
 
 begin
-  RecvFrom:=fprecvfrom(Sock,@buf,buflen,flags,@Addr,@AddrLen);
+  RecvFrom:=fprecvfrom(Sock,@buf,buflen,flags,@Addr,psocklen(@AddrLen));
 end;
 
 Function Bind(Sock:Longint;Const Addr;AddrLen:Longint):Boolean;
@@ -58,7 +58,7 @@ end;
 
 Function Accept(Sock:Longint;Var Addr;Var Addrlen:Longint):Longint;
 begin
-  Accept:=fpaccept(sock,@addr,@addrlen);
+  Accept:=fpaccept(sock,@addr,psocklen(@addrlen));
 end;
 
 Function Connect(Sock:Longint;Const Addr;Addrlen:Longint): boolean;
@@ -74,12 +74,12 @@ end;
 
 Function GetSocketName(Sock:Longint;Var Addr;Var Addrlen:Longint):Longint;
 begin
-  GetSocketName:=fpgetsockname(sock,@addr,@addrlen);
+  GetSocketName:=fpgetsockname(sock,@addr,psocklen(@addrlen));
 end;
 
 Function GetPeerName(Sock:Longint;Var Addr;Var Addrlen:Longint):Longint;
 begin
-  GetPeerName:=fpgetPeerName(sock,@addr,@addrlen);
+  GetPeerName:=fpgetPeerName(sock,@addr,psocklen(@addrlen));
 end;
 
 Function SetSocketOptions(Sock,Level,OptName:Longint;const OptVal;optlen:longint):Longint;
@@ -89,13 +89,14 @@ end;
 
 Function GetSocketOptions(Sock,Level,OptName:Longint;Var OptVal;Var optlen:longint):Longint;
 begin
-  GetSocketOptions:=fpgetsockopt(Sock,Level,OptName,@OptVal,@OptLen);
+  GetSocketOptions:=fpgetsockopt(Sock,Level,OptName,@OptVal,psocklen(@OptLen));
 end;
 
 Function SocketPair(Domain,SocketType,Protocol:Longint;var Pair:TSockArray):Longint;
 begin
-  SocketPair:=fpsocketpair(domain,sockettype,protocol,@pair);
+  SocketPair:=fpsocketpair(domain,sockettype,protocol,@pair[1]);
 end;
+{$endif}
 
 {******************************************************************************
                                UnixSock
@@ -116,10 +117,8 @@ var
   AddrLen  : longint;
 begin
   Str2UnixSockAddr(addr,UnixAddr,AddrLen);
-  Bind(Sock,UnixAddr,AddrLen);
-  Bind:=(SocketError=0);
+  Bind := fpBind(Sock, @UnixAddr, AddrLen)=0; // what the flying fuck were you thinking?
 end;
-
 
 
 Function DoAccept(Sock:longint;var addr:string):longint;
@@ -128,7 +127,7 @@ var
   AddrLen  : longint;
 begin
   AddrLen:=length(addr)+3;
-  DoAccept:=Accept(Sock,UnixAddr,AddrLen);
+  DoAccept:=fpAccept(Sock,@UnixAddr,@AddrLen);
   Move(UnixAddr.Path,Addr[1],AddrLen);
   SetLength(Addr,AddrLen);
 end;
@@ -141,7 +140,7 @@ var
   AddrLen  : longint;
 begin
   Str2UnixSockAddr(addr,UnixAddr,AddrLen);
-  DoConnect:=Connect(Sock,UnixAddr,AddrLen);
+  DoConnect:=fpConnect(Sock,@UnixAddr,AddrLen)=0;
 end;
 
 Function Accept(Sock:longint;var addr:string;var SockIn,SockOut:text):Boolean;
@@ -158,8 +157,6 @@ begin
    Accept:=false;
 end;
 
-
-
 Function Accept(Sock:longint;var addr:string;var SockIn,SockOut:File):Boolean;
 var
   s : longint;
@@ -174,8 +171,6 @@ begin
    Accept:=false;
 end;
 
-
-
 Function Connect(Sock:longint;const addr:string;var SockIn,SockOut:text):Boolean;
 begin
   Connect:=DoConnect(Sock,addr);
@@ -183,15 +178,12 @@ begin
      Sock2Text(Sock,SockIn,SockOut);
 end;
 
-
-
 Function Connect(Sock:longint;const addr:string;var SockIn,SockOut:file):Boolean;
 begin
   Connect:=DoConnect(Sock,addr);
   if Connect then
      Sock2File(Sock,SockIn,SockOut);
 end;
-
 
 Function CloseSocket (Sock:Longint):Longint;
 begin
@@ -201,9 +193,3 @@ begin
 end;
 
 
-{
- $Log: sockovl.inc,v $
- Revision 1.2  2005/02/14 17:13:26  peter
-   * truncate log
-
-}

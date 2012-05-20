@@ -1,5 +1,4 @@
 {
-    $Id: aliases.inc,v 1.4 2005/02/14 17:13:22 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2000 by Florian Klaempfl
     member of the Free Pascal development team.
@@ -26,14 +25,7 @@
 
 { export for internal usage }
 Procedure int_Finalize (Data,TypeInfo: Pointer); [external name 'FPC_FINALIZE'];
-Procedure int_Addref (Data,TypeInfo : Pointer);{$ifndef NOSAVEREGISTERS}saveregisters;{$endif} [external name 'FPC_ADDREF'];
-Procedure int_DecRef (Data, TypeInfo : Pointer);{$ifndef NOSAVEREGISTERS}saveregisters;{$endif} [external name 'FPC_DECREF'];
+Procedure int_Addref (Data,TypeInfo : Pointer); [external name 'FPC_ADDREF'];
 Procedure int_Initialize (Data,TypeInfo: Pointer); [external name 'FPC_INITIALIZE'];
-procedure int_FinalizeArray(data,typeinfo : pointer;count,size : longint); [external name 'FPC_FINALIZEARRAY'];
+procedure int_FinalizeArray(data,typeinfo : pointer;count : longint); [external name 'FPC_FINALIZE_ARRAY'];
 
-{
-  $Log: aliases.inc,v $
-  Revision 1.4  2005/02/14 17:13:22  peter
-    * truncate log
-
-}

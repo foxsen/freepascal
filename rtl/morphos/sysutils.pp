@@ -1,8 +1,6 @@
 {
-    $Id: sysutils.pp,v 1.7 2005/02/26 14:38:14 florian Exp $
-
     This file is part of the Free Pascal run time library.
-    Copyright (c) 2004 by Karoly Balogh
+    Copyright (c) 2004-2006 by Karoly Balogh
 
     Sysutils unit for MorphOS
 
@@ -23,9 +21,11 @@ unit sysutils;
 interface
 
 {$MODE objfpc}
+{$MODESWITCH OUT}
 { force ansistrings }
 {$H+}
 
+{$DEFINE HAS_SLEEP}
 { Include platform independent interface part }
 {$i sysutilh.inc}
 
@@ -37,6 +37,10 @@ Procedure AddDisk(const path:string);
 implementation
 
 uses dos,sysconst;
+
+{$DEFINE FPC_FEXPAND_VOLUMES} (* Full paths begin with drive specification *)
+{$DEFINE FPC_FEXPAND_DRIVESEP_IS_ROOT}
+{$DEFINE FPC_FEXPAND_NO_DEFAULT_PATHS}
 
 { Include platform independent implementation part }
 {$i sysutils.inc}
@@ -53,10 +57,44 @@ uses dos,sysconst;
 { * Followings are implemented in the system unit! * }
 function PathConv(path: shortstring): shortstring; external name 'PATHCONV';
 procedure AddToList(var l: Pointer; h: LongInt); external name 'ADDTOLIST';
-procedure RemoveFromList(var l: Pointer; h: LongInt); external name 'REMOVEFROMLIST';
+function RemoveFromList(var l: Pointer; h: LongInt): boolean; external name 'REMOVEFROMLIST';
+function CheckInList(var l: Pointer; h: LongInt): pointer; external name 'CHECKINLIST';
 
 var
   MOS_fileList: Pointer; external name 'MOS_FILELIST';
+
+
+function dosLock(const name: String;
+                 accessmode: Longint) : LongInt;
+var
+  buffer: array[0..255] of Char;
+begin
+  move(name[1],buffer,length(name));
+  buffer[length(name)]:=#0;
+  dosLock:=Lock(buffer,accessmode);
+end;
+
+
+function AmigaFileDateToDateTime(aDate: TDateStamp; out success: boolean): TDateTime;
+var
+  tmpSecs: DWord;
+  tmpDate: TDateTime;
+  tmpTime: TDateTime; 
+  clockData: TClockData;
+begin
+  with aDate do
+    tmpSecs:=(ds_Days * (24 * 60 * 60)) + (ds_Minute * 60) + (ds_Tick div TICKS_PER_SECOND);
+
+  Amiga2Date(tmpSecs,@clockData);
+{$WARNING TODO: implement msec values, if possible}
+  with clockData do begin
+     success:=TryEncodeDate(year,month,mday,tmpDate) and
+              TryEncodeTime(hour,min,sec,0,tmpTime);
+  end;
+
+  result:=ComposeDateTime(tmpDate,tmpTime);
+end;
+
 
 
 {****************************************************************************
@@ -86,6 +124,7 @@ end;
 
 function FileGetDate(Handle: LongInt) : LongInt;
 begin
+  {$WARNING filegetdate call is dummy}
 end;
 
 
@@ -112,14 +151,20 @@ begin
 end;
 
 
-function FileCreate(const FileName: string; Mode: integer): LongInt;
+function FileCreate(const FileName: string; Rights: integer): LongInt;
+begin
+  {$WARNING FIX ME! To do: FileCreate Access Modes}
+  FileCreate:=FileCreate(FileName);
+end;
+
+function FileCreate(const FileName: string; ShareMode: integer; Rights : integer): LongInt;
 begin
   {$WARNING FIX ME! To do: FileCreate Access Modes}
   FileCreate:=FileCreate(FileName);
 end;
 
 
-function FileRead(Handle: LongInt; var Buffer; Count: LongInt): LongInt;
+function FileRead(Handle: LongInt; out Buffer; Count: LongInt): LongInt;
 begin
   FileRead:=-1;
   if (Count<=0) or (Handle<=0) then exit;
@@ -153,7 +198,7 @@ begin
   FileSeek:=dosSeek(Handle, FOffset, seekMode);
 end;
 
-function FileSeek(Handle: LongInt; FOffset, Origin: Int64): Int64;
+function FileSeek(Handle: LongInt; FOffset: Int64; Origin: Longint): Int64;
 begin
   {$WARNING Need to add 64bit call }
   FileSeek:=FileSeek(Handle,LongInt(FOffset),LongInt(Origin));
@@ -169,11 +214,15 @@ begin
 end;
 
 
-function FileTruncate(Handle, Size: LongInt): Boolean;
+function FileTruncate(Handle: THandle; Size: Int64): Boolean;
 var
   dosResult: LongInt;
 begin
   FileTruncate:=False;
+  
+  if Size > high (longint) then exit;
+{$WARNING Possible support for 64-bit FS to be checked!}
+
   if (Handle<=0) then exit;
 
   dosResult:=SetFileSize(Handle, Size, OFFSET_BEGINNING);
@@ -207,121 +256,135 @@ end;
 (****** end of non portable routines ******)
 
 
-Function FileAge (Const FileName : String): Longint;
+function FileAge (const FileName : String): Longint;
+var
+  tmpName: String;
+  tmpLock: Longint;
+  tmpFIB : PFileInfoBlock;
+  tmpDateTime: TDateTime;
+  validFile: boolean;
 
-var F: file;
-    Time: longint;
 begin
-   Assign(F,FileName);
-   dos.GetFTime(F,Time);
-   { Warning this is not compatible with standard routines
-     since Double are not supported on m68k by default!
-   }
-   FileAge:=Time;
-end;
+  validFile:=false;
+  tmpName := PathConv(FileName);
+  tmpLock := dosLock(tmpName, SHARED_LOCK);
 
-
-Function FileExists (Const FileName : String) : Boolean;
-Var
- F: File;
- OldMode : Byte;
-Begin
-  OldMode := FileMode;
-  FileMode := fmOpenRead;
-  Assign(F,FileName);
-  Reset(F,1);
-  FileMode := OldMode;
-  If IOResult <> 0 then
-    FileExists := FALSE
-  else
-    Begin
-      FileExists := TRUE;
-      Close(F);
+  if (tmpLock <> 0) then begin
+    new(tmpFIB);
+    if Examine(tmpLock,tmpFIB) then begin
+      tmpDateTime:=AmigaFileDateToDateTime(tmpFIB^.fib_Date,validFile);
     end;
+    Unlock(tmpLock);
+    dispose(tmpFIB);
+  end;
+
+  if validFile then
+    result:=DateTimeToFileDate(tmpDateTime)
+  else
+    result:=-1;   
 end;
 
-type
-  PDOSSearchRec = ^SearchRec;
 
-Function FindFirst (Const Path : String; Attr : Longint; Var Rslt : TSearchRec) : Longint;
-Const
-  faSpecial = faHidden or faSysFile or faVolumeID or faDirectory;
+function FileExists (const FileName : String) : Boolean;
 var
-  p : pDOSSearchRec;
-  dosattr: word;
-  DT: Datetime;
+  tmpName: String;
+  tmpLock: LongInt;
+  tmpFIB : PFileInfoBlock;
+
 begin
- dosattr:=0;
- if Attr and faHidden <> 0 then
-   dosattr := dosattr or Hidden;
- if Attr and faSysFile <> 0 then
-   dosattr := dosattr or SysFile;
- if Attr and favolumeID <> 0 then
-   dosattr := dosattr or VolumeID;
- if Attr and faDirectory <> 0 then
-   dosattr := dosattr or Directory;
- New(p);
- Rslt.FindHandle :=  THandle(p);
- dos.FindFirst(path,dosattr,p^);
- if DosError <> 0 then
-    begin
-      FindFirst := -1;
-    end
- else
-   begin
-     Rslt.Name := p^.Name;
-     { Not compatible with other platforms! }
-     Rslt.Time:=p^.Time;
-     Rslt.Attr := p^.Attr;
-     Rslt.ExcludeAttr := not p^.Attr;
-     Rslt.Size := p^.Size;
-     FindFirst := 0;
-   end;
+  result:=false;
+  tmpName := PathConv(FileName);
+  tmpLock := dosLock(tmpName, SHARED_LOCK);
+
+  if (tmpLock <> 0) then begin
+    new(tmpFIB);
+    if Examine(tmpLock,tmpFIB) and (tmpFIB^.fib_DirEntryType <= 0) then
+      result:=true;
+    Unlock(tmpLock);
+    dispose(tmpFIB);
+  end;
 end;
 
 
-Function FindNext (Var Rslt : TSearchRec) : Longint;
+function FindFirst(const Path: String; Attr : Longint; out Rslt: TSearchRec): Longint;
 var
- p : pDOSSearchRec;
- DT: Datetime;
+  tmpStr: array[0..255] of Char;
+  Anchor: PAnchorPath;
+  tmpDateTime: TDateTime;
+  validDate: boolean;
 begin
-  p:= PDOsSearchRec(Rslt.FindHandle);
-  if not assigned(p) then
-     begin
-       FindNext := -1;
-       exit;
-     end;
-  Dos.FindNext(p^);
- if DosError <> 0 then
-    begin
-      FindNext := -1;
-    end
- else
-   begin
-     Rslt.Name := p^.Name;
-     UnpackTime(p^.Time, DT);
-     { Warning: Not compatible with other platforms }
-     Rslt.time := p^.Time;
-     Rslt.Attr := p^.Attr;
-     Rslt.ExcludeAttr := not p^.Attr;
-     Rslt.Size := p^.Size;
-     FindNext := 0;
-   end;
+  result:=-1; { We emulate Linux/Unix behaviour, and return -1 on errors. }
+  tmpStr:=PathConv(path)+#0;
+
+  { $1e = faHidden or faSysFile or faVolumeID or faDirectory }
+  Rslt.ExcludeAttr := (not Attr) and ($1e);
+  Rslt.FindHandle  := 0;
+
+  new(Anchor);
+  FillChar(Anchor^,sizeof(TAnchorPath),#0);
+
+  if MatchFirst(@tmpStr,Anchor)<>0 then exit;
+  Rslt.FindHandle := longint(Anchor);
+
+  with Anchor^.ap_Info do begin
+    Rslt.Name := StrPas(fib_FileName);
+
+    Rslt.Size := fib_Size;
+    Rslt.Time := DateTimeToFileDate(AmigaFileDateToDateTime(fib_Date,validDate));
+    if not validDate then exit;
+
+    { "128" is Windows "NORMALFILE" attribute. Some buggy code depend on this... :( (KB) }
+    Rslt.Attr := 128;
+
+    if fib_DirEntryType > 0 then Rslt.Attr:=Rslt.Attr or faDirectory;
+    if ((fib_Protection and FIBF_READ) <> 0) and
+       ((fib_Protection and FIBF_WRITE) = 0) then Rslt.Attr:=Rslt.Attr or faReadOnly;
+
+    result:=0; { Return zero if everything went OK }
+  end;
 end;
 
-Procedure FindClose (Var F : TSearchrec);
-Var
-  p : PDOSSearchRec;
 
+function FindNext (var Rslt : TSearchRec): Longint;
+var
+  Anchor: PAnchorPath;
+  validDate: boolean;
 begin
-  p:=PDOSSearchRec(f.FindHandle);
-  if not assigned(p) then
-       exit;
-  Dos.FindClose(p^);
-  if assigned(p) then
-     Dispose(p);
-  f.FindHandle := THandle(nil);
+  result:=-1;
+
+  Anchor:=PAnchorPath(Rslt.FindHandle);
+  if not assigned(Anchor) then exit;
+  if MatchNext(Anchor) <> 0 then exit;
+
+  with Anchor^.ap_Info do begin
+    Rslt.Name := StrPas(fib_FileName);
+    Rslt.Size := fib_Size;
+    Rslt.Time := DateTimeToFileDate(AmigaFileDateToDateTime(fib_Date,validDate));
+    if not validDate then exit;
+
+    { "128" is Windows "NORMALFILE" attribute. Some buggy code depend on this... :( (KB) }
+    Rslt.Attr := 128;
+    if fib_DirEntryType > 0 then Rslt.Attr:=Rslt.Attr or faDirectory;
+    if ((fib_Protection and FIBF_READ) <> 0) and
+       ((fib_Protection and FIBF_WRITE) = 0) then Rslt.Attr:=Rslt.Attr or faReadOnly;
+
+    result:=0; { Return zero if everything went OK }
+  end;
 end;
+
+
+procedure FindClose(var f: TSearchRec);
+var
+  Anchor: PAnchorPath;
+begin
+  Anchor:=PAnchorPath(f.FindHandle);
+  if not assigned(Anchor) then exit;
+  MatchEnd(Anchor);
+  Dispose(Anchor);
+end;
+
+
+(****** end of non portable routines ******)
 
 Function FileGetAttr (Const FileName : String) : Longint;
 var
@@ -399,8 +462,7 @@ Begin
   DiskSize := dos.DiskSize(Drive);
 End;
 
-
-Function GetCurrentDir : String;
+function GetCurrentDir : String;
 begin
   GetDir (0,Result);
 end;
@@ -408,44 +470,47 @@ end;
 
 Function SetCurrentDir (Const NewDir : String) : Boolean;
 begin
-   ChDir(NewDir);
+  ChDir(NewDir);
   result := (IOResult = 0);
 end;
 
 
 Function CreateDir (Const NewDir : String) : Boolean;
 begin
-   MkDir(NewDir);
+  MkDir(NewDir);
   result := (IOResult = 0);
 end;
 
 
 Function RemoveDir (Const Dir : String) : Boolean;
 begin
-   RmDir(Dir);
+  RmDir(Dir);
   result := (IOResult = 0);
 end;
 
 
-Function DirectoryExists(const Directory: string): Boolean;
+function DirectoryExists(const Directory: string): Boolean;
 var
- s: string;
+  tmpStr : String;
+  tmpLock: LongInt;
+  FIB    : PFileInfoBlock;
 begin
-  { Get old directory }
-  s:=GetCurrentDir;
-  ChDir(Directory);
-  DirectoryExists := (IOResult = 0);
-  ChDir(s);
+  result:=false;
+  if (Directory='') or (InOutRes<>0) then exit;
+  tmpStr:=PathConv(Directory);
+
+  tmpLock:=dosLock(tmpStr,SHARED_LOCK);
+  if tmpLock=0 then exit;
+
+  FIB:=nil; new(FIB);
+
+  if (Examine(tmpLock,FIB)=True) and (FIB^.fib_DirEntryType>0) then
+    result:=True;
+
+  if tmpLock<>0 then Unlock(tmpLock);
+  if assigned(FIB) then dispose(FIB);
 end;
 
-
-{****************************************************************************
-                              Misc Functions
-****************************************************************************}
-
-procedure Beep;
-begin
-end;
 
 
 {****************************************************************************
@@ -458,7 +523,7 @@ var
 begin
   dos.GetTime(SystemTime.Hour, SystemTime.Minute, SystemTime.Second,SystemTime.Millisecond);
   dos.GetDate(SystemTime.Year, SystemTime.Month, SystemTime.Day, DayOfWeek);
-end ;
+end;
 
 
 Procedure InitAnsi;
@@ -519,21 +584,46 @@ begin
   Result:=Dos.EnvStr(Index);
 end;
 
-function ExecuteProcess (const Path: AnsiString; const ComLine: AnsiString):
+function ExecuteProcess (const Path: AnsiString; const ComLine: AnsiString;Flags:TExecuteFlags=[]):
                                                                        integer;
 var
+  tmpPath: AnsiString;
+  convPath: AnsiString;
   CommandLine: AnsiString;
+  tmpLock: longint;
+
   E: EOSError;
-
 begin
-  Dos.Exec (Path, ComLine);
-  if DosError <> 0 then begin
+  DosError:= 0;
+  
+  convPath:=PathConv(Path);
+  tmpPath:=convPath+' '+ComLine;
+  
+  { Here we must first check if the command we wish to execute }
+  { actually exists, because this is NOT handled by the        }
+  { _SystemTagList call (program will abort!!)                 }
 
+  { Try to open with shared lock }
+  tmpLock:=Lock(PChar(convPath),SHARED_LOCK);
+  if tmpLock<>0 then
+    begin
+      { File exists - therefore unlock it }
+      Unlock(tmpLock);
+      result:=SystemTagList(PChar(tmpPath),nil);
+      { on return of -1 the shell could not be executed }
+      { probably because there was not enough memory    }
+      if result = -1 then
+        DosError:=8;
+    end
+  else
+    DosError:=3;
+  
+  if DosError <> 0 then begin
     if ComLine = '' then
       CommandLine := Path
     else
       CommandLine := Path + ' ' + ComLine;
-
+    
     E := EOSError.CreateFmt (SExecuteProcessFailed, [CommandLine, DosError]);
     E.ErrorCode := DosError;
     raise E;
@@ -541,7 +631,7 @@ begin
 end;
 
 function ExecuteProcess (const Path: AnsiString;
-                                  const ComLine: array of AnsiString): integer;
+                                  const ComLine: array of AnsiString;Flags:TExecuteFlags=[]): integer;
 var
   CommandLine: AnsiString;
   I: integer;
@@ -556,6 +646,12 @@ begin
   ExecuteProcess := ExecuteProcess (Path, CommandLine);
 end;
 
+procedure Sleep (Milliseconds: cardinal);
+begin
+ // Amiga/MorphOS dos.library Delay() has precision of 1/50 seconds
+ Delay(Milliseconds div 20);
+end;
+
 
 {****************************************************************************
                               Initialization code
@@ -564,24 +660,8 @@ end;
 Initialization
   InitExceptions;
   InitInternational;    { Initialize internationalization settings }
+  OnBeep:=Nil;          { No SysBeep() on MorphOS, for now. Figure out if we want 
+                          to use intuition.library/DisplayBeep() for this (KB) }
 Finalization
   DoneExceptions;
 end.
-{
-    $Log: sysutils.pp,v $
-    Revision 1.7  2005/02/26 14:38:14  florian
-      + SysLocale
-
-    Revision 1.6  2005/02/14 17:13:30  peter
-      * truncate log
-
-    Revision 1.5  2005/01/30 02:36:14  karoly
-      * fixed compilation
-
-    Revision 1.4  2005/01/12 08:03:42  karoly
-      * Few more Sysutils functions implemented
-
-    Revision 1.3  2005/01/11 17:44:06  karoly
-      * basic file I/O implemented
-
-}

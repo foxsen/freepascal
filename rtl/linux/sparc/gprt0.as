@@ -1,6 +1,3 @@
-/*
-  $Id: gprt0.as,v 1.4 2004/11/05 21:36:36 florian Exp $
-*/
         .section ".text"
         .align 4
         .global _start
@@ -31,6 +28,11 @@ _start:
        	sethi	%hi(operatingsystem_parameter_envp),%o1
        	or	%o1,%lo(operatingsystem_parameter_envp),%o1
        	st	%o2, [%o1]
+
+    /* Save initial stackpointer */
+	sethi	%hi(__stkptr),%o1
+	or	%o1,%lo(__stkptr),%o1
+	st	%sp, [%o1]
 
   /* reload the addresses for C startup code  */
         ld      [%sp+22*4], %o1
@@ -84,10 +86,7 @@ _start:
         .globl  _haltproc
         .type   _haltproc,@function
   _haltproc:
-        mov	1, %g1			/* "exit" system call */
-        sethi	%hi(operatingsystem_result),%o0
-        or	%o0,%lo(operatingsystem_result),%o0
-        ldsh	[%o0], %o0			/* give exit status to parent process*/
+        mov	188, %g1			/* "exit" system call */
         ta	0x10			/* dot the system call */
         nop				/* delay slot */
         /* Die very horribly if exit returns.  */
@@ -95,16 +94,8 @@ _start:
 
 .data
 
-        .comm   ___fpc_brk_addr,4        /* heap management */
+        .comm __stkptr,4
 
         .comm operatingsystem_parameter_envp,4
         .comm operatingsystem_parameter_argc,4
         .comm operatingsystem_parameter_argv,4
-/*
-  $Log: gprt0.as,v $
-  Revision 1.4  2004/11/05 21:36:36  florian
-    * initial implementation
-
-  Revision 1.3  2003/05/23 21:09:14  florian
-    + dummy implementation readded to satisfy makefile
-*/

@@ -4,14 +4,16 @@
 
 [package]
 name=fpdoc
-version=2.0.0
+version=2.7.1
 
 [require]
-packages=fcl
+packages=fcl-base fcl-xml fcl-passrc chm
+packages_darwin=univint
+packages_iphonesim=univint
 
 [target]
-programs=fpdoc makeskel unitdiff
-rst=dwriter fpdoc dglobals makeskel dwlinear
+programs=fpdoc makeskel unitdiff fpclasschart
+rst=dwriter fpdoc dglobals makeskel dwlinear 
 # removed to reduce dependencies of rpm.
 #dirs_linux_i386=fpde
 #dirs_win32=fpde
@@ -26,11 +28,12 @@ fpcpackage=y
 fpcdir=../..
 
 [clean]
-units=dglobals dwriter dw_xml sh_pas dw_html dw_latex dw_ipf dw_txt dw_man
-files=dwriter.rst fpdoc.rst dglobals.rst makeskel.rst
+units=dglobals dwriter dw_xml sh_pas dw_html dw_latex dw_ipf dw_txt dw_man dwlinear dw_linrtf dw_dxml fpdocproj fpdocxmlopts mkfpdoc
+files=dwriter.rst fpdoc.rst dglobals.rst makeskel.rst fpdocopts.rst
 
 [rules]
+.NOTPARALLEL:
 fpdoc$(EXEEXT): fpdoc.pp dglobals.pp dwriter.pp dw_xml.pp sh_pas.pp dw_html.pp\
-  dw_latex.pp dwlinear.pp dw_txt.pp
+  dw_latex.pp dwlinear.pp dw_txt.pp dw_linrtf.pp
 
 makeskel$(EXEEXT): makeskel.pp dglobals.pp

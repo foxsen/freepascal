@@ -1,5 +1,4 @@
 {
-    $Id: start.inc,v 1.2 2005/02/14 17:13:31 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Michael Van Canneyt,
     member of the Free Pascal development team.
@@ -90,8 +89,9 @@ asm
         sll     %o2, 2, %o2
         add     %o2, %o1, %o2
 
-        call    __fpstart
-        nop
+
+        // call    __fpstart
+        // nop
 
         call    PASCALMAIN
         nop
@@ -100,27 +100,4 @@ asm
         unimp
 end;
 
-{
-  $Log: start.inc,v $
-  Revision 1.2  2005/02/14 17:13:31  peter
-    * truncate log
-
-  Revision 1.1  2005/02/14 16:32:41  peter
-    * solaris updates
-
-  Revision 1.1  2005/02/13 22:13:20  peter
-    * get solaris back in shape
-
-  Revision 1.8  2005/02/05 23:46:12  peter
-    * set addr:=nil for other signals
-
-  Revision 1.7  2005/02/05 23:45:38  peter
-    * sigcontext is invalid, use siginfo only
-
-  Revision 1.6  2005/01/30 18:01:15  peter
-    * signal cleanup for linux
-    * sigactionhandler instead of tsigaction for bsds
-    * sigcontext moved to cpu dir
-
-}
 

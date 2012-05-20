@@ -1,5 +1,4 @@
 {
-    $Id: sysutils.pp,v 1.20 2005/02/26 14:38:14 florian Exp $
 
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Florian Klaempfl
@@ -19,6 +18,7 @@ unit sysutils;
 interface
 
 {$MODE objfpc}
+{$MODESWITCH OUT}
 { force ansistrings }
 {$H+}
 
@@ -34,6 +34,9 @@ implementation
 
   uses
     sysconst;
+
+{$DEFINE FPC_FEXPAND_UNC} (* UNC paths are supported *)
+{$DEFINE FPC_FEXPAND_DRIVES} (* Full paths begin with drive specification *)
 
 { Include platform independent implementation part }
 {$i sysutils.inc}
@@ -69,6 +72,25 @@ type
             cbList:cardinal;            {Length of entire EA set.}
         end;
         PFileStatus4=^TFileStatus4;
+
+        TFileStatus3L = object (TFileStatus)
+            DateCreation,               {Date of file creation.}
+            TimeCreation,               {Time of file creation.}
+            DateLastAccess,             {Date of last access to file.}
+            TimeLastAccess,             {Time of last access to file.}
+            DateLastWrite,              {Date of last modification of file.}
+            TimeLastWrite:word;         {Time of last modification of file.}
+            FileSize,                   {Size of file.}
+            FileAlloc:int64;         {Amount of space the file really
+                                         occupies on disk.}
+            AttrFile:cardinal;          {Attributes of file.}
+        end;
+        PFileStatus3L=^TFileStatus3L;
+
+        TFileStatus4L=object(TFileStatus3L)
+            cbList:cardinal;            {Length of entire EA set.}
+        end;
+        PFileStatus4L=^TFileStatus4L;
 
         TFileFindBuf3=object(TFileStatus)
             NextEntryOffset: cardinal;  {Offset of next entry}
@@ -106,6 +128,43 @@ type
                                          character is always zero.}
         end;
         PFileFindBuf4=^TFileFindBuf4;
+
+        TFileFindBuf3L=object(TFileStatus)
+            NextEntryOffset: cardinal;  {Offset of next entry}
+            DateCreation,               {Date of file creation.}
+            TimeCreation,               {Time of file creation.}
+            DateLastAccess,             {Date of last access to file.}
+            TimeLastAccess,             {Time of last access to file.}
+            DateLastWrite,              {Date of last modification of file.}
+            TimeLastWrite:word;         {Time of last modification of file.}
+            FileSize,                   {Size of file.}
+            FileAlloc:int64;            {Amount of space the file really
+                                         occupies on disk.}
+            AttrFile:cardinal;          {Attributes of file.}
+            Name:shortstring;           {Also possible to use as ASCIIZ.
+                                         The byte following the last string
+                                         character is always zero.}
+        end;
+        PFileFindBuf3L=^TFileFindBuf3L;
+
+        TFileFindBuf4L=object(TFileStatus)
+            NextEntryOffset: cardinal;  {Offset of next entry}
+            DateCreation,               {Date of file creation.}
+            TimeCreation,               {Time of file creation.}
+            DateLastAccess,             {Date of last access to file.}
+            TimeLastAccess,             {Time of last access to file.}
+            DateLastWrite,              {Date of last modification of file.}
+            TimeLastWrite:word;         {Time of last modification of file.}
+            FileSize,                   {Size of file.}
+            FileAlloc:int64;            {Amount of space the file really
+                                         occupies on disk.}
+            AttrFile:cardinal;          {Attributes of file.}
+            cbList:cardinal;            {Size of the file's extended attributes.}
+            Name:shortstring;           {Also possible to use as ASCIIZ.
+                                         The byte following the last string
+                                         character is always zero.}
+        end;
+        PFileFindBuf4L=^TFileFindBuf4L;
 
  TFSInfo = record
             case word of
@@ -224,7 +283,7 @@ type
   PgmInputs:PChar;            {Command parameters (nil allowed).}
   TermQ:PChar;                {System queue. (nil allowed).}
   Environment:PChar;          {Environment to pass (nil allowed).}
-  InheritOpt:word;            {Inherit enviroment from shell/
+  InheritOpt:word;            {Inherit environment from shell/
                                inherit environment from parent (0/1).}
   SessionType:word;           {Auto/full screen/window/presentation
                                manager/full screen Dos/windowed Dos
@@ -243,10 +302,13 @@ type
  PStartData=^TStartData;
 
 const
- ilStandard      = 1;
- ilQueryEAsize   = 2;
- ilQueryEAs      = 3;
- ilQueryFullName = 5;
+ ilStandard      =  1; (* Use TFileStatus3/TFindFileBuf3 *)
+ ilQueryEASize   =  2; (* Use TFileStatus4/TFindFileBuf4 *)
+ ilQueryEAs      =  3;
+ ilQueryFullName =  5;
+ ilStandardL     = 11; (* Use TFileStatus3L/TFindFileBuf3L *)
+ ilQueryEASizeL  = 12; (* Use TFileStatus4L/TFindFileBuf4L *)
+ ilQueryEAsL     = 13;
 
  quFIFO     = 0;
  quLIFO     = 1;
@@ -400,39 +462,61 @@ asm
  mov ecx, Mode
  mov edx, FileName
 {$ENDIF REGCALL}
-(* DenyAll if sharing not specified. *)
- test ecx, 112
- jnz @FOpen1
- or ecx, 16
+(* DenyNone if sharing not specified. *)
+ mov eax, ecx
+ xor eax, 112
+ jz @FOpenDefSharing
+ cmp eax, 64
+ jbe FOpen1
+@FOpenDefSharing:
+ or ecx, 64
 @FOpen1:
  mov eax, 7F2Bh
  call syscall
+(* syscall __open() returns -1 in case of error, i.e. exactly what we need *)
  pop ebx
 end {['eax', 'ebx', 'ecx', 'edx']};
 
 
-function FileCreate (const FileName: string): longint; assembler;
+function FileCreate (const FileName: string): longint;
+begin
+  FileCreate := FileCreate (FileName, ofReadWrite or faCreate or doDenyRW, 777);
+                                                       (* Sharing to DenyAll *)
+end;
+
+
+function FileCreate (const FileName: string; Rights: integer): longint;
+begin
+  FileCreate := FileCreate (FileName, ofReadWrite or faCreate or doDenyRW,
+                                              Rights); (* Sharing to DenyAll *)
+end;
+
+function FileCreate (const FileName: string; ShareMode: integer; Rights: integer): longint; assembler;
 asm
  push ebx
 {$IFDEF REGCALL}
+ mov ecx, edx
  mov edx, eax
 {$ELSE REGCALL}
+ mov ecx, ShareMode
  mov edx, FileName
 {$ENDIF REGCALL}
+ and ecx, 112
+ or ecx, ecx
+ jz @FCDefSharing
+ cmp ecx, 64
+ jbe @FCSharingOK
+@FCDefSharing:
+ mov ecx, doDenyRW   (* Sharing to DenyAll *)
+@FCSharingOK:
+ or ecx, ofReadWrite or faCreate
  mov eax, 7F2Bh
- mov ecx, ofReadWrite or faCreate or doDenyRW   (* Sharing to DenyAll *)
  call syscall
  pop ebx
 end {['eax', 'ebx', 'ecx', 'edx']};
 
 
-function FileCreate (const FileName: string; Mode: integer): longint;
-begin
-  FileCreate:=FileCreate(FileName);
-end;
-
-
-function FileRead (Handle: longint; var Buffer; Count: longint): longint;
+function FileRead (Handle: longint; Out Buffer; Count: longint): longint;
                                                                      assembler;
 asm
  push ebx
@@ -491,7 +575,7 @@ asm
  pop ebx
 end {['eax', 'ebx', 'edx']};
 
-function FileSeek (Handle: longint; FOffset, Origin: Int64): Int64;
+function FileSeek (Handle: longint; FOffset: Int64; Origin: longint): Int64;
 begin
   {$warning need to add 64bit call }
   Result:=FileSeek(Handle,Longint(Foffset),Longint(Origin));
@@ -510,15 +594,19 @@ begin
 end;
 
 
-function FileTruncate (Handle, Size: longint): boolean; assembler;
+function FileTruncate (Handle: THandle; Size: Int64): boolean; assembler;
 asm
  push ebx
 {$IFDEF REGCALL}
  mov ebx, eax
 {$ELSE REGCALL}
  mov ebx, Handle
- mov edx, Size
 {$ENDIF REGCALL}
+ mov edx, dword ptr Size
+ mov eax, dword ptr Size+4
+ or eax, eax
+ mov eax, 0
+ jz @FTruncEnd  (* file sizes > 4 GB not supported with EMX *)
  mov eax, 7F25h
  push ebx
  call syscall
@@ -549,122 +637,148 @@ begin
 end;
 
 
-function FileExists (const FileName: string): boolean; assembler;
-asm
-{$IFDEF REGCALL}
- mov edx, eax
-{$ELSE REGCALL}
- mov edx, FileName
-{$ENDIF REGCALL}
- mov ax, 4300h
- call syscall
- mov eax, 0
- jc @FExistsEnd
- test cx, 18h
- jnz @FExistsEnd
- inc eax
-@FExistsEnd:
-end {['eax', 'ecx', 'edx']};
+function FileExists (const FileName: string): boolean;
+var
+  L: longint;
+begin
+  if FileName = '' then
+   Result := false
+  else
+   begin
+    L := FileGetAttr (FileName);
+    Result := (L >= 0) and (L and (faDirectory or faVolumeID) = 0);
+(* Neither VolumeIDs nor directories are files. *)
+   end;
+end;
 
 
-type    TRec = record
-            T, D: word;
-        end;
-        PSearchRec = ^SearchRec;
+type
+  TRec = record
+   T, D: word;
+  end;
+  PSearchRec = ^SearchRec;
 
-function FindFirst (const Path: string; Attr: longint; var Rslt: TSearchRec): longint;
+function FindFirst (const Path: string; Attr: longint; out Rslt: TSearchRec): longint;
 
-var SR: PSearchRec;
-    FStat: PFileFindBuf3;
-    Count: cardinal;
-    Err: cardinal;
+var
+  SR: PSearchRec;
+  FStat: PFileFindBuf3L;
+  Count: cardinal;
+  Err: cardinal;
 
 begin
-    if os_mode = osOS2 then
-        begin
-            New (FStat);
-            Rslt.FindHandle := $FFFFFFFF;
-            Count := 1;
-            Err := DosFindFirst (PChar (Path), Rslt.FindHandle,
-                   Attr and FindResvdMask, FStat, SizeOf (FStat^), Count,
-                                                                   ilStandard);
-            if (Err = 0) and (Count = 0) then Err := 18;
-            FindFirst := -Err;
-            if Err = 0 then
-                begin
-                    Rslt.Name := FStat^.Name;
-                    Rslt.Size := FStat^.FileSize;
-                    Rslt.Attr := FStat^.AttrFile;
-                    Rslt.ExcludeAttr := 0;
-                    TRec (Rslt.Time).T := FStat^.TimeLastWrite;
-                    TRec (Rslt.Time).D := FStat^.DateLastWrite;
-                end;
-            Dispose (FStat);
-        end
+  if os_mode = osOS2 then
+   begin
+    New (FStat);
+    Rslt.FindHandle := THandle ($FFFFFFFF);
+    Count := 1;
+    if FSApi64 then
+     Err := DosFindFirst (PChar (Path), Rslt.FindHandle,
+            Attr and FindResvdMask, FStat, SizeOf (FStat^), Count, ilStandardL)
     else
-        begin
-            Err := DOS.DosError;
-            GetMem (SR, SizeOf (SearchRec));
-            Rslt.FindHandle := longint(SR);
-            DOS.FindFirst (Path, Attr, SR^);
-            FindFirst := -DOS.DosError;
-            if DosError = 0 then
-                begin
-                    Rslt.Time := SR^.Time;
-                    Rslt.Size := SR^.Size;
-                    Rslt.Attr := SR^.Attr;
-                    Rslt.ExcludeAttr := 0;
-                    Rslt.Name := SR^.Name;
-                end;
-            DOS.DosError := Err;
-        end;
+     Err := DosFindFirst (PChar (Path), Rslt.FindHandle,
+            Attr and FindResvdMask, FStat, SizeOf (FStat^), Count, ilStandard);
+    if (Err = 0) and (Count = 0) then
+     Err := 18;
+    FindFirst := -Err;
+    if Err = 0 then
+     begin
+      Rslt.ExcludeAttr := 0;
+      TRec (Rslt.Time).T := FStat^.TimeLastWrite;
+      TRec (Rslt.Time).D := FStat^.DateLastWrite;
+      if FSApi64 then
+       begin
+        Rslt.Size := FStat^.FileSize;
+        Rslt.Name := FStat^.Name;
+        Rslt.Attr := FStat^.AttrFile;
+       end
+      else
+       begin
+        Rslt.Size := PFileFindBuf3 (FStat)^.FileSize;
+        Rslt.Name := PFileFindBuf3 (FStat)^.Name;
+        Rslt.Attr := PFileFindBuf3 (FStat)^.AttrFile;
+       end;
+     end
+    else
+     FindClose (Rslt);
+    Dispose (FStat);
+   end
+  else
+   begin
+    Err := DOS.DosError;
+    GetMem (SR, SizeOf (SearchRec));
+    Rslt.FindHandle := longint(SR);
+    DOS.FindFirst (Path, Attr, SR^);
+    FindFirst := -DOS.DosError;
+    if DosError = 0 then
+     begin
+      Rslt.Time := SR^.Time;
+(* Extend the supported file sizes from 2 GB to 4 GB at least. *)
+      Rslt.Size := cardinal (SR^.Size);
+      Rslt.Attr := SR^.Attr;
+      Rslt.ExcludeAttr := 0;
+      Rslt.Name := SR^.Name;
+     end;
+    DOS.DosError := Err;
+   end;
 end;
 
 
 function FindNext (var Rslt: TSearchRec): longint;
 
-var SR: PSearchRec;
-    FStat: PFileFindBuf3;
-    Count: cardinal;
-    Err: cardinal;
+var
+  SR: PSearchRec;
+  FStat: PFileFindBuf3L;
+  Count: cardinal;
+  Err: cardinal;
 
 begin
-    if os_mode = osOS2 then
-        begin
-            New (FStat);
-            Count := 1;
-            Err := DosFindNext (Rslt.FindHandle, FStat, SizeOf (FStat^),
-                                                                        Count);
-            if (Err = 0) and (Count = 0) then Err := 18;
-            FindNext := -Err;
-            if Err = 0 then
-                begin
-                    Rslt.Name := FStat^.Name;
-                    Rslt.Size := FStat^.FileSize;
-                    Rslt.Attr := FStat^.AttrFile;
-                    Rslt.ExcludeAttr := 0;
-                    TRec (Rslt.Time).T := FStat^.TimeLastWrite;
-                    TRec (Rslt.Time).D := FStat^.DateLastWrite;
-                end;
-            Dispose (FStat);
-        end
-    else
-        begin
-            SR := PSearchRec (Rslt.FindHandle);
-            if SR <> nil then
-                begin
-                    DOS.FindNext (SR^);
-                    FindNext := -DosError;
-                    if DosError = 0 then
-                        begin
-                            Rslt.Time := SR^.Time;
-                            Rslt.Size := SR^.Size;
-                            Rslt.Attr := SR^.Attr;
-                            Rslt.ExcludeAttr := 0;
-                            Rslt.Name := SR^.Name;
-                        end;
-                end;
-        end;
+  if os_mode = osOS2 then
+   begin
+    New (FStat);
+    Count := 1;
+    Err := DosFindNext (Rslt.FindHandle, FStat, SizeOf (FStat^), Count);
+    if (Err = 0) and (Count = 0) then
+     Err := 18;
+    FindNext := -Err;
+    if Err = 0 then
+     begin
+      Rslt.ExcludeAttr := 0;
+      TRec (Rslt.Time).T := FStat^.TimeLastWrite;
+      TRec (Rslt.Time).D := FStat^.DateLastWrite;
+      if FSApi64 then
+       begin
+        Rslt.Size := FStat^.FileSize;
+        Rslt.Name := FStat^.Name;
+        Rslt.Attr := FStat^.AttrFile;
+       end
+      else
+       begin
+        Rslt.Size := PFileFindBuf3 (FStat)^.FileSize;
+        Rslt.Name := PFileFindBuf3 (FStat)^.Name;
+        Rslt.Attr := PFileFindBuf3 (FStat)^.AttrFile;
+       end;
+     end;
+    Dispose (FStat);
+   end
+  else
+   begin
+    SR := PSearchRec (Rslt.FindHandle);
+    if SR <> nil then
+     begin
+      DOS.FindNext (SR^);
+      FindNext := -DosError;
+      if DosError = 0 then
+       begin
+        Rslt.Time := SR^.Time;
+(* Extend the supported file sizes from 2 GB to 4 GB at least. *)
+        Rslt.Size := cardinal (SR^.Size);
+        Rslt.Attr := SR^.Attr;
+        Rslt.ExcludeAttr := 0;
+        Rslt.Name := SR^.Name;
+       end;
+     end;
+   end;
 end;
 
 
@@ -941,29 +1055,38 @@ begin
 end;
 
 
-{$ASMMODE INTEL}
-function DirectoryExists (const Directory: string): boolean; assembler;
-asm
-{$IFDEF REGCALL}
- mov edx, eax
-{$ELSE REGCALL}
- mov edx, Directory
-{$ENDIF REGCALL}
- mov ax, 4300h
- call syscall
- mov eax, 0
- jc @FExistsEnd
- test cx, 10h
- jz @FExistsEnd
- inc eax
-@FExistsEnd:
-end {['eax', 'ecx', 'edx']};
+function DirectoryExists (const Directory: string): boolean;
+var
+  L: longint;
+begin
+  if Directory = '' then
+   Result := false
+  else
+   begin
+    if ((Length (Directory) = 2) or
+        (Length (Directory) = 3) and
+        (Directory [3] in AllowDirectorySeparators)) and
+       (Directory [2] in AllowDriveSeparators) and
+       (UpCase (Directory [1]) in ['A'..'Z']) then
+(* Checking attributes for 'x:' is not possible but for 'x:.' it is. *)
+     L := FileGetAttr (Directory + '.')
+    else if (Directory [Length (Directory)] in AllowDirectorySeparators) and
+                                              (Length (Directory) > 1) and
+(* Do not remove '\' in '\\' (invalid path, possibly broken UNC path). *)
+      not (Directory [Length (Directory) - 1] in AllowDirectorySeparators) then
+     L := FileGetAttr (Copy (Directory, 1, Length (Directory) - 1))
+    else
+     L := FileGetAttr (Directory);
+    Result := (L > 0) and (L and faDirectory = faDirectory);
+   end;
+end;
 
 
 {****************************************************************************
                               Time Functions
 ****************************************************************************}
 
+{$ASMMODE INTEL}
 procedure GetLocalTime (var SystemTime: TSystemTime); assembler;
 asm
 (* Expects the default record alignment (word)!!! *)
@@ -1123,7 +1246,7 @@ end;
 {$ASMMODE DEFAULT}
 
 
-function ExecuteProcess (const Path: AnsiString; const ComLine: AnsiString):
+function ExecuteProcess (const Path: AnsiString; const ComLine: AnsiString;Flags:TExecuteFlags=[]):
                                                                        integer;
 var
  HQ: THandle;
@@ -1192,7 +1315,7 @@ end;
 
 
 function ExecuteProcess (const Path: AnsiString;
-                                  const ComLine: array of AnsiString): integer;
+                                  const ComLine: array of AnsiString;Flags:TExecuteFlags=[]): integer;
 
 var
   CommandLine: AnsiString;
@@ -1220,13 +1343,3 @@ Initialization
 Finalization
   DoneExceptions;
 end.
-
-{
-  $Log: sysutils.pp,v $
-  Revision 1.20  2005/02/26 14:38:14  florian
-    + SysLocale
-
-  Revision 1.19  2005/02/14 17:13:22  peter
-    * truncate log
-
-}

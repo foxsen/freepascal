@@ -1,5 +1,4 @@
 {
-    $Id: go32.pp,v 1.8 2005/02/14 17:13:22 peter Exp $
     This file is part of the Free Pascal run time library.
     and implements some stuff for protected mode programming
     Copyright (c) 1999-2000 by the Free Pascal development team.
@@ -220,7 +219,7 @@ interface
       end;
 
 
-    procedure test_int31(flag : longint);
+    procedure test_int31(flag : longint); stdcall; { stack-args! }
       begin
          asm
             pushl %ebx
@@ -278,6 +277,7 @@ interface
       begin
          regs.realsp:=0;
          regs.realss:=0;
+         regs.realres:=0; { play it safe }
          asm
             { save all used registers to avoid crash under NTVDM }
             { when spawning a 32-bit DPMI application            }
@@ -433,7 +433,7 @@ interface
               popw %es
               popl %edi
               popl %esi
-           end ['ESI','EDI','ECX'];
+           end ['ECX','EAX'];
       end;
 
     procedure outportb(port : word;data : byte);
@@ -849,6 +849,7 @@ interface
     function free_memory_block(blockhandle : longint) : boolean;
       begin
          asm
+            pushl %edi
             pushl %esi
             movl blockhandle,%esi
             movl %esi,%edi
@@ -859,6 +860,7 @@ interface
             call test_int31
             movb %al,__RESULT
             popl %esi
+            popl %edi
          end;
       end;
 
@@ -1184,10 +1186,3 @@ begin
    int31error:=0;
    dosmemselector:=_core_selector;
 end.
-
-{
-  $Log: go32.pp,v $
-  Revision 1.8  2005/02/14 17:13:22  peter
-    * truncate log
-
-}

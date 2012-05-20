@@ -103,6 +103,9 @@ Begin
    int64val := 1;
    int64val := - int64val;
    Write('Value should be -1...');
+
+   { the following test give range check errors }
+   {$R-}
    test(int64val and $FFFFFFFF, -1);
 
    { CURRENT NODE : REGISTER }
@@ -113,4 +116,3 @@ Begin
    test(int64val and $FFFFFFFF, -2);
 {$ENDIF}
 end.
-

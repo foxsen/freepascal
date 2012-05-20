@@ -1,5 +1,4 @@
 {
-  $Id: fastmove.inc,v 1.5 2005/01/26 20:58:10 florian Exp $
   Copyright (c) 2004, John O'Harrow (john@almcrest.demon.co.uk)
 
 This software is provided 'as-is', without any express or implied warranty.
@@ -24,12 +23,6 @@ the following restrictions:
 
 Version: 1.40 - 16-SEP-2004
 }
-
-{$ifndef VER1_0}
-  {$if (FPC_VERSION>1) or ((FPC_RELEASE>=9) and (FPC_PATCH>6))}
-    { $define USE_FASTMOVE}
-  {$endif}
-{$endif}
 
 {$ifdef USE_FASTMOVE}
 
@@ -373,6 +366,41 @@ asm
   mov     [edx],cl
 @@Done:
 end; {SmallBackwardMove}
+
+
+{ at least valgrind up to 3.3 has a bug which prevents the default code to
+  work so we use a rather simple implementation here
+}
+procedure Forwards_Valgrind;assembler;nostackframe;
+asm
+  push    esi
+  push    edi
+  mov     esi,eax
+  mov     edi,edx
+  rep     movsb
+  pop     edi
+  pop     esi
+end;
+
+{ at least valgrind up to 3.3 has a bug which prevents the default code to
+  work so we use a rather simple implementation here
+}
+procedure Backwards_Valgrind;assembler;nostackframe;
+asm
+  push    esi
+  push    edi
+  lea     esi,[eax+ecx-1]
+  lea     edi,[edx+ecx-1]
+@@repeat:
+  mov     al,[esi]
+  mov     [edi],al
+  dec     esi
+  dec     edi
+  dec     ecx
+  jnz     @@repeat
+  pop     edi
+  pop     esi
+end;
 
 {-------------------------------------------------------------------------}
 {Move ECX Bytes from EAX to EDX, where EAX > EDX and ECX > 36 (SMALLMOVESIZE)}
@@ -835,9 +863,29 @@ asm
 end;
 
 {$asmmode att}
+{$ifdef FPC_HAS_VALGRINDBOOL}
+{$ifndef FPC_HAS_INDIRECT_MAIN_INFORMATION}
+var
+  valgrind_used : boolean;external name '__fpc_valgrind';
+{$endif FPC_HAS_INDIRECT_MAIN_INFORMATION}
+{$endif FPC_HAS_VALGRINDBOOL}
 
 procedure setup_fastmove;{$ifdef SYSTEMINLINE}inline;{$endif}
   begin
+{$ifdef FPC_HAS_VALGRINDBOOL}
+    { workaround valgrind bug }
+{$ifdef FPC_HAS_INDIRECT_MAIN_INFORMATION}
+    if EntryInformation.valgrind_used then
+{$else FPC_HAS_INDIRECT_MAIN_INFORMATION}
+    if valgrind_used then
+{$endif FPC_HAS_INDIRECT_MAIN_INFORMATION}
+      begin
+        fastmoveproc_forward:=@Forwards_Valgrind;
+        fastmoveproc_backward:=@Backwards_Valgrind;
+      end
+    else
+{$endif FPC_HAS_VALGRINDBOOL}
+
     if has_sse_support then
       begin
         fastmoveproc_forward:=@Forwards_SSE_3;
@@ -851,11 +899,5 @@ procedure setup_fastmove;{$ifdef SYSTEMINLINE}inline;{$endif}
   end;
 
 {$endif  FPC_SYSTEM_HAS_MOVE}
-
-{$else}
-
-procedure setup_fastmove;{$ifdef SYSTEMINLINE}inline;{$endif}
-  begin
-  end;
 
 {$endif}

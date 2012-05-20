@@ -1,5 +1,4 @@
 {
-    $Id: ppu.pas,v 1.65 2005/03/27 14:10:52 jonas Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl
 
     Routines to read/write ppu files
@@ -27,7 +26,7 @@ unit ppu;
 interface
 
   uses
-    globtype;
+    systems,globtype,constexp,cstreams;
 
 { Also write the ppu if only crc if done, this can be used with ppudump to
   see the differences between the intf and implementation }
@@ -39,12 +38,12 @@ var
 const
   CRC_array_Size = 200000;
 type
-  tcrc_array = array[0..crc_array_size] of longint;
+  tcrc_array = array[0..crc_array_size] of dword;
   pcrc_array = ^tcrc_array;
 {$endif Test_Double_checksum}
 
 const
-  CurrentPPUVersion=49;
+  CurrentPPUVersion = 148;
 
 { buffer sizes }
   maxentrysize = 1024;
@@ -61,7 +60,7 @@ const
   ibendsyms           = 251;
   ibendinterface      = 252;
   ibendimplementation = 253;
-  ibendbrowser        = 254;
+//  ibendbrowser        = 254;
   ibend               = 255;
   {general}
   ibmodulename           = 1;
@@ -74,11 +73,11 @@ const
   iblinkotherofiles      = 8;
   iblinkotherstaticlibs  = 9;
   iblinkothersharedlibs  = 10;
-  ibdbxcount             = 11;
+  ibImportSymbols        = 11;
   ibsymref               = 12;
   ibdefref               = 13;
-  ibendsymtablebrowser   = 14;
-  ibbeginsymtablebrowser = 15;
+//  ibendsymtablebrowser   = 14;
+//  ibbeginsymtablebrowser = 15;
 {$IFDEF MACRO_DIFF_HINT}
   ibusedmacros           = 16;
 {$ENDIF}
@@ -88,17 +87,17 @@ const
   {syms}
   ibtypesym        = 20;
   ibprocsym        = 21;
-  ibglobalvarsym   = 22;
+  ibstaticvarsym   = 22;
   ibconstsym       = 23;
   ibenumsym        = 24;
-  ibtypedconstsym  = 25;
+//  ibtypedconstsym  = 25;
   ibabsolutevarsym = 26;
   ibpropertysym    = 27;
   ibfieldvarsym    = 28;
-  ibunitsym        = 29;  { needed for browser }
+  ibunitsym        = 29;
   iblabelsym       = 30;
   ibsyssym         = 31;
-  ibrttisym        = 32;
+  ibnamespacesym   = 32;
   iblocalvarsym    = 33;
   ibparavarsym     = 34;
   ibmacrosym       = 35;
@@ -118,43 +117,97 @@ const
   ibfloatdef       = 52;
   ibclassrefdef    = 53;
   iblongstringdef  = 54;
-{$ifdef ansistring_bits}
-  ibansistring16def  = 58;
-  ibansistring32def  = 55;
-  ibansistring64def  = 59;
-{$else}
   ibansistringdef  = 55;
-{$endif}
   ibwidestringdef  = 56;
   ibvariantdef     = 57;
-  {implementation/objectdata}
+  ibundefineddef   = 58;
+  ibunicodestringdef = 59;
+  {implementation/ObjData}
   ibnodetree       = 80;
   ibasmsymbols     = 81;
+  ibresources      = 82;
+  ibcreatedobjtypes = 83;
+  ibwpofile         = 84;
+  ibmoduleoptions   = 85;
+
+  ibmainname       = 90;
+  ibsymtableoptions = 91;
+  ibrecsymtableoptions = 91;
+  { target-specific things }
+  iblinkotherframeworks = 100;
+  ibjvmnamespace = 101;
 
 { unit flags }
-  uf_init          = $1;
-  uf_finalize      = $2;
-  uf_big_endian    = $4;
-  uf_has_dbx       = $8;
-  uf_has_browser   = $10;
-  uf_in_library    = $20;     { is the file in another file than <ppufile>.* ? }
-  uf_smart_linked  = $40;     { the ppu can be smartlinked }
-  uf_static_linked = $80;     { the ppu can be linked static }
-  uf_shared_linked = $100;    { the ppu can be linked shared }
-  uf_local_browser = $200;
-  uf_no_link       = $400;    { unit has no .o generated, but can still have
-                                external linking! }
-  uf_has_resources = $800;    { unit has resource section }
-  uf_little_endian = $1000;
-  uf_release       = $2000;   { unit was compiled with -Ur option }
-  uf_threadvars    = $4000;   { unit has threadvars }
-  uf_fpu_emulation = $8000;   { this unit was compiled with fpu emulation on }
-  uf_has_debuginfo = $10000;  { this unit has debuginfo generated }
-  uf_local_symtable = $20000; { this unit has a local symtable stored }
-  uf_uses_variants  = $40000; { this unit uses variants }
+  uf_init                = $000001; { unit has initialization section }
+  uf_finalize            = $000002; { unit has finalization section   }
+  uf_big_endian          = $000004;
+//uf_has_browser         = $000010;
+  uf_in_library          = $000020; { is the file in another file than <ppufile>.* ? }
+  uf_smart_linked        = $000040; { the ppu can be smartlinked }
+  uf_static_linked       = $000080; { the ppu can be linked static }
+  uf_shared_linked       = $000100; { the ppu can be linked shared }
+//uf_local_browser       = $000200;
+  uf_no_link             = $000400; { unit has no .o generated, but can still have external linking! }
+  uf_has_resourcestrings = $000800; { unit has resource string section }
+  uf_little_endian       = $001000;
+  uf_release             = $002000; { unit was compiled with -Ur option }
+  uf_threadvars          = $004000; { unit has threadvars }
+  uf_fpu_emulation       = $008000; { this unit was compiled with fpu emulation on }
+  uf_has_stabs_debuginfo = $010000; { this unit has stabs debuginfo generated }
+  uf_local_symtable      = $020000; { this unit has a local symtable stored }
+  uf_uses_variants       = $040000; { this unit uses variants }
+  uf_has_resourcefiles   = $080000; { this unit has external resources (using $R directive)}
+  uf_has_exports         = $100000; { this module or a used unit has exports }
+  uf_has_dwarf_debuginfo = $200000; { this unit has dwarf debuginfo generated }
+  uf_wideinits           = $400000; { this unit has winlike widestring typed constants }
+  uf_classinits          = $800000; { this unit has class constructors/destructors }
+  uf_resstrinits        = $1000000; { this unit has string consts referencing resourcestrings }
+
+{$ifdef generic_cpu}
+{ We need to use the correct size of aint and pint for
+  the target CPU }
+const
+  CpuAddrBitSize : array[tsystemcpu] of longint =
+    (
+    {  0 } 32 {'none'},
+    {  1 } 32 {'i386'},
+    {  2 } 32 {'m68k'},
+    {  3 } 32 {'alpha'},
+    {  4 } 32 {'powerpc'},
+    {  5 } 32 {'sparc'},
+    {  6 } 32 {'vis'},
+    {  7 } 64 {'ia64'},
+    {  8 } 64 {'x86_64'},
+    {  9 } 32 {'mips'},
+    { 10 } 32 {'arm'},
+    { 11 } 64 {'powerpc64'},
+    { 12 } 16 {'avr'},
+    { 13 } 32 {'mipsel'},
+    { 14 } 32 {'jvm'}
+    );
+  CpuAluBitSize : array[tsystemcpu] of longint =
+    (
+    {  0 } 32 {'none'},
+    {  1 } 32 {'i386'},
+    {  2 } 32 {'m68k'},
+    {  3 } 32 {'alpha'},
+    {  4 } 32 {'powerpc'},
+    {  5 } 32 {'sparc'},
+    {  6 } 32 {'vis'},
+    {  7 } 64 {'ia64'},
+    {  8 } 64 {'x86_64'},
+    {  9 } 32 {'mips'},
+    { 10 } 32 {'arm'},
+    { 11 } 64 {'powerpc64'},
+    { 12 }  8 {'avr'},
+    { 13 } 32 {'mipsel'},
+    { 14 } 64 {'jvm'}
+    );
+{$endif generic_cpu}
 
 type
-  ppureal=extended;
+  { bestreal is defined based on the target architecture }
+  ppureal=bestreal;
 
   tppuerror=(ppuentrytoobig,ppuentryerror);
 
@@ -168,7 +221,9 @@ type
     size     : longint; { size of the ppufile without header }
     checksum : cardinal; { checksum for this ppufile }
     interface_checksum : cardinal;
-    future   : array[0..2] of longint;
+    deflistsize,
+    symlistsize : longint;
+    indirect_checksum: cardinal;
   end;
 
   tppuentry=packed record
@@ -177,9 +232,11 @@ type
     nr   : byte;
   end;
 
+  { tppufile }
+
   tppufile=class
   private
-    f        : file;
+    f        : TCCustomFileStream;
     mode     : byte; {0 - Closed, 1 - Reading, 2 - Writing}
     fname    : string;
     fsize    : integer;
@@ -193,7 +250,6 @@ type
     crc_test2  : pcrc_array;
   private
 {$endif def Test_Double_checksum}
-    change_endian : boolean;
     buf      : pchar;
     bufstart,
     bufsize,
@@ -209,11 +265,22 @@ type
     entrytyp : byte;
     header           : tppuheader;
     size             : integer;
+    change_endian    : boolean; { Used in ppudump util }
+    { crc for the entire unit }
     crc,
-    interface_crc    : cardinal;
+    { crc for the interface definitions in this unit }
+    interface_crc,
+    { crc of all object/class definitions in the interface of this unit, xor'ed
+      by the crc's of all object/class definitions in the interfaces of units
+      used by this unit. Reason: see mantis #13840 }
+    indirect_crc     : cardinal;
     error,
+{$ifdef generic_cpu}
+    has_more,
+{$endif not generic_cpu}
     do_crc,
-    do_interface_crc : boolean;
+    do_interface_crc,
+    do_indirect_crc  : boolean;
     crc_only         : boolean;    { used to calculate interface_crc before implementation }
     constructor Create(const fn:string);
     destructor  Destroy;override;
@@ -226,22 +293,29 @@ type
   {read}
     function  openfile:boolean;
     procedure reloadbuf;
-    procedure readdata(var b;len:integer);
+    procedure readdata(out b;len:integer);
     procedure skipdata(len:integer);
     function  readentry:byte;
     function  EndOfEntry:boolean;
     function  entrysize:longint;
-    procedure getdatabuf(var b;len:integer;var res:integer);
-    procedure getdata(var b;len:integer);
+    function  entryleft:longint;
+    procedure getdatabuf(out b;len:integer;out res:integer);
+    procedure getdata(out b;len:integer);
     function  getbyte:byte;
     function  getword:word;
+    function  getdword:dword;
     function  getlongint:longint;
     function getint64:int64;
+    function  getqword:qword;
     function getaint:aint;
+    function getasizeint:asizeint;
+    function getaword:aword;
     function  getreal:ppureal;
+    function  getrealsize(sizeofreal : longint):ppureal;
     function  getstring:string;
-    procedure getnormalset(var b);
-    procedure getsmallset(var b);
+    function  getansistring:ansistring;
+    procedure getnormalset(out b);
+    procedure getsmallset(out b);
     function  skipuntilentry(untilb:byte):boolean;
   {write}
     function  createfile:boolean;
@@ -252,15 +326,20 @@ type
     procedure putdata(const b;len:integer);
     procedure putbyte(b:byte);
     procedure putword(w:word);
+    procedure putdword(w:dword);
     procedure putlongint(l:longint);
     procedure putint64(i:int64);
+    procedure putqword(q:qword);
     procedure putaint(i:aint);
+    procedure putasizeint(i:asizeint);
+    procedure putaword(i:aword);
     procedure putreal(d:ppureal);
-    procedure putstring(s:string);
+    procedure putstring(const s:string);
+    procedure putansistring(const s:ansistring);
     procedure putnormalset(const b);
     procedure putsmallset(const b);
-    procedure tempclose;
-    function  tempopen:boolean;
+    procedure tempclose;        // MG: not used, obsolete?
+    function  tempopen:boolean; // MG: not used, obsolete?
   end;
 
 implementation
@@ -269,35 +348,19 @@ implementation
 {$ifdef Test_Double_checksum}
     comphook,
 {$endif def Test_Double_checksum}
-    crc,
+    fpccrc,
     cutils;
 
-{*****************************************************************************
-                             Endian Handling
-*****************************************************************************}
+function swapendian_ppureal(d:ppureal):ppureal;
 
-Function SwapLong(x : longint): longint;
-var
-  y : word;
-  z : word;
-Begin
-  y := x shr 16;
-  y := word(longint(y) shl 8) or (y shr 8);
-  z := x and $FFFF;
-  z := word(longint(z) shl 8) or (z shr 8);
-  SwapLong := (longint(z) shl 16) or longint(y);
-End;
+type ppureal_bytes=array[0..sizeof(d)-1] of byte;
 
+var i:0..sizeof(d)-1;
 
-Function SwapWord(x : word): word;
-var
-  z : byte;
-Begin
-  z := x shr 8;
-  x := x and $ff;
-  x := word(x shl 8);
-  SwapWord := x or z;
-End;
+begin
+  for i:=low(ppureal_bytes) to high(ppureal_bytes) do
+    ppureal_bytes(swapendian_ppureal)[i]:=ppureal_bytes(d)[high(ppureal_bytes)-i];
+end;
 
 
 {*****************************************************************************
@@ -347,10 +410,7 @@ begin
   if Mode<>0 then
    begin
      Flush;
-     {$I-}
-      system.close(f);
-     {$I+}
-     if ioresult<>0 then;
+     f.Free;
      Mode:=0;
      closed:=true;
    end;
@@ -402,35 +462,33 @@ end;
 
 function tppufile.openfile:boolean;
 var
-  ofmode : byte;
   i      : integer;
 begin
   openfile:=false;
-  assign(f,fname);
-  ofmode:=filemode;
-  filemode:=$0;
-  {$I-}
-   reset(f,1);
-  {$I+}
-  filemode:=ofmode;
-  if ioresult<>0 then
-   exit;
+  try
+    f:=CFileStreamClass.Create(fname,fmOpenRead)
+  except
+    exit;
+  end;
   closed:=false;
 {read ppuheader}
-  fsize:=filesize(f);
+  fsize:=f.Size;
   if fsize<sizeof(tppuheader) then
    exit;
-  blockread(f,header,sizeof(tppuheader),i);
+  i:=f.Read(header,sizeof(tppuheader));
   { The header is always stored in little endian order }
   { therefore swap if on a big endian machine          }
 {$IFDEF ENDIAN_BIG}
-  header.compiler := SwapWord(header.compiler);
-  header.cpu := SwapWord(header.cpu);
-  header.target := SwapWord(header.target);
-  header.flags := SwapLong(header.flags);
-  header.size := SwapLong(header.size);
-  header.checksum := cardinal(SwapLong(longint(header.checksum)));
-  header.interface_checksum := cardinal(SwapLong(longint(header.interface_checksum)));
+  header.compiler := swapendian(header.compiler);
+  header.cpu := swapendian(header.cpu);
+  header.target := swapendian(header.target);
+  header.flags := swapendian(header.flags);
+  header.size := swapendian(header.size);
+  header.checksum := swapendian(header.checksum);
+  header.interface_checksum := swapendian(header.interface_checksum);
+  header.indirect_checksum := swapendian(header.indirect_checksum);
+  header.deflistsize:=swapendian(header.deflistsize);
+  header.symlistsize:=swapendian(header.symlistsize);
 {$ENDIF}
   { the PPU DATA is stored in native order }
   if (header.flags and uf_big_endian) = uf_big_endian then
@@ -466,38 +524,32 @@ end;
 procedure tppufile.reloadbuf;
 begin
   inc(bufstart,bufsize);
-  blockread(f,buf^,ppubufsize,bufsize);
+  bufsize:=f.Read(buf^,ppubufsize);
   bufidx:=0;
 end;
 
 
-procedure tppufile.readdata(var b;len:integer);
+procedure tppufile.readdata(out b;len:integer);
 var
-  p   : pchar;
-  left,
-  idx : integer;
+  p,pbuf : pchar;
+  left : integer;
 begin
   p:=pchar(@b);
-  idx:=0;
-  while len>0 do
-   begin
-     left:=bufsize-bufidx;
-     if len>left then
-      begin
-        move(buf[bufidx],p[idx],left);
-        dec(len,left);
-        inc(idx,left);
-        reloadbuf;
-        if bufsize=0 then
-         exit;
-      end
-     else
-      begin
-        move(buf[bufidx],p[idx],len);
-        inc(bufidx,len);
-        exit;
-      end;
-   end;
+  pbuf:=@buf[bufidx];
+  repeat
+    left:=bufsize-bufidx;
+    if len<left then
+      break;
+    move(pbuf^,p^,left);
+    dec(len,left);
+    inc(p,left);
+    reloadbuf;
+    pbuf:=@buf[bufidx];
+    if bufsize=0 then
+      exit;
+  until false;
+  move(pbuf^,p^,len);
+  inc(bufidx,len);
 end;
 
 
@@ -527,12 +579,20 @@ end;
 function tppufile.readentry:byte;
 begin
   if entryidx<entry.size then
-   skipdata(entry.size-entryidx);
+    begin
+{$ifdef generic_cpu}
+     has_more:=true;
+{$endif not generic_cpu}
+     skipdata(entry.size-entryidx);
+    end;
   readdata(entry,sizeof(tppuentry));
   if change_endian then
-   entry.size:=swaplong(entry.size);
+    entry.size:=swapendian(entry.size);
   entrystart:=bufstart+bufidx;
   entryidx:=0;
+{$ifdef generic_cpu}
+  has_more:=false;
+{$endif not generic_cpu}
   if not(entry.id in [mainentryid,subentryid]) then
    begin
      readentry:=iberror;
@@ -545,7 +605,11 @@ end;
 
 function tppufile.endofentry:boolean;
 begin
+{$ifdef generic_cpu}
+  endofentry:=(entryidx=entry.size);
+{$else not generic_cpu}
   endofentry:=(entryidx>=entry.size);
+{$endif not generic_cpu}
 end;
 
 
@@ -554,8 +618,13 @@ begin
   entrysize:=entry.size;
 end;
 
+function tppufile.entryleft:longint;
+begin
+  entryleft:=entry.size-entryidx;
+end;
 
-procedure tppufile.getdatabuf(var b;len:integer;var res:integer);
+
+procedure tppufile.getdatabuf(out b;len:integer;out res:integer);
 begin
   if entryidx+len>entry.size then
    res:=entry.size-entryidx
@@ -566,7 +635,7 @@ begin
 end;
 
 
-procedure tppufile.getdata(var b;len:integer);
+procedure tppufile.getdata(out b;len:integer);
 begin
   if entryidx+len>entry.size then
    begin
@@ -579,62 +648,88 @@ end;
 
 
 function tppufile.getbyte:byte;
-var
-  b : byte;
 begin
   if entryidx+1>entry.size then
    begin
      error:=true;
-     getbyte:=0;
+     result:=0;
      exit;
    end;
-  readdata(b,1);
-  getbyte:=b;
+  if bufsize-bufidx>=1 then
+    begin
+      result:=pbyte(@buf[bufidx])^;
+      inc(bufidx);
+    end
+  else
+    readdata(result,1);
   inc(entryidx);
 end;
 
 
 function tppufile.getword:word;
-var
-  w : word;
 begin
   if entryidx+2>entry.size then
    begin
      error:=true;
-     getword:=0;
+     result:=0;
      exit;
    end;
-  readdata(w,2);
-  if change_endian then
-   getword:=swapword(w)
+  if bufsize-bufidx>=sizeof(word) then
+    begin
+      result:=Unaligned(pword(@buf[bufidx])^);
+      inc(bufidx,sizeof(word));
+    end
   else
-   getword:=w;
+    readdata(result,sizeof(word));
+  if change_endian then
+   result:=swapendian(result);
   inc(entryidx,2);
 end;
 
 
 function tppufile.getlongint:longint;
-var
-  l : longint;
 begin
   if entryidx+4>entry.size then
    begin
      error:=true;
-     getlongint:=0;
+     result:=0;
      exit;
    end;
-  readdata(l,4);
-  if change_endian then
-   getlongint:=swaplong(l)
+  if bufsize-bufidx>=sizeof(longint) then
+    begin
+      result:=Unaligned(plongint(@buf[bufidx])^);
+      inc(bufidx,sizeof(longint));
+    end
   else
-   getlongint:=l;
+    readdata(result,sizeof(longint));
+  if change_endian then
+   result:=swapendian(result);
+  inc(entryidx,4);
+end;
+
+
+function tppufile.getdword:dword;
+begin
+  if entryidx+4>entry.size then
+   begin
+     error:=true;
+     result:=0;
+     exit;
+   end;
+  if bufsize-bufidx>=sizeof(dword) then
+    begin
+      result:=Unaligned(plongint(@buf[bufidx])^);
+      inc(bufidx,sizeof(longint));
+    end
+  else
+    readdata(result,sizeof(dword));
+  if change_endian then
+   result:=swapendian(result);
   inc(entryidx,4);
 end;
 
 
 function tppufile.getint64:int64;
-var
-  i : int64;
 begin
   if entryidx+8>entry.size then
    begin
@@ -642,79 +737,241 @@ begin
      result:=0;
      exit;
    end;
-  readdata(i,8);
-  if change_endian then
-    result:=swapint64(i)
+  if bufsize-bufidx>=sizeof(int64) then
+    begin
+      result:=Unaligned(pint64(@buf[bufidx])^);
+      inc(bufidx,sizeof(int64));
+    end
   else
-    result:=i;
+    readdata(result,sizeof(int64));
+  if change_endian then
+   result:=swapendian(result);
+  inc(entryidx,8);
+end;
+
+
+function tppufile.getqword:qword;
+begin
+  if entryidx+8>entry.size then
+   begin
+     error:=true;
+     result:=0;
+     exit;
+   end;
+  if bufsize-bufidx>=sizeof(qword) then
+    begin
+      result:=Unaligned(pqword(@buf[bufidx])^);
+      inc(bufidx,sizeof(qword));
+    end
+  else
+    readdata(result,sizeof(qword));
+  if change_endian then
+   result:=swapendian(result);
   inc(entryidx,8);
 end;
 
 
 function tppufile.getaint:aint;
 begin
-{$ifdef cpu64bit}
-  result:=getint64;
-{$else cpu64bit}
+{$ifdef generic_cpu}
+  if CpuAluBitSize[tsystemcpu(header.cpu)]=64 then
+    result:=getint64
+  else if CpuAluBitSize[tsystemcpu(header.cpu)]=32 then
+    result:=getlongint
+  else if CpuAluBitSize[tsystemcpu(header.cpu)]=16 then
+    result:=smallint(getword)
+  else if CpuAluBitSize[tsystemcpu(header.cpu)]=8 then
+    result:=shortint(getbyte)
+  else
+    begin
+      error:=true;
+      result:=0;
+    end;
+{$else not generic_cpu}
+{$ifdef cpu64bitalu}
+  result:=getint64
+{$else cpu64bitalu}
   result:=getlongint;
-{$endif cpu64bit}
+{$endif cpu64bitalu}
+{$endif not generic_cpu}
 end;
 
+
+function tppufile.getasizeint:asizeint;
+begin
+{$ifdef generic_cpu}
+  if CpuAddrBitSize[tsystemcpu(header.cpu)]=64 then
+    result:=getint64
+  else if CpuAddrBitSize[tsystemcpu(header.cpu)]=32 then
+    result:=getlongint
+  else if CpuAddrBitSize[tsystemcpu(header.cpu)]=16 then
+    result:=smallint(getword)
+  else
+    begin
+      error:=true;
+      result:=0;
+    end;
+{$else not generic_cpu}
+{$ifdef cpu64bitaddr}
+  result:=getint64;
+{$else cpu64bitaddr}
+  result:=getlongint;
+{$endif cpu32bitaddr}
+{$endif not generic_cpu}
+end;
+
+
+function tppufile.getaword:aword;
+begin
+{$ifdef generic_cpu}
+  if CpuAluBitSize[tsystemcpu(header.cpu)]=64 then
+    result:=getqword
+  else if CpuAluBitSize[tsystemcpu(header.cpu)]=32 then
+    result:=getdword
+  else if CpuAluBitSize[tsystemcpu(header.cpu)]=16 then
+    result:=getword
+  else if CpuAluBitSize[tsystemcpu(header.cpu)]=8 then
+    result:=getbyte
+  else
+    begin
+      error:=true;
+      result:=0;
+    end;
+{$else not generic_cpu}
+{$ifdef cpu64bitalu}
+  result:=getqword;
+{$else cpu64bitalu}
+  result:=getdword;
+{$endif cpu64bitalu}
+{$endif not generic_cpu}
+end;
+
+function  tppufile.getrealsize(sizeofreal : longint):ppureal;
+var
+  e : ppureal;
+  d : double;
+  s : single;
+begin
+  if sizeofreal=sizeof(e) then
+    begin
+      if entryidx+sizeof(e)>entry.size then
+       begin
+         error:=true;
+         result:=0;
+         exit;
+       end;
+      readdata(e,sizeof(e));
+      if change_endian then
+        result:=swapendian_ppureal(e)
+      else
+        result:=e;
+      inc(entryidx,sizeof(e));
+      exit;
+    end;
+  if sizeofreal=sizeof(d) then
+    begin
+      if entryidx+sizeof(d)>entry.size then
+       begin
+         error:=true;
+         result:=0;
+         exit;
+       end;
+      readdata(d,sizeof(d));
+      if change_endian then
+        result:=swapendian(pqword(@d)^)
+      else
+        result:=d;
+      inc(entryidx,sizeof(d));
+      result:=d;
+      exit;
+    end;
+  if sizeofreal=sizeof(s) then
+    begin
+      if entryidx+sizeof(s)>entry.size then
+       begin
+         error:=true;
+         result:=0;
+         exit;
+       end;
+      readdata(s,sizeof(s));
+      if change_endian then
+        result:=swapendian(pdword(@s)^)
+      else
+        result:=s;
+      inc(entryidx,sizeof(s));
+      result:=s;
+      exit;
+    end;
+  error:=true;
+  result:=0.0;
+end;
 
 function tppufile.getreal:ppureal;
 var
   d : ppureal;
+  hd : double;
 begin
-  if entryidx+sizeof(ppureal)>entry.size then
-   begin
-     error:=true;
-     getreal:=0;
-     exit;
-   end;
-  readdata(d,sizeof(ppureal));
-  getreal:=d;
-  inc(entryidx,sizeof(ppureal));
+  if target_info.system=system_x86_64_win64 then
+    begin
+      hd:=getrealsize(sizeof(hd));
+      getreal:=hd;
+    end
+  else
+    begin
+      d:=getrealsize(sizeof(d));
+      getreal:=d;
+    end;
 end;
 
 
 function tppufile.getstring:string;
-var
-  s : string;
 begin
-  s[0]:=chr(getbyte);
-  if entryidx+length(s)>entry.size then
+  result[0]:=chr(getbyte);
+  if entryidx+length(result)>entry.size then
    begin
      error:=true;
      exit;
    end;
-  ReadData(s[1],length(s));
-  getstring:=s;
-  inc(entryidx,length(s));
+  ReadData(result[1],length(result));
+  inc(entryidx,length(result));
 end;
 
 
-procedure tppufile.getsmallset(var b);
+function tppufile.getansistring:ansistring;
 var
-  l : longint;
+  len: longint;
 begin
-  l:=getlongint;
-  longint(b):=l;
+  len:=getlongint;
+  if entryidx+len>entry.size then
+   begin
+     error:=true;
+     exit;
+   end;
+  setlength(result,len);
+  if len>0 then
+    getdata(result[1],len);
 end;
 
 
-procedure tppufile.getnormalset(var b);
-type
-  SetLongintArray = Array [0..7] of longint;
+procedure tppufile.getsmallset(out b);
 var
   i : longint;
 begin
+  getdata(b,4);
   if change_endian then
-    begin
-      for i:=0 to 7 do
-        SetLongintArray(b)[i]:=getlongint;
-    end
-  else
-    getdata(b,32);
+    for i:=0 to 3 do
+      Pbyte(@b)[i]:=reverse_byte(Pbyte(@b)[i]);
+end;
+
+
+procedure tppufile.getnormalset(out b);
+var
+  i : longint;
+begin
+  getdata(b,32);
+  if change_endian then
+    for i:=0 to 31 do
+      Pbyte(@b)[i]:=reverse_byte(Pbyte(@b)[i]);
 end;
 
 
@@ -734,6 +991,8 @@ end;
 *****************************************************************************}
 
 function tppufile.createfile:boolean;
+var
+  ok: boolean;
 begin
   createfile:=false;
 {$ifdef INTFPPU}
@@ -745,32 +1004,36 @@ begin
 {$endif}
   if not crc_only then
     begin
-      assign(f,fname);
       {$ifdef MACOS}
       {FPas is FreePascal's creator code on MacOS. See systems/mac_crea.txt}
       SetDefaultMacOSCreator('FPas');
       SetDefaultMacOSFiletype('FPPU');
       {$endif}
-      {$I-}
-      rewrite(f,1);
-      {$I+}
+      ok:=false;
+      try
+        f:=CFileStreamClass.Create(fname,fmCreate);
+        ok:=true;
+      except
+      end;
       {$ifdef MACOS}
       SetDefaultMacOSCreator('MPS ');
       SetDefaultMacOSFiletype('TEXT');
       {$endif}
-      if ioresult<>0 then
+      if not ok then
        exit;
       Mode:=2;
     {write header for sure}
-      blockwrite(f,header,sizeof(tppuheader));
+      f.Write(header,sizeof(tppuheader));
     end;
   bufsize:=ppubufsize;
   bufstart:=sizeof(tppuheader);
   bufidx:=0;
 {reset}
-  crc:=cardinal($ffffffff);
-  interface_crc:=cardinal($ffffffff);
+  crc:=0;
+  interface_crc:=0;
+  indirect_crc:=0;
   do_interface_crc:=true;
+  do_indirect_crc:=false;
   Error:=false;
   do_crc:=true;
   size:=0;
@@ -797,26 +1060,30 @@ begin
 {$else not FPC_BIG_ENDIAN}
     header.flags := header.flags or uf_big_endian;
     { Now swap the header in the correct endian (always little endian) }
-    header.compiler := SwapWord(header.compiler);
-    header.cpu := SwapWord(header.cpu);
-    header.target := SwapWord(header.target);
-    header.flags := SwapLong(header.flags);
-    header.size := SwapLong(header.size);
-    header.checksum := cardinal(SwapLong(longint(header.checksum)));
-    header.interface_checksum := cardinal(SwapLong(longint(header.interface_checksum)));
+    header.compiler := swapendian(header.compiler);
+    header.cpu := swapendian(header.cpu);
+    header.target := swapendian(header.target);
+    header.flags := swapendian(header.flags);
+    header.size := swapendian(header.size);
+    header.checksum := swapendian(header.checksum);
+    header.interface_checksum := swapendian(header.interface_checksum);
+    header.indirect_checksum := swapendian(header.indirect_checksum);
+    header.deflistsize:=swapendian(header.deflistsize);
+    header.symlistsize:=swapendian(header.symlistsize);
 {$endif not FPC_BIG_ENDIAN}
 { write header and restore filepos after it }
-  opos:=filepos(f);
-  seek(f,0);
-  blockwrite(f,header,sizeof(tppuheader));
-  seek(f,opos);
+  opos:=f.Position;
+  f.Position:=0;
+  f.Write(header,sizeof(tppuheader));
+  f.Position:=opos;
 end;
 
 
 procedure tppufile.writebuf;
 begin
-  if not crc_only then
-    blockwrite(f,buf^,bufidx);
+  if not crc_only and
+     (bufidx <> 0) then
+    f.Write(buf^,bufidx);
   inc(bufstart,bufidx);
   bufidx:=0;
 end;
@@ -886,10 +1153,10 @@ begin
       {flush to be sure}
         WriteBuf;
       {write entry}
-        opos:=filepos(f);
-        seek(f,entrystart);
-        blockwrite(f,entry,sizeof(tppuentry));
-        seek(f,opos);
+        opos:=f.Position;
+        f.Position:=entrystart;
+        f.write(entry,sizeof(tppuentry));
+        f.Position:=opos;
       end;
      entrybufstart:=bufstart;
    end
@@ -951,6 +1218,11 @@ begin
             inc(crcindex);
           end;
 {$endif def Test_Double_checksum}
+         { indirect crc must only be calculated for the interface; changes
+           to a class in the implementation cannot require another unit to
+           be recompiled }
+         if do_indirect_crc then
+           indirect_crc:=UpdateCrc32(indirect_crc,b,len);
        end;
     end;
   if not crc_only then
@@ -971,6 +1243,12 @@ begin
 end;
 
 
+procedure tppufile.putdword(w:dword);
+begin
+  putdata(w,4);
+end;
+
+
 procedure tppufile.putlongint(l:longint);
 begin
   putdata(l,4);
@@ -983,113 +1261,109 @@ begin
 end;
 
 
+procedure tppufile.putqword(q:qword);
+begin
+  putdata(q,sizeof(qword));
+end;
+
+
 procedure tppufile.putaint(i:aint);
 begin
   putdata(i,sizeof(aint));
 end;
 
 
-procedure tppufile.putreal(d:ppureal);
+procedure tppufile.putasizeint(i: asizeint);
 begin
-  putdata(d,sizeof(ppureal));
+  putdata(i,sizeof(asizeint));
 end;
 
 
-    procedure tppufile.putstring(s:string);
-      begin
-        putdata(s,length(s)+1);
-      end;
+procedure tppufile.putaword(i:aword);
+begin
+  putdata(i,sizeof(aword));
+end;
 
 
-    procedure tppufile.putsmallset(const b);
-      var
-        l : longint;
-      begin
-        l:=longint(b);
-        putlongint(l);
-      end;
+procedure tppufile.putreal(d:ppureal);
+var
+  hd : double;
+begin
+  if target_info.system=system_x86_64_win64 then
+    begin
+      hd:=d;
+      putdata(hd,sizeof(hd));
+    end
+  else
+    putdata(d,sizeof(ppureal));
+end;
 
 
-    procedure tppufile.putnormalset(const b);
-      type
-        SetLongintArray = Array [0..7] of longint;
-      var
-        i : longint;
-        tempb : setlongintarray;
-      begin
-        if change_endian then
-          begin
-            for i:=0 to 7 do
-              tempb[i]:=SwapLong(SetLongintArray(b)[i]);
-            putdata(tempb,32);
-          end
-        else
-          putdata(b,32);
-      end;
+procedure tppufile.putstring(const s:string);
+  begin
+    putdata(s,length(s)+1);
+  end;
 
 
-    procedure tppufile.tempclose;
-      begin
-        if not closed then
-         begin
-           closepos:=filepos(f);
-           {$I-}
-            system.close(f);
-           {$I+}
-           if ioresult<>0 then;
-           closed:=true;
-           tempclosed:=true;
-         end;
-      end;
+procedure tppufile.putansistring(const s:ansistring);
+  var
+    len: longint;
+  begin
+    len:=length(s);
+    putlongint(len);
+    if len>0 then
+      putdata(s[1],len);
+  end;
 
 
-    function tppufile.tempopen:boolean;
-      var
-        ofm : byte;
-      begin
-        tempopen:=false;
-        if not closed or not tempclosed then
-         exit;
-        ofm:=filemode;
-        filemode:=0;
-        {$I-}
-         reset(f,1);
-        {$I+}
-        filemode:=ofm;
-        if ioresult<>0 then
-         exit;
-        closed:=false;
-        tempclosed:=false;
+procedure tppufile.putsmallset(const b);
+  var
+    l : longint;
+  begin
+    l:=longint(b);
+    putlongint(l);
+  end;
 
-      { restore state }
-        seek(f,closepos);
-        tempopen:=true;
-      end;
+
+procedure tppufile.putnormalset(const b);
+  begin
+    putdata(b,32);
+  end;
+
+
+procedure tppufile.tempclose;
+  begin
+    if not closed then
+     begin
+       closepos:=f.Position;
+       f.Free;
+       f:=nil;
+       closed:=true;
+       tempclosed:=true;
+     end;
+  end;
+
+
+function tppufile.tempopen:boolean;
+  begin
+    tempopen:=false;
+    if not closed or not tempclosed then
+     exit;
+   { MG: not sure, if this is correct
+     f.position:=0;
+       No, f was freed in tempclose above, we need to
+       recreate it.  PM 2011/06/06 }
+    try
+      f:=CFileStreamClass.Create(fname,fmOpenRead);
+    except
+      exit;
+    end;
+    closed:=false;
+    tempclosed:=false;
+
+  { restore state }
+    f.Position:=closepos;
+    tempopen:=true;
+  end;
 
 end.
-{
-  $Log: ppu.pas,v $
-  Revision 1.65  2005/03/27 14:10:52  jonas
-    * const record parameters > 8 bytes are now passed by reference for non
-      cdecl/cppdecl procedures on Mac OS/Mac OS X to fix compatibility with
-      GPC (slightly more efficient than Metrowerks behaviour below, but
-      less efficient in most cases than our previous scheme)
-    + "mwpascal" procedure directive to support the const record parameter
-      behaviour of Metrowerks Pascal, which passes all const records by
-      reference
-
-  Revision 1.64  2005/02/14 17:13:07  peter
-    * truncate log
-
-  Revision 1.63  2005/01/24 17:46:18  olle
-    + ppu files now has FPas as creator code on MacOS
-
-  Revision 1.62  2005/01/19 22:19:41  peter
-    * unit mapping rewrite
-    * new derefmap added
-
-  Revision 1.61  2005/01/09 20:24:43  olle
-    * rework of macro subsystem
-    + exportable macros for mode macpas
-
-}

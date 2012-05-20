@@ -7,17 +7,18 @@ main=rtl
 
 [target]
 loaders=nwplibc nwl_main nwl_dlle
-units=$(SYSTEMUNIT) objpas macpas strings \
-      lineinfo winsock heaptrc matrix \
-      nwsnut libc dos crt objects sysconst dynlibs \
-      initc sysutils types typinfo classes \
+units=$(SYSTEMUNIT) uuchar objpas macpas iso7185 strings \
+      lineinfo lnfodwrf winsock heaptrc matrix \
+      nwsnut libc dos crt objects sysconst \
+      initc sysutils types typinfo fgl classes fmtbcd \
       cpu mmx getopts \
       dateutils strutils convutils \
       charset ucomplex variants \
       rtlconsts math varutils freebidi utf8bidi \
-      mouse video keyboard cmem sockets ctypes
+      mouse video keyboard dynlibs cmem sockets ctypes
 
 rsts=math varutils variants convutils typinfo classes dateutils sysconst rtlconsts system
+implicitunits=exeinfo
 
 [require]
 nortl=y
@@ -31,12 +32,13 @@ target=netwlibc
 
 [compiler]
 includedir=$(INC) $(PROCINC)
-sourcedir=$(INC) $(PROCINC)
+sourcedir=$(INC) $(PROCINC) $(COMMON)
 
 
 [prerules]
 RTL=..
 INC=$(RTL)/inc
+COMMON=$(RTL)/common
 PROCINC=$(RTL)/$(CPU_TARGET)
 
 UNITPREFIX=rtl
@@ -72,6 +74,7 @@ OBJPASDIR=$(RTL)/objpas
 override BINUTILSPREFIX=$(CPU_TARGET)-netware-
 
 [rules]
+.NOTPARALLEL:
 SYSTEMPPU=$(addsuffix $(PPUEXT),$(SYSTEMUNIT))
 
 # Get the system independent include file names.
@@ -122,6 +125,8 @@ $(SYSTEMUNIT)$(PPUEXT) : $(SYSTEMUNIT).pp libc.pp $(SYSDEPS)
 	$(COPY) $(IMPFILES) $(COMPILER_UNITTARGETDIR)
         $(COMPILER) -Us -Sg $(SYSTEMUNIT).pp
 
+uuchar$(PPUEXT): $(SYSTEMUNIT)$(PPUEXT) $(INC)/uuchar.pp
+
 objpas$(PPUEXT): $(OBJPASDIR)/objpas.pp $(INC)/except.inc $(SYSTEMUNIT)$(PPUEXT)
         $(COMPILER) -I$(OBJPASDIR) $(OBJPASDIR)/objpas.pp
 
@@ -144,9 +149,9 @@ nwsnut$(PPUEXT) : nwsnut.pp ../netware/nwsnut.pp libc$(PPUEXT) $(SYSTEMUNIT)$(PP
 sockets$(PPUEXT) : sockets.pp winsock$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT) \
                    $(INC)/sockets.inc $(INC)/socketsh.inc
 
-dynlibs$(PPUEXT) : $(INC)/dynlibs.pp libc$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
+dynlibs$(PPUEXT) : $(INC)/dynlibs.pas libc$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
 
-initc$(PPUEXT) : initc.pp libc$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
+initc$(PPUEXT) : initc.pp ctypes$(PPUEXT) libc$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
 
 
 #
@@ -170,8 +175,11 @@ sysutils$(PPUEXT) : sysutils.pp $(wildcard $(OBJPASDIR)/sysutils/*.inc) \
 classes$(PPUEXT) : classes.pp $(wildcard $(OBJPASDIR)/classes/*.inc) \
                    sysutils$(PPUEXT) typinfo$(PPUEXT) rtlconsts$(PPUEXT) \
                    sysconst$(PPUEXT) types$(PPUEXT) \
-                   tthread.inc
+                   tthread.inc fgl$(PPUEXT)
         $(COMPILER) -Fi$(OBJPASDIR)/classes classes.pp
+
+fgl$(PPUEXT) : $(OBJPASDIR)/fgl.pp objpas$(PPUEXT) types$(PPUEXT) system$(PPUEXT) sysutils$(PPUEXT)
+        $(COMPILER) $(OBJPASDIR)/fgl.pp
 
 typinfo$(PPUEXT): $(OBJPASDIR)/typinfo.pp objpas$(PPUEXT)
         $(COMPILER) -Sg $(OBJPASDIR)/typinfo.pp
@@ -192,8 +200,11 @@ utf8bidi$(PPUEXT) : $(OBJPASDIR)/utf8bidi.pp freebidi$(PPUEXT)
         $(COMPILER) -Sc $(OBJPASDIR)/utf8bidi.pp
 
 
-variants$(PPUEXT) : $(INC)/variants.pp sysutils$(PPUEXT) sysconst$(PPUEXT) varutils$(PPUEXT) typinfo$(PPUEXT) rtlconsts$(PPUEXT)
+variants$(PPUEXT) : $(INC)/variants.pp sysutils$(PPUEXT) sysconst$(PPUEXT) varutils$(PPUEXT) typinfo$(PPUEXT) rtlconsts$(PPUEXT) math$(PPUEXT)
         $(COMPILER) -Fi$(INC) $(INC)/variants.pp
+
+fmtbcd$(PPUEXT) : $(OBJPASDIR)/fmtbcd.pp objpas$(PPUEXT) sysutils$(PPUEXT) variants$(PPUEXT) classes$(PPUEXT) system$(PPUEXT)
+        $(COMPILER) $(OBJPASDIR)/fmtbcd.pp
 
 types$(PPUEXT) : $(OBJPASDIR)/types.pp objpas$(PPUEXT) $(SYSTEMUNIT)$(PPUEXT)
         $(COMPILER) $(OBJPASDIR)/types.pp
@@ -217,7 +228,7 @@ strutils$(PPUEXT) : $(OBJPASDIR)/strutils.pp
 # Mac Pascal Model
 #
 
-macpas$(PPUEXT) : $(INC)/macpas.pp system$(PPUEXT)
+macpas$(PPUEXT) : $(INC)/macpas.pp objpas$(PPUEXT) math$(PPUEXT)
         $(COMPILER) $(INC)/macpas.pp $(REDIR)
 
 #
@@ -234,6 +245,8 @@ heaptrc$(PPUEXT) : $(INC)/heaptrc.pp $(SYSTEMUNIT)$(PPUEXT)
         $(COMPILER) -Sg $(INC)/heaptrc.pp
 
 lineinfo$(PPUEXT) : $(INC)/lineinfo.pp $(SYSTEMUNIT)$(PPUEXT)
+
+lnfodwrf$(PPUEXT) : $(INC)/lnfodwrf.pp $(SYSTEMUNIT)$(PPUEXT)
 
 charset$(PPUEXT) : $(INC)/charset.pp $(SYSTEMUNIT)$(PPUEXT)
 

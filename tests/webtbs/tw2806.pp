@@ -1,4 +1,5 @@
 { %cpu=i386 }
+{ %OPT=-Cg- }
 
 {$ifdef fpc}{$asmmode intel}{$endif}
 
@@ -21,5 +22,3 @@ begin
       halt(1);
     end;
 end.
-
-

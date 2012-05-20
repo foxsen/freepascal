@@ -1,5 +1,4 @@
 {
-    $Id: syscallh.inc,v 1.2 2005/02/14 17:13:21 peter Exp $
     Copyright (c) 2002 by Marco van de Voort
 
     Header for syscall in system unit for i386 *BSD.
@@ -33,21 +32,14 @@ Type
 
   TSysParam  = int64;
 
-function do_sysCall(sysnr:TSysParam):TSysResult;{$ifndef VER1_0} oldfpccall;{$endif}   external name 'FPC_DOSYS0';
-function do_sysCall(sysnr,param1:TSysParam):TSysResult; {$ifndef VER1_0} oldfpccall;{$endif}external name 'FPC_DOSYS1';
-function do_sysCall(sysnr,param1,param2:TSysParam):TSysResult; {$ifndef VER1_0} oldfpccall;{$endif} external name 'FPC_DOSYS2';
-function do_sysCall(sysnr,param1,param2,param3:TSysParam):TSysResult;{$ifndef VER1_0} oldfpccall;{$endif} external name 'FPC_DOSYS3';
-function do_sysCall(sysnr,param1,param2,param3,param4:TSysParam):TSysResult;{$ifndef VER1_0} oldfpccall;{$endif} external name 'FPC_DOSYS4';
-function do_sysCall(sysnr,param1,param2,param3,param4,param5:TSysParam):TSysResult; {$ifndef VER1_0} oldfpccall;{$endif}  external name 'FPC_DOSYS5';
-function do_sysCall(sysnr,param1,param2,param3,param4,param5,param6:TSysParam):int64;{$ifndef VER1_0} oldfpccall;{$endif}  external name 'FPC_DOSYS6';
+function do_sysCall(sysnr:TSysParam):TSysResult; external name 'FPC_DOSYS0';
+function do_sysCall(sysnr,param1:TSysParam):TSysResult; external name 'FPC_DOSYS1';
+function do_sysCall(sysnr,param1,param2:TSysParam):TSysResult;  external name 'FPC_DOSYS2';
+function do_sysCall(sysnr,param1,param2,param3:TSysParam):TSysResult; external name 'FPC_DOSYS3';
+function do_sysCall(sysnr,param1,param2,param3,param4:TSysParam):TSysResult; external name 'FPC_DOSYS4';
+function do_sysCall(sysnr,param1,param2,param3,param4,param5:TSysParam):TSysResult; external name 'FPC_DOSYS5';
+function do_sysCall(sysnr,param1,param2,param3,param4,param5,param6:TSysParam):int64; external name 'FPC_DOSYS6';
+function do_sysCall(sysnr,param1,param2,param3,param4,param5,param6,param7:TSysParam):int64; external name 'FPC_DOSYS7';
 
-// special
-function do__sysCall(sysnr,param1,param2,param3,param4,param5,param6,param7,Param8:TSysParam):TSysResult; {$ifndef VER1_0} oldfpccall;{$endif}  external name 'FPC_DOSYS8';
 {$endif}
 
-{
-  $Log: syscallh.inc,v $
-  Revision 1.2  2005/02/14 17:13:21  peter
-    * truncate log
-
-}

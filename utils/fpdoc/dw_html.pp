@@ -1,8 +1,6 @@
 {
-    $Id: dw_html.pp,v 1.17 2005/05/09 18:50:13 michael Exp $
-
     FPDoc  -  Free Pascal Documentation Tool
-    Copyright (C) 2000 - 2003 by
+    Copyright (C) 2000 - 2005 by
       Areca Systems GmbH / Sebastian Guenther, sg@freepascal.org
 
     * HTML/XHTML output generator
@@ -21,7 +19,7 @@ unit dw_HTML;
 
 interface
 
-uses Classes, DOM, DOM_HTML, dGlobals, PasTree, dWriter;
+uses Classes, contnrs, DOM, DOM_HTML, dGlobals, PasTree, dWriter, ChmWriter, ChmBase;
 
 const
   // Subpage indices for modules
@@ -33,6 +31,7 @@ const
   VarsSubindex = 6;
   // Maybe needed later for topic overview ??
   TopicsSubIndex = 7;
+  IndexSubIndex = 8;
 
   // Subpage indices for classes
   PropertiesByInheritanceSubindex = 1;
@@ -84,13 +83,16 @@ type
 
   THTMLWriter = class(TFPDocWriter)
   private
+    FImageFileList: TStrings;
+
     FOnTest: TNotifyEvent;
     FPackage: TPasPackage;
+    FCharSet : String;
     function GetPageCount: Integer;
     procedure SetOnTest(const AValue: TNotifyEvent);
   protected
+    FCSSFile: String;
     FAllocator: TFileAllocator;
-    Procedure CreateAllocator; virtual;
     CurDirectory: String;       // relative to curdir of process
     BaseDirectory: String;      // relative path to package base directory
     PageInfos: TObjectList;     // list of TPageInfo objects
@@ -104,10 +106,17 @@ type
     CurOutputNode: TDOMNode;
     InsideHeadRow, DoPasHighlighting: Boolean;
     HighlighterFlags: Byte;
-    
-    FooterFile: string;
 
+    FooterFile: string;
+    FIDF : Boolean;
+    FDateFormat: String;
+    FIndexColCount : Integer;
+    FSearchPage : String;
+    FBaseImageURL : String;
+
+    Procedure CreateAllocator; virtual;
     function ResolveLinkID(const Name: String): DOMString;
+    function ResolveLinkIDInUnit(const Name,AUnitName: String): DOMString;
     function ResolveLinkWithinPackage(AElement: TPasElement;
       ASubpageIndex: Integer): String;
 
@@ -117,7 +126,7 @@ type
     function CreateH1(Parent: TDOMNode): THTMLElement;
     function CreateH2(Parent: TDOMNode): THTMLElement;
     function CreateH3(Parent: TDOMNode): THTMLElement;
-    function CreateTable(Parent: TDOMNode): THTMLElement;
+    function CreateTable(Parent: TDOMNode; const AClass: DOMString = ''): THTMLElement;
     function CreateContentTable(Parent: TDOMNode): THTMLElement;
     function CreateTR(Parent: TDOMNode): THTMLElement;
     function CreateTD(Parent: TDOMNode): THTMLElement;
@@ -128,6 +137,8 @@ type
     function CreateWarning(Parent: TDOMNode): THTMLElement;
 
     // Description node conversion
+    Procedure DescrEmitNotesHeader(AContext : TPasElement); override;
+    Procedure DescrEmitNotesFooter(AContext : TPasElement); override;
     procedure PushOutputNode(ANode: TDOMNode);
     procedure PopOutputNode;
     procedure DescrWriteText(const AText: DOMString); override;
@@ -137,11 +148,14 @@ type
     procedure DescrEndItalic; override;
     procedure DescrBeginEmph; override;
     procedure DescrEndEmph; override;
+    procedure DescrWriteImageEl(const AFileName, ACaption, ALinkName : DOMString); override;
     procedure DescrWriteFileEl(const AText: DOMString); override;
     procedure DescrWriteKeywordEl(const AText: DOMString); override;
     procedure DescrWriteVarEl(const AText: DOMString); override;
     procedure DescrBeginLink(const AId: DOMString); override;
     procedure DescrEndLink; override;
+    procedure DescrBeginURL(const AURL: DOMString); override;
+    procedure DescrEndURL; override;
     procedure DescrWriteLinebreak; override;
     procedure DescrBeginParagraph; override;
     procedure DescrEndParagraph; override;
@@ -176,7 +190,6 @@ type
     procedure DescrBeginTableCell; override;
     procedure DescrEndTableCell; override;
 
-
     procedure AppendText(Parent: TDOMNode; const AText: DOMString);
     procedure AppendNbSp(Parent: TDOMNode; ACount: Integer);
     procedure AppendSym(Parent: TDOMNode; const AText: DOMString);
@@ -185,14 +198,15 @@ type
       AShFlags: Byte): Byte;
     Procedure AppendShortDescr(AContext : TPasElement;Parent: TDOMNode; DocNode : TDocNode);
     procedure AppendShortDescr(Parent: TDOMNode; Element: TPasElement);
+    procedure AppendShortDescrCell(Parent: TDOMNode; Element: TPasElement);
     procedure AppendDescr(AContext: TPasElement; Parent: TDOMNode;
       DescrNode: TDOMElement; AutoInsertBlock: Boolean);
     procedure AppendDescrSection(AContext: TPasElement; Parent: TDOMNode;
       DescrNode: TDOMElement; const ATitle: DOMString);
-    procedure AppendShortDescrCell(Parent: TDOMNode; Element: TPasElement);
     function AppendHyperlink(Parent: TDOMNode; Element: TPasElement): TDOMElement;
     function AppendType(CodeEl, TableEl: TDOMElement;
-      Element: TPasType; Expanded: Boolean): TDOMElement;
+      Element: TPasType; Expanded: Boolean;
+      NestingLevel: Integer = 0): TDOMElement;
     function AppendProcType(CodeEl, TableEl: TDOMElement;
       Element: TPasProcedureType; Indent: Integer): TDOMElement;
     procedure AppendProcExt(CodeEl: TDOMElement; Element: TPasProcedure);
@@ -200,6 +214,8 @@ type
       Element: TPasProcedureBase);
     procedure AppendProcArgsSection(Parent: TDOMNode;
       Element: TPasProcedureType);
+    function AppendRecordType(CodeEl, TableEl: TDOMElement;
+      Element: TPasRecordType; NestingLevel: Integer): TDOMElement;
 
     procedure AppendTitle(const AText: DOMString);
     procedure AppendMenuBar(ASubpageIndex: Integer);
@@ -209,9 +225,12 @@ type
     Procedure AppendSeeAlsoSection(AElement : TPasElement;DocNode : TDocNode);
     Procedure AppendExampleSection(AElement : TPasElement;DocNode : TDocNode);
     procedure AppendFooter;
-
+    procedure CreateIndexPage(L : TStringList);
+    procedure CreateModuleIndexPage(AModule: TPasModule);
     procedure CreatePageBody(AElement: TPasElement; ASubpageIndex: Integer); virtual;
     procedure CreatePackagePageBody;
+    procedure CreatePackageIndex;
+    procedure AddModuleIdentifiers(AModule : TPasModule; L : TStrings);
     Procedure CreateTopicPageBody(AElement : TTopicElement);
     procedure CreateModulePageBody(AModule: TPasModule; ASubpageIndex: Integer);
     procedure CreateConstPageBody(AConst: TPasConst);
@@ -232,18 +251,23 @@ type
       ASubpageIndex: Integer): TXMLDocument;
 
     // For producing complete package documentation
-    procedure WriteHTMLPages;
+    procedure WriteHTMLPages; virtual;
     procedure WriteXHTMLPages;
 
-    SearchPage: String;
+    Function InterPretOption(Const Cmd,Arg : String) : boolean; override;
+    Procedure WriteDoc; override;
+    Class Function FileNameExtension : String; override;
+    class procedure Usage(List: TStrings); override;
+    Property SearchPage: String Read FSearchPage Write FSearchPage;
     property Allocator: TFileAllocator read FAllocator;
     property Package: TPasPackage read FPackage;
     property PageCount: Integer read GetPageCount;
-
+    Property IncludeDateInFooter : Boolean Read FIDF Write FIDF;
+    Property DateFormat : String Read FDateFormat Write FDateFormat;
     property OnTest: TNotifyEvent read FOnTest write SetOnTest;
-    Function InterPretOption(Const Cmd,Arg : String) : boolean; override;
-    Procedure WriteDoc; override;
-    class procedure Usage(List: TStrings); override;
+    Property CharSet : String Read FCharSet Write FCharSet;
+    Property IndexColCount : Integer Read FIndexColCount write FIndexColCount;
+    Property BaseImageURL : String Read FBaseImageURL Write FBaseImageURL;
   end;
 
   THTMWriter = class(THTMLWriter)
@@ -251,10 +275,13 @@ type
     Procedure CreateAllocator; override;
   end;
 
+  {$DEFINE chmInterface}
+  {$I dw_htmlchm.inc}
+  {$UNDEF chmInterface}
 
 implementation
 
-uses SysUtils, XHTML, XMLRead, XMLWrite, HTMWrite, sh_pas;
+uses SysUtils, XHTML, XMLRead, XMLWrite, HTMWrite, sh_pas,chmsitemap;
 
 
 Function FixHTMLpath(S : String) : STring;
@@ -262,6 +289,8 @@ Function FixHTMLpath(S : String) : STring;
 begin
   Result:=StringReplace(S,'\','/',[rfReplaceAll]);
 end;
+
+{$I dw_htmlchm.inc}
 
 procedure TFileAllocator.AllocFilename(AElement: TPasElement;
   ASubindex: Integer);
@@ -301,6 +330,7 @@ end;
 function TLongNameFileAllocator.GetFilename(AElement: TPasElement;
   ASubindex: Integer): String;
 var
+  s: String;
   i: Integer;
 begin
   if AElement.ClassType = TPasPackage then
@@ -308,20 +338,70 @@ begin
   else if AElement.ClassType = TPasModule then
     Result := LowerCase(AElement.Name) + PathDelim + 'index'
   else
+  begin
+    if AElement is TPasOperator then
     begin
-    Result := LowerCase(AElement.PathName);
-    i := 1;
-    if (Length(Result)>0) and (Result[1]='#') then
+      Result := LowerCase(AElement.Parent.PathName) + '.op-';
+      s := Copy(AElement.Name, Pos(' ', AElement.Name) + 1, Length(AElement.Name));
+      s := Copy(s, 1, Pos('(', s) - 1);
+      if s = ':=' then
+        s := 'assign'
+      else if s = '+' then
+        s := 'add'
+      else if s = '-' then
+        s := 'sub'
+      else if s = '*' then
+        s := 'mul'
+      else if s = '/' then
+        s := 'div'
+      else if s = '**' then
+        s := 'power'
+      else if s = '=' then
+        s := 'equal'
+      else if s = '<>' then
+        s := 'unequal'
+      else if s = '<' then
+        s := 'less'
+      else if s = '<=' then
+        s := 'lessequal'
+      else if s = '>' then
+        s := 'greater'
+      else if s = '>=' then
+        s := 'greaterthan'
+      else if s = '><' then
+        s := 'symmetricdifference';
+      Result := Result + s + '-';
+      s := '';
+      i := 1;
+      while AElement.Name[i] <> '(' do
+        Inc(i);
+      Inc(i);
+      while AElement.Name[i] <> ')' do
       begin
+        if AElement.Name[i] = ',' then
+	begin
+	  s := s + '-';
+	  Inc(i);
+	end else
+	  s := s + AElement.Name[i];
+        Inc(i);
+      end;
+      Result := Result + LowerCase(s) + '-' + LowerCase(Copy(AElement.Name,
+        Pos('):', AElement.Name) + 3, Length(AElement.Name)));
+    end else
+      Result := LowerCase(AElement.PathName);
+    i := 1;
+    if (Length(Result) > 0) and (Result[1] = '#') then
+    begin
       while Result[i] <> '.' do
         Inc(i);
-      Result:=Copy(Result,i+1,Length(Result));
-      end;
+      Result := Copy(Result, i + 1, Length(Result));
+    end;
     i := 1;
-    while (I<=Length(Result)) and (Result[i]<>'.') do
+    while (i <= Length(Result)) and (Result[i] <> '.') do
       Inc(i);
-    If (I<=Length(Result)) and (I>0) then
-      Result[i]:= PathDelim;
+    if (i <= Length(Result)) and (i > 0) then
+      Result[i] := PathDelim;
   end;
 
   if ASubindex > 0 then
@@ -346,7 +426,26 @@ begin
     Result := '../';
 end;
 
+Type
 
+  { TLinkData }
+
+  TLinkData = Class(TObject)
+    FPathName,
+    FLink,
+    FModuleName : String;
+
+    Constructor Create(Const APathName,ALink,AModuleName : string);
+  end;
+
+{ TLinkData }
+
+constructor TLinkData.Create(Const APathName, ALink, AModuleName: string);
+begin
+  FPathName:=APathName;
+  FLink:=ALink;
+  FModuleName:=AModuleName;
+end;
 
 constructor THTMLWriter.Create(APackage: TPasPackage; AEngine: TFPDocEngine);
 
@@ -408,7 +507,7 @@ constructor THTMLWriter.Create(APackage: TPasPackage; AEngine: TFPDocEngine);
   end;
 
   procedure AddPages(AElement: TPasElement; ASubpageIndex: Integer;
-    AList: TList);
+    AList: TFPList);
   var
     i: Integer;
   begin
@@ -420,34 +519,36 @@ constructor THTMLWriter.Create(APackage: TPasPackage; AEngine: TFPDocEngine);
     end;
   end;
 
-  procedure ScanModule(AModule: TPasModule);
+  procedure ScanModule(AModule: TPasModule; LinkList : TObjectList);
   var
     i, j, k: Integer;
     s: String;
     ClassEl: TPasClassType;
     FPEl, AncestorMemberEl: TPasElement;
     DocNode: TDocNode;
+    ALink : DOMString;
     DidAutolink: Boolean;
   begin
     AddPage(AModule, 0);
+    AddPage(AModule,IndexSubIndex);
     AddTopicPages(AModule);
     with AModule do
-    begin
-      if InterfaceSection.ResStrings.Count > 0 then
       begin
+      if InterfaceSection.ResStrings.Count > 0 then
+        begin
         AddPage(AModule, ResstrSubindex);
         s := Allocator.GetFilename(AModule, ResstrSubindex);
         for i := 0 to InterfaceSection.ResStrings.Count - 1 do
           with TPasResString(InterfaceSection.ResStrings[i]) do
             Engine.AddLink(PathName, s + '#' + LowerCase(Name));
-      end;
+        end;
       AddPages(AModule, ConstsSubindex, InterfaceSection.Consts);
       AddPages(AModule, TypesSubindex, InterfaceSection.Types);
       if InterfaceSection.Classes.Count > 0 then
-      begin
+        begin
         AddPage(AModule, ClassesSubindex);
         for i := 0 to InterfaceSection.Classes.Count - 1 do
-        begin
+          begin
           ClassEl := TPasClassType(InterfaceSection.Classes[i]);
           AddPage(ClassEl, 0);
           // !!!: Only add when there are items
@@ -459,73 +560,99 @@ constructor THTMLWriter.Create(APackage: TPasPackage; AEngine: TFPDocEngine);
           AddPage(ClassEl, EventsByNameSubindex);
 
           for j := 0 to ClassEl.Members.Count - 1 do
-          begin
+            begin
             FPEl := TPasElement(ClassEl.Members[j]);
             if ((FPEl.Visibility = visPrivate) and Engine.HidePrivate) or
               ((FPEl.Visibility = visProtected) and Engine.HideProtected) then
               continue;
 
             DocNode := Engine.FindDocNode(FPEl);
-            if not Assigned(DocNode) then
-            begin
+            if Assigned(DocNode) then
+              begin
+              if Assigned(DocNode.Node) then
+                ALink:=DocNode.Node['link']
+              else
+                ALink:='';
+              If (ALink<>'') then
+                LinkList.Add(TLinkData.Create(FPEl.PathName,ALink,AModule.name))
+              else
+                AddPage(FPEl, 0);
+              end
+            else
+              begin
               DidAutolink := False;
               if Assigned(ClassEl.AncestorType) and
                 (ClassEl.AncestorType.ClassType = TPasClassType) then
-              begin
-                for k := 0 to TPasClassType(ClassEl.AncestorType).Members.Count - 1 do
                 begin
+                for k := 0 to TPasClassType(ClassEl.AncestorType).Members.Count - 1 do
+                  begin
                   AncestorMemberEl :=
                     TPasElement(TPasClassType(ClassEl.AncestorType).Members[k]);
                   if AncestorMemberEl.Name = FPEl.Name then
-                  begin
+                    begin
                     DocNode := Engine.FindDocNode(AncestorMemberEl);
                     if Assigned(DocNode) then
-                    begin
+                      begin
                       DidAutolink := True;
                       Engine.AddLink(FPEl.PathName,
                         Engine.FindAbsoluteLink(AncestorMemberEl.PathName));
                       break;
+                      end;
                     end;
                   end;
                 end;
-              end;
               if not DidAutolink then
                 AddPage(FPEl, 0);
-            end else
-              AddPage(FPEl, 0);
+              end;
+            end;
           end;
         end;
-      end;
       AddPages(AModule, ProcsSubindex, InterfaceSection.Functions);
       AddPages(AModule, VarsSubindex, InterfaceSection.Variables);
-    end;
+      end;
   end;
 
 var
   i: Integer;
+  L : TObjectList;
+
 begin
   inherited ;
+  IndexColCount:=3;
+  Charset:='iso-8859-1';
   CreateAllocator;
   FPackage := APackage;
   OutputNodeStack := TList.Create;
 
   PageInfos := TObjectList.Create;
+  FImageFileList := TStringList.Create;
 
   // Allocate page for the package itself, if a name is given (i.e. <> '#')
   if Length(Package.Name) > 1 then
     begin
     AddPage(Package, 0);
+    AddPage(Package,IndexSubIndex);
     AddTopicPages(Package);
     end;
-
-  for i := 0 to Package.Modules.Count - 1 do
-    ScanModule(TPasModule(Package.Modules[i]));
+  L:=TObjectList.Create;
+  try
+    for i := 0 to Package.Modules.Count - 1 do
+      ScanModule(TPasModule(Package.Modules[i]),L);
+    // Resolve links
+    For I:=0 to L.Count-1 do
+      With TLinkData(L[i]) do
+        Engine.AddLink(FPathName,ResolveLinkIDInUnit(FLink,FModuleName));
+  finally
+    L.Free;
+  end;
 end;
 
 destructor THTMLWriter.Destroy;
 begin
   PageInfos.Free;
   OutputNodeStack.Free;
+  FAllocator.Free;
+  FImageFileList.Free;
   inherited Destroy;
 end;
 
@@ -538,8 +665,9 @@ var
 begin
   Doc := THTMLDocument.Create;
   Result := Doc;
-  Doc.AppendChild(Doc.CreateProcessingInstruction(
-    'DOCTYPE', 'HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN"'));
+  Doc.AppendChild(Doc.Impl.CreateDocumentType(
+    'HTML', '-//W3C//DTD HTML 4.01 Transitional//EN',
+    'http://www.w3.org/TR/html4/loose.dtd'));
 
   HTMLEl := Doc.CreateHtmlElement;
   Doc.AppendChild(HTMLEl);
@@ -549,7 +677,8 @@ begin
   El := Doc.CreateElement('meta');
   HeadEl.AppendChild(El);
   El['http-equiv'] := 'Content-Type';
-  El['content'] := 'text/html; charset=iso8859-1';
+  
+  El['content'] := 'text/html; charset=utf-8';
   TitleElement := Doc.CreateElement('title');
   HeadEl.AppendChild(TitleElement);
   El := Doc.CreateElement('link');
@@ -580,7 +709,7 @@ begin
   EndIndex := Length(AFilename);
   if EndIndex = 0 then
     exit;
-  while not (AFilename[EndIndex] in DirSeparators) do
+  while not (AFilename[EndIndex] in AllowDirectorySeparators) do
   begin
     Dec(EndIndex);
     if EndIndex = 0 then
@@ -588,7 +717,7 @@ begin
   end;
 
   Path := Copy(AFilename, 1, EndIndex - 1);
-  if not FileExists(Path) then
+  if not DirectoryExists(Path) then
   begin
     CreatePath(Path);
     MkDir(Path);
@@ -600,6 +729,8 @@ var
   i: Integer;
   PageDoc: TXMLDocument;
   Filename: String;
+  TempStream: TMemoryStream;
+
 begin
   if Engine.Output <> '' then
     Engine.Output := IncludeTrailingBackSlash(Engine.Output);
@@ -609,12 +740,31 @@ begin
       PageDoc := CreateHTMLPage(Element, SubpageIndex);
       try
         Filename := Engine.Output + Allocator.GetFilename(Element, SubpageIndex);
-        CreatePath(Filename);
-        WriteHTMLFile(PageDoc, Filename);
+        try
+          CreatePath(Filename);
+          WriteHTMLFile(PageDoc, Filename);
+        except
+	  on E: Exception do
+            DoLog(SErrCouldNotCreateFile, [FileName, e.Message]);
+        end;
       finally
         PageDoc.Free;
       end;
     end;
+
+  if FCSSFile <> '' then
+  begin
+    if not FileExists(FCSSFile) Then
+      begin
+        DoLog('Can''t find CSS file "%s"',[FCSSFILE]);
+        halt(1);
+      end;
+    TempStream := TMemoryStream.Create;
+    TempStream.LoadFromFile(FCSSFile);
+    TempStream.Position := 0;
+    TempStream.SaveToFile(Engine.output+ExtractFileName(FCSSFile));
+    TempStream.Free;
+  end;
 end;
 
 procedure THTMLWriter.WriteXHTMLPages;
@@ -670,6 +820,14 @@ end;
   - AppendHyperlink (for unresolved parse tree element links)
 }
 
+function THTMLWriter.ResolveLinkIDInUnit(const Name,AUnitName: String): DOMString;
+
+begin
+  Result:=ResolveLinkID(Name);
+  If (Result='') and (AUnitName<>'')  then
+    Result:=ResolveLinkID(AUnitName+'.'+Name);
+end;
+
 function THTMLWriter.ResolveLinkID(const Name: String): DOMString;
 var
   i: Integer;
@@ -694,8 +852,10 @@ begin
       if Length(Result) = 0 then
       begin
         if Assigned(Module) then
+          begin
           Result := Engine.FindAbsoluteLink(Module.PathName + '.' + Name);
-        // WriteLn('Searching for ', Module.PathName + '.' + Name, ' => ', Result);
+//          WriteLn('Searching for ', Module.PathName + '.' + Name, ' => ', Result);
+          end;
         if Length(Result) = 0 then
           for i := Length(Name) downto 1 do
             if Name[i] = '.' then
@@ -711,7 +871,7 @@ begin
   if Length(Result) > 0 then
     if Copy(Result, 1, Length(CurDirectory) + 1) = CurDirectory + '/' then
       Result := Copy(Result, Length(CurDirectory) + 2, Length(Result))
-    else
+    else if not IsLinkAbsolute(Result) then
       Result := BaseDirectory + Result;
 end;
 
@@ -761,11 +921,13 @@ begin
   Result := CreateEl(Parent, 'h3');
 end;
 
-function THTMLWriter.CreateTable(Parent: TDOMNode): THTMLElement;
+function THTMLWriter.CreateTable(Parent: TDOMNode; const AClass: DOMString = ''): THTMLElement;
 begin
   Result := CreateEl(Parent, 'table');
   Result['cellspacing'] := '0';
   Result['cellpadding'] := '0';
+  if AClass <> '' then
+    Result['class'] := AClass;
 end;
 
 function THTMLWriter.CreateContentTable(Parent: TDOMNode): THTMLElement;
@@ -805,7 +967,8 @@ end;
 
 function THTMLWriter.CreateCode(Parent: TDOMNode): THTMLElement;
 begin
-  Result := CreateEl(CreateEl(Parent, 'tt'), 'nobr');
+  Result := CreateEl(CreateEl(Parent, 'tt'), 'span');
+  Result['class'] := 'code';
 end;
 
 function THTMLWriter.CreateWarning(Parent: TDOMNode): THTMLElement;
@@ -814,6 +977,16 @@ begin
   Result['class'] := 'warning';
 end;
 
+procedure THTMLWriter.DescrEmitNotesHeader(AContext: TPasElement);
+begin
+  AppendText(CreateH2(BodyElement), SDocNotes);
+  PushOutputNode(BodyElement);
+end;
+
+procedure THTMLWriter.DescrEmitNotesFooter(AContext: TPasElement);
+begin
+  PopOutPutNode;
+end;
 
 procedure THTMLWriter.PushOutputNode(ANode: TDOMNode);
 begin
@@ -862,6 +1035,49 @@ begin
   PopOutputNode;
 end;
 
+procedure THTMLWriter.DescrWriteImageEl(const AFileName, ACaption, ALinkName : DOMString);
+
+Var
+  Pel,Cel,Lel : TDOMNode;
+  El :TDomElement;
+  D : String;
+  L : Integer;
+   
+begin
+  // Determine parent node.
+  If (ACaption='') then
+    Pel:=CurOutputNode
+  else
+    begin
+    Cel:=CreateTable(CurOutputNode, 'imagetable');
+    Pel:=CreateTD(CreateTR(Cel));
+    Cel:=CreateTD(CreateTR(Cel));
+    El := CreateEl(Cel, 'span');
+    El['class'] := 'imagecaption';
+    Cel := El;
+    If (ALinkName<>'') then
+      Cel:=CreateAnchor(Cel,ALinkName);
+    AppendText(Cel,ACaption);
+    end;
+
+  // Determine URL for image.  
+  If (Module=Nil) then
+    D:=Allocator.GetRelativePathToTop(Package)
+  else
+    D:=Allocator.GetRelativePathToTop(Module);
+  L:=Length(D);
+  If (L>0) and (D[L]<>'/') then
+    D:=D+'/';
+
+  // Create image node.  
+  El:=CreateEl(Pel,'img');
+  EL['src']:=D + BaseImageURL + AFileName;
+  El['alt']:=ACaption;
+
+  //cache image filename, so it can be used later (CHM)
+  FImageFileList.Add(BaseImageURL + AFileName);
+end;
+
 procedure THTMLWriter.DescrWriteFileEl(const AText: DOMString);
 var
   NewEl: TDOMElement;
@@ -893,14 +1109,28 @@ begin
   s := ResolveLinkID(a);
   if Length(s) = 0 then
   begin
-
-    WriteLn(Format(SErrUnknownLinkID, [a]));
+    if assigned(module) then
+      s:=module.name
+    else
+      s:='?';
+    if a='' then a:='<empty>';
+    DoLog(SErrUnknownLinkID, [s,a]);
     PushOutputNode(CreateEl(CurOutputNode, 'b'));
   end else
     PushOutputNode(CreateLink(CurOutputNode, s));
 end;
 
 procedure THTMLWriter.DescrEndLink;
+begin
+  PopOutputNode;
+end;
+
+procedure THTMLWriter.DescrBeginURL(const AURL: DOMString);
+begin
+  PushOutputNode(CreateLink(CurOutputNode, AURL));
+end;
+
+procedure THTMLWriter.DescrEndURL;
 begin
   PopOutputNode;
 end;
@@ -1135,117 +1365,109 @@ end;
 
 function THTMLWriter.AppendPasSHFragment(Parent: TDOMNode;
   const AText: String; AShFlags: Byte): Byte;
+
+
 var
-  CurParent: TDOMNode;
   Line, Last, p: PChar;
   IsInSpecial: Boolean;
+  lastwasasm : boolean;
   El: TDOMElement;
+
+  Procedure MaybeOutput;
+
+  Var
+    CurParent: TDomNode;
+
+  begin
+    If (Last<>Nil) then
+      begin
+      If (el<>Nil) then
+        CurParent:=El
+      else
+        CurParent:=Parent;
+      AppendText(CurParent,Last);
+      El:=Nil;
+      Last:=Nil;
+      end;
+  end;
+
+  Function NewEl(Const ElType,Attr,AttrVal : String) : TDomElement;
+
+  begin
+    Result:=CreateEl(Parent,ElType);
+    Result[Attr]:=AttrVal;
+  end;
+
+  Function NewSpan(Const AttrVal : String) : TDomElement;
+
+  begin
+    Result:=CreateEl(Parent,'span');
+    Result['class']:=AttrVal;
+  end;
+
 begin
   GetMem(Line, Length(AText) * 3 + 4);
+  Try
   DoPascalHighlighting(AShFlags, PChar(AText), Line);
   Result := AShFlags;
-
-  CurParent := Parent;
   IsInSpecial := False;
-  Last := Line;
+  Last := Nil;
   p := Line;
+  el:=nil;
   while p[0] <> #0 do
   begin
     if p[0] = LF_ESCAPE then
-    begin
+      begin
       p[0] := #0;
-      AppendText(CurParent, Last);
-
-      if IsInSpecial then
-        CurParent := Parent;
+      MaybeOutput;
       case Ord(p[1]) of
-        shDefault:
-          IsInSpecial := False;
-        shInvalid:
-          begin
-            El := CreateEl(CurParent, 'font');
-            El['color'] := 'red';
-            CurParent := El;
-            IsInSpecial := True;
-          end;
-        shSymbol:
-          begin
-            El := CreateEl(CurParent, 'span');
-            El['class'] := 'sym';
-            CurParent := El;
-            IsInSpecial := True;
-          end;
-        shKeyword:
-          begin
-            El := CreateEl(CurParent, 'span');
-            El['class'] := 'kw';
-            CurParent := El;
-            IsInSpecial := True;
-          end;
-        shComment:
-          begin
-            El := CreateEl(CurParent, 'span');
-            El['class'] := 'cmt';
-            CurParent := El;
-            IsInSpecial := True;
-          end;
-        shDirective:
-          begin
-            El := CreateEl(CurParent, 'span');
-            El['class'] := 'dir';
-            CurParent := El;
-            IsInSpecial := True;
-          end;
-        shNumbers:
-          begin
-            El := CreateEl(CurParent, 'span');
-            El['class'] := 'num';
-            CurParent := El;
-            IsInSpecial := True;
-          end;
-        shCharacters:
-          begin
-            El := CreateEl(CurParent, 'span');
-            El['class'] := 'chr';
-            CurParent := El;
-            IsInSpecial := True;
-          end;
-        shStrings:
-          begin
-            El := CreateEl(CurParent, 'span');
-            El['class'] := 'str';
-            CurParent := El;
-            IsInSpecial := True;
-          end;
-        shAssembler:
-          begin
-            El := CreateEl(CurParent, 'span');
-            El['class'] := 'asm';
-            CurParent := El;
-            IsInSpecial := True;
-          end;
+        shDefault:    El:=Nil;
+        shInvalid:    El:=newel('font','color','red');
+        shSymbol :    El:=newspan('sym');
+        shKeyword:    El:=newspan('kw');
+        shComment:    El:=newspan('cmt');
+        shDirective:  El:=newspan('dir');
+        shNumbers:    El:=newspan('num');
+        shCharacters: El:=newspan('chr');
+        shStrings:    El:=newspan('str');
+        shAssembler:  El:=newspan('asm');
       end;
-      Last := p + 2;
-    end;
+      Inc(P);
+      end
+    else If (Last=Nil) then
+      Last:=P;
     Inc(p);
   end;
-  if Last <> p then
-    AppendText(CurParent, Last);
-  FreeMem(Line);
+  MaybeOutput;
+  Finally
+    FreeMem(Line);
+  end;
 end;
 
 Procedure THTMLWriter.AppendShortDescr(AContext: TPasElement; Parent: TDOMNode; DocNode : TDocNode);
 
+Var
+  N : TDocNode;
+
 begin
-  if Assigned(DocNode) and Assigned(DocNode.ShortDescr) then
+  if Assigned(DocNode) then
     begin
-    PushOutputNode(Parent);
-    try
-      if not ConvertShort(AContext,TDomElement(DocNode.ShortDescr)) then
-        WriteLn(SErrInvalidShortDescr);
-    finally
-      PopOutputNode;
-    end;
+    If (DocNode.Link<>'') then
+      begin
+      N:=Engine.FindLinkedNode(DocNode);
+      If (N<>Nil) then
+        DocNode:=N;
+      end;
+    If Assigned(DocNode.ShortDescr) then
+      begin
+      PushOutputNode(Parent);
+      try
+        if not ConvertShort(AContext,TDomElement(DocNode.ShortDescr)) then
+          Warning(AContext, SErrInvalidShortDescr)
+      finally
+        PopOutputNode;
+      end;
+      end;
     end;
 end;
 
@@ -1253,6 +1475,22 @@ procedure THTMLWriter.AppendShortDescr(Parent: TDOMNode; Element: TPasElement);
 
 begin
   AppendShortDescr(Element,Parent,Engine.FindDocNode(Element));
+end;
+
+procedure THTMLWriter.AppendShortDescrCell(Parent: TDOMNode;
+  Element: TPasElement);
+
+var
+  ParaEl: TDOMElement;
+
+begin
+  if Assigned(Engine.FindShortDescr(Element)) then
+  begin
+    AppendNbSp(CreatePara(CreateTD(Parent)), 2);
+    ParaEl := CreatePara(CreateTD(Parent));
+    ParaEl['class'] := 'cmt';
+    AppendShortDescr(ParaEl, Element);
+  end;
 end;
 
 procedure THTMLWriter.AppendDescr(AContext: TPasElement; Parent: TDOMNode;
@@ -1281,25 +1519,12 @@ begin
 end;
 
 
-procedure THTMLWriter.AppendShortDescrCell(Parent: TDOMNode;
-  Element: TPasElement);
-var
-  ParaEl: TDOMElement;
-begin
-  if Assigned(Engine.FindShortDescr(Element)) then
-  begin
-    AppendNbSp(CreatePara(CreateTD(Parent)), 2);
-    ParaEl := CreatePara(CreateTD(Parent));
-    ParaEl['class'] := 'cmt';
-    AppendShortDescr(ParaEl, Element);
-  end;
-end;
 
 function THTMLWriter.AppendHyperlink(Parent: TDOMNode;
   Element: TPasElement): TDOMElement;
 var
   s: String;
-  UnitList: TList;
+  UnitList: TFPList;
   i: Integer;
   ThisPackage: TLinkNode;
 begin
@@ -1335,12 +1560,16 @@ begin
                 break;
               ThisPackage := ThisPackage.NextSibling;
             end;
+            if length(s)=0 then
+              s := ResolveLinkID('#rtl.System.' + Element.Name);
             if Length(s) > 0 then
               break;
           end;
         end;
       end;
-    end else
+    end else if Element is TPasEnumValue then
+      s := ResolveLinkID(Element.Parent.PathName)
+    else  
       s := ResolveLinkID(Element.PathName);
 
     if Length(s) > 0 then
@@ -1362,7 +1591,11 @@ end;
 
 { Returns the new CodeEl, which will be the old CodeEl in most cases }
 function THTMLWriter.AppendType(CodeEl, TableEl: TDOMElement;
-  Element: TPasType; Expanded: Boolean): TDOMElement;
+  Element: TPasType; Expanded: Boolean; NestingLevel: Integer): TDOMElement;
+
+Var
+  S : String;
+
 begin
   Result := CodeEl;
 
@@ -1374,9 +1607,15 @@ begin
   // Array
   if Element.ClassType = TPasArrayType then
   begin
-    AppendPasSHFragment(CodeEl,
-      'array [' + TPasArrayType(Element).IndexRange + '] of ', 0);
-    Result := AppendType(CodeEl, TableEl, TPasArrayType(Element).ElType, False);
+    S:='array ';
+    If (TPasArrayType(Element).IndexRange<>'') then
+      S:=S+'[' + TPasArrayType(Element).IndexRange + '] ';
+    S:=S+'of ';
+    If (TPasArrayType(Element).ElType=Nil) then
+      S:=S+'Const';
+    AppendPasSHFragment(CodeEl,S,0);
+    If (TPasArrayType(Element).ElType<>Nil) then
+      Result := AppendType(CodeEl, TableEl, TPasArrayType(Element).ElType, False);
   end else
   // Procedure or funtion type
   if Element.InheritsFrom(TPasProcedureType) then
@@ -1388,6 +1627,11 @@ begin
   if Element.InheritsFrom(TPasRangeType) then
     AppendPasSHFragment(CodeEl, TPasRangeType(Element).RangeStart + '..' +
       TPasRangeType(Element).RangeEnd, 0)
+  // Record type
+  else if Element.ClassType = TPasRecordType then
+    Result := AppendRecordType(CodeEl, TableEl, TPasRecordType(Element), NestingLevel)
+  else if (Element.ClassType = TPasFileType) and (TPasFileType(Element).elType=Nil) then
+    AppendPasSHFragment(CodeEl,'file',0)
   else
   // Other types
     AppendHyperlink(CodeEl, Element);
@@ -1579,6 +1823,79 @@ begin
   end;
 end;
 
+function THTMLWriter.AppendRecordType(CodeEl, TableEl: TDOMElement;
+  Element: TPasRecordType; NestingLevel: Integer): TDOMElement;
+var
+  i, j: Integer;
+  Variable: TPasVariable;
+  TREl, TDEl: TDOMElement;
+  CurVariant: TPasVariant;
+begin
+  if not (Element.Parent is TPasVariant) then
+    if Element.IsPacked then
+      If Element.IsBitPacked then
+        AppendKw(CodeEl, 'bitpacked record')
+      else
+        AppendKW(CodeEl, 'packed record')
+    else
+      AppendKw(CodeEl, 'record');
+
+  for i := 0 to Element.Members.Count - 1 do
+  begin
+    Variable := TPasVariable(Element.Members[i]);
+    TREl := CreateTR(TableEl);
+    CodeEl := CreateCode(CreatePara(CreateTD_vtop(TREl)));
+    AppendShortDescrCell(TREl, Variable);
+    AppendNbSp(CodeEl, NestingLevel * 2 + 2);
+    AppendText(CodeEl, Variable.Name);
+    AppendSym(CodeEl, ': ');
+    CodeEl := AppendType(CodeEl, TableEl, Variable.VarType, False, NestingLevel + 1);
+    AppendSym(CodeEl, ';');
+  end;
+
+  if Assigned(Element.VariantType) then
+  begin
+    TREl := CreateTR(TableEl);
+    CodeEl := CreateCode(CreatePara(CreateTD_vtop(TREl)));
+    AppendNbSp(CodeEl, NestingLevel * 2 + 2);
+    AppendKw(CodeEl, 'case ');
+    if TPasRecordType(Element).VariantName <> '' then
+    begin
+      AppendText(CodeEl, TPasRecordType(Element).VariantName);
+      AppendSym(CodeEl, ': ');
+    end;
+    CodeEl := AppendType(CodeEl, TableEl, TPasRecordType(Element).VariantType, True);
+    AppendKw(CodeEl, ' of');
+    for i := 0 to TPasRecordType(Element).Variants.Count - 1 do
+    begin
+      CurVariant := TPasVariant(Element.Variants[i]);
+      TREl := CreateTR(TableEl);
+      CodeEl := CreateCode(CreatePara(CreateTD_vtop(TREl)));
+      AppendNbSp(CodeEl, NestingLevel * 2 + 4);
+      for j := 0 to CurVariant.Values.Count - 1 do
+      begin
+	if j > 0 then
+	  AppendSym(CodeEl, ', ');
+	AppendPasSHFragment(CodeEl, CurVariant.Values[j], 0);
+      end;
+      AppendSym(CodeEl, ': (');
+      AppendType(CodeEl, TableEl, CurVariant.Members, True, NestingLevel + 3);
+      CodeEl := CreateCode(CreatePara(CreateTD_vtop(CreateTR(TableEl))));
+      AppendNbSp(CodeEl, NestingLevel * 2 + 6);
+      AppendSym(CodeEl, ');');
+    end;
+  end;
+
+  if not (Element.Parent is TPasVariant) then
+  begin
+    CodeEl := CreateCode(CreatePara(CreateTD(CreateTR(TableEl))));
+    AppendText(CodeEl, ' '); // !!!: Dirty trick, necessary for current XML writer
+    AppendNbSp(CodeEl, NestingLevel * 2);
+    AppendKw(CodeEl, 'end');
+  end;
+  Result := CodeEl;
+end;
+
 procedure THTMLWriter.AppendTitle(const AText: DOMString);
 begin
   AppendText(TitleElement, AText);
@@ -1660,7 +1977,7 @@ begin
   ParaEl := CreateEl(CreateTD(TREl), 'b');
 
   if Assigned(Module) then
-  begin
+    begin
     AddLink(0, SDocOverview);
     if Module.InterfaceSection.ResStrings.Count > 0 then
       AddLink(ResstrSubindex, SDocResStrings);
@@ -1674,7 +1991,20 @@ begin
       AddLink(ProcsSubindex, SDocProceduresAndFunctions);
     if Module.InterfaceSection.Variables.Count > 0 then
       AddLink(VarsSubindex, SDocVariables);
-  end;
+    AddLink(IndexSubIndex,SDocIdentifierIndex);  
+    end
+  else
+    begin
+    // Manually add link for package page
+    AppendText(ParaEl, '[');
+    if (IndexSubIndex = ASubpageIndex) then
+      AppendText(ParaEl, SDocIdentifierIndex)
+    else
+      AppendText(
+        CreateLink(ParaEl, ResolveLinkWithinPackage(Package, IndexSubIndex)),
+        SDocIdentifierIndex);
+    AppendText(ParaEl, ']');
+    end;
 
   if Length(SearchPage) > 0 then
   begin
@@ -1733,12 +2063,27 @@ begin
        s:= ResolveLinkID(l);
        if Length(s)=0 then
          begin
-         WriteLn(Format(SErrUnknownLinkID, [l]));
+         if assigned(module) then
+           s:=module.name
+         else
+           s:='?';
+         if l='' then l:='<empty>';
+         DoLog(SErrUnknownLinkID, [s,l]);
          NewEl := CreateEl(ParaEl,'b')
          end
        else
          NewEl := CreateLink(ParaEl,s);
-       AppendText(NewEl,El['id']);
+        if Not IsDescrNodeEmpty(El) then
+          begin
+          PushOutputNode(NewEl);
+          Try
+            ConvertBaseShortList(AElement, El, True)
+          Finally
+            PopOutputNode;
+          end;
+          end
+        else
+          AppendText(NewEl,El['id']);
        l:=El['id'];
        DescrEl := Engine.FindShortDescr(AElement.GetModule,L);
        if Assigned(DescrEl) then
@@ -1763,7 +2108,7 @@ Procedure THTMLWriter.AppendExampleSection(AElement : TPasElement;DocNode : TDoc
 var
   Node: TDOMNode;
 //  TableEl, El, TREl, TDEl, ParaEl, NewEl, DescrEl: TDOMElement;
-  s: String;
+  fn,s: String;
   f: Text;
 
 begin
@@ -1774,39 +2119,58 @@ begin
     begin
     if (Node.NodeType = ELEMENT_NODE) and (Node.NodeName = 'example') then
       begin
-      AppendText(CreateH2(BodyElement), SDocExample);
-      try
-        Assign(f, Engine.GetExampleFilename(TDOMElement(Node)));
-        Reset(f);
+      fn:=Engine.GetExampleFilename(TDOMElement(Node));
+      If (fn<>'') then
+        begin
+        AppendText(CreateH2(BodyElement), SDocExample);
         try
-          PushOutputNode(BodyElement);
-          DescrBeginCode(False, TDOMElement(Node)['highlighter']);
-          while not EOF(f) do
-            begin
-            ReadLn(f, s);
-            DescrWriteCodeLine(s);
-            end;
-          DescrEndCode;
-          PopOutputNode;
-        finally
-          Close(f);
-        end;
-      except
-        on e: Exception do
-          begin
-          e.Message := '[example] ' + e.Message;
-          raise;
+          Assign(f, FN);
+          Reset(f);
+          try
+            PushOutputNode(BodyElement);
+            DescrBeginCode(False, TDOMElement(Node)['highlighter']);
+            while not EOF(f) do
+              begin
+              ReadLn(f, s);
+              DescrWriteCodeLine(s);
+              end;
+            DescrEndCode;
+            PopOutputNode;
+          finally
+            Close(f);
           end;
-      end;
+        except
+          on e: Exception do
+            begin
+            e.Message := '[example] ' + e.Message;
+            raise;
+            end;
+        end;
+        end;
       end;
     Node := Node.NextSibling;
     end;
 end;
 
 procedure THTMLWriter.AppendFooter;
+
+Var
+  S : String;
+  F : TDomElement;
 begin
   if FooterFile<>'' then
-    ReadXMLFragment(BodyElement, FooterFile);
+    ReadXMLFragment(BodyElement, FooterFile)
+  else if IncludeDateInFooter then
+    begin
+    CreateEl(BodyElement, 'hr');
+    F:=CreateEl(BodyElement,'span');
+    F['class']:='footer';
+    If (FDateFormat='') then
+      S:=DateToStr(Date)
+    else
+      S:=FormatDateTime(FDateFormat,Date);  
+    AppendText(F,Format(SDocDateGenerated,[S]));
+    end;
 end;
 
 procedure THTMLWriter.FinishElementPage(AElement: TPasElement);
@@ -1826,11 +2190,17 @@ begin
     if Assigned(DocNode.ErrorsDoc) then
       AppendDescrSection(AElement, BodyElement, DocNode.ErrorsDoc, SDocErrors);
 
+    // Append Version info
+    if Assigned(DocNode.Version) then
+      AppendDescrSection(AElement, BodyElement, DocNode.Version, SDocVersion);
+
     // Append "See also" section
     AppendSeeAlsoSection(AElement,DocNode);
 
     // Append examples, if present
     AppendExampleSection(AElement,DocNode);
+    // Append notes, if present
+    ConvertNotes(AElement,DocNode.Notes);
     end;
 end;
 
@@ -1854,6 +2224,7 @@ begin
     AppendSeeAlsoSection(AElement,DocNode);
     CreateTopicLinks(DocNode,AElement);
     AppendExampleSection(AElement,DocNode);
+    ConvertNotes(AElement,DocNode.Notes);
     end;
 end;
 
@@ -1865,13 +2236,19 @@ var
 begin
   CurDirectory := Allocator.GetFilename(AElement, ASubpageIndex);
   i := Length(CurDirectory);
-  while (i > 0) and not (CurDirectory[i] in DirSeparators) do
+  while (i > 0) and not (CurDirectory[i] in AllowDirectorySeparators) do
     Dec(i);
   CurDirectory := Copy(CurDirectory, 1, i);
   BaseDirectory := Allocator.GetRelativePathToTop(AElement);
 
   if AElement.ClassType = TPasPackage then
-    CreatePackagePageBody
+    begin
+    Module:=Nil;
+    If (ASubPageIndex=0) then
+      CreatePackagePageBody
+    else if ASubPageIndex=IndexSubIndex then
+      CreatePackageIndex  
+    end
   else
     begin
     Element := AElement;
@@ -1895,6 +2272,158 @@ begin
       CreateProcPageBody(TPasProcedure(AElement))
     else if AElement.ClassType = TTopicELement then
       CreateTopicPageBody(TTopicElement(AElement))
+  end;
+end;
+
+	procedure THTMLWriter.CreateIndexPage(L : TStringList);
+
+Var
+  Lists  : Array['A'..'Z'] of TStringList;
+  LOther : TStringList;
+  
+  CL : TStringList;
+  TableEl, TREl, EL: TDOMElement;
+  E : TPasElement;
+  I,Rows,J,Index : Integer;
+  S : String;
+  C : Char;
+
+begin
+  For C:='A' to 'Z' do
+    Lists[C]:=Nil;
+  L.Sort;
+  Cl:=Nil;
+  // Divide over alphabet
+  For I:=0 to L.Count-1 do
+    begin
+    S:=L[i];
+    E:=TPasElement(L.Objects[i]);
+    If not (E is TPasUnresolvedTypeRef) then
+      begin
+      If (S<>'') then 
+        begin
+        C:=Upcase(S[1]);
+        If C='_' then
+          C:='A';
+        If (C in ['A'..'Z']) and (Lists[C]=Nil) then
+          begin
+          CL:=TStringList.Create;
+          Lists[C]:=CL;
+          end;
+        end;
+      if assigned(cl) then  
+        CL.AddObject(S,E);
+      end;  
+    end;  
+  Try  
+  // Create a quick jump table to all available letters.    
+  TableEl := CreateTable(BodyElement);
+  TableEl['border']:='1';
+  TableEl['width']:='50%';
+  TREl := CreateTR(TableEl);
+  for C:='A' to 'Z' do
+    If (Lists[C]<>Nil) then
+      begin
+      El:=CreateTD_vtop(TREl);
+      AppendText(CreateLink(El,'#SECTION'+C),C);
+      If C<>'Z' then
+       AppendNBsp(El,1);
+      end;
+  // Now emit all identifiers.    
+  TableEl:=Nil;
+  For C:='A' to 'Z' do
+    begin
+    CL:=Lists[C];
+    If CL<>Nil then
+      begin
+      El:=CreateH2(BodyElement);
+      AppendText(El,C);
+      CreateAnchor(El,'SECTION'+C);
+      TableEl := CreateTable(BodyElement);
+      TableEl['Width']:='80%';
+      // Determine number of rows needed
+      Rows:=(CL.Count div IndexColCount);
+      If ((CL.Count Mod IndexColCount)<>0) then
+        Inc(Rows);
+      // Fill rows  
+      For I:=0 to Rows-1 do
+        begin
+        TREl := CreateTR(TableEl);
+        For J:=0 to IndexColCount-1 do 
+          begin
+          El:=CreateTD_vtop(TREl);
+          Index:=(J*Rows)+I;
+          If (Index<CL.Count) then
+            begin
+            S:=CL[Index];
+            E:=TPasElement(CL.Objects[Index]);
+            AppendHyperlink(El,E);
+            end;
+          end;  
+        end;  
+      end; // have List
+    end;  // For C:=
+  Finally
+    for C:='A' to 'Z' do
+      FreeAndNil(Lists[C]);
+  end;  
+end;
+
+procedure THTMLWriter.AddModuleIdentifiers(AModule : TPasModule; L : TStrings);
+
+  Procedure AddElementsFromList(L : TStrings; List : TFPList);
+  
+  Var
+    I : Integer;
+    El : TPasElement;
+    
+  begin
+    For I:=0 to List.Count-1 do
+      begin
+      El:=TPasElement(List[I]);
+      L.AddObject(El.Name,El);
+      If el is TPasEnumType then
+        AddElementsFromList(L,TPasEnumType(el).Values);
+      end;
+  end;
+  
+begin
+  AddElementsFromList(L,AModule.InterfaceSection.Consts);
+  AddElementsFromList(L,AModule.InterfaceSection.Types);
+  AddElementsFromList(L,AModule.InterfaceSection.Functions);
+  AddElementsFromList(L,AModule.InterfaceSection.Classes);
+  AddElementsFromList(L,AModule.InterfaceSection.Variables);
+  AddElementsFromList(L,AModule.InterfaceSection.ResStrings);
+end;
+
+
+procedure THTMLWriter.CreatePackageIndex;
+
+Var
+  L : TStringList;
+  I : Integer;
+  M : TPasModule;
+  E : TPasElement;
+  S : String;    
+  
+begin
+  L:=TStringList.Create;
+  try
+    L.Capacity:=PageInfos.Count; // Too much, but that doesn't hurt.
+    For I:=0 to Package.Modules.Count-1 do
+      begin
+      M:=TPasModule(Package.Modules[i]);
+      L.AddObject(M.Name,M);
+      AddModuleIdentifiers(M,L);
+      end;
+    AppendMenuBar(IndexSubIndex);
+    S:=Package.Name;
+    If Length(S)>0 then
+      Delete(S,1,1);
+    AppendTitle(Format(SDocPackageIndex, [S]));
+    CreateIndexPage(L);
+  Finally
+    L.Free;
   end;
 end;
 
@@ -1971,6 +2500,23 @@ begin
     end;
 end;
 
+procedure THTMLWriter.CreateModuleIndexPage(AModule: TPasModule);
+
+Var
+  L : TStringList;
+
+begin
+  L:=TStringList.Create;
+  try
+    AddModuleIdentifiers(AModule,L);
+    AppendMenuBar(IndexSubIndex);
+    AppendTitle(Format(SDocModuleIndex, [AModule.Name]));
+    CreateIndexPage(L);
+  Finally
+    L.Free;
+  end;  
+end;
+
 procedure THTMLWriter.CreateModulePageBody(AModule: TPasModule;
   ASubpageIndex: Integer);
 
@@ -2014,16 +2560,17 @@ procedure THTMLWriter.CreateModulePageBody(AModule: TPasModule;
       begin
       if Assigned(DocNode.Descr) then
         AppendDescrSection(AModule, BodyElement, DocNode.Descr, SDocOverview);
+      ConvertNotes(AModule,DocNode.Notes);
       CreateTopicLinks(DocNode,AModule);
       end;
   end;
 
-  procedure CreateSimpleSubpage(const ATitle: DOMString; AList: TList);
+  procedure CreateSimpleSubpage(const ATitle: DOMString; AList: TFPList);
   var
     TableEl, TREl, TDEl, CodeEl: TDOMElement;
     i, j: Integer;
     Decl: TPasElement;
-    SortedList: TList;
+    SortedList: TFPList;
     DocNode: TDocNode;
     S : String;
 
@@ -2031,7 +2578,7 @@ procedure THTMLWriter.CreateModulePageBody(AModule: TPasModule;
     AppendMenuBar(ASubpageIndex);
     S:=ATitle;
     AppendTitle(Format(SDocUnitTitle + ': %s', [AModule.Name, S]));
-    SortedList := TList.Create;
+    SortedList := TFPList.Create;
     try
       for i := 0 to AList.Count - 1 do
       begin
@@ -2077,9 +2624,10 @@ procedure THTMLWriter.CreateModulePageBody(AModule: TPasModule;
       ParaEl := CreatePara(BodyElement);
       AppendText(CreateCode(ParaEl), Decl.Name);
       CreateEl(ParaEl, 'br');
-      AppendText(ParaEl, Decl.Value);
+      AppendText(ParaEl, Decl.Expr.getDeclaration(true));
     end;
   end;
+  
 
 begin
   case ASubpageIndex of
@@ -2097,6 +2645,8 @@ begin
       CreateSimpleSubpage(SDocProceduresAndFunctions, AModule.InterfaceSection.Functions);
     VarsSubindex:
       CreateSimpleSubpage(SDocVariables, AModule.InterfaceSection.Variables);
+    IndexSubIndex: 
+      CreateModuleIndexPage(AModule);
   end;
 end;
 
@@ -2120,7 +2670,7 @@ begin
     AppendSym(CodeEl, ': ');
     AppendType(CodeEl, TableEl, AConst.VarType, False);
   end;
-  AppendPasSHFragment(CodeEl, ' = ' + AConst.Value + ';', 0);
+  AppendPasSHFragment(CodeEl, ' = ' + AConst.Expr.GetDeclaration(True) + ';', 0);
 
   FinishElementPage(AConst);
 end;
@@ -2151,11 +2701,11 @@ begin
   AppendText(CodeEl, AType.Name);
   AppendSym(CodeEl, ' = ');
 
-  If Assigned(DocNode) and 
-     Assigned(DocNode.Node) and 
+  If Assigned(DocNode) and
+     Assigned(DocNode.Node) and
      (Docnode.Node['opaque']='1') then
     AppendText(CodeEl,SDocOpaque)
-  else 
+  else
     begin
     // Alias
     if AType.ClassType = TPasAliasType then
@@ -2185,8 +2735,8 @@ begin
         AppendShortDescrCell(TREl, EnumValue);
         AppendNbSp(CodeEl, 2);
         s := EnumValue.Name;
-        if EnumValue.IsValueUsed then
-          s := s + ' = ' + IntToStr(EnumValue.Value);
+        if EnumValue.AssignedValue<>'' then
+          s := s + ' = ' + EnumValue.AssignedValue;
         if i < TPasEnumType(AType).Values.Count - 1 then
           s := s + ',';
         AppendPasSHFragment(CodeEl, s, 0);
@@ -2211,27 +2761,7 @@ begin
     // Record
     if AType.ClassType = TPasRecordType then
     begin
-      if TPasRecordType(AType).IsPacked then
-        AppendKw(CodeEl, 'packed record')
-      else
-        AppendKw(CodeEl, 'record');
-
-      for i := 0 to TPasRecordType(AType).Members.Count - 1 do
-      begin
-        Variable := TPasVariable(TPasRecordType(AType).Members[i]);
-        TREl := CreateTR(TableEl);
-        CodeEl := CreateCode(CreatePara(CreateTD_vtop(TREl)));
-        AppendShortDescrCell(TREl, Variable);
-        AppendNbSp(CodeEl, 2);
-        AppendText(CodeEl, Variable.Name);
-        AppendSym(CodeEl, ': ');
-        AppendType(CodeEl, TableEl, Variable.VarType, False);
-        AppendSym(CodeEl, ';');
-      end;
-
-      CodeEl := CreateCode(CreatePara(CreateTD(CreateTR(TableEl))));
-      AppendText(CodeEl, ' '); // !!!: Dirty trick, necessary for current XML writer
-      AppendKw(CodeEl, 'end');
+      CodeEl := AppendRecordType(CodeEl, TableEl, TPasRecordType(AType), 0);
       AppendSym(CodeEl, ';');
     end else
     // Set
@@ -2250,8 +2780,8 @@ begin
           AppendShortDescrCell(TREl, EnumValue);
           AppendNbSp(CodeEl, 2);
           s := EnumValue.Name;
-          if EnumValue.IsValueUsed then
-            s := s + ' = ' + IntToStr(EnumValue.Value);
+          if (EnumValue.AssignedValue<>'') then
+            s := s + ' = ' + EnumValue.AssignedValue;
           if i < EnumType.Values.Count - 1 then
             s := s + ',';
           AppendPasSHFragment(CodeEl, s, 0);
@@ -2324,6 +2854,22 @@ var
     AppendText(ParaEl, '] ');
   end;
 
+  procedure AppendGenericTypes(CodeEl : TDomElement; AList : TFPList; isSpecialize : Boolean);
+
+  Var
+    I : integer;
+  begin
+    for I:=0 to AList.Count-1 do
+      begin
+      if I=0 then
+        AppendSym(CodeEl, '<')
+      else
+        AppendSym(CodeEl, ',');
+      AppendText(CodeEl,TPasGenericTemplateType(AList[i]).Name);
+      end;
+    AppendSym(CodeEl, '>');
+  end;
+
   procedure CreateMainPage;
   var
     TableEl, TREl, TDEl, CodeEl: TDOMElement;
@@ -2332,6 +2878,7 @@ var
     CurVisibility: TPasMemberVisibility;
     i: Integer;
     s: String;
+    ThisInterface,
     ThisClass: TPasClassType;
     HaveSeenTObject: Boolean;
   begin
@@ -2353,16 +2900,39 @@ var
     TDEl := CreateTD(TREl);
     CodeEl := CreateCode(CreatePara(TDEl));
     AppendKw(CodeEl, 'type');
+    if AClass.ObjKind=okGeneric then
+      AppendKw(CodeEl, ' generic ');
     AppendText(CodeEl, ' ' + AClass.Name + ' ');
+    if AClass.ObjKind=okGeneric then
+      AppendGenericTypes(CodeEl,AClass.GenericTemplateTypes,false);
     AppendSym(CodeEl, '=');
     AppendText(CodeEl, ' ');
-    AppendKw(CodeEl, ObjKindNames[AClass.ObjKind]);
+    if AClass.ObjKind<>okSpecialize then
+      AppendKw(CodeEl, ObjKindNames[AClass.ObjKind])
+    else
+      AppendKw(CodeEl, ' specialize ');
 
     if Assigned(AClass.AncestorType) then
     begin
-      AppendSym(CodeEl, '(');
-      AppendHyperlink(CodeEl, AClass.AncestorType);
-      AppendSym(CodeEl, ')');
+      if AClass.ObjKind=okSpecialize then
+        begin
+        AppendHyperlink(CodeEl, AClass.AncestorType);
+        AppendGenericTypes(CodeEl,AClass.GenericTemplateTypes,true)
+        end
+      else
+        begin
+        AppendSym(CodeEl, '(');
+        AppendHyperlink(CodeEl, AClass.AncestorType);
+        if AClass.Interfaces.count>0 Then
+          begin
+            for i:=0 to AClass.interfaces.count-1 do
+             begin
+               AppendSym(CodeEl, ', ');
+               AppendHyperlink(CodeEl,TPasClassType(AClass.Interfaces[i]));
+             end;
+          end;
+        AppendSym(CodeEl, ')');
+        end;
     end;
 
     if AClass.Members.Count > 0 then
@@ -2429,6 +2999,12 @@ var
             AppendKw(CodeEl, ' default');
             AppendSym(CodeEl, ';');
           end;
+          if (TPasProperty(Member).ImplementsName<>'') then
+          begin
+            AppendKw(CodeEl, ' implements');
+            AppendText(CodeEl, ' '+TPasProperty(Member).ImplementsName);
+            AppendSym(CodeEl, ';');
+          end;
           SetLength(s, 0);
           if Length(TPasProperty(Member).ReadAccessorName) > 0 then
             s := s + 'r';
@@ -2446,7 +3022,8 @@ var
     end;
 
     AppendText(CodeEl, ' '); // !!!: Dirty trick, necessary for current XML writer
-    AppendKw(CodeEl, 'end');
+    if not AClass.IsShortDefinition then
+      AppendKw(CodeEl, 'end');
     AppendSym(CodeEl, ';');
 
 
@@ -2461,6 +3038,15 @@ var
       TDEl['align'] := 'center';
       CodeEl := CreateCode(CreatePara(TDEl));
       AppendHyperlink(CodeEl, ThisClass);
+      if ThisClass.Interfaces.count>0 then
+        begin
+          for i:=0 to ThisClass.interfaces.count-1 do
+            begin
+              ThisInterface:=TPasClassType(ThisClass.Interfaces[i]);
+              AppendText(CodeEl,',');
+              AppendHyperlink(CodeEl, ThisInterface);
+            end;
+        end;
       AppendShortDescrCell(TREl, ThisClass);
       if HaveSeenTObject or (CompareText(ThisClass.Name, 'TObject') = 0) then
         HaveSeenTObject := True
@@ -2565,13 +3151,13 @@ var
 
   procedure CreateSortedSubpage(AFilter: TMemberFilter);
   var
-    List: TList;
+    List: TFPList;
     ThisClass: TPasClassType;
     i, j: Integer;
     Member: TPasElement;
     TableEl, TREl, TDEl, ParaEl, LinkEl: TDOMElement;
   begin
-    List := TList.Create;
+    List := TFPList.Create;
     try
       ThisClass := AClass;
       while True do
@@ -2846,20 +3432,48 @@ begin
     SearchPage := Arg
   else if Cmd = '--footer' then
     FooterFile := Arg
+  else if Cmd = '--charset' then
+    CharSet := Arg
+  else if Cmd = '--index-colcount' then
+    IndexColCount := StrToIntDef(Arg,IndexColCount)
+  else if Cmd = '--image-url' then
+    FBaseImageURL  := Arg
+  else if Cmd = '--css-file' then
+    FCSSFile := arg
+  else if Cmd = '--footer-date' then
+    begin
+    FIDF:=True;
+    FDateFormat:=Arg;
+    end
   else
     Result:=False;
 end;
 
 procedure THTMLWriter.WriteDoc;
 begin
-   WriteLn(Format(SWritingPages, [PageCount]));
+   DoLog(SWritingPages, [PageCount]);
    WriteHTMLPages;
 end;
 
-procedure THTMLWriter.Usage(List: TStrings);
+class procedure THTMLWriter.Usage(List: TStrings);
 begin
   List.add('--footer');
   List.Add(SHTMLUsageFooter);
+  List.Add('--footer-date[=Fmt]');
+  List.Add(SHTMLUsageFooterDate);
+  List.Add('--charset=set');
+  List.Add(SHTMLUsageCharset);
+  List.Add('--html-search=pagename');
+  List.Add(SHTMLHtmlSearch);
+  List.Add('--index-colcount=N');
+  List.Add(SHTMLIndexColcount);
+  List.Add('--image-url=url');
+  List.Add(SHTMLImageUrl);
+end;
+
+Class Function THTMLWriter.FileNameExtension : String; 
+begin
+  result:='';
 end;
 
 // private methods
@@ -2890,91 +3504,10 @@ initialization
   // Do not localize.
   RegisterWriter(THTMLWriter,'html','HTML output using fpdoc.css stylesheet.');
   RegisterWriter(THTMWriter,'htm','HTM (8.3 filenames) output using fpdoc.css stylesheet.');
+  RegisterWriter(TCHMHTMLWriter,'chm','Compressed HTML file output using fpdoc.css stylesheet.');
+
 finalization
   UnRegisterWriter('html');
   UnRegisterWriter('htm');
+  UnRegisterWriter('chm');
 end.
-
-
-{
-  $Log: dw_html.pp,v $
-  Revision 1.17  2005/05/09 18:50:13  michael
-  * Added patch from Vincent Snijders to add a footer to each HTML page
-
-  Revision 1.16  2005/05/04 08:38:58  michael
-  + Added support for opaque types
-
-  Revision 1.15  2005/02/14 17:13:38  peter
-    * truncate log
-
-  Revision 1.14  2005/01/12 21:11:41  michael
-  + New structure for writers. Implemented TXT writer
-
-  Revision 1.13  2005/01/09 15:59:50  michael
-  + Split out latex writer to linear and latex writer
-
-  Revision 1.12  2004/12/20 19:01:11  peter
-    * typo
-
-  Revision 1.11  2004/12/20 16:28:56  michael
-  + Fixed HTML path
-
-  Revision 1.10  2004/10/22 19:58:35  michael
-  + Sort list of modules in package page
-
-  Revision 1.9  2004/08/31 09:40:05  michael
-  + Lookup using string, not widestring
-
-  Revision 1.8  2004/08/28 18:04:49  michael
-  + Added context to topic pages
-
-  Revision 1.7  2004/07/25 22:40:13  michael
-  + Strip path from sourcefilename in generated docs
-
-  Revision 1.6  2004/06/06 10:53:02  michael
-  + Added Topic support
-
-  Revision 1.5  2003/11/28 12:51:37  sg
-  * Added support for source references
-
-  Revision 1.4  2003/04/22 00:00:05  sg
-  * Fixed bug in path building for links to elements which don't have their
-    own page, but their parent element has
-
-  Revision 1.3  2003/04/17 14:15:24  sg
-  * Added writing of array ranges
-
-  Revision 1.2  2003/03/18 19:28:44  michael
-  + Some changes to output handling, more suitable for tex output
-
-  Revision 1.1  2003/03/17 23:03:20  michael
-  + Initial import in CVS
-
-  Revision 1.15  2003/03/13 22:02:13  sg
-  * New version with many bugfixes and our own parser (now independent of the
-    compiler source)
-
-  Revision 1.14  2002/11/15 19:46:32  sg
-  * Added support for classes and objects (formerly all objects have been
-    written als classes)
-
-  Revision 1.13  2002/05/24 00:13:22  sg
-  * much improved new version, including many linking and output fixes
-
-  Revision 1.12  2002/03/12 10:58:36  sg
-  * reworked linking engine and internal structure
-
-  Revision 1.11  2002/01/20 11:19:55  michael
-  + Added link attribute and property to TFPElement
-
-  Revision 1.10  2001/12/21 11:25:13  sg
-  * The parser can now unget two tokens from the scanner
-  * Added parsing and HTML output of range types
-  * Procedure/function variable bugfixes
-
-  Revision 1.9  2001/12/17 22:34:04  sg
-  * Fixed typo in output for menu bar
-
-  Revision 1.8  2001/12/17 13:41:17  jonas
-    * OsPathSeparator -> PathDelim
-}

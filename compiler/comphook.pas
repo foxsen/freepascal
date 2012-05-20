@@ -1,5 +1,4 @@
 {
-    $Id: comphook.pas,v 1.39 2005/04/28 19:27:12 olle Exp $
     Copyright (c) 1998-2002 by Peter Vreman
 
     This unit handles the compilerhooks for output to external programs
@@ -27,11 +26,12 @@ unit comphook;
 interface
 
 uses
-{$IFNDEF MACOS_USE_FAKE_SYSUTILS}
-  SysUtils,
+{$IFNDEF USE_FAKE_SYSUTILS}
+  sysutils,
 {$ELSE}
-  globals,
+  fksysutl,
 {$ENDIF}
+  globtype,
   finput;
 
 Const
@@ -52,6 +52,7 @@ Const
   V_Conditional  = $10000;
   V_Debug        = $20000;
   V_Executable   = $40000;
+  V_TimeStamps   = $80000;
   V_LevelMask    = $fffffff;
   V_All          = V_LevelMask;
   V_Default      = V_Fatal + V_Error + V_Normal;
@@ -75,13 +76,21 @@ type
     currentsource : string;   { filename }
     currentline,
     currentcolumn : longint;  { current line and column }
+    currentmodulestate : string[20];
   { Total Status }
     compiledlines : longint;  { the number of lines which are compiled }
-    errorcount    : longint;  { number of generated errors }
+    errorcount,
+    countWarnings,
+    countNotes,
+    countHints    : longint;  { number of found errors/warnings/notes/hints }
+    codesize,
+    datasize      : qword;
   { program info }
     isexe,
+    ispackage,
     islibrary     : boolean;
   { Settings for the output }
+    showmsgnrs    : boolean;
     verbosity     : longint;
     maxerrorcount : longint;
     errorwarning,
@@ -92,56 +101,61 @@ type
     use_redir,
     use_bugreport,
     use_gccoutput,
-    compiling_current : boolean;
+    print_source_path : boolean;
   { Redirection support }
     redirfile : text;
   { Special file for bug report }
     reportbugfile : text;
   end;
+
+type
+  EControlCAbort=class(Exception)
+    constructor Create;
+  end;
+  ECompilerAbort=class(Exception)
+    constructor Create;
+  end;
+  ECompilerAbortSilent=class(Exception)
+    constructor Create;
+  end;
+
 var
   status : tcompilerstatus;
 
-    type
-      EControlCAbort=class(Exception)
-        constructor Create;
-      end;
-      ECompilerAbort=class(Exception)
-        constructor Create;
-      end;
-      ECompilerAbortSilent=class(Exception)
-        constructor Create;
-      end;
-
 { Default Functions }
 Function  def_status:boolean;
-Function  def_comment(Level:Longint;const s:string):boolean;
+Function  def_comment(Level:Longint;const s:ansistring):boolean;
 function  def_internalerror(i:longint):boolean;
+function  def_CheckVerbosity(v:longint):boolean;
 procedure def_initsymbolinfo;
 procedure def_donesymbolinfo;
 procedure def_extractsymbolinfo;
-function  def_openinputfile(const filename: string): tinputfile;
-Function  def_getnamedfiletime(Const F : String) : Longint;
+function  def_openinputfile(const filename: TPathStr): tinputfile;
+Function  def_getnamedfiletime(Const F : TPathStr) : Longint;
 { Function redirecting for IDE support }
 type
   tstopprocedure         = procedure(err:longint);
   tstatusfunction        = function:boolean;
-  tcommentfunction       = function(Level:Longint;const s:string):boolean;
+  tcommentfunction       = function(Level:Longint;const s:ansistring):boolean;
   tinternalerrorfunction = function(i:longint):boolean;
+  tcheckverbosityfunction = function(i:longint):boolean;
 
   tinitsymbolinfoproc = procedure;
   tdonesymbolinfoproc = procedure;
   textractsymbolinfoproc = procedure;
-  topeninputfilefunc = function(const filename: string): tinputfile;
-  tgetnamedfiletimefunc = function(const filename: string): longint;
+  topeninputfilefunc = function(const filename: TPathStr): tinputfile;
+  tgetnamedfiletimefunc = function(const filename: TPathStr): longint;
 
 const
   do_status        : tstatusfunction  = @def_status;
   do_comment       : tcommentfunction = @def_comment;
   do_internalerror : tinternalerrorfunction = @def_internalerror;
+  do_checkverbosity : tcheckverbosityfunction = @def_checkverbosity;
 
   do_initsymbolinfo : tinitsymbolinfoproc = @def_initsymbolinfo;
   do_donesymbolinfo : tdonesymbolinfoproc = @def_donesymbolinfo;
   do_extractsymbolinfo : textractsymbolinfoproc = @def_extractsymbolinfo;
+  needsymbolinfo : boolean =false;
 
   do_openinputfile : topeninputfilefunc = @def_openinputfile;
   do_getnamedfiletime : tgetnamedfiletimefunc = @def_getnamedfiletime;
@@ -149,12 +163,7 @@ const
 implementation
 
   uses
-{$IFDEF USE_SYSUTILS}
-    SysUtils,
-{$ELSE USE_SYSUTILS}
-   dos,
-{$ENDIF USE_SYSUTILS}
-   cutils
+   cutils, systems, globals
    ;
 
 {****************************************************************************
@@ -169,7 +178,11 @@ begin
    begin
      case s[i] of
       '\' : gccfilename[i]:='/';
- 'A'..'Z' : gccfilename[i]:=chr(ord(s[i])+32);
+ 'A'..'Z' : if not (tf_files_case_aware in source_info.flags) and
+               not (tf_files_case_sensitive in source_info.flags) then
+              gccfilename[i]:=chr(ord(s[i])+32)
+            else
+              gccfilename[i]:=s[i];
      else
       gccfilename[i]:=s[i];
      end;
@@ -191,34 +204,22 @@ end;
                           Stopping the compiler
 ****************************************************************************}
 
-     constructor EControlCAbort.Create;
-       begin
-{$IFNDEF MACOS_USE_FAKE_SYSUTILS}
-         inherited Create('Ctrl-C Signaled!');
-{$ELSE}
-         inherited Create;
-{$ENDIF}
-       end;
+constructor EControlCAbort.Create;
+  begin
+    inherited Create('Ctrl-C Signaled!');
+  end;
 
 
-     constructor ECompilerAbort.Create;
-       begin
-{$IFNDEF MACOS_USE_FAKE_SYSUTILS}
-         inherited Create('Compilation Aborted');
-{$ELSE}
-         inherited Create;
-{$ENDIF}
-       end;
+constructor ECompilerAbort.Create;
+  begin
+    inherited Create('Compilation Aborted');
+  end;
 
 
-     constructor ECompilerAbortSilent.Create;
-       begin
-{$IFNDEF MACOS_USE_FAKE_SYSUTILS}
-         inherited Create('Compilation Aborted');
-{$ELSE}
-         inherited Create;
-{$ENDIF}
-       end;
+constructor ECompilerAbortSilent.Create;
+  begin
+    inherited Create('Compilation Aborted');
+  end;
 
 
 {****************************************************************************
@@ -226,10 +227,8 @@ end;
 ****************************************************************************}
 
 function def_status:boolean;
-{$ifdef HASGETHEAPSTATUS}
 var
   hstatus : TFPCHeapStatus;
-{$endif HASGETHEAPSTATUS}
 begin
   def_status:=false; { never stop }
 { Status info?, Called every line }
@@ -240,12 +239,8 @@ begin
        begin
          if status.currentline>0 then
            Write(status.currentline,' ');
-{$ifdef HASGETHEAPSTATUS}
          hstatus:=GetFPCHeapStatus;
          WriteLn(DStr(hstatus.CurrHeapUsed shr 10),'/',DStr(hstatus.CurrHeapSize shr 10),' Kb Used');
-{$else HASGETHEAPSTATUS}
-         WriteLn(DStr(memavail shr 10),'/',DStr(system.heapsize shr 10),' Kb Free');
-{$endif HASGETHEAPSTATUS}
        end;
    end;
 {$ifdef macos}
@@ -254,12 +249,13 @@ begin
 end;
 
 
-Function def_comment(Level:Longint;const s:string):boolean;
+Function def_comment(Level:Longint;const s:ansistring):boolean;
 const
   rh_errorstr   = 'error:';
   rh_warningstr = 'warning:';
 var
-  hs : string;
+  hs : ansistring;
+  hs2 : ansistring;
 begin
   def_comment:=false; { never stop }
   hs:='';
@@ -306,8 +302,12 @@ begin
           hs:=gccfilename(status.currentsource)+':'+tostr(status.currentline)+': '+hs+' '+
               tostr(status.currentcolumn)+': '+s
         else
-          hs:=status.currentsource+'('+tostr(status.currentline)+
+          begin
+            hs:=status.currentsource+'('+tostr(status.currentline)+
               ','+tostr(status.currentcolumn)+') '+hs+' '+s;
+          end;
+        if status.print_source_path then
+          hs:=status.currentsourcepath+hs;
       end
      else
       begin
@@ -332,18 +332,22 @@ begin
      else
       hs:=s;
    end;
+  if (status.verbosity and V_TimeStamps)<>0 then
+    begin
+      system.str(getrealtime-starttime:0:3,hs2);
+      hs:='['+hs2+'] '+hs;
+    end;
 
   { Display line }
-  if ((status.verbosity and (Level and V_LevelMask))=(Level and V_LevelMask)) then
+  if (Level<>V_None) and
+     ((status.verbosity and (Level and V_LevelMask))=(Level and V_LevelMask)) then
    begin
-{$ifdef FPC}
      if status.use_stderr then
       begin
         writeln(stderr,hs);
         flush(stderr);
       end
      else
-{$endif}
       begin
         if status.use_redir then
          writeln(status.redirfile,hs)
@@ -354,10 +358,8 @@ begin
   { include everything in the bugreport file }
   if status.use_bugreport then
    begin
-{$ifdef FPC}
      Write(status.reportbugfile,hexstr(level,8)+':');
      Writeln(status.reportbugfile,hs);
-{$endif}
    end;
 end;
 
@@ -366,13 +368,18 @@ function def_internalerror(i : longint) : boolean;
 begin
   do_comment(V_Fatal+V_LineInfo,'Internal error '+tostr(i));
 {$ifdef EXTDEBUG}
-  {$ifdef FPC}
-    { Internalerror() and def_internalerror() do not
-      have a stackframe }
-    dump_stack(stdout,get_caller_frame(get_frame));
-  {$endif FPC}
+  { Internalerror() and def_internalerror() do not
+    have a stackframe }
+  dump_stack(stdout,get_caller_frame(get_frame));
 {$endif EXTDEBUG}
   def_internalerror:=true;
+end;
+
+function def_CheckVerbosity(v:longint):boolean;
+begin
+  result:=status.use_bugreport or
+          ((v<>V_None) and
+           ((status.verbosity and (v and V_LevelMask))=(v and V_LevelMask)));
 end;
 
 procedure def_initsymbolinfo;
@@ -387,50 +394,15 @@ procedure def_extractsymbolinfo;
 begin
 end;
 
-function  def_openinputfile(const filename: string): tinputfile;
+function  def_openinputfile(const filename: TPathStr): tinputfile;
 begin
   def_openinputfile:=tdosinputfile.create(filename);
 end;
 
 
-Function def_GetNamedFileTime (Const F : String) : Longint;
-var
-{$IFDEF USE_SYSUTILS}
-  fh : THandle;
-{$ELSE USE_SYSUTILS}
-  info : SearchRec;
-{$ENDIF USE_SYSUTILS}
+Function def_GetNamedFileTime (Const F : TPathStr) : Longint;
 begin
-  Result := -1;
-{$IFDEF USE_SYSUTILS}
-  fh := FileOpen(f, faArchive+faReadOnly+faHidden);
-  Result := FileGetDate(fh);
-  FileClose(fh);
-{$ELSE USE_SYSUTILS}
-  FindFirst (F,archive+readonly+hidden,info);
-  if DosError=0 then
-    Result := info.time;
-  FindClose(info);
-{$ENDIF USE_SYSUTILS}
+  Result:=FileAge(F);
 end;
 
 end.
-{
-  $Log: comphook.pas,v $
-  Revision 1.39  2005/04/28 19:27:12  olle
-    * Made compile on macos
-
-  Revision 1.38  2005/04/24 21:01:37  peter
-    * always use exceptions to stop the compiler
-    - remove stop, do_stop
-
-  Revision 1.37  2005/02/28 15:38:38  marco
-   * getFPCheapstatus  (no, FPC HEAP, not FP CHEAP!)
-
-  Revision 1.36  2005/02/14 17:13:06  peter
-    * truncate log
-
-  Revision 1.35  2005/01/24 18:12:17  olle
-    * In MPW, whole path to source file is now displayed in messages.
-
-}

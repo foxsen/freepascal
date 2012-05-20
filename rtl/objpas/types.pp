@@ -1,5 +1,4 @@
 {
-    $Id: types.pp,v 1.10 2005/02/26 15:11:43 florian Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2002 by Florian Klaempfl,
     member of the Free Pascal development team.
@@ -17,23 +16,35 @@ unit types;
 
   interface
 
-{$ifdef Win32}
+{$ifdef Windows}
     uses
        Windows;
-{$endif Win32}
+{$endif Windows}
 
-{$ifndef ver1_0}
-const
+  {$ifdef wince}
+  //roozbeh:the reason is currently RT_RCDATA is defines in windows for wince as constant,
+  //        but in win32 it is function so here is required to redeclared.
+  //RT_RCDATA = PWideChar(10);
+  {$else}
+ const
   RT_RCDATA = PChar(10);
+  {$endif}
 
 type
   DWORD = LongWord;
 
   PLongint = System.PLongint;
-  PInteger = System.PInteger;
   PSmallInt = System.PSmallInt;
+{$ifndef FPUNONE}
   PDouble = System.PDouble;
+{$endif}
   PByte = System.PByte;
+  Largeint = int64;
+  LARGE_INT = LargeInt;
+  PLargeInt = ^LargeInt;
+  LargeUint = qword;
+  LARGE_UINT= LargeUInt;
+  PLargeuInt = ^LargeuInt;
 
   TIntegerDynArray = array of Integer;
   TCardinalDynArray = array of Cardinal;
@@ -44,13 +55,16 @@ type
   TInt64DynArray = array of Int64;
   TQWordDynArray = array of QWord;
   TLongWordDynArray = array of LongWord;
+{$ifndef FPUNONE}
   TSingleDynArray = array of Single;
   TDoubleDynArray = array of Double;
+{$endif}
   TBooleanDynArray = array of Boolean;
   TStringDynArray = array of AnsiString;
   TWideStringDynArray   = array of WideString;
+  TPointerDynArray = array of Pointer;
 
-{$ifdef Win32}
+{$ifdef Windows}
   TPoint = Windows.TPoint;
 {$else}
   TPoint =
@@ -65,7 +79,7 @@ type
   PPoint = ^TPoint;
   tagPOINT = TPoint;
 
-{$ifdef Win32}
+{$ifdef Windows}
   TRect = Windows.TRect;
 {$else}
   TRect =
@@ -77,10 +91,10 @@ type
       0: (Left,Top,Right,Bottom : Longint);
       1: (TopLeft,BottomRight : TPoint);
     end;
-{$endif Win32}
+{$endif Windows}
   PRect = ^TRect;
 
-{$ifdef Win32}
+{$ifdef Windows}
   TSize = Windows.TSize;
 {$else}
   TSize =
@@ -91,10 +105,10 @@ type
      cx : Longint;
      cy : Longint;
   end;
-{$endif Win32}
+{$endif Windows}
   PSize = ^TSize;
   tagSIZE = TSize;
-  SIZE = TSize;
+//  SIZE = TSize;
 
 
   TSmallPoint =
@@ -107,13 +121,18 @@ type
   end;
   PSmallPoint = ^TSmallPoint;
 
+  TDuplicates = (dupIgnore, dupAccept, dupError);
+
 type
   TOleChar = WideChar;
   POleStr = PWideChar;
   PPOleStr = ^POleStr;
 
-{$ifndef win32}
+  TListCallback = procedure(data,arg:pointer) of object;
+  TListStaticCallback = procedure(data,arg:pointer);
+
 const
+  GUID_NULL: TGUID  = '{00000000-0000-0000-0000-000000000000}';
 
   STGTY_STORAGE   = 1;
   STGTY_STREAM    = 2;
@@ -128,7 +147,16 @@ const
   LOCK_EXCLUSIVE = 2;
   LOCK_ONLYONCE  = 4;
 
-  E_FAIL = HRESULT($80004005);
+  STATFLAG_DEFAULT   	      = 0;
+  STATFLAG_NONAME    	      = 1;
+  STATFLAG_NOOPEN    	      = 2;
+
+{$ifndef Wince}
+  // in Wince these are in unit windows. Under 32/64 in ActiveX.
+  // for now duplicate them. Not that bad for untyped constants.
+
+  E_FAIL 		      = HRESULT($80004005);
+  E_INVALIDARG                = HRESULT($80070057);
 
   STG_E_INVALIDFUNCTION       = HRESULT($80030001);
   STG_E_FILENOTFOUND          = HRESULT($80030002);
@@ -172,15 +200,13 @@ const
   STG_S_BLOCK                 = $00030201;
   STG_S_RETRYNOW              = $00030202;
   STG_S_MONITORING            = $00030203;
+{$endif}
 
-  GUID_NULL: TGUID  = '{00000000-0000-0000-0000-000000000000}';
-
+{$ifndef Windows}
 type
   PCLSID = PGUID;
   TCLSID = TGUID;
 
-  LARGE_INT = Int64;
-  Largeint = LARGE_INT;
   PDWord = ^DWord;
 
   PDisplay = Pointer;
@@ -207,37 +233,43 @@ type
   TFileTime = _FILETIME;
   FILETIME = _FILETIME;
   PFileTime = ^TFileTime;
+{$else}
+type
+  PCLSID    = Windows.PCLSID;
+  TCLSID    = Windows.CLSID;
+  TFiletime = Windows.TFileTime;
+  Filetime  = Windows.FileTime;
+  PFiletime = Windows.PFileTime;
+{$endif Windows}
 
-  tagSTATSTG =
-{$ifndef FPC_REQUIRES_PROPER_ALIGNMENT}
-  packed
-{$endif FPC_REQUIRES_PROPER_ALIGNMENT}
-  record
-     pwcsName : POleStr;
-     dwType : Longint;
-     cbSize : Largeint;
-     mtime : TFileTime;
-     ctime : TFileTime;
-     atime : TFileTime;
-     grfMode : Longint;
-     grfLocksSupported : Longint;
-     clsid : TCLSID;
-     grfStateBits : Longint;
-     reserved : Longint;
+type
+  tagSTATSTG = record
+     pwcsName      : POleStr;
+     dwType        : DWord;
+     cbSize        : Large_uint;
+     mtime         : TFileTime;
+     ctime         : TFileTime;
+     atime         : TFileTime;
+     grfMode       : DWord;
+     grfLocksSupported : DWord;
+     clsid         : TCLSID;
+     grfStateBits  : DWord;
+     reserved      : DWord;
   end;
   TStatStg = tagSTATSTG;
   STATSTG = TStatStg;
   PStatStg = ^TStatStg;
 
-{$ifdef HASINTF}
+  { classes depends on these interfaces, we can't use the activex unit in classes though }
   IClassFactory = Interface(IUnknown) ['{00000001-0000-0000-C000-000000000046}']
      Function CreateInstance(Const unkOuter : IUnknown;Const riid : TGUID;Out vObject) : HResult;StdCall;
      Function LockServer(fLock : LongBool) : HResult;StdCall;
   End;
 
-  ISequentialStream = interface(IUnknown) ['{0c733a30-2a1c-11ce-ade5-00aa0044773d}']
-     function Read(pv : Pointer;cb : DWord;pcbRead : PDWord) : HRESULT;stdcall;
-     function Write(pv : Pointer;cb : DWord;pcbWritten : PDWord) : HRESULT;stdcall;
+  ISequentialStream = interface(IUnknown)
+     ['{0c733a30-2a1c-11ce-ade5-00aa0044773d}']
+     function Read(pv : Pointer;cb : DWORD;pcbRead : PDWORD) : HRESULT;stdcall;
+     function Write(pv : Pointer;cb : DWORD;pcbWritten : PDWORD): HRESULT;stdcall;
   end;
 
   IStream = interface(ISequentialStream) ['{0000000C-0000-0000-C000-000000000046}']
@@ -255,25 +287,23 @@ type
      Function Stat(out statstg : TStatStg;grfStatFlag : Longint) : HRESULT;stdcall;
      function Clone(out stm : IStream) : HRESULT;stdcall;
   end;
-{$endif HASINTF}
-{$endif win32}
 
 function EqualRect(const r1,r2 : TRect) : Boolean;
 function Rect(Left,Top,Right,Bottom : Integer) : TRect;
 function Bounds(ALeft,ATop,AWidth,AHeight : Integer) : TRect;
-function Point(x,y : Integer) : TPoint;
+function Point(x,y : Integer) : TPoint; inline;
 function PtInRect(const Rect : TRect; const p : TPoint) : Boolean;
 function IntersectRect(var Rect : TRect; const R1,R2 : TRect) : Boolean;
 function UnionRect(var Rect : TRect; const R1,R2 : TRect) : Boolean;
 function IsRectEmpty(const Rect : TRect) : Boolean;
 function OffsetRect(var Rect : TRect;DX : Integer;DY : Integer) : Boolean;
 function CenterPoint(const Rect: TRect): TPoint;
-
-{$endif ver1_0}
+function InflateRect(var Rect: TRect; dx: Integer; dy: Integer): Boolean;
+function Size(AWidth, AHeight: Integer): TSize;
+function Size(const ARect: TRect): TSize;
 
 implementation
 
-{$ifndef ver1_0}
 
 function EqualRect(const r1,r2 : TRect) : Boolean;
 
@@ -302,7 +332,7 @@ begin
 end;
 
 
-function Point(x,y : Integer) : TPoint;
+function Point(x,y : Integer) : TPoint; inline;
 
 begin
   Point.x:=x;
@@ -320,50 +350,58 @@ end;
 
 
 function IntersectRect(var Rect : TRect;const R1,R2 : TRect) : Boolean;
-
+var
+  lRect: TRect;
 begin
-  Rect:=R1;
-  with R2 do
-    begin
-    if Left>R1.Left then
-      Rect.Left:=Left;
-    if Top>R1.Top then
-      Rect.Top:=Top;
-    if Right<R1.Right then
-      Rect.Right:=Right;
-    if Bottom<R1.Bottom then
-      Rect.Bottom:=Bottom;
-    end;
-  if IsRectEmpty(Rect) then
-    begin
+  lRect := R1;
+  if R2.Left > R1.Left then
+    lRect.Left := R2.Left;
+  if R2.Top > R1.Top then
+    lRect.Top := R2.Top;
+  if R2.Right < R1.Right then
+    lRect.Right := R2.Right;
+  if R2.Bottom < R1.Bottom then
+    lRect.Bottom := R2.Bottom;
+
+  // The var parameter is only assigned in the end to avoid problems
+  // when passing the same rectangle in the var and const parameters.
+  // See http://bugs.freepascal.org/view.php?id=17722
+  if IsRectEmpty(lRect) then
+  begin
     FillChar(Rect,SizeOf(Rect),0);
     IntersectRect:=false;
-    end
+  end
   else
+  begin
     IntersectRect:=true;
+    Rect := lRect;
+  end;	
 end;
 
 function UnionRect(var Rect : TRect;const R1,R2 : TRect) : Boolean;
+var
+  lRect: TRect;
 begin
-  Rect:=R1;
-  with R2 do
-    begin
-    if Left<R1.Left then
-      Rect.Left:=Left;
-    if Top<R1.Top then
-      Rect.Top:=Top;
-    if Right>R1.Right then
-      Rect.Right:=Right;
-    if Bottom>R1.Bottom then
-      Rect.Bottom:=Bottom;
-    end;
-  if IsRectEmpty(Rect) then
-    begin
+  lRect:=R1;
+  if R2.Left<R1.Left then
+    lRect.Left:=R2.Left;
+  if R2.Top<R1.Top then
+    lRect.Top:=R2.Top;
+  if R2.Right>R1.Right then
+    lRect.Right:=R2.Right;
+  if R2.Bottom>R1.Bottom then
+    lRect.Bottom:=R2.Bottom;
+
+  if IsRectEmpty(lRect) then
+  begin
     FillChar(Rect,SizeOf(Rect),0);
     UnionRect:=false;
-    end
+  end
   else
+  begin
+    Rect:=lRect;
     UnionRect:=true;
+  end;
 end;
 
 function IsRectEmpty(const Rect : TRect) : Boolean;
@@ -388,26 +426,52 @@ begin
     OffsetRect:=false;
 end;
 
-function CenterPoint(const Rect: TRect): TPoint;
-
+function Avg(a, b: Longint): Longint;
 begin
-  With Rect do
+  if a < b then
+    Result := a + ((b - a) shr 1)
+  else
+    Result := b + ((a - b) shr 1);
+end;
+
+function CenterPoint(const Rect: TRect): TPoint;
+begin
+  with Rect do
     begin
-    Result.X:=(Left+Right) div 2;
-    Result.Y:=(Top+Bottom) div 2;
+      Result.X := Avg(Left, Right);
+      Result.Y := Avg(Top, Bottom);
     end;
 end;
 
+function InflateRect(var Rect: TRect; dx: Integer; dy: Integer): Boolean;
+begin
+  if Assigned(@Rect) then
+  begin
+    with Rect do
+    begin
+      dec(Left, dx);
+      dec(Top, dy);
+      inc(Right, dx);
+      inc(Bottom, dy);
+    end;
+    Result := True;
+  end
+  else
+    Result := False;
+end;
 
-{$endif ver1_0}
+function Size(AWidth, AHeight: Integer): TSize;
+begin
+  Result.cx := AWidth;
+  Result.cy := AHeight;
+end;
+
+function Size(const ARect: TRect): TSize;
+begin
+  Result.cx := ARect.Right - ARect.Left;
+  Result.cy := ARect.Bottom - ARect.Top;
+end;
+
+
 
 end.
-{
-  $Log: types.pp,v $
-  Revision 1.10  2005/02/26 15:11:43  florian
-    * TSize is imported from the Windows unit on win32
-
-  Revision 1.9  2005/02/14 17:13:31  peter
-    * truncate log
-
-}

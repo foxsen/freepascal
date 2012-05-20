@@ -14,7 +14,7 @@ uses
   SysUtils;
 
 const
-{$ifdef cpusparc}
+{$if defined(cpusparc) or defined(cpuarm) or defined(go32v2)}
   loopcnt = 10000;
 {$else}
   loopcnt = 1000000;
@@ -101,4 +101,3 @@ begin
   { The small fixed size blocks shall not reuse the big memory block }
   procb;
 end.
-

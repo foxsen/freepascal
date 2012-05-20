@@ -1,5 +1,4 @@
 {
-    $Id: dos.pp,v 1.10 2005/02/14 17:13:32 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team.
 
@@ -13,6 +12,9 @@
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
  **********************************************************************}
+
+{$inline on}
+
 unit dos;
 interface
 
@@ -152,7 +154,7 @@ end;
 
 function GetMsCount: int64;
 begin
-  GetMsCount := MemL [$40:$6c] * 55;
+  GetMsCount := int64 (MemL [$40:$6c]) * 55;
 end;
 
 {******************************************************************************
@@ -202,9 +204,7 @@ begin
   c[0]:=char(length(comline)+2);
 { create path }
   p:=path;
-  for i:=1 to length(p) do
-   if p[i]='/' then
-    p[i]:='\';
+  DoDirSeparators(p);
   if LFNSupport then
     GetShortName(p);
 { create buffer }
@@ -333,44 +333,13 @@ TYPE  ExtendedFat32FreeSpaceRec=packed Record
          Dummy,Dummy2    : DWORD;  {8 bytes reserved}
          END;
 
+
 function do_diskdata(drive : byte; Free : BOOLEAN) : Int64;
 VAR
   S    : String;
   Rec  : ExtendedFat32FreeSpaceRec;
-BEGIN
- if (swap(dosversion)>=$070A) AND LFNSupport then
-  begin
-   S:='C:\'#0;
-   if Drive=0 then
-    begin
-     GetDir(Drive,S);
-     Setlength(S,4);
-     S[4]:=#0;
-    end
-   else
-    S[1]:=chr(Drive+64);
-   Rec.Strucversion:=0;
-   dosmemput(tb_segment,tb_offset,Rec,SIZEOF(ExtendedFat32FreeSpaceRec));
-   dosmemput(tb_segment,tb_offset+Sizeof(ExtendedFat32FreeSpaceRec)+1,S[1],4);
-   dosregs.dx:=tb_offset+Sizeof(ExtendedFat32FreeSpaceRec)+1;
-   dosregs.ds:=tb_segment;
-   dosregs.di:=tb_offset;
-   dosregs.es:=tb_segment;
-   dosregs.cx:=Sizeof(ExtendedFat32FreeSpaceRec);
-   dosregs.ax:=$7303;
-   msdos(dosregs);
-   if (dosregs.flags and fcarry) = 0 then {No error clausule in int except cf}
-    begin
-      copyfromdos(rec,Sizeof(ExtendedFat32FreeSpaceRec));
-      if Free then
-       Do_DiskData:=int64(rec.AvailAllocUnits)*rec.SecPerClus*rec.BytePerSec
-      else
-       Do_DiskData:=int64(rec.TotalAllocUnits)*rec.SecPerClus*rec.BytePerSec;
-    end
-   else
-    Do_DiskData:=-1;
-  end
- else
+
+  procedure OldDosDiskData; inline;
   begin
    dosregs.dl:=drive;
    dosregs.ah:=$36;
@@ -385,7 +354,48 @@ BEGIN
    else
     do_diskdata:=-1;
   end;
+
+BEGIN
+ if LFNSupport then
+  begin
+   S:='C:\'#0;
+   if Drive=0 then
+    begin
+     GetDir(Drive,S);
+     Setlength(S,4);
+     S[4]:=#0;
+    end
+   else
+    S[1]:=chr(Drive+64);
+   Rec.Strucversion:=0;
+   Rec.RetSize := 0;
+   dosmemput(tb_segment,tb_offset,Rec,SIZEOF(ExtendedFat32FreeSpaceRec));
+   dosmemput(tb_segment,tb_offset+Sizeof(ExtendedFat32FreeSpaceRec)+1,S[1],4);
+   dosregs.dx:=tb_offset+Sizeof(ExtendedFat32FreeSpaceRec)+1;
+   dosregs.ds:=tb_segment;
+   dosregs.di:=tb_offset;
+   dosregs.es:=tb_segment;
+   dosregs.cx:=Sizeof(ExtendedFat32FreeSpaceRec);
+   dosregs.ax:=$7303;
+   msdos(dosregs);
+   if (dosregs.flags and fcarry) = 0 then {No error clausule in int except cf}
+    begin
+     copyfromdos(rec,Sizeof(ExtendedFat32FreeSpaceRec));
+     if Rec.RetSize = 0 then (* Error - "FAT32" function not supported! *)
+      OldDosDiskData
+     else
+      if Free then
+       Do_DiskData:=int64(rec.AvailAllocUnits)*rec.SecPerClus*rec.BytePerSec
+      else
+       Do_DiskData:=int64(rec.TotalAllocUnits)*rec.SecPerClus*rec.BytePerSec;
+    end
+   else
+    Do_DiskData:=-1;
+  end
+ else
+  OldDosDiskData;
 end;
+
 
 function diskfree(drive : byte) : int64;
 begin
@@ -448,8 +458,7 @@ var
   w : LFNSearchRec;
 begin
   { allow slash as backslash }
-  for i:=0 to strlen(path) do
-    if path[i]='/' then path[i]:='\';
+  DoDirSeparators(path);
   dosregs.si:=1; { use ms-dos time }
   { don't include the label if not asked for it, needed for network drives }
   if attr=$8 then
@@ -528,8 +537,7 @@ var
    i : longint;
 begin
   { allow slash as backslash }
-  for i:=0 to strlen(path) do
-    if path[i]='/' then path[i]:='\';
+  DoDirSeparators(path);
   copytodos(f,sizeof(searchrec));
   dosregs.edx:=tb_offset;
   dosregs.ds:=tb_segment;
@@ -641,8 +649,7 @@ begin
   else
     begin
        { allow slash as backslash }
-       for i:=1 to length(dirlist) do
-         if dirlist[i]='/' then dirlist[i]:='\';
+       DoDirSeparators(dirlist);
        repeat
          p1:=pos(';',dirlist);
          if p1<>0 then
@@ -839,10 +846,3 @@ end;
 
 
 end.
-
-{
-  $Log: dos.pp,v $
-  Revision 1.10  2005/02/14 17:13:32  peter
-    * truncate log
-
-}

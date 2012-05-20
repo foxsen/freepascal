@@ -1,5 +1,4 @@
 {
-    $Id: crt.pp,v 1.13 2005/05/14 15:01:49 hajny Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team.
 
@@ -220,7 +219,7 @@ Begin
 End;
 
 
-Procedure GotoXy(X: Byte; Y: Byte);
+Procedure GotoXy(X: tcrtcoord; Y: tcrtcoord);
 {
   Go to coordinates X,Y in the current window.
 }
@@ -285,7 +284,7 @@ End;
 
 
 
-Function WhereX: Byte;
+Function WhereX: tcrtcoord;
 {
   Return current X-position of cursor.
 }
@@ -298,7 +297,7 @@ End;
 
 
 
-Function WhereY: Byte;
+Function WhereY: tcrtcoord;
 {
   Return current Y-position of cursor.
 }
@@ -377,7 +376,7 @@ asm
         cmpl    %fs:(%edi),%ebx
         je      .LDelayLoop1
 .LDelayLoop2:
-end;
+end ['EAX'];
 
 
 procedure initdelay;assembler;
@@ -405,7 +404,7 @@ asm
         movl    %eax,DelayCnt
         popl %edi
         popl %ebx
-end;
+end ['EAX','ECX','EDX'];
 
 
 procedure Delay(MS: Word);assembler;
@@ -424,7 +423,7 @@ asm
 .LDelay2:
         popl %edi
         popl %ebx
-end;
+end ['EAX','ECX','EDX'];
 
 
 procedure sound(hz : word);
@@ -452,7 +451,7 @@ begin
         outb    %al,$0x42
         movb    %ch,%al
         outb    %al,$0x42
-  end ['EAX','ECX','EDX'];
+  end ['EAX','ECX'];
 end;
 
 
@@ -767,13 +766,3 @@ begin
 { Enable ctrl-c input (JM) }
   __djgpp_set_ctrl_c(0);
 end.
-
-{
-  $Log: crt.pp,v $
-  Revision 1.13  2005/05/14 15:01:49  hajny
-    * TextMode parameter type changed to word for TP/BP compatibility
-
-  Revision 1.12  2005/02/14 17:13:22  peter
-    * truncate log
-
-}

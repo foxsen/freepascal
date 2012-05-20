@@ -1,5 +1,4 @@
 {
-    $Id: cutils.pas,v 1.52 2005/04/23 14:15:58 hajny Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl
 
     This unit implements some support functions
@@ -30,23 +29,12 @@ unit cutils;
 
 interface
 
+  type
+    Tcharset=set of char;
 
-    type
-{$ifdef ver1_0}
-       ptrint = longint;
-{$endif ver1_0}
-       pstring = ^string;
-       get_var_value_proc=function(const s:string):string of object;
-       Tcharset=set of char;
+  var
+    internalerrorproc : procedure(i:longint);
 
-    var
-      internalerrorproc : procedure(i:longint);
-
-{$ifndef HASGETFPCHEAPSTATUS}
-    type
-      TFPCHeapStatus = THeapStatus;
-    function GetFPCHeapStatus:TFPCHeapStatus;
-{$endif HASGETFPCHEAPSTATUS}
 
     {# Returns the minimal value between @var(a) and @var(b) }
     function min(a,b : longint) : longint;{$ifdef USEINLINE}inline;{$endif}
@@ -54,29 +42,41 @@ interface
     {# Returns the maximum value between @var(a) and @var(b) }
     function max(a,b : longint) : longint;{$ifdef USEINLINE}inline;{$endif}
     function max(a,b : int64) : int64;{$ifdef USEINLINE}inline;{$endif}
-    {# Returns the value in @var(x) swapped to different endian }
-    Function SwapInt64(x : int64): int64;{$ifdef USEINLINE}inline;{$endif}
-    {# Returns the value in @var(x) swapped to different endian }
-    function SwapLong(x : longint): longint;{$ifdef USEINLINE}inline;{$endif}
-    {# Returns the value in @va(x) swapped to different endian }
-    function SwapWord(x : word): word;{$ifdef USEINLINE}inline;{$endif}
     {# Return value @var(i) aligned on @var(a) boundary }
     function align(i,a:longint):longint;{$ifdef USEINLINE}inline;{$endif}
+    { if you have an address aligned using "oldalignment" and add an
+      offset of (a multiple of) offset to it, this function calculates
+      the new minimally guaranteed alignment
+    }
+    function newalignment(oldalignment: longint; offset: int64): longint;
+    {# Return @var(b) with the bit order reversed }
+    function reverse_byte(b: byte): byte;
 
-    function used_align(varalign,minalign,maxalign:longint):longint;
-    function size_2_align(len : longint) : longint;
+    function next_prime(l: longint): longint;
+
+    function used_align(varalign,minalign,maxalign:shortint):shortint;
+    function isbetteralignedthan(new, org, limit: cardinal): boolean;
+    function size_2_align(len : longint) : shortint;
+    function packedbitsloadsize(bitlen: int64) : int64;
     procedure Replace(var s:string;s1:string;const s2:string);
-    procedure Replace(var s:AnsiString;s1:string;const s2:string);
+    procedure Replace(var s:AnsiString;s1:string;const s2:AnsiString);
     procedure ReplaceCase(var s:string;const s1,s2:string);
+    procedure ReplaceCase(var s:ansistring;const s1,s2:ansistring);
+    Function MatchPattern(const pattern,what:string):boolean;
+    function upper(const c : char) : char;
     function upper(const s : string) : string;
+    function upper(const s : ansistring) : ansistring;
+    function lower(const c : char) : char;
     function lower(const s : string) : string;
+    function lower(const s : ansistring) : ansistring;
+    function rpos(const needle: char; const haystack: shortstring): longint; overload;
+    function rpos(const needle: shortstring; const haystack: shortstring): longint; overload;
     function trimbspace(const s:string):string;
     function trimspace(const s:string):string;
     function space (b : longint): string;
     function PadSpace(const s:string;len:longint):string;
     function GetToken(var s:string;endchar:char):string;
     procedure uppervar(var s : string);
-    function hexstr(val : cardinal;cnt : cardinal) : string;
     function realtostr(e:extended):string;{$ifdef USEINLINE}inline;{$endif}
     function tostr(i : qword) : string;{$ifdef USEINLINE}inline;{$endif}overload;
     function tostr(i : int64) : string;{$ifdef USEINLINE}inline;{$endif}overload;
@@ -88,37 +88,37 @@ interface
     {# Returns true if value is a power of 2, the actual
        exponent value is returned in power.
     }
-    function ispowerof2(value : int64;var power : longint) : boolean;
+    function ispowerof2(value : int64;out power : longint) : boolean;
+    function nextpowerof2(value : int64; out power: longint) : int64;
     function backspace_quote(const s:string;const qchars:Tcharset):string;
     function octal_quote(const s:string;const qchars:Tcharset):string;
-    function maybequoted(const s:string):string;
 
     {# If the string is quoted, in accordance with pascal, it is
        dequoted and returned in s, and the function returns true.
        If it is not quoted, or if the quoting is bad, s is not touched,
        and false is returned.
     }
-    function DePascalQuote(var s: string): Boolean;
-    function CompareText(S1, S2: string): longint;
+    function DePascalQuote(var s: ansistring): Boolean;
+    function CompareStr(const S1, S2: string): Integer;
+    function CompareText(S1, S2: string): integer;
+    function CompareVersionStrings(s1,s2: string): longint;
 
     { releases the string p and assignes nil to p }
     { if p=nil then freemem isn't called          }
-    procedure stringdispose(var p : pstring);{$ifdef USEINLINE}inline;{$endif}
+    procedure stringdispose(var p : pshortstring);{$ifdef USEINLINE}inline;{$endif}
 
 
     { allocates mem for a copy of s, copies s to this mem and returns }
     { a pointer to this mem                                           }
-    function stringdup(const s : string) : pstring;{$ifdef USEINLINE}inline;{$endif}
+    function stringdup(const s : string) : pshortstring;{$ifdef USEINLINE}inline;{$endif}
 
     {# Allocates memory for the string @var(s) and copies s as zero
        terminated string to that allocated memory and returns a pointer
        to that mem
     }
     function  strpnew(const s : string) : pchar;
-    procedure strdispose(var p : pchar);
+    function  strpnew(const s : ansistring) : pchar;
 
-    function string_evaluate(s:string;get_var_value:get_var_value_proc;
-                             const vars:array of string):Pchar;
     {# makes the character @var(c) lowercase, with spanish, french and german
        character set
     }
@@ -126,13 +126,13 @@ interface
 
     { makes zero terminated string to a pascal string }
     { the data in p is modified and p is returned     }
-    function pchar2pstring(p : pchar) : pstring;
+    function pchar2pshortstring(p : pchar) : pshortstring;
 
-    { ambivalent to pchar2pstring }
-    function pstring2pchar(p : pstring) : pchar;
+    { inverse of pchar2pshortstring }
+    function pshortstring2pchar(p : pshortstring) : pchar;
 
-    { Speed/Hash value }
-    Function GetSpeedValue(Const s:String):cardinal;
+    { allocate a new pchar with the contents of a}
+    function ansistring2pchar(const a: ansistring) : pchar;
 
     { Ansistring (pchar+length) support }
     procedure ansistringdispose(var p : pchar;length : longint);
@@ -143,21 +143,16 @@ interface
     function minilzw_encode(const s:string):string;
     function minilzw_decode(const s:string):string;
 
+    Function nextafter(x,y:double):double;
+
+  { hide Sysutils.ExecuteProcess in units using this one after SysUtils}
+  const
+    ExecuteProcess = 'Do not use' deprecated 'Use cfileutil.RequotedExecuteProcess instead, ExecuteProcess cannot deal with single quotes as used by Unix command lines';
 
 implementation
 
-uses
-  strings
-  ;
-
-
-{$ifndef HASGETFPCHEAPSTATUS}
-    function GetFPCHeapStatus:TFPCHeapStatus;
-    begin
-      GetHeapStatus(result);
-    end;
-{$endif HASGETFPCHEAPSTATUS}
-
+    uses
+      SysUtils;
 
     var
       uppertbl,
@@ -169,10 +164,10 @@ uses
       return the minimal of a and b
     }
       begin
-         if a>b then
-           min:=b
+         if a<=b then
+           min:=a
          else
-           min:=a;
+           min:=b;
       end;
 
 
@@ -181,10 +176,10 @@ uses
       return the minimal of a and b
     }
       begin
-         if a>b then
-           min:=b
+         if a<=b then
+           min:=a
          else
-           min:=a;
+           min:=b;
       end;
 
 
@@ -193,10 +188,10 @@ uses
       return the maximum of a and b
     }
       begin
-         if a<b then
-           max:=b
+         if a>=b then
+           max:=a
          else
-           max:=a;
+           max:=b;
       end;
 
 
@@ -205,43 +200,32 @@ uses
       return the maximum of a and b
     }
       begin
-         if a<b then
-           max:=b
+         if a>=b then
+           max:=a
          else
-           max:=a;
+           max:=b;
       end;
 
 
-    Function SwapLong(x : longint): longint;{$ifdef USEINLINE}inline;{$endif}
+    function newalignment(oldalignment: longint; offset: int64): longint;
       var
-        y : word;
-        z : word;
-      Begin
-        y := x shr 16;
-        y := word(longint(y) shl 8) or (y shr 8);
-        z := x and $FFFF;
-        z := word(longint(z) shl 8) or (z shr 8);
-        SwapLong := (longint(z) shl 16) or longint(y);
-      End;
+        localoffset: longint;
+      begin
+        localoffset:=longint(offset);
+        while (localoffset mod oldalignment)<>0 do
+          oldalignment:=oldalignment div 2;
+        newalignment:=oldalignment;
+      end;
 
 
-    Function SwapInt64(x : int64): int64;{$ifdef USEINLINE}inline;{$endif}
-      Begin
-        result:=swaplong(longint(hi(x)));
-        result:=result or (swaplong(longint(lo(x))) shl 32);
-      End;
-
-
-    Function SwapWord(x : word): word;{$ifdef USEINLINE}inline;{$endif}
-      var
-        z : byte;
-      Begin
-        z := x shr 8;
-        x := x and $ff;
-        x := (x shl 8);
-        SwapWord := x or z;
-      End;
-
+    function reverse_byte(b: byte): byte;
+      const
+        reverse_nible:array[0..15] of 0..15 =
+          (%0000,%1000,%0100,%1100,%0010,%1010,%0110,%1110,
+           %0001,%1001,%0101,%1101,%0011,%1011,%0111,%1111);
+      begin
+        reverse_byte:=(reverse_nible[b and $f] shl 4) or reverse_nible[b shr 4];
+      end;
 
     function align(i,a:longint):longint;{$ifdef USEINLINE}inline;{$endif}
     {
@@ -261,7 +245,7 @@ uses
       end;
 
 
-    function size_2_align(len : longint) : longint;
+    function size_2_align(len : longint) : shortint;
       begin
          if len>16 then
            size_2_align:=32
@@ -278,7 +262,84 @@ uses
       end;
 
 
-    function used_align(varalign,minalign,maxalign:longint):longint;
+    function packedbitsloadsize(bitlen: int64) : int64;
+      begin
+         case bitlen of
+           1,2,4,8:
+             result := 1;
+           { 10 bits can never be split over 3 bytes via 1-8-1, because it }
+           { always starts at a multiple of 10 bits. Same for the others.  }
+           3,5,6,7,9,10,12,16:
+             result := 2;
+  {$ifdef cpu64bitalu}
+           { performance penalty for unaligned 8 byte access is much   }
+           { higher than for unaligned 4 byte access, at least on ppc, }
+           { so use 4 bytes even in some cases where a value could     }
+           { always loaded using a single 8 byte load (e.g. in case of }
+           { 28 bit values)                                            }
+           11,13,14,15,17..32:
+             result := 4;
+           else
+             result := 8;
+  {$else cpu64bitalu}
+           else
+             result := 4;
+  {$endif cpu64bitalu}
+         end;
+      end;
+
+
+    function isbetteralignedthan(new, org, limit: cardinal): boolean;
+      var
+        cnt: cardinal;
+      begin
+        cnt:=2;
+        while (cnt <= limit) do
+          begin
+            if (org and (cnt-1)) > (new and (cnt-1)) then
+              begin
+                result:=true;
+                exit;
+              end
+            else if (org and (cnt-1)) < (new and (cnt-1)) then
+              begin
+                result:=false;
+                exit;
+              end;
+            cnt:=cnt*2;
+          end;
+        result:=false;
+      end;
+
+
+    function next_prime(l: longint): longint;
+      var
+        check, checkbound: longint;
+        ok: boolean;
+      begin
+        result:=l or 1;
+        while l<high(longint) do
+          begin
+            ok:=true;
+            checkbound:=trunc(sqrt(l));
+            check:=3;
+            while check<checkbound do
+              begin
+                if (l mod check) = 0 then
+                  begin
+                    ok:=false;
+                    break;
+                  end;
+                inc(check,2);
+              end;
+            if ok then
+              exit;
+            inc(l);
+          end;
+      end;
+
+
+    function used_align(varalign,minalign,maxalign:shortint):shortint;
       begin
         { varalign  : minimum alignment required for the variable
           minalign  : Minimum alignment of this structure, 0 = undefined
@@ -318,7 +379,7 @@ uses
       end;
 
 
-    procedure Replace(var s:AnsiString;s1:string;const s2:string);
+    procedure Replace(var s:AnsiString;s1:string;const s2:AnsiString);
       var
          last,
          i  : longint;
@@ -359,6 +420,90 @@ uses
       end;
 
 
+    procedure ReplaceCase(var s: ansistring; const s1, s2: ansistring);
+      var
+         last,
+         i  : longint;
+      begin
+        last:=0;
+        repeat
+          i:=pos(s1,s);
+          if i=last then
+           i:=0;
+          if (i>0) then
+           begin
+             Delete(s,i,length(s1));
+             Insert(s2,s,i);
+             last:=i;
+           end;
+        until (i=0);
+      end;
+
+
+    Function MatchPattern(const pattern,what:string):boolean;
+      var
+        found : boolean;
+        i1,i2 : longint;
+      begin
+        i1:=0;
+        i2:=0;
+        if pattern='' then
+          begin
+            result:=(what='');
+            exit;
+          end;
+        found:=true;
+        repeat
+          inc(i1);
+          if (i1>length(pattern)) then
+            break;
+          inc(i2);
+          if (i2>length(what)) then
+            break;
+          case pattern[i1] of
+            '?' :
+              found:=true;
+            '*' :
+              begin
+                found:=true;
+                if (i1=length(pattern)) then
+                 i2:=length(what)
+                else
+                 if (i1<length(pattern)) and (pattern[i1+1]<>what[i2]) then
+                  begin
+                    if i2<length(what) then
+                     dec(i1)
+                  end
+                else
+                 if i2>1 then
+                  dec(i2);
+              end;
+            else
+              found:=(pattern[i1]=what[i2]) or (what[i2]='?');
+          end;
+        until not found;
+        if found then
+          begin
+            found:=(i2>=length(what)) and
+                   (
+                    (i1>length(pattern)) or
+                    ((i1=length(pattern)) and
+                     (pattern[i1]='*'))
+                   );
+          end;
+        result:=found;
+      end;
+
+
+    function upper(const c : char) : char;
+    {
+      return uppercase of c
+    }
+      begin
+        upper:=uppertbl[c];
+      end;
+
+
     function upper(const s : string) : string;
     {
       return uppercased string of s
@@ -372,6 +517,28 @@ uses
       end;
 
 
+    function upper(const s : ansistring) : ansistring;
+    {
+      return uppercased string of s
+    }
+      var
+        i  : longint;
+      begin
+        setlength(upper,length(s));
+        for i:=1 to length(s) do
+          upper[i]:=uppertbl[s[i]];
+      end;
+
+
+    function lower(const c : char) : char;
+    {
+      return lowercase of c
+    }
+      begin
+        lower:=lowertbl[c];
+      end;
+
+
     function lower(const s : string) : string;
     {
       return lowercased string of s
@@ -382,6 +549,19 @@ uses
         for i:=1 to length(s) do
           lower[i]:=lowertbl[s[i]];
         lower[0]:=s[0];
+      end;
+
+
+    function lower(const s : ansistring) : ansistring;
+    {
+      return lowercased string of s
+    }
+      var
+        i : longint;
+      begin
+        setlength(lower,length(s));
+        for i:=1 to length(s) do
+          lower[i]:=lowertbl[s[i]];
       end;
 
 
@@ -415,39 +595,6 @@ uses
       end;
 
 
-    function hexstr(val : cardinal;cnt : cardinal) : string;
-      const
-        HexTbl : array[0..15] of char='0123456789ABCDEF';
-      var
-        i,j : cardinal;
-      begin
-        { calculate required length }
-        i:=0;
-        j:=val;
-        while (j>0) do
-         begin
-           inc(i);
-           j:=j shr 4;
-         end;
-        { generate fillers }
-        j:=0;
-        while (i+j<cnt) do
-         begin
-           inc(j);
-           hexstr[j]:='0';
-         end;
-        { generate hex }
-        inc(j,i);
-        hexstr[0]:=chr(j);
-        while (val>0) do
-         begin
-           hexstr[j]:=hextbl[val and $f];
-           dec(j);
-           val:=val shr 4;
-         end;
-      end;
-
-
     function DStr(l:longint):string;
       var
         TmpStr : string[32];
@@ -462,6 +609,34 @@ uses
             insert('.',TmpStr,i+1);
          end;
         DStr:=TmpStr;
+      end;
+
+
+    function rpos(const needle: char; const haystack: shortstring): longint;
+      begin
+        result:=length(haystack);
+        while (result>0) do
+          begin
+            if haystack[result]=needle then
+              exit;
+            dec(result);
+          end;
+      end;
+
+
+    function rpos(const needle: shortstring; const haystack: shortstring): longint;
+      begin
+        result:=0;
+        if (length(needle)=0) or
+           (length(needle)>length(haystack)) then
+          exit;
+        result:=length(haystack)-length(needle);
+        repeat
+          if (haystack[result]=needle[1]) and
+             (copy(haystack,result,length(needle))=needle) then
+            exit;
+          dec(result);
+        until result=0;
       end;
 
 
@@ -524,21 +699,23 @@ uses
     function GetToken(var s:string;endchar:char):string;
       var
         i : longint;
+        quote : char;
       begin
         GetToken:='';
         s:=TrimSpace(s);
         if (length(s)>0) and
-           (s[1]='''') then
+           (s[1] in ['''','"']) then
          begin
+           quote:=s[1];
            i:=1;
            while (i<length(s)) do
             begin
               inc(i);
-              if s[i]='''' then
+              if s[i]=quote then
                begin
                  { Remove double quote }
                  if (i<length(s)) and
-                    (s[i+1]='''') then
+                    (s[i+1]=quote) then
                   begin
                     Delete(s,i,1);
                     inc(i);
@@ -626,11 +803,13 @@ uses
          l : longint;
       begin
          val(s,l,w);
+         // remove warning
+         l:=l;
          is_number:=(w=0);
       end;
 
 
-    function ispowerof2(value : int64;var power : longint) : boolean;
+    function ispowerof2(value : int64;out power : longint) : boolean;
     {
       return if value is a power of 2. And if correct return the power
     }
@@ -658,6 +837,31 @@ uses
       end;
 
 
+    function nextpowerof2(value : int64; out power: longint) : int64;
+    {
+      returns the power of 2 >= value
+    }
+      var
+        i : longint;
+      begin
+        result := 0;
+        power := -1;
+        if ((value <= 0) or
+            (value >= $4000000000000000)) then
+          exit;
+        result := 1;
+        for i:=0 to 63 do
+          begin
+            if result>=value then
+              begin
+                power := i;
+                exit;
+              end;
+            result:=result shl 1;
+          end;
+      end;
+
+
     function backspace_quote(const s:string;const qchars:Tcharset):string;
 
     var i:byte;
@@ -679,6 +883,7 @@ uses
         end;
     end;
 
+
     function octal_quote(const s:string;const qchars:Tcharset):string;
 
     var i:byte;
@@ -699,40 +904,8 @@ uses
         end;
     end;
 
-    function maybequoted(const s:string):string;
-      var
-        s1 : string;
-        i  : integer;
-        quoted : boolean;
-      begin
-        quoted:=false;
-        s1:='"';
-        for i:=1 to length(s) do
-         begin
-           case s[i] of
-             '"' :
-               begin
-                 quoted:=true;
-                 s1:=s1+'\"';
-               end;
-             ' ',
-             #128..#255 :
-               begin
-                 quoted:=true;
-                 s1:=s1+s[i];
-               end;
-             else
-               s1:=s1+s[i];
-           end;
-         end;
-        if quoted then
-          maybequoted:=s1+'"'
-        else
-          maybequoted:=s;
-      end;
 
-
-    function DePascalQuote(var s: string): Boolean;
+    function DePascalQuote(var s: ansistring): Boolean;
       var
         destPos, sourcePos, len: Integer;
         t: string;
@@ -768,7 +941,7 @@ uses
     end;
 
 
-    function pchar2pstring(p : pchar) : pstring;
+    function pchar2pshortstring(p : pchar) : pshortstring;
       var
          w,i : longint;
       begin
@@ -776,11 +949,11 @@ uses
          for i:=w-1 downto 0 do
            p[i+1]:=p[i];
          p[0]:=chr(w);
-         pchar2pstring:=pstring(p);
+         pchar2pshortstring:=pshortstring(p);
       end;
 
 
-    function pstring2pchar(p : pstring) : pchar;
+    function pshortstring2pchar(p : pshortstring) : pchar;
       var
          w,i : longint;
       begin
@@ -788,7 +961,19 @@ uses
          for i:=1 to w do
            p^[i-1]:=p^[i];
          p^[w]:=#0;
-         pstring2pchar:=pchar(p);
+         pshortstring2pchar:=pchar(p);
+      end;
+
+
+    function ansistring2pchar(const a: ansistring) : pchar;
+      var
+        len: ptrint;
+      begin
+        len:=length(a);
+        getmem(result,len+1);
+        if (len<>0) then
+          move(a[1],result[0],len);
+        result[len]:=#0;
       end;
 
 
@@ -816,208 +1001,125 @@ uses
          p : pchar;
       begin
          getmem(p,length(s)+1);
-         strpcopy(p,s);
-         strpnew:=p;
+         move(s[1],p^,length(s));
+         p[length(s)]:=#0;
+         result:=p;
       end;
 
-
-    procedure strdispose(var p : pchar);
+    function strpnew(const s: ansistring): pchar;
+      var
+         p : pchar;
       begin
-        if assigned(p) then
-         begin
-           freemem(p,strlen(p)+1);
-           p:=nil;
-         end;
+        getmem(p,length(s)+1);
+        move(s[1],p^,length(s)+1);
+        result:=p;
       end;
 
 
-    procedure stringdispose(var p : pstring);{$ifdef USEINLINE}inline;{$endif}
+    procedure stringdispose(var p : pshortstring);{$ifdef USEINLINE}inline;{$endif}
       begin
          if assigned(p) then
            begin
-             freemem(p,length(p^)+1);
+             freemem(p);
              p:=nil;
            end;
       end;
 
 
-    function stringdup(const s : string) : pstring;{$ifdef USEINLINE}inline;{$endif}
+    function stringdup(const s : string) : pshortstring;{$ifdef USEINLINE}inline;{$endif}
       begin
          getmem(result,length(s)+1);
          result^:=s;
       end;
 
 
-    function CompareText(S1, S2: string): longint;
+    function CompareStr(const S1, S2: string): Integer;
+      var
+        count, count1, count2: integer;
+      begin
+        result := 0;
+        Count1 := Length(S1);
+        Count2 := Length(S2);
+        if Count1>Count2 then
+          Count:=Count2
+        else
+          Count:=Count1;
+        result := CompareChar(S1[1],S2[1], Count);
+        if result=0 then
+          result:=Count1-Count2;
+      end;
+
+
+    function CompareText(S1, S2: string): integer;
       begin
         UpperVar(S1);
         UpperVar(S2);
-        if S1<S2 then
-         CompareText:=-1
-        else
-         if S1>S2 then
-          CompareText:= 1
-        else
-         CompareText:=0;
+        Result:=CompareStr(S1,S2);
       end;
 
-    function string_evaluate(s:string;get_var_value:get_var_value_proc;
-                             const vars:array of string):Pchar;
 
-    {S contains a prototype of a stabstring. Stabstr_evaluate will expand
-     variables and parameters.
-
-     Output is s in ASCIIZ format, with the following expanded:
-
-     ${varname}   - The variable name is expanded.
-     $n           - The parameter n is expanded.
-     $$           - Is expanded to $
-    }
-
-    const maxvalue=9;
-          maxdata=1023;
-
-    var i,j:byte;
-        varname:string[63];
-        varno,varcounter:byte;
-        varvalues:array[0..9] of Pstring;
-        {1 kb of parameters is the limit. 256 extra bytes are allocated to
-         ensure buffer integrity.}
-        varvaluedata:array[0..maxdata+256] of char;
-        varptr:Pchar;
-        len:cardinal;
-        r:Pchar;
-
-    begin
-      {Two pass approach, first, calculate the length and receive variables.}
-      i:=1;
-      len:=0;
-      varcounter:=0;
-      varptr:=@varvaluedata;
-      while i<=length(s) do
-        begin
-          if (s[i]='$') and (i<length(s)) then
-            begin
-             if s[i+1]='$' then
-               begin
-                 inc(len);
-                 inc(i);
-               end
-             else if (s[i+1]='{') and (length(s)>2) and (i<length(s)-2) then
-               begin
-                 varname:='';
-                 inc(i,2);
-                 repeat
-                   inc(varname[0]);
-                   varname[length(varname)]:=s[i];
-                   s[i]:=char(varcounter);
-                   inc(i);
-                 until s[i]='}';
-                 varvalues[varcounter]:=Pstring(varptr);
-                 if varptr>@varvaluedata+maxdata then
-                   internalerrorproc(200411152);
-                 Pstring(varptr)^:=get_var_value(varname);
-                 inc(len,length(Pstring(varptr)^));
-                 inc(varptr,length(Pstring(varptr)^)+1);
-                 inc(varcounter);
-               end
-             else if s[i+1] in ['0'..'9'] then
-               begin
-                 inc(len,length(vars[byte(s[i+1])-byte('1')]));
-                 inc(i);
-               end;
-            end
-          else
-            inc(len);
-          inc(i);
-        end;
-
-      {Second pass, writeout stabstring.}
-      getmem(r,len+1);
-      string_evaluate:=r;
-      i:=1;
-      while i<=length(s) do
-        begin
-          if (s[i]='$') and (i<length(s)) then
-            begin
-             if s[i+1]='$' then
-               begin
-                 r^:='$';
-                 inc(r);
-                 inc(i);
-               end
-             else if (s[i+1]='{') and (length(s)>2) and (i<length(s)-2) then
-               begin
-                 varname:='';
-                 inc(i,2);
-                 varno:=byte(s[i]);
-                 repeat
-                   inc(i);
-                 until s[i]='}';
-                 for j:=1 to length(varvalues[varno]^) do
-                   begin
-                     r^:=varvalues[varno]^[j];
-                     inc(r);
-                   end;
-               end
-             else if s[i+1] in ['0'..'9'] then
-               begin
-                 for j:=1 to length(vars[byte(s[i+1])-byte('1')]) do
-                   begin
-                     r^:=vars[byte(s[i+1])-byte('1')][j];
-                     inc(r);
-                   end;
-                 inc(i);
-               end
-            end
-          else
-            begin
-              r^:=s[i];
-              inc(r);
-            end;
-          inc(i);
-        end;
-      r^:=#0;
-    end;
-
-{*****************************************************************************
-                               GetSpeedValue
-*****************************************************************************}
-
-{$ifdef ver1_0}
-  {$R-}
-{$endif}
-
-    var
-      Crc32Tbl : array[0..255] of cardinal;
-
-    procedure MakeCRC32Tbl;
+    function CompareVersionStrings(s1,s2: string): longint;
       var
-        crc : cardinal;
-        i,n : integer;
+        start1, start2,
+        i1, i2,
+        num1,num2,
+        res,
+        err        : longint;
       begin
-        for i:=0 to 255 do
-         begin
-           crc:=i;
-           for n:=1 to 8 do
-            if odd(longint(crc)) then
-             crc:=cardinal(crc shr 1) xor cardinal($edb88320)
+        i1:=1;
+        i2:=1;
+        repeat
+          start1:=i1;
+          start2:=i2;
+          while (i1<=length(s1)) and
+                (s1[i1] in ['0'..'9']) do
+             inc(i1);
+          while (i2<=length(s2)) and
+                (s2[i2] in ['0'..'9']) do
+             inc(i2);
+          { one of the strings misses digits -> other is the largest version }
+          if i1=start1 then
+            if i2=start2 then
+              exit(0)
             else
-             crc:=cardinal(crc shr 1);
-           Crc32Tbl[i]:=crc;
-         end;
-      end;
-
-
-    Function GetSpeedValue(Const s:String):cardinal;
-      var
-        i : integer;
-        InitCrc : cardinal;
-      begin
-        InitCrc:=cardinal($ffffffff);
-        for i:=1 to Length(s) do
-         InitCrc:=Crc32Tbl[byte(InitCrc) xor ord(s[i])] xor (InitCrc shr 8);
-        GetSpeedValue:=InitCrc;
+              exit(-1)
+          else if i2=start2 then
+            exit(1);
+          { get version number part }
+          val(copy(s1,start1,i1-start1),num1,err);
+          val(copy(s2,start2,i2-start2),num2,err);
+          { different -> done }
+          res:=num1-num2;
+          if res<>0 then
+            exit(res);
+          { if one of the two is at the end while the other isn't, add a '.0' }
+          if (i1>length(s1)) and
+             (i2<=length(s1)) then
+            s1:=s1+'.0'
+          else if i2>length(s2) then
+            s2:=s2+'.0';
+          { compare non-numerical characters normally }
+          while (i1<=length(s1)) and
+                not(s1[i1] in ['0'..'9']) and
+                (i2<=length(s2)) and
+                not(s2[i2] in ['0'..'9']) do
+            begin
+              res:=ord(s1[i1])-ord(s2[i2]);
+              if res<>0 then
+                exit(res);
+              inc(i1);
+              inc(i2);
+            end;
+          { both should be digits again now, otherwise pick the one with the
+            digits as the largest (it more likely means that the input was
+            ill-formatted though) }
+          if (i1<=length(s1)) and
+             not(s1[i1] in ['0'..'9']) then
+            exit(-1);
+          if (i2<=length(s2)) and
+             not(s2[i2] in ['0'..'9']) then
+            exit(1);
+        until false;
       end;
 
 
@@ -1029,7 +1131,7 @@ uses
       begin
          if assigned(p) then
            begin
-             freemem(p,length+1);
+             freemem(p);
              p:=nil;
            end;
       end;
@@ -1104,6 +1206,8 @@ uses
 
     begin
       minilzw_encode:='';
+      fillchar(data,sizeof(data),#0);
+      fillchar(previous,sizeof(previous),#0);
       if s<>'' then
         begin
           lzwptr:=127;
@@ -1161,6 +1265,8 @@ uses
 
     begin
       minilzw_decode:='';
+      fillchar(data,sizeof(data),#0);
+      fillchar(previous,sizeof(previous),#0);
       if s<>'' then
         begin
           lzwptr:=127;
@@ -1215,27 +1321,115 @@ uses
         runerror(255);
       end;
 
+    Function Nextafter(x,y:double):double;
+    // Returns the double precision number closest to x in
+    // the direction toward y.
+
+    // Initial direct translation by Soeren Haastrup from
+    // www.netlib.org/fdlibm/s_nextafter.c according to
+    // ====================================================
+    // Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+    // Developed at SunSoft, a Sun Microsystems, Inc. business.
+    // Permission to use, copy, modify, and distribute this
+    // software is freely granted, provided that this notice
+    // is preserved.
+    // ====================================================
+    // and with all signaling policies preserved as is.
+
+    type
+      {$if defined(ENDIAN_LITTLE) and not defined(FPC_DOUBLE_HILO_SWAPPED)}
+        twoword=record
+                  lo,hi:longword; // Little Endian split of a double.
+                end;
+      {$else}
+        twoword=record
+                  hi,lo:longword; // Big Endian split of a double.
+                end;
+      {$endif}
+
+    var
+        hx,hy,ix,iy:longint;
+        lx,ly:longword;
+
+    Begin
+    hx:=twoword(x).hi;    // high and low words of x and y
+    lx:=twoword(x).lo;
+    hy:=twoword(y).hi;
+    ly:=twoword(y).lo;
+    ix:=hx and $7fffffff;  // absolute values
+    iy:=hy and $7fffffff;
+
+    // Case x=NAN or y=NAN
+
+    if ( (ix>=$7ff00000) and ((longword(ix-$7ff00000) or lx) <> 0) )
+        or ( (iy>=$7ff00000) and ((longword(iy-$7ff00000) OR ly) <> 0) )
+    then exit(x+y);
+
+    // Case x=y
+
+    if x=y then exit(x); // (implies Nextafter(0,-0) is 0 and not -0...)
+
+    // Case x=0
+
+    if (longword(ix) or lx)=0
+    then begin
+          twoword(x).hi:=hy and $80000000;  // return +-minimalSubnormal
+          twoword(x).lo:=1;
+          y:=x*x;    // set underflow flag (ignored in FPC as default)
+          if y=x
+          then exit(y)
+          else exit(x);
+        end;
+
+    // all other cases
+
+    if hx>=0  // x>0
+    then begin
+          if (hx>hy) or ( (hx=hy) and (lx>ly) ) // x>y , return x-ulp
+          then begin
+                if (lx=0) then hx:=hx-1;
+                lx:=lx-1;
+              end
+          else begin                      // x<y, return x+ulp
+                lx:=lx+1;
+                if lx=0 then hx:=hx+1;
+              end
+        end
+    else begin // x<0
+          if (hy>=0) or (hx>=hy) or ( (hx=hy) and (lx>ly)) // x<y, return x-ulp
+          then begin
+                if (lx=0) then hx:=hx-1;
+                lx:=lx-1;
+              end
+          else begin            // x>y , return x+ulp
+                lx:=lx+1;
+                if lx=0 then hx:=hx+1;
+              end
+        end;
+
+    // finally check if overflow or underflow just happend
+
+    hy:=hx and $7ff00000;
+    if (hy>= $7ff00000) then exit(x+x); // overflow and signal
+    if (hy<$0010000)                    // underflow
+    then begin
+          y:=x*x;              // raise underflow flag
+          if y<>x
+          then begin
+                twoword(y).hi:=hx;
+                twoword(y).lo:=lx;
+                exit(y);
+              end
+        end;
+
+    twoword(x).hi:=hx;
+    twoword(x).lo:=lx;
+    nextafter:=x;
+
+    end;
+
 
 initialization
   internalerrorproc:=@defaulterror;
-  makecrc32tbl;
   initupperlower;
 end.
-{
-  $Log: cutils.pas,v $
-  Revision 1.52  2005/04/23 14:15:58  hajny
-    * DeleteFile replaced with RemoveFile to avoid duplicate
-
-  Revision 1.51  2005/04/06 11:49:37  michael
-  * Fix methodpointer copy from callnode to loadnode
-
-  Revision 1.50  2005/03/04 16:49:22  peter
-    * getheapstatus fixes
-
-  Revision 1.49  2005/02/14 17:13:06  peter
-    * truncate log
-
-  Revision 1.48  2005/01/20 17:05:53  peter
-    * use val() for decoding integers
-
-}

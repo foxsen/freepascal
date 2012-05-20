@@ -1,5 +1,4 @@
 {
-   $Id: osmacro.inc,v 1.2 2005/02/14 17:13:30 peter Exp $
     Copyright (c) 2000-2002 by Marco van de Voort
 
     The "linux" posixy macro's that are used both in the Baseunx unit as the
@@ -89,15 +88,40 @@ begin
  wtermsig:=cint(status and 127);
 end;
 
+
+{$ifdef FPC_USE_LIBC}
+function __fxstat(__ver,filedes : cint; var __stat: tstat): cint; cdecl; external clib name '__fxstat'+suffix64bit;
+function __xstat(__ver : cint;FileName: PChar; var __stat: tstat): cint; cdecl; external clib name '__xstat'+suffix64bit;
+function __lxstat(__ver : cint; FileName: PChar; var __stat: tstat): cint; cdecl; external clib name '__lxstat'+suffix64bit;
 {
-  $Log: osmacro.inc,v $
-  Revision 1.2  2005/02/14 17:13:30  peter
-    * truncate log
-
-  Revision 1.1  2005/02/13 21:47:56  peter
-    * include file cleanup part 2
-
-  Revision 1.4  2005/02/13 20:01:38  peter
-    * include file cleanup
-
+function __fxstat64(__ver : cint; FileDes: Integer; var __stat: tstat): cint; cdecl; external clib name '__fxstat64';
+function __xstat64(__ver : cint; FileName: PChar; var __stat: tstat): cint; cdecl; external clib name '__xstat64';
+function __lxstat64(__ver : cint; FileName: PChar; var __stat: tstat): cint; cdecl; external clib name '__lxstat64';
+function __xmknod(__ver : cint; Pathname: PChar; Mode: mode_t; var Device: dev_t): cint; cdecl; external clib name '__xmknod';
 }
+{$define FPC_HAS_BASEUNIX_STAT}
+function  FpFstat(fd : cint; var sb : stat): cint;inline;
+  begin
+    __fxstat(_STAT_VER,fd,sb);
+  end;
+
+
+function  fpLstat(path:pchar;Info:pstat):cint;inline;
+  begin
+    __lxstat(_STAT_VER,path,Info^);
+  end;
+
+
+function  FpStat(path: pchar; var buf : stat): cint;inline;
+  begin
+    __xstat(_STAT_VER,path,buf);
+  end;
+
+{$ifndef fs32bit}
+function  FpOpen    (path: pchar; flags : cint; mode: TMode):cint; inline;
+  begin
+    FpOpen:=__fpopen(path, flags or O_LARGEFILE, mode);
+  end;
+{$endif}
+
+{$endif FPC_USE_LIBC}

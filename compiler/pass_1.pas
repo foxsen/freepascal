@@ -1,8 +1,7 @@
 {
-    $Id: pass_1.pas,v 1.35 2005/02/14 17:13:07 peter Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl
 
-    This unit handles the typecheck and node conversion pass
+    This unit handles the pass_typecheck and node conversion pass
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -29,8 +28,9 @@ interface
     uses
        node;
 
-    procedure resulttypepass(var p : tnode);
-    function  do_resulttypepass(var p : tnode) : boolean;
+    procedure typecheckpass(var p : tnode);
+    function  do_typecheckpass(var p : tnode) : boolean;
+    function  do_typecheckpass_changed(var p : tnode; out nodechanged: boolean) : boolean;
 
     procedure firstpass(var p : tnode);
     function  do_firstpass(var p : tnode) : boolean;
@@ -42,7 +42,7 @@ interface
 implementation
 
     uses
-      globtype,systems,cclasses,
+      globtype,comphook,systems,cclasses,
       cutils,globals,
       procinfo,
       cgbase,symdef
@@ -58,39 +58,45 @@ implementation
                             Global procedures
 *****************************************************************************}
 
-    procedure resulttypepass(var p : tnode);
+    procedure typecheckpass_internal(var p : tnode; out node_changed: boolean);
       var
          oldcodegenerror  : boolean;
          oldlocalswitches : tlocalswitches;
+         oldverbosity     : longint;
          oldpos    : tfileposinfo;
          hp        : tnode;
       begin
-        if (p.resulttype.def=nil) then
+        node_changed:=false;
+        if (p.resultdef=nil) then
          begin
            oldcodegenerror:=codegenerror;
-           oldpos:=aktfilepos;
-           oldlocalswitches:=aktlocalswitches;
+           oldpos:=current_filepos;
+           oldlocalswitches:=current_settings.localswitches;
+           oldverbosity:=status.verbosity;
            codegenerror:=false;
-           aktfilepos:=p.fileinfo;
-           aktlocalswitches:=p.localswitches;
-           hp:=p.det_resulttype;
+           current_filepos:=p.fileinfo;
+           current_settings.localswitches:=p.localswitches;
+           status.verbosity:=p.verbosity;
+           hp:=p.pass_typecheck;
            { should the node be replaced? }
            if assigned(hp) then
             begin
+               node_changed:=true;
                p.free;
-               { run resulttypepass }
-               resulttypepass(hp);
                { switch to new node }
                p:=hp;
+               { run typecheckpass }
+               typecheckpass(p);
             end;
-           aktlocalswitches:=oldlocalswitches;
-           aktfilepos:=oldpos;
+           current_settings.localswitches:=oldlocalswitches;
+           current_filepos:=oldpos;
+           status.verbosity:=oldverbosity;
            if codegenerror then
             begin
               include(p.flags,nf_error);
               { default to errortype if no type is set yet }
-              if p.resulttype.def=nil then
-               p.resulttype:=generrortype;
+              if p.resultdef=nil then
+               p.resultdef:=generrordef;
             end;
            codegenerror:=codegenerror or oldcodegenerror;
          end
@@ -98,16 +104,32 @@ implementation
          begin
            { update the codegenerror boolean with the previous result of this node }
            if (nf_error in p.flags) then
-            codegenerror:=true;
+             codegenerror:=true;
          end;
       end;
 
 
-    function do_resulttypepass(var p : tnode) : boolean;
+    procedure typecheckpass(var p : tnode);
+      var
+        node_changed: boolean;
+      begin
+        typecheckpass_internal(p,node_changed);
+      end;
+
+
+    function do_typecheckpass_changed(var p : tnode; out nodechanged: boolean) : boolean;
       begin
          codegenerror:=false;
-         resulttypepass(p);
-         do_resulttypepass:=codegenerror;
+         typecheckpass_internal(p,nodechanged);
+         do_typecheckpass_changed:=codegenerror;
+      end;
+
+
+    function do_typecheckpass(var p : tnode) : boolean;
+      var
+        nodechanged: boolean;
+      begin
+         result:=do_typecheckpass_changed(p,nodechanged);
       end;
 
 
@@ -116,6 +138,7 @@ implementation
          oldcodegenerror  : boolean;
          oldlocalswitches : tlocalswitches;
          oldpos    : tfileposinfo;
+         oldverbosity: longint;
          hp : tnode;
       begin
          if (nf_pass1_done in p.flags) then
@@ -123,55 +146,63 @@ implementation
          if not(nf_error in p.flags) then
            begin
               oldcodegenerror:=codegenerror;
-              oldpos:=aktfilepos;
-              oldlocalswitches:=aktlocalswitches;
+              oldpos:=current_filepos;
+              oldlocalswitches:=current_settings.localswitches;
+              oldverbosity:=status.verbosity;
               codegenerror:=false;
-              aktfilepos:=p.fileinfo;
-              aktlocalswitches:=p.localswitches;
+              current_filepos:=p.fileinfo;
+              current_settings.localswitches:=p.localswitches;
+              status.verbosity:=p.verbosity;
               { checks make always a call }
-              if ([cs_check_range,cs_check_overflow,cs_check_stack] * aktlocalswitches <> []) then
+              if ([cs_check_range,cs_check_overflow,cs_check_stack] * current_settings.localswitches <> []) then
                 include(current_procinfo.flags,pi_do_call);
-              { determine the resulttype if not done }
-              if (p.resulttype.def=nil) then
+              { determine the resultdef if not done }
+              if (p.resultdef=nil) then
                begin
-                 aktfilepos:=p.fileinfo;
-                 aktlocalswitches:=p.localswitches;
-                 hp:=p.det_resulttype;
+                 hp:=p.pass_typecheck;
                  { should the node be replaced? }
                  if assigned(hp) then
                   begin
                      p.free;
-                     { run resulttypepass }
-                     resulttypepass(hp);
                      { switch to new node }
                      p:=hp;
+                     { run typecheckpass }
+                     typecheckpass(p);
                   end;
                  if codegenerror then
                   begin
                     include(p.flags,nf_error);
                     { default to errortype if no type is set yet }
-                    if p.resulttype.def=nil then
-                     p.resulttype:=generrortype;
+                    if p.resultdef=nil then
+                     p.resultdef:=generrordef;
                   end;
-                 aktlocalswitches:=oldlocalswitches;
-                 aktfilepos:=oldpos;
                  codegenerror:=codegenerror or oldcodegenerror;
                end;
               if not(nf_error in p.flags) then
                begin
                  { first pass }
-                 aktfilepos:=p.fileinfo;
-                 aktlocalswitches:=p.localswitches;
                  hp:=p.pass_1;
                  { should the node be replaced? }
                  if assigned(hp) then
                   begin
                     p.free;
-                    { run firstpass }
-                    firstpass(hp);
                     { switch to new node }
-                    p:=hp;
-                  end;
+                    p := hp;
+                    { run firstpass }
+                    firstpass(p);
+                  end
+                 else
+                   begin
+                     { inlining happens in pass_1 and can cause new }
+                     { simplify opportunities                       }
+                     hp:=p.simplify(true);
+                     if assigned(hp) then
+                       begin
+                         p.free;
+                         p := hp;
+                         firstpass(p);
+                       end;
+                   end;
                  if codegenerror then
                   include(p.flags,nf_error)
                  else
@@ -184,8 +215,9 @@ implementation
                end;
               include(p.flags,nf_pass1_done);
               codegenerror:=codegenerror or oldcodegenerror;
-              aktlocalswitches:=oldlocalswitches;
-              aktfilepos:=oldpos;
+              current_settings.localswitches:=oldlocalswitches;
+              current_filepos:=oldpos;
+              status.verbosity:=oldverbosity;
            end
          else
            codegenerror:=true;
@@ -219,9 +251,3 @@ implementation
 {$endif}
 
 end.
-{
-  $Log: pass_1.pas,v $
-  Revision 1.35  2005/02/14 17:13:07  peter
-    * truncate log
-
-}

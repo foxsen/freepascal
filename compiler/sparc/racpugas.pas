@@ -1,5 +1,4 @@
 {
-    $Id: racpugas.pas,v 1.13 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 1998-2002 by Mazen NEIFER
 
     Does the parsing for the i386 GNU AS styled inline assembler.
@@ -52,7 +51,7 @@ Interface
       globtype,verbose,
       systems,
       { aasm }
-      cpubase,aasmbase,aasmtai,aasmcpu,
+      cpubase,aasmbase,aasmtai,aasmdata,aasmcpu,
       { symtable }
       symconst,symsym,
       { parser }
@@ -64,7 +63,7 @@ Interface
 
     procedure TSparcReader.ReadSym(oper : tSparcoperand);
       var
-         tempstr : string;
+         tempstr, mangledname : string;
          typesize,l,k : aint;
       begin
         tempstr:=actasmpattern;
@@ -86,7 +85,9 @@ Interface
         { record.field ? }
         if actasmtoken=AS_DOT then
           begin
-            BuildRecordOffsetSize(tempstr,l,k);
+            BuildRecordOffsetSize(tempstr,l,k,mangledname,false);
+           if (mangledname<>'') then
+             Message(asmr_e_invalid_reference_syntax);
             inc(oper.opr.ref.offset,l);
           end;
       end;
@@ -104,9 +105,9 @@ Interface
             if actasmtoken=AS_ID then
               begin
                 if upper(actasmpattern)='LO' then
-                  oper.opr.ref.refaddr:=addr_lo
+                  oper.opr.ref.refaddr:=addr_low
                 else if upper(actasmpattern)='HI' then
-                  oper.opr.ref.refaddr:=addr_hi
+                  oper.opr.ref.refaddr:=addr_high
                 else
                   Message(asmr_e_invalid_reference_syntax);
                 Consume(AS_ID);
@@ -237,6 +238,7 @@ Interface
 
         procedure MaybeRecordOffset;
           var
+            mangledname: string;
             hasdot  : boolean;
             l,
             toffset,
@@ -250,7 +252,10 @@ Interface
               begin
                 if expr<>'' then
                   begin
-                    BuildRecordOffsetSize(expr,toffset,tsize);
+                    BuildRecordOffsetSize(expr,toffset,tsize,mangledname,false);
+                    if (oper.opr.typ<>OPR_CONSTANT) and
+                       (mangledname<>'') then
+                      Message(asmr_e_wrong_sym_type);
                     inc(l,toffset);
                     oper.SetSize(tsize,true);
                   end;
@@ -270,9 +275,19 @@ Interface
                   inc(oper.opr.localsymofs,l)
                 end;
               OPR_CONSTANT :
-                inc(oper.opr.val,l);
+                if (mangledname<>'') then
+                  begin
+                    if (oper.opr.val<>0) then
+                      Message(asmr_e_wrong_sym_type);
+                    oper.opr.typ:=OPR_SYMBOL;
+                    oper.opr.symbol:=current_asmdata.RefAsmSymbol(mangledname);
+                  end
+                else
+                  inc(oper.opr.val,l);
               OPR_REFERENCE :
                 inc(oper.opr.ref.offset,l);
+              OPR_SYMBOL:
+                Message(asmr_e_invalid_symbol_ref);
               else
                 internalerror(200309221);
             end;
@@ -337,14 +352,14 @@ Interface
                   memory location) }
                 oper.InitRef;
                 if actasmtoken=AS_LO then
-                  oper.opr.ref.refaddr:=addr_lo
+                  oper.opr.ref.refaddr:=addr_low
                 else
-                  oper.opr.ref.refaddr:=addr_hi;
+                  oper.opr.ref.refaddr:=addr_high;
                 Consume(actasmtoken);
                 Consume(AS_LPAREN);
                 BuildConstSymbolExpression(false, true,false,l,tempstr,tempsymtyp);
                 if not assigned(oper.opr.ref.symbol) then
-                  oper.opr.ref.symbol:=objectlibrary.newasmsymbol(tempstr,AB_EXTERNAL,tempsymtyp)
+                  oper.opr.ref.symbol:=current_asmdata.RefAsmSymbol(tempstr)
                 else
                   Message(asmr_e_cant_have_multiple_relocatable_symbols);
                 case oper.opr.typ of
@@ -572,7 +587,6 @@ Interface
 
     function TSparcReader.is_asmopcode(const s: string):boolean;
       var
-        str2opEntry: tstr2opEntry;
         cond:TAsmCond;
       Begin
         { making s a value parameter would break other assembler readers }
@@ -583,16 +597,18 @@ Interface
         { clear condition }
         fillchar(actcondition,sizeof(actcondition),0);
 
-        str2opentry:=tstr2opentry(iasmops.search(s));
-        if assigned(str2opentry) then
-          begin
-            actopcode:=str2opentry.op;
-            actasmtoken:=AS_OPCODE;
-            is_asmopcode:=true;
-          end
+         { Search opcodes }
+         actopcode:=tasmop(PtrUInt(iasmops.Find(s)));
+         if actopcode<>A_NONE then
+           begin
+             actasmtoken:=AS_OPCODE;
+             result:=TRUE;
+             exit;
+           end;
+
         { not found, check branch instructions }
-        else if (Upcase(s[1])='B') or
-                ((Upcase(s[1])='F') and (Upcase(s[2])='B')) then
+        if (Upcase(s[1])='B') or
+           ((Upcase(s[1])='F') and (Upcase(s[2])='B')) then
           begin
             { we can search here without an extra table which is sorted by string length
               because we take the whole remaining string without the leading B }
@@ -670,9 +686,3 @@ initialization
   RegisterAsmMode(asmmode_Sparc_att_info);
   RegisterAsmMode(asmmode_Sparc_standard_info);
 end.
-{
-  $Log: racpugas.pas,v $
-  Revision 1.13  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

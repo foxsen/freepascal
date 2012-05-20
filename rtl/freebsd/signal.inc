@@ -1,5 +1,4 @@
 {
-    $Id: signal.inc,v 1.11 2005/02/14 17:13:22 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Jonas Maebe,
     member of the Free Pascal development team.
@@ -79,6 +78,7 @@ const
 
 type sigset_t = array[0..3] of Longint;
 
+    psigcontext = ^sigcontextrec;
     PSigContextRec = ^SigContextRec;
     SigContextRec = record
        sc_mask      : sigset_t;          { signal mask to restore }
@@ -131,7 +131,9 @@ type sigset_t = array[0..3] of Longint;
             End;
 
 
-  TSigInfo_t = record
+  PSigInfo   = ^SigInfo_t;
+  PSigInfo_t = ^SigInfo_t;
+  SigInfo_t = record
                 si_signo,                       { signal number }
                 si_errno,                       { errno association }
         {
@@ -147,9 +149,10 @@ type sigset_t = array[0..3] of Longint;
                 si_addr         : Pointer;      { faulting instruction }
                 si_value        : SigVal;       { signal value }
                 si_band         : Cardinal;     { band event for SIGPOLL }
-                __spare         : array[0..6] of Longint; { gimme some slack
-}
+                __spare         : array[0..6] of Longint; { gimme some slack }
                 end;
+  TSigInfo = SigInfo_t;
+  TSigInfo_t = TSigInfo;
 
 
 
@@ -158,7 +161,7 @@ type sigset_t = array[0..3] of Longint;
   PSignalHandler  = ^SignalHandler;
   SignalRestorer  = Procedure;cdecl;
   PSignalRestorer = ^SignalRestorer;
-  sigActionHandler = procedure(Sig: Longint; var sininfo:tsiginfo_t;var SigContext: SigContextRec);cdecl;
+  sigActionHandler = procedure(Sig: Longint; sininfo:psiginfo; SigContext: PSigContext);cdecl;
 
   TSigset=sigset_t;
   sigset=tsigset;
@@ -175,6 +178,16 @@ type sigset_t = array[0..3] of Longint;
     Sa_Mask     : TSigSet;
   end;
   PSigActionRec = ^SigActionRec;
+  
+
+  pstack_t = ^stack_t;
+  stack_t = record
+    ss_sp: pChar;                       {* signal stack base *}
+    ss_size: size_t;                    {* signal stack length *}
+    ss_flags: cInt;                     {* SS_DISABLE and/or SS_ONSTACK *}
+  end;
+  TStack = stack_t;
+  PStack = pstack_t;
 
 {
   Change action of process upon receipt of a signal.
@@ -194,14 +207,3 @@ const
 
 
 
-{
-  $Log: signal.inc,v $
-  Revision 1.11  2005/02/14 17:13:22  peter
-    * truncate log
-
-  Revision 1.10  2005/01/30 18:01:15  peter
-    * signal cleanup for linux
-    * sigactionhandler instead of tsigaction for bsds
-    * sigcontext moved to cpu dir
-
-}

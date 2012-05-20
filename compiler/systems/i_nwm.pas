@@ -1,5 +1,4 @@
 {
-    $Id: i_nwm.pas,v 1.10 2005/03/20 22:36:45 olle Exp $
     Copyright (c) 1998-2002 by Peter Vreman
 
     This unit implements support information structures for Netware modules
@@ -22,6 +21,8 @@
 { This unit implements support information structures for Netware modules. }
 unit i_nwm;
 
+{$i fpcdefs.inc}
+
   interface
 
     uses
@@ -33,7 +34,7 @@ unit i_nwm;
             system       : system_i386_netware;
             name         : 'Netware for i386(clib)';
             shortname    : 'Netware';
-            flags        : [];
+            flags        : [tf_smartlink_library,tf_smartlink_sections,tf_dwarf_only_local_labels];
             cpu          : cpu_i386;
             unit_env     : 'NETWAREUNITS';
             extradefines : 'NETWARE_CLIB';
@@ -49,23 +50,24 @@ unit i_nwm;
             resobjext    : '.or';
             sharedlibext : '.nlm';
             staticlibext : '.a';
-            staticlibprefix : '';
+            staticlibprefix : 'libp';
             sharedlibprefix : '';
             sharedClibext : '.nlm';
             staticClibext : '.a';
-            staticClibprefix : '';
+            staticClibprefix : 'lib';
             sharedClibprefix : '';
-            p_ext_support : false;
+            importlibprefix : 'libimp';
+            importlibext : '.a';
             Cprefix      : '';
             newline      : #13#10;
             dirsep       : '/';
-            files_case_relevent : false;
-            assem        : as_i386_elf32;
+            assem        : as_i386_nlmcoff; // as_i386_elf32;
             assemextern  : as_gas;
             link         : nil;
             linkextern   : nil;
             ar           : ar_gnu_ar;
             res          : res_none;
+            dbg          : dbg_stabs;
             script       : script_unix;
             endian       : endian_little;
             alignment    :
@@ -85,8 +87,7 @@ unit i_nwm;
               );
             first_parm_offset : 8;
             stacksize    : 16384;
-            DllScanSupported:false;
-            use_function_relative_addresses : true
+            abi : abi_default
           );
 
   implementation
@@ -98,13 +99,3 @@ initialization
   {$endif netware}
 {$endif CPU86}
 end.
-{
-  $Log: i_nwm.pas,v $
-  Revision 1.10  2005/03/20 22:36:45  olle
-    * Cleaned up handling of source file extension.
-    + Added support for .p extension for macos and darwin
-
-  Revision 1.9  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

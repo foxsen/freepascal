@@ -1,5 +1,4 @@
 {
-    $Id: sighnd.inc,v 1.7 2005/04/24 21:19:22 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Michael Van Canneyt,
     member of the Free Pascal development team.
@@ -16,55 +15,40 @@
 
  **********************************************************************}
 
-
-procedure SignalToRunerror(sig : longint; SigInfo: PSigInfo; SigContext: PSigContext);cdecl;
+procedure SignalToRunerror(sig : longint; SigInfo: PSigInfo; context: PUContext);public name '_FPC_DEFAULTSIGHANDLER';cdecl;
 var
   res : word;
 {  fpustate: longint; }
 begin
   res:=0;
+{$ifndef FPUNONE}
   { exception flags are turned off by kernel }
   fpc_enable_ppc_fpu_exceptions;
+{$endif}
   case sig of
     SIGFPE :
-        begin
-{
-         fpscr is cleared by the kernel -> can't find out cause :(
-          fpustate := fpc_get_ppc_fpscr;
-          if (fpustate and ppc_fpu_underflow) <> 0 then
-            res := 206
-          else if (fpustate and ppc_fpu_overflow) <> 0 then
-            res := 205
-          else if (fpustate and ppc_fpu_divbyzero) <> 0 then
-            res := 200
-          else
-}
-            res := 207;
-        end;
+      case (SigInfo^.si_code) of
+        FPE_FLTDIV : res := 200;
+        FPE_FLTOVF : res := 205;
+        FPE_FLTUND : res := 206;
+        else
+          res := 207;
+      end;
+    SIGBUS :
+      res:=214;
     SIGILL,
-    SIGBUS,
     SIGSEGV :
-        res:=216;
+      res:=216;
+    SIGINT:
+        res:=217;
+    SIGQUIT:
+        res:=233;
   end;
   reenable_signal(sig);
   { give runtime error at the position where the signal was raised }
   if res<>0 then
-    HandleErrorAddrFrame(res,pointer(SigContext^.pt_regs^.nip),pointer(SigContext^.pt_regs^.gpr[1]));
+    HandleErrorAddrFrame(res, pointer(context^.uc_mcontext.pt_regs^.nip),
+      pointer(context^.uc_mcontext.pt_regs^.gpr[1]));
 end;
 
-{
-  $Log: sighnd.inc,v $
-  Revision 1.7  2005/04/24 21:19:22  peter
-    * unblock signal in signalhandler, remove the sigprocmask call
-      from setjmp
-
-  Revision 1.6  2005/02/14 17:13:30  peter
-    * truncate log
-
-  Revision 1.5  2005/01/30 18:01:15  peter
-    * signal cleanup for linux
-    * sigactionhandler instead of tsigaction for bsds
-    * sigcontext moved to cpu dir
-
-}
 

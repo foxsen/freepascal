@@ -1,5 +1,4 @@
 {
-    $Id: n386mem.pas,v 1.66 2005/02/14 17:13:09 peter Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl
 
     Generate i386 assembler for in memory related nodes
@@ -29,20 +28,19 @@ interface
     uses
       globtype,
       cgbase,cpuinfo,cpubase,
-      node,nmem,ncgmem;
+      node,nmem,ncgmem,nx86mem;
 
     type
        ti386addrnode = class(tcgaddrnode)
-          procedure pass_2;override;
+          procedure pass_generate_code;override;
        end;
 
        ti386derefnode = class(tcgderefnode)
-          procedure pass_2;override;
+          procedure pass_generate_code;override;
        end;
 
-       ti386vecnode = class(tcgvecnode)
-          procedure update_reference_reg_mul(reg:tregister;l:aint);override;
-          procedure pass_2;override;
+       ti386vecnode = class(tx86vecnode)
+          procedure pass_generate_code;override;
        end;
 
 implementation
@@ -51,7 +49,7 @@ implementation
       systems,
       cutils,verbose,
       symdef,paramgr,
-      aasmtai,
+      aasmtai,aasmdata,
       nld,ncon,nadd,
       cgutils,cgobj;
 
@@ -59,10 +57,10 @@ implementation
                              TI386ADDRNODE
 *****************************************************************************}
 
-    procedure ti386addrnode.pass_2;
+    procedure ti386addrnode.pass_generate_code;
 
       begin
-        inherited pass_2;
+        inherited pass_generate_code;
         { for use of other segments, not used }
         {if left.location.reference.segment<>NR_NO then
           location.segment:=left.location.reference.segment;}
@@ -73,10 +71,10 @@ implementation
                            TI386DEREFNODE
 *****************************************************************************}
 
-    procedure ti386derefnode.pass_2;
+    procedure ti386derefnode.pass_generate_code;
       begin
-         inherited pass_2;
-         if tpointerdef(left.resulttype.def).is_far then
+         inherited pass_generate_code;
+         if tpointerdef(left.resultdef).is_far then
            location.reference.segment:=NR_FS;
       end;
 
@@ -85,50 +83,9 @@ implementation
                              TI386VECNODE
 *****************************************************************************}
 
-     procedure ti386vecnode.update_reference_reg_mul(reg:tregister;l:aint);
-       var
-         l2 : integer;
-         hreg : tregister;
-       begin
-         { Optimized for x86 to use the index register and scalefactor }
-         if location.reference.index=NR_NO then
-          begin
-            { no preparations needed }
-          end
-         else if location.reference.base=NR_NO then
-          begin
-            case location.reference.scalefactor of
-             2 : cg.a_op_const_reg(exprasmlist,OP_SHL,OS_ADDR,1,location.reference.index);
-             4 : cg.a_op_const_reg(exprasmlist,OP_SHL,OS_ADDR,2,location.reference.index);
-             8 : cg.a_op_const_reg(exprasmlist,OP_SHL,OS_ADDR,3,location.reference.index);
-            end;
-            location.reference.base:=location.reference.index;
-          end
-         else
-          begin
-            hreg := cg.getaddressregister(exprasmlist);
-            cg.a_loadaddr_ref_reg(exprasmlist,location.reference,hreg);
-            reference_reset_base(location.reference,hreg,0);
-          end;
-         { insert the new index register and scalefactor or
-           do the multiplication manual }
-         case l of
-          1,2,4,8 : location.reference.scalefactor:=l;
-         else
-           begin
-              if ispowerof2(l,l2) then
-                cg.a_op_const_reg(exprasmlist,OP_SHL,OS_ADDR,l2,reg)
-              else
-                cg.a_op_const_reg(exprasmlist,OP_IMUL,OS_ADDR,l,reg);
-           end;
-         end;
-         location.reference.index:=reg;
-       end;
-
-
-    procedure ti386vecnode.pass_2;
+    procedure ti386vecnode.pass_generate_code;
       begin
-        inherited pass_2;
+        inherited pass_generate_code;
         if nf_memseg in flags then
           location.reference.segment:=NR_FS;
       end;
@@ -139,9 +96,3 @@ begin
    cderefnode:=ti386derefnode;
    cvecnode:=ti386vecnode;
 end.
-{
-  $Log: n386mem.pas,v $
-  Revision 1.66  2005/02/14 17:13:09  peter
-    * truncate log
-
-}

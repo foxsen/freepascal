@@ -1,5 +1,4 @@
 {
-    $Id: stat.inc,v 1.3 2005/02/14 17:13:30 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2004 by Jonas Maebe,
     member of the Free Pascal development team.
@@ -15,61 +14,101 @@
 
 {$ifndef FPC_USE_LIBC} // kernel record
 
-  stat = packed record
-     case byte of
-      0: (
-    st_dev : qword;
-    st_ino : qword;
-    st_nlink : qword;
+  stat = packed record  // No unix typing because of differences
+    case byte of
+      0:
+        (dev,
+        ino,
+        nlink  : qword deprecated;
 
-    st_mode : dword;
-    st_uid : dword;
-    st_gid : dword;
-    __pad0 : dword;
-    st_rdev : qword;
-    st_size : int64;
-    st_blksize : int64;
-    st_blocks : int64;      { Number 512-byte blocks allocated. }
+        mode,
+        uid,
+        gid,
+        __pad0 : cardinal deprecated;
+        rdev   : qword deprecated;
+        size,
+        blksize,
+        blocks : int64 deprecated;
 
-    st_atime : qword;
-    __reserved0 : qword;    { reserved for atime.nanoseconds }
-    st_mtime : qword;
-    __reserved1 : qword;    { reserved for atime.nanoseconds }
-    st_ctime : qword;
-    __reserved2 : qword;    { reserved for atime.nanoseconds }
-    __unused : array[0..2] of int64;
-         );
-      1: (
-          dev,
-          ino,
-          nlink : qword;
-          mode,
-          uid,
-          gid           : dword;
-          pad1_dummy : dword;
-          rdev          : qword;
-          size,
-          blksze,
-          blocks    : int64;
-          atime,
-          unused1_dummy,
-          mtime,
-          unused2_dummy,
-          ctime,
-          unused3_dummy,
-          unused4_dummy,
-          unused5_dummy : qword;)
+        atime,
+        atime_nsec,
+        mtime,
+        mtime_nsec,
+        ctime,
+        ctime_nsec : qword deprecated;
+        __unused  : array[0..2] of qword deprecated);
+      1:
+        (st_dev,
+        st_ino,
+        st_nlink  : qword;
+
+        st_mode,
+        st_uid,
+        st_gid,
+        __pad1    : cardinal;
+        st_rdev   : qword;
+        st_size,
+        st_blksize,
+        st_blocks : int64;
+
+        st_atime,
+        st_atime_nsec,
+        st_mtime,
+        st_mtime_nsec,
+        st_ctime,
+        st_ctime_nsec : qword;
+        __unused2  : array[0..2] of qword;);
   end;
 
 {$else}
 
-(* get it from glibc/sysdeps/unix/sysv/linux/x86_64/bits/stat.h and check defines with gcc *)
+{$packrecords C}
+// god from /usr/include/asm-x86_64 some -dev of linux-headers must be installed
+
+  Stat = record
+  case Byte of
+    0:(dev: cuLong deprecated;
+    ino: cuLong deprecated;
+    nlink: cuLong deprecated;
+
+    mode: cuInt deprecated;
+    uid: cuInt deprecated;
+    gid: cuInt deprecated;
+    __pad0: cuInt deprecated;
+    rdev: cuLong deprecated;
+    size: cLong deprecated;
+    blksize: cLong deprecated;
+    blocks: cLong	deprecated; //* Number 512-byte blocks allocated. */
+
+    atime: cuLong deprecated;
+    atime_nsec: cuLong deprecated;
+    mtime: cuLong deprecated;
+    mtime_nsec: cuLong deprecated;
+    ctime: cuLong deprecated;
+    ctime_nsec: cuLong deprecated;
+    __unused: array[0..2] of cLong deprecated;);
+
+    1:(st_dev: cuLong;
+    st_ino: cuLong;
+    st_nlink: cuLong;
+
+    st_mode: cuInt;
+    st_uid: cuInt;
+    st_gid: cuInt;
+    __pad1: cuInt;
+    st_rdev: cuLong;
+    st_size: cLong;
+    st_blksize: cLong;
+    st_blocks: cLong;	//* Number 512-byte blocks allocated. */
+
+    st_atime: cuLong;
+    st_atime_nsec: cuLong; 
+    st_mtime: cuLong;
+    st_mtime_nsec: cuLong;
+    st_ctime: cuLong;
+    st_ctime_nsec: cuLong;
+    __unused2: array[0..2] of cLong);
+  end;
 
 {$endif}
 
-{
-  $Log: stat.inc,v $
-  Revision 1.3  2005/02/14 17:13:30  peter
-    * truncate log
-
-}

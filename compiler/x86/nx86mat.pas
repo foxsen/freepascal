@@ -1,5 +1,4 @@
 {
-    $Id: nx86mat.pas,v 1.10 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl
 
     Generate x86 code for math nodes
@@ -48,13 +47,15 @@ interface
   implementation
 
     uses
+      globtype,
       systems,
       cutils,verbose,globals,
-      symconst,aasmbase,aasmtai,defutil,
+      symconst,symdef,
+      aasmbase,aasmtai,aasmdata,defutil,
       cgbase,pass_1,pass_2,
       ncon,
-      cpubase,
-      cga,ncgutil,cgobj,cgx86,cgutils;
+      cpubase,procinfo,
+      cga,ncgutil,cgobj,hlcgobj,cgx86,cgutils;
 
 
 {*****************************************************************************
@@ -68,32 +69,19 @@ interface
          if codegenerror then
            exit;
 
-         if (left.resulttype.def.deftype=floatdef) then
+         if (left.resultdef.typ=floatdef) then
            begin
-             if use_sse(left.resulttype.def) then
-               begin
-                 if (registersmm < 1) then
-                   registersmm := 1;
-                 expectloc:=LOC_MMREGISTER;
-               end
+             if use_vectorfpu(left.resultdef) then
+               expectloc:=LOC_MMREGISTER
              else
-               begin
-                 if (registersfpu < 1) then
-                   registersfpu := 1;
-                 expectloc:=LOC_FPUREGISTER;
-               end;
+               expectloc:=LOC_FPUREGISTER;
            end
 {$ifdef SUPPORT_MMX}
          else
-           if (cs_mmx in aktlocalswitches) and
-              is_mmx_able_array(left.resulttype.def) then
+           if (cs_mmx in current_settings.localswitches) and
+              is_mmx_able_array(left.resultdef) then
              begin
-               registersint:=left.registersint;
-               registersfpu:=left.registersfpu;
-               registersmmx:=left.registersmmx;
-               if (left.location.loc<>LOC_MMXREGISTER) and
-                  (registersmmx<1) then
-                 registersmmx:=1;
+               expectloc:=LOC_MMXREGISTER;
              end
 {$endif SUPPORT_MMX}
          else
@@ -109,7 +97,7 @@ interface
       begin
         secondpass(left);
         location_reset(location,LOC_MMXREGISTER,OS_NO);
-        hreg:=cg.getmmxregister(exprasmlist,OS_M64);
+        hreg:=tcgx86(cg).getmmxregister(current_asmdata.CurrAsmList);
         emit_reg_reg(A_PXOR,S_NO,hreg,hreg);
         case left.location.loc of
           LOC_MMXREGISTER:
@@ -118,21 +106,20 @@ interface
             end;
           LOC_CMMXREGISTER:
             begin
-               location.register:=cg.getmmxregister(exprasmlist,OS_M64);
+               location.register:=tcgx86(cg).getmmxregister(current_asmdata.CurrAsmList);
                emit_reg_reg(A_MOVQ,S_NO,left.location.register,location.register);
             end;
           LOC_REFERENCE,
           LOC_CREFERENCE:
             begin
-               reference_release(exprasmlist,left.location.reference);
-               location.register:=cg.getmmxregister(exprasmlist,OS_M64);
+               location.register:=tcgx86(cg).getmmxregister(current_asmdata.CurrAsmList);
                emit_ref_reg(A_MOVQ,S_NO,left.location.reference,location.register);
             end;
           else
             internalerror(200203225);
         end;
-        if cs_mmx_saturation in aktlocalswitches then
-          case mmx_type(resulttype.def) of
+        if cs_mmx_saturation in current_settings.localswitches then
+          case mmx_type(resultdef) of
              mmxs8bit:
                op:=A_PSUBSB;
              mmxu8bit:
@@ -143,7 +130,7 @@ interface
                op:=A_PSUBUSW;
           end
         else
-          case mmx_type(resulttype.def) of
+          case mmx_type(resultdef) of
              mmxs8bit,mmxu8bit:
                op:=A_PSUBB;
              mmxs16bit,mmxu16bit,mmxfixed16:
@@ -152,7 +139,6 @@ interface
                op:=A_PSUBD;
           end;
         emit_reg_reg(op,S_NO,location.register,hreg);
-        cg.ungetregister(exprasmlist,hreg);
         emit_reg_reg(A_MOVQ,S_NO,hreg,location.register);
       end;
 {$endif SUPPORT_MMX}
@@ -168,44 +154,45 @@ interface
 
         if expectloc=LOC_MMREGISTER then
           begin
-            location_force_mmregscalar(exprasmlist,left.location,false);
-            location_reset(location,LOC_MMREGISTER,def_cgsize(resulttype.def));
+            location_force_mmregscalar(current_asmdata.CurrAsmList,left.location,false);
+            location_reset(location,LOC_MMREGISTER,def_cgsize(resultdef));
 
             { make life of register allocator easier }
-            location.register:=cg.getmmregister(exprasmlist,OS_M128);
-            cg.a_loadmm_reg_reg(exprasmlist,def_cgsize(resulttype.def),def_cgsize(resulttype.def),left.location.register,location.register,mms_movescalar);
+            location.register:=cg.getmmregister(current_asmdata.CurrAsmList,def_cgsize(resultdef));
+            cg.a_loadmm_reg_reg(current_asmdata.CurrAsmList,def_cgsize(resultdef),def_cgsize(resultdef),left.location.register,location.register,mms_movescalar);
 
-            reg:=cg.getmmregister(exprasmlist,OS_M128);
+            reg:=cg.getmmregister(current_asmdata.CurrAsmList,def_cgsize(resultdef));
 
-            objectlibrary.getdatalabel(l1);
-            consts.concat(Tai_label.Create(l1));
-            case def_cgsize(resulttype.def) of
+            current_asmdata.getdatalabel(l1);
+            new_section(current_asmdata.asmlists[al_typedconsts],sec_rodata_norel,l1.name,const_align(sizeof(pint)));
+            current_asmdata.asmlists[al_typedconsts].concat(Tai_label.Create(l1));
+            case def_cgsize(resultdef) of
               OS_F32:
-                consts.concat(tai_const.create_32bit(longint(1 shl 31)));
+                current_asmdata.asmlists[al_typedconsts].concat(tai_const.create_32bit(longint(1 shl 31)));
               OS_F64:
                 begin
-                  consts.concat(tai_const.create_32bit(0));
-                  consts.concat(tai_const.create_32bit(-(1 shl 31)));
+                  current_asmdata.asmlists[al_typedconsts].concat(tai_const.create_32bit(0));
+                  current_asmdata.asmlists[al_typedconsts].concat(tai_const.create_32bit(-(1 shl 31)));
                 end
               else
                 internalerror(2004110215);
             end;
 
-            reference_reset_symbol(href,l1,0);
-            cg.a_loadmm_ref_reg(exprasmlist,def_cgsize(resulttype.def),def_cgsize(resulttype.def),href,reg,mms_movescalar);
+            reference_reset_symbol(href,l1,0,resultdef.alignment);
+            cg.a_loadmm_ref_reg(current_asmdata.CurrAsmList,def_cgsize(resultdef),def_cgsize(resultdef),href,reg,mms_movescalar);
 
-            cg.a_opmm_reg_reg(exprasmlist,OP_XOR,left.location.size,reg,location.register,nil);
+            cg.a_opmm_reg_reg(current_asmdata.CurrAsmList,OP_XOR,left.location.size,reg,location.register,nil);
           end
         else
           begin
-            location_reset(location,LOC_FPUREGISTER,def_cgsize(resulttype.def));
+            location_reset(location,LOC_FPUREGISTER,def_cgsize(resultdef));
             case left.location.loc of
               LOC_REFERENCE,
               LOC_CREFERENCE:
                 begin
                   location.register:=NR_ST;
-                  cg.a_loadfpu_ref_reg(exprasmlist,
-                     def_cgsize(left.resulttype.def),
+                  cg.a_loadfpu_ref_reg(current_asmdata.CurrAsmList,
+                     left.location.size,location.size,
                      left.location.reference,location.register);
                   emit_none(A_FCHS,S_NO);
                 end;
@@ -213,7 +200,7 @@ interface
               LOC_CFPUREGISTER:
                 begin
                    { "load st,st" is ignored by the code generator }
-                   cg.a_loadfpu_reg_reg(exprasmlist,left.location.size,left.location.register,NR_ST);
+                   cg.a_loadfpu_reg_reg(current_asmdata.CurrAsmList,left.location.size,location.size,left.location.register,NR_ST);
                    location.register:=NR_ST;
                    emit_none(A_FCHS,S_NO);
                 end;
@@ -233,19 +220,19 @@ interface
          hl : tasmlabel;
          opsize : tcgsize;
       begin
-        opsize:=def_cgsize(resulttype.def);
+        opsize:=def_cgsize(resultdef);
 
         if left.expectloc=LOC_JUMP then
          begin
            location_reset(location,LOC_JUMP,OS_NO);
-           hl:=truelabel;
-           truelabel:=falselabel;
-           falselabel:=hl;
+           hl:=current_procinfo.CurrTrueLabel;
+           current_procinfo.CurrTrueLabel:=current_procinfo.CurrFalseLabel;
+           current_procinfo.CurrFalseLabel:=hl;
            secondpass(left);
-           maketojumpbool(exprasmlist,left,lr_load_regvars);
-           hl:=truelabel;
-           truelabel:=falselabel;
-           falselabel:=hl;
+           maketojumpbool(current_asmdata.CurrAsmList,left,lr_load_regvars);
+           hl:=current_procinfo.CurrTrueLabel;
+           current_procinfo.CurrTrueLabel:=current_procinfo.CurrFalseLabel;
+           current_procinfo.CurrFalseLabel:=hl;
          end
         else
          begin
@@ -264,9 +251,13 @@ interface
              LOC_REGISTER,
              LOC_CREGISTER,
              LOC_REFERENCE,
-             LOC_CREFERENCE :
+             LOC_CREFERENCE,
+             LOC_SUBSETREG,
+             LOC_CSUBSETREG,
+             LOC_SUBSETREF,
+             LOC_CSUBSETREF :
                begin
-                 location_force_reg(exprasmlist,left.location,opsize,true);
+                 hlcg.location_force_reg(current_asmdata.CurrAsmList,left.location,left.resultdef,resultdef,true);
                  emit_reg_reg(A_TEST,TCGSize2Opsize[opsize],left.location.register,left.location.register);
                  location_reset(location,LOC_FLAGS,OS_NO);
                  location.resflags:=F_E;
@@ -286,7 +277,7 @@ interface
     begin
       secondpass(left);
       location_reset(location,LOC_MMXREGISTER,OS_NO);
-      r:=cg.getintregister(exprasmlist,OS_INT);
+      r:=cg.getintregister(current_asmdata.CurrAsmList,OS_INT);
       emit_const_reg(A_MOV,S_L,longint($ffffffff),r);
       { load operand }
       case left.location.loc of
@@ -294,36 +285,25 @@ interface
           location_copy(location,left.location);
         LOC_CMMXREGISTER:
           begin
-            location.register:=cg.getmmxregister(exprasmlist,OS_M64);
+            location.register:=tcgx86(cg).getmmxregister(current_asmdata.CurrAsmList);
             emit_reg_reg(A_MOVQ,S_NO,left.location.register,location.register);
           end;
         LOC_REFERENCE,
         LOC_CREFERENCE:
           begin
-            location_release(exprasmlist,left.location);
-            location.register:=cg.getmmxregister(exprasmlist,OS_M64);
+            location.register:=tcgx86(cg).getmmxregister(current_asmdata.CurrAsmList);
             emit_ref_reg(A_MOVQ,S_NO,left.location.reference,location.register);
           end;
       end;
       { load mask }
-      hreg:=cg.getmmxregister(exprasmlist,OS_M64);
+      hreg:=tcgx86(cg).getmmxregister(current_asmdata.CurrAsmList);
       emit_reg_reg(A_MOVD,S_NO,r,hreg);
-      cg.ungetregister(exprasmlist,r);
       { lower 32 bit }
-      emit_reg_reg(A_PXOR,S_D,hreg,location.register);
+      emit_reg_reg(A_PXOR,S_NO,hreg,location.register);
       { shift mask }
-      emit_const_reg(A_PSLLQ,S_NO,32,hreg);
+      emit_const_reg(A_PSLLQ,S_B,32,hreg);
       { higher 32 bit }
-      cg.ungetregister(exprasmlist,hreg);
-      emit_reg_reg(A_PXOR,S_D,hreg,location.register);
+      emit_reg_reg(A_PXOR,S_NO,hreg,location.register);
     end;
 {$endif SUPPORT_MMX}
 end.
-
-
-{
-  $Log: nx86mat.pas,v $
-  Revision 1.10  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

@@ -1,5 +1,4 @@
 {
-    $Id: mouse.pp,v 1.12 2005/02/14 17:13:22 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Florian Klaempfl
     member of the Free Pascal development team
@@ -21,6 +20,9 @@ interface
 
 { tells the mouse unit to draw the mouse cursor itself }
 procedure DoCustomMouse(b : boolean);
+
+const
+  MouseIsVisible: boolean = false;
 
 
 implementation
@@ -56,7 +58,6 @@ const
   CallCounter  : longint = 0;
 {$endif DEBUG}
   drawmousecursor : boolean = false;
-  mouseisvisible : boolean = false;
   { position where the mouse was drawn the last time }
   oldmousex : longint = -1;
   oldmousey : longint = -1;
@@ -587,6 +588,7 @@ begin
              popl    %ebp
      .LShowMouseExit:
      end;
+  MouseIsVisible := true;
 end;
 
 
@@ -616,6 +618,7 @@ begin
              popl    %ebp
      .LHideMouseExit:
      end;
+  MouseIsVisible := false;
 end;
 
 
@@ -741,6 +744,8 @@ const
   LastCallcounter : longint = 0;
 
 procedure SysGetMouseEvent(var MouseEvent: TMouseEvent);
+var
+ RR: TRealRegs;
 begin
   if not MousePresent then
     begin
@@ -755,11 +760,15 @@ begin
 {$endif EXTMOUSEDEBUG}
   LastCallcounter:=Callcounter;
 {$endif DEBUG}
-  repeat until PendingMouseEvents>0;
+  while PendingMouseEvents = 0 do
+   begin
+(* Give up time slices while waiting for mouse events. *)
+    RealIntr ($28, RR);
+   end;
   MouseEvent:=PendingMouseHead^;
   inc(PendingMouseHead);
-  if longint(PendingMouseHead)=longint(@PendingMouseEvent)+sizeof(PendingMouseEvent) then
-   PendingMouseHead:=@PendingMouseEvent;
+  if PendingMouseHead=@PendingMouseEvent[0]+MouseEventBufsize then
+   PendingMouseHead:=@PendingMouseEvent[0];
   dec(PendingMouseEvents);
   if (LastMouseEvent.x<>MouseEvent.x) or (LastMouseEvent.y<>MouseEvent.y) then
    MouseEvent.Action:=MouseActionMove;
@@ -794,15 +803,3 @@ Const
 Begin
   SetMouseDriver(SysMouseDriver);
 end.
-{
-  $Log: mouse.pp,v $
-  Revision 1.12  2005/02/14 17:13:22  peter
-    * truncate log
-
-  Revision 1.11  2005/01/12 10:25:48  armin
-  * Patch for bug 3548 from Peter
-
-  Revision 1.10  2005/01/03 18:15:34  peter
-  save ebx in assembler procs
-
-}

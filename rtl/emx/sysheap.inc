@@ -1,5 +1,4 @@
 {
-    $Id: sysheap.inc,v 1.1 2005/02/06 16:57:18 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2001 by Free Pascal development team
 
@@ -66,26 +65,16 @@ asm
 end {['eax', 'edx']};
 {$ENDIF DUMPGROW}
 
-function SysOSAlloc (Size: ptrint): pointer;
+function SysOSAlloc (Size: ptruint): pointer;
 begin
  SysOSAlloc := Sbrk (Size);
 end;
 
 {.$define HAS_SYSOSFREE}
 
-procedure SysOSFree (P: pointer; Size: ptrint);
+procedure SysOSFree (P: pointer; Size: ptruint);
 begin
 end;
 
 
-{
-   $Log: sysheap.inc,v $
-   Revision 1.1  2005/02/06 16:57:18  peter
-     * threads for go32v2,os,emx,netware
-
-   Revision 1.1  2005/02/06 13:06:20  peter
-     * moved file and dir functions to sysfile/sysdir
-     * win32 thread in systemunit
-
-}
 

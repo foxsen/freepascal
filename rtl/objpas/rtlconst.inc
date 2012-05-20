@@ -1,5 +1,4 @@
 {
-    $Id: rtlconst.inc,v 1.2 2005/04/16 09:25:02 michael Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2003 by Florian Klaempfl
     member of the Free Pascal development team
@@ -41,7 +40,7 @@ ResourceString
   SBoldItalicFont               = 'Bold Italic';
   SBucketListLocked             = 'List is locked during an active ForEach.';
   SCancelButton                 = 'Cancel';
-  SCannotCreateDir              = 'Das Verzeichnis kann nicht erstellt werden';
+  SCannotCreateDir              = 'Cannot create directory';
   SCannotCreateName             = 'Cannot use standard name for and unknown component';
   SCannotCreateSocket           = 'Unable to create new socket';
   SCannotDragForm               = 'Forms cannot be dragged';
@@ -51,7 +50,10 @@ ResourceString
   SCannotShowModal              = 'A visible Window can not be made modal';
   SCantChangeWhileActive        = 'Changing value on an active socket is not allowed';
   SCantWriteResourceStreamError = 'Can not write to read-only ResourceStream';
-  SCardDLLNotLoaded             = 'CARDS library could not be loaded';
+  SCardDLLNotLoaded             = 'CARDS library could not be loaded' deprecated; { use SLibraryNotLoaded }
+  SLibraryAlreadyLoaded         = 'Interface %s already initialized from library "%s"';
+  SLibraryNotLoaded             = 'Can not initialize interface %s from library "%s"';
+  SLibraryUnknownSym            = 'Can not resolve symbol "%s" of interface %s from library "%s"';
   SChangeIconSize               = 'Can not change icon size';
   SCharExpected                 = '"%s" expected';
   SCheckSynchronizeError        = 'CheckSynchronize called from non-main thread "$%x"';
@@ -102,17 +104,18 @@ ResourceString
   SDuplicateClass               = 'A class named "%s" already exists';
   SDuplicateItem                = 'Duplicates not allowed in this list ($0%x)';
   SDuplicateMenus               = 'Menu "%s" is used by another form';
-  SDuplicateName                = 'Duplcate name: A component named "%s" already exists';
+  SDuplicateName                = 'Duplicate name: A component named "%s" already exists';
   SDuplicateReference           = 'WriteObject was called twice for one instance';
   SDuplicateString              = 'String list does not allow duplicates';
   SEmptyStreamIllegalReader     = 'Illegal Nil stream for TReader constructor';
   SEmptyStreamIllegalWriter     = 'Illegal Nil stream for TWriter constructor';
   SErrindexTooLarge             = 'Bit index exceeds array limit: %d';
   SErrInvalidBitIndex           = 'Invalid bit index : %d';
-  SErrNoStreaming               = 'Failed to initialize component: No streaming method available.';
+  SErrNoStreaming               = 'Failed to initialize component class "%s": No streaming method available.';
   SErrNoVariantSupport          = 'No variant support for properties. Please use the variants unit in your project and recompile';
   SErrOutOfMemory               = 'Out of memory';
   SErrPropertyNotFound          = 'Unknown property: "%s"';
+  SerrInvalidPropertyType       = 'Invalid property type from streamed property: %d';
   SErrUnknownEnumValue          = 'Unknown enumeration value: "%s"';
   SFailedToCallConstructor      = 'TStrings descendant "%s" failed to call inherited constructor';
   SFB                           = 'FB';
@@ -149,12 +152,12 @@ ResourceString
   SInvalidDateMonthWeek         = '(%d, %d, %d, %d) is not a valid DateMonthWeek quad';
   SInvalidDateWeek              = '(%d, %d, %d) is not a valid DateWeek triplet';
   SInvalidDayOfWeekInMonth      = '(%d, %d, %d, %d) is not a valid DayOfWeekInMonth quad';
+  SErrIllegalDateFormatString   = '"%s" is not a valid date format string';
   SInvalidFileName              = '"%s" is not a valid file name.';
   SInvalidIcon                  = 'Invalid Icon';
   SInvalidImage                 = 'Invalid stream format';
   SInvalidImageList             = 'Invalid ImageList';
   SInvalidImageSize             = 'Invalid image size';
-  SInvalidJulianDate            = '%f Julian cannot be represented as a DateTime';
   SInvalidMask                  = '"%s" is not a valid mask at (%d)';
   SInvalidMemoSize              = 'Text larger than memo capacity';
   SInvalidMetafile              = 'Invalid Metafile';
@@ -178,6 +181,8 @@ ResourceString
   SListCapacityError            = 'List capacity (%d) exceeded.';
   SListCountError               = 'List count (%d) out of bounds.';
   SListIndexError               = 'List index (%d) out of bounds';
+  SListItemSizeError            = 'Incompatible item size in source list';
+  SMapKeyError                  = 'Map key (address $%x) does not exist';
   SMaskEditErr                  = 'Invalid mask input value.  Use escape key to abandon changes';
   SMaskErr                      = 'Invalid mask input value';
   SMDIChildNotVisible           = 'A MDI-Child Window can not be hidden.';
@@ -214,6 +219,14 @@ ResourceString
   SOutOfResources               = 'Out of system resources';
   SParentRequired               = 'Element ''%s'' has no parent Window';
   SParseError                   = '%s on line %d';
+  SParLocInfo                   = ' (at %d,%d, stream offset %.8x)';
+  SParExpected                  = 'Wrong token type: %s expected';
+  SParWrongTokenType            = 'Wrong token type: %s expected but %s found';
+  SParWrongTokenSymbol          = 'Wrong token symbol: %s expected but %s found';
+  SParInvalidInteger            = 'Invalid integer number: %s';
+  SParInvalidFloat              = 'Invalid floating point number: %s';
+  SParUnterminatedString        = 'Unterminated string';
+  SParUnterminatedBinValue      = 'Unterminated byte value';
   SPictureDesc                  = ' (%dx%d)';
   SPictureLabel                 = 'Image:';
   SPreviewLabel                 = 'Preview';
@@ -246,6 +259,9 @@ ResourceString
   SSocketRead                   = 'Read';
   SSocketWrite                  = 'Write';
   SSortedListError              = 'Operation not allowed on sorted list';
+  SStreamInvalidSeek            = 'Invalid stream operation %s.Seek';   
+  SStreamNoReading              = 'Reading from %s is not supported';
+  SStreamNoWriting              = 'Writing to %s is not supported';
   SStreamSetSize                = 'Error setting stream size';
   SStringExpected               = 'String expected';
   SSymbolExpected               = '%s expected';
@@ -260,6 +276,7 @@ ResourceString
   SUnknownGroup                 = '%s not in a class registration group';
   SUnknownProperty              = 'Unknown property: "%s"';
   SUnknownPropertyType          = 'Unknown property type %d';
+  SUnsupportedPropertyVariantType = 'Unsupported property variant type %d';
   SUntitled                     = '(Untitled)';
   SVBitmaps                     = 'Bitmaps';
   SVEnhMetafiles                = 'Enhanced MetaFiles';
@@ -272,6 +289,13 @@ ResourceString
   sWindowsSocketError           = 'A Windows socket error occurred: %s (%d), on API "%s"';
   SWriteError                   = 'Stream write error';
   SYesButton                    = '&Yes';
+  SStringIndexOutOfRange        = 'String index %d out of range [1 - %d]';
+  SHighSurrogateOutOfRange      = 'High surrogate $%x out of range [$D800 - $DBFF]';
+  SLowSurrogateOutOfRange       = 'Low surrogate $%x out of range [$DC00 - $DFFF]';
+  SInvalidUTF32Char             = 'Invalid UTF32 character $%x. Valid UTF32 character must be in range [$0 - $10FFFF] except surrogate range [$D800-$DFFF]';
+  SInvalidHighSurrogate         = 'Invalid high surrogate at index %d. High surrogate must be followed by a low surrogate pair';
+  SInvalidUnicodeCodePointSequence = 'Invalid unicode code point sequence';
+  SClassCantBeConstructed       = 'Class %s can not be constructed';
 
 { ---------------------------------------------------------------------
     Keysim Names
@@ -519,24 +543,9 @@ ResourceString
   SMsgDlgRetry = '&Retry';
   SMsgDlgWarning = 'Warning';
   SMsgDlgYes = '&Yes';
-  SMsgDlgYesToAll = 'Yes to A&lle';
+  SMsgDlgYesToAll = 'Yes to a&ll';
 
 
 implementation
 
 end.
-{
-  $Log: rtlconst.inc,v $
-  Revision 1.2  2005/04/16 09:25:02  michael
-  + Added TypInfo unit constants
-
-  Revision 1.1  2005/04/14 21:47:27  hajny
-    * rtlconst/s fix for GO32v2 etc.
-
-  Revision 1.1  2005/03/07 17:57:25  peter
-    * renamed rtlconst to rtlconsts
-
-  Revision 1.7  2005/02/14 17:13:31  peter
-    * truncate log
-
-}

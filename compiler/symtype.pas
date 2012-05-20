@@ -1,5 +1,4 @@
 {
-    $Id: symtype.pas,v 1.52 2005/03/07 17:58:27 peter Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl, Pierre Muller
 
     This unit handles the symbol tables
@@ -28,11 +27,9 @@ interface
     uses
       { common }
       cutils,
-{$ifdef MEMDEBUG}
       cclasses,
-{$endif MEMDEBUG}
       { global }
-      globtype,globals,
+      globtype,globals,constexp,
       { symtable }
       symconst,symbase,
       { aasm }
@@ -49,44 +46,46 @@ interface
 
 
 {************************************************
-                     TRef
-************************************************}
-
-      tref = class
-        nextref     : tref;
-        posinfo     : tfileposinfo;
-        moduleindex : longint;
-        is_written  : boolean;
-        constructor create(ref:tref;pos:pfileposinfo);
-        procedure   freechain;
-        destructor  destroy;override;
-      end;
-
-{************************************************
                      TDef
 ************************************************}
 
-      tgetsymtable = (gs_none,gs_record,gs_local,gs_para);
+      tgeTSymtable = (gs_none,gs_record,gs_local,gs_para);
 
-      tdef = class(tdefentry)
+      tdef = class(TDefEntry)
          typesym    : tsym;  { which type the definition was generated this def }
-         defoptions : tdefoptions;
-         constructor create;
+         { maybe it's useful to merge the dwarf and stabs debugging info with some hacking }
+         { dwarf debugging }
+         dwarf_lab : tasmsymbol;
+         dwarf_ref_lab : tasmsymbol;
+         { stabs debugging }
+         stab_number : word;
+         dbg_state   : tdefdbgstatus;
+         defoptions  : tdefoptions;
+         defstates   : tdefstates;
+         constructor create(dt:tdeftyp);
          procedure buildderef;virtual;abstract;
          procedure buildderefimpl;virtual;abstract;
          procedure deref;virtual;abstract;
          procedure derefimpl;virtual;abstract;
          function  typename:string;
-         function  gettypename:string;virtual;
+         function  GetTypeName:string;virtual;
+         function  typesymbolprettyname:string;virtual;
          function  mangledparaname:string;
-         function  getmangledparaname:string;virtual;
-         function  size:aint;virtual;abstract;
-         function  alignment:longint;virtual;abstract;
+         function  getmangledparaname:TSymStr;virtual;
+         function  rtti_mangledname(rt:trttitype):string;virtual;abstract;
+         function  OwnerHierarchyName: string; virtual; abstract;
+         function  size:asizeint;virtual;abstract;
+         function  packedbitsize:asizeint;virtual;
+         function  alignment:shortint;virtual;abstract;
+         function  getvardef:longint;virtual;abstract;
          function  getparentdef:tdef;virtual;
-         function  getsymtable(t:tgetsymtable):tsymtable;virtual;
+         function  geTSymtable(t:tgeTSymtable):TSymtable;virtual;
          function  is_publishable:boolean;virtual;abstract;
          function  needs_inittable:boolean;virtual;abstract;
+         function  needs_separate_initrtti:boolean;virtual;abstract;
          function  is_related(def:tdef):boolean;virtual;
+         procedure ChangeOwner(st:TSymtable);
+         procedure register_created_object_type;virtual;
       end;
 
 {************************************************
@@ -94,32 +93,33 @@ interface
 ************************************************}
 
       { this object is the base for all symbol objects }
-      tsym = class(tsymentry)
+
+      { tsym }
+
+      tsym = class(TSymEntry)
       protected
       public
-         _realname  : pstring;
          fileinfo   : tfileposinfo;
+         { size of fileinfo is 10 bytes, so if a >word aligned type would follow,
+           two bytes of memory would be wasted, so we put two one byte fields over here }
+         visibility : tvisibility;
+         isdbgwritten : boolean;
          symoptions : tsymoptions;
-         refs          : longint;
-         lastref,
-         defref,
-         lastwritten : tref;
-         refcount    : longint;
-{$ifdef GDB}
-         isstabwritten : boolean;
-         function  get_var_value(const s:string):string;
-         function  stabstr_evaluate(const s:string;vars:array of string):Pchar;
-         function  stabstring : pchar;virtual;
-{$endif GDB}
-         constructor create(const n : string);
-         destructor destroy;override;
-         function  realname:string;
+         refs       : longint;
+         reflist    : TLinkedList;
+         { deprecated optionally can have a message }
+         deprecatedmsg: pshortstring;
+         constructor create(st:tsymtyp;const aname:string);
+         destructor  destroy;override;
+         function  mangledname:TSymStr; virtual;
+         function  prettyname:string; virtual;
          procedure buildderef;virtual;
          procedure deref;virtual;
-         function  gettypedef:tdef;virtual;
-         procedure load_references(ppufile:tcompilerppufile;locals:boolean);virtual;
-         function  write_references(ppufile:tcompilerppufile;locals:boolean):boolean;virtual;
-         function is_visible_for_object(currobjdef:Tdef):boolean;virtual;
+         procedure ChangeOwner(st:TSymtable);
+         procedure IncRefCount;
+         procedure IncRefCountBy(AValue : longint);
+         procedure MaybeCreateRefList;
+         procedure AddRef;
       end;
 
       tsymarr = array[0..maxlongint div sizeof(pointer)-1] of tsym;
@@ -132,53 +132,39 @@ interface
       tderef = object
         dataidx : longint;
         procedure reset;
-        procedure build(s:tsymtableentry);
-        function  resolve:tsymtableentry;
+        procedure build(s:TObject);
+        function  resolve:TObject;
      end;
 
 {************************************************
-                   TType
+                   tpropaccesslist
 ************************************************}
 
-      ttype = object
-        def : tdef;
-        sym : tsym;
-        deref : tderef;
-        procedure reset;
-        procedure setdef(p:tdef);
-        procedure setsym(p:tsym);
-        procedure resolve;
-        procedure buildderef;
-      end;
-
-{************************************************
-                   TSymList
-************************************************}
-
-      psymlistitem = ^tsymlistitem;
-      tsymlistitem = record
+      ppropaccesslistitem = ^tpropaccesslistitem;
+      tpropaccesslistitem = record
         sltype : tsltype;
-        next   : psymlistitem;
+        next   : ppropaccesslistitem;
         case byte of
           0 : (sym : tsym; symderef : tderef);
-          1 : (value  : TConstExprInt);
-          2 : (tt : ttype);
+          1 : (value  : TConstExprInt; valuedef: tdef; valuedefderef:tderef);
+          2 : (def: tdef; defderef:tderef);
       end;
 
-      tsymlist = class
+      tpropaccesslist = class
         procdef  : tdef;
         procdefderef : tderef;
         firstsym,
-        lastsym  : psymlistitem;
+        lastsym  : ppropaccesslistitem;
         constructor create;
         destructor  destroy;override;
         function  empty:boolean;
         procedure addsym(slt:tsltype;p:tsym);
-        procedure addsymderef(slt:tsltype;const d:tderef);
-        procedure addconst(slt:tsltype;v:TConstExprInt);
-        procedure addtype(slt:tsltype;const tt:ttype);
+        procedure addconst(slt:tsltype;v:TConstExprInt;d:tdef);
+        procedure addtype(slt:tsltype;d:tdef);
+        procedure addsymderef(slt:tsltype;d:tderef);
+        procedure addconstderef(slt:tsltype;v:TConstExprInt;d:tderef);
+        procedure addtypederef(slt:tsltype;d:tderef);
         procedure clear;
-        function  getcopy:tsymlist;
         procedure resolve;
         procedure buildderef;
       end;
@@ -190,27 +176,23 @@ interface
        public
          procedure checkerror;
          procedure getguid(var g: tguid);
-         function  getexprint:tconstexprint;
+         function  getexprint:Tconstexprint;
          function  getptruint:TConstPtrUInt;
          procedure getposinfo(var p:tfileposinfo);
          procedure getderef(var d:tderef);
-         function  getsymlist:tsymlist;
-         procedure gettype(var t:ttype);
+         function  getpropaccesslist:tpropaccesslist;
          function  getasmsymbol:tasmsymbol;
          procedure putguid(const g: tguid);
-         procedure putexprint(v:tconstexprint);
+         procedure putexprint(const v:tconstexprint);
          procedure PutPtrUInt(v:TConstPtrUInt);
          procedure putposinfo(const p:tfileposinfo);
          procedure putderef(const d:tderef);
-         procedure putsymlist(p:tsymlist);
-         procedure puttype(const t:ttype);
+         procedure putpropaccesslist(p:tpropaccesslist);
          procedure putasmsymbol(s:tasmsymbol);
        end;
 
 {$ifdef MEMDEBUG}
     var
-      membrowser,
-      memrealnames,
       memmanglednames,
       memprocpara,
       memprocparast,
@@ -218,63 +200,105 @@ interface
       memprocnodetree : tmemdebug;
 {$endif MEMDEBUG}
 
-    const
-       current_object_option : tsymoptions = [sp_public];
+    function  FindUnitSymtable(st:TSymtable):TSymtable;
 
 
 implementation
 
     uses
+       crefs,
        verbose,
        fmodule
-{$ifdef GDB}
-       ,gdb
-{$endif GDB}
        ;
+
+{****************************************************************************
+                                Utils
+****************************************************************************}
+
+    function FindUnitSymtable(st:TSymtable):TSymtable;
+      begin
+        result:=nil;
+        repeat
+          if not assigned(st) then
+           internalerror(200602034);
+          case st.symtabletype of
+            localmacrosymtable,
+            exportedmacrosymtable,
+            staticsymtable,
+            globalsymtable :
+              begin
+                result:=st;
+                exit;
+              end;
+            recordsymtable,
+            enumsymtable,
+            arraysymtable,
+            localsymtable,
+            parasymtable,
+            ObjectSymtable :
+              st:=st.defowner.owner;
+            else
+              internalerror(200602035);
+          end;
+        until false;
+      end;
 
 
 {****************************************************************************
                                 Tdef
 ****************************************************************************}
 
-    constructor tdef.create;
+    constructor tdef.create(dt:tdeftyp);
       begin
          inherited create;
-         deftype:=abstractdef;
+         typ:=dt;
          owner := nil;
          typesym := nil;
          defoptions:=[];
+         dbg_state:=dbg_state_unused;
+         stab_number:=0;
       end;
 
 
     function tdef.typename:string;
       begin
+        result:=OwnerHierarchyName;
         if assigned(typesym) and
-           not(deftype in [procvardef,procdef]) and
-           assigned(typesym._realname) and
-           (typesym._realname^[1]<>'$') then
-         typename:=typesym._realname^
+           not(typ in [procvardef,procdef]) and
+           (typesym.realname[1]<>'$') then
+          result:=result+typesym.realname
         else
-         typename:=gettypename;
+          result:=result+GetTypeName;
       end;
 
 
-    function tdef.gettypename : string;
+    function tdef.GetTypeName : string;
       begin
-         gettypename:='<unknown type>'
+         GetTypeName:='<unknown type>'
+      end;
+
+
+    function tdef.typesymbolprettyname:string;
+      begin
+        result:=OwnerHierarchyName;
+        if assigned(typesym) then
+          result:=result+typesym.prettyname
+        else
+          result:=result+'<no type symbol>'
       end;
 
 
     function tdef.mangledparaname:string;
       begin
+        result:=OwnerHierarchyName;
         if assigned(typesym) then
-         mangledparaname:=typesym.name
+          mangledparaname:=result+typesym.name
         else
-         mangledparaname:=getmangledparaname;
+          mangledparaname:=result+getmangledparaname;
       end;
 
 
-    function tdef.getmangledparaname:string;
+    function tdef.getmangledparaname:TSymStr;
       begin
          result:='<unknown type>';
       end;
@@ -286,61 +310,90 @@ implementation
       end;
 
 
-    function tdef.getsymtable(t:tgetsymtable):tsymtable;
+    function tdef.geTSymtable(t:tgeTSymtable):TSymtable;
       begin
         result:=nil;
       end;
 
 
-   function  tdef.is_related(def:tdef):boolean;
-     begin
-       result:=false;
-     end;
+    function tdef.is_related(def:tdef):boolean;
+      begin
+        result:=false;
+      end;
 
+
+    function tdef.packedbitsize:asizeint;
+      begin
+        result:=size * 8;
+      end;
+
+
+    procedure tdef.ChangeOwner(st:TSymtable);
+      begin
+//        if assigned(Owner) then
+//          Owner.DefList.List[i]:=nil;
+        Owner:=st;
+        Owner.DefList.Add(self);
+      end;
+
+
+    procedure tdef.register_created_object_type;
+      begin
+      end;
 
 {****************************************************************************
                           TSYM (base for all symtypes)
 ****************************************************************************}
 
-    constructor tsym.create(const n : string);
+    constructor tsym.create(st:tsymtyp;const aname:string);
       begin
-         if n[1]='$' then
-          inherited createname(copy(n,2,255))
-         else
-          inherited createname(upper(n));
-         _realname:=stringdup(n);
-         typ:=abstractsym;
+         inherited CreateNotOwned;
+         realname:=aname;
+         typ:=st;
+         RefList:=nil;
          symoptions:=[];
-         defref:=nil;
-         refs:=0;
-         lastwritten:=nil;
-         refcount:=0;
-         fileinfo:=akttokenpos;
-         if (cs_browser in aktmoduleswitches) and make_ref then
-          begin
-            defref:=tref.create(defref,@akttokenpos);
-            inc(refcount);
-          end;
-         lastref:=defref;
-{$ifdef GDB}
-         isstabwritten := false;
-{$endif GDB}
-         symoptions:=current_object_option;
+         fileinfo:=current_tokenpos;
+         isdbgwritten := false;
+         visibility:=vis_public;
+         deprecatedmsg:=nil;
       end;
 
-
-    destructor tsym.destroy;
+    destructor  Tsym.destroy;
       begin
-{$ifdef MEMDEBUG}
-        memrealnames.start;
-{$endif MEMDEBUG}
-        stringdispose(_realname);
-{$ifdef MEMDEBUG}
-        memrealnames.stop;
-{$endif MEMDEBUG}
-        inherited destroy;
+        stringdispose(deprecatedmsg);
+        if assigned(RefList) then
+          RefList.Free;
+        inherited Destroy;
       end;
 
+    procedure Tsym.IncRefCount;
+      begin
+        inc(refs);
+        if cs_browser in current_settings.moduleswitches then
+          begin
+            MaybeCreateRefList;
+            AddRef;
+          end;
+      end;
+
+    procedure Tsym.IncRefCountBy(AValue : longint);
+      begin
+        inc(refs,AValue);
+      end;
+
+    procedure Tsym.MaybeCreateRefList;
+      begin
+        if not assigned(reflist) then
+          reflist:=TRefLinkedList.create;
+      end;
+
+    procedure Tsym.AddRef;
+      var
+        RefItem: TRefItem;
+      begin
+        RefItem:=TRefItem.Create(current_tokenpos);
+        RefList.Concat(RefItem);
+      end;
 
     procedure Tsym.buildderef;
       begin
@@ -351,274 +404,32 @@ implementation
       begin
       end;
 
-{$ifdef GDB}
-    function Tsym.get_var_value(const s:string):string;
 
-    begin
-      if s='name' then
-        get_var_value:=name
-      else if s='ownername' then
-        get_var_value:=owner.name^
-      else if s='line' then
-        get_var_value:=tostr(fileinfo.line)
-      else if s='N_LSYM' then
-        get_var_value:=tostr(N_LSYM)
-      else if s='N_LCSYM' then
-        get_var_value:=tostr(N_LCSYM)
-      else if s='N_RSYM' then
-        get_var_value:=tostr(N_RSYM)
-      else if s='N_TSYM' then
-        get_var_value:=tostr(N_TSYM)
-      else if s='N_STSYM' then
-        get_var_value:=tostr(N_STSYM)
-      else if s='N_FUNCTION' then
-        get_var_value:=tostr(N_FUNCTION)
-      else
-        internalerror(200401152);
-    end;
-
-    function Tsym.stabstr_evaluate(const s:string;vars:array of string):Pchar;
-
-    begin
-      stabstr_evaluate:=string_evaluate(s,@get_var_value,vars);
-    end;
-
-    function Tsym.stabstring : pchar;
-
-    begin
-       stabstring:=nil;
-    end;
-{$endif GDB}
-
-
-    function tsym.realname : string;
+    function tsym.mangledname : TSymStr;
       begin
-        if assigned(_realname) then
-         realname:=_realname^
-        else
-         realname:=name;
+        internalerror(200204171);
+        result:='';
       end;
 
 
-    function tsym.gettypedef:tdef;
+    function tsym.prettyname : string;
       begin
-        gettypedef:=nil;
+        result:=realname;
       end;
 
 
-    procedure Tsym.load_references(ppufile:tcompilerppufile;locals:boolean);
-      var
-        pos : tfileposinfo;
-        move_last : boolean;
+    procedure tsym.ChangeOwner(st:TSymtable);
       begin
-        move_last:=lastwritten=lastref;
-        while (not ppufile.endofentry) do
-         begin
-           ppufile.getposinfo(pos);
-           inc(refcount);
-           lastref:=tref.create(lastref,@pos);
-           lastref.is_written:=true;
-           if refcount=1 then
-            defref:=lastref;
-         end;
-        if move_last then
-          lastwritten:=lastref;
-      end;
-
-    { big problem here :
-      wrong refs were written because of
-      interface parsing of other units PM
-      moduleindex must be checked !! }
-
-    function Tsym.write_references(ppufile:tcompilerppufile;locals:boolean):boolean;
-      var
-        d : tderef;
-        ref   : tref;
-        symref_written,move_last : boolean;
-      begin
-        write_references:=false;
-        if lastwritten=lastref then
-          exit;
-      { should we update lastref }
-        move_last:=true;
-        symref_written:=false;
-      { write symbol refs }
-        d.reset;
-        if assigned(lastwritten) then
-          ref:=lastwritten
-        else
-          ref:=defref;
-        while assigned(ref) do
-         begin
-           if ref.moduleindex=current_module.unit_index then
-             begin
-              { write address to this symbol }
-                if not symref_written then
-                  begin
-                     d.build(self);
-                     ppufile.putderef(d);
-                     symref_written:=true;
-                  end;
-                ppufile.putposinfo(ref.posinfo);
-                ref.is_written:=true;
-                if move_last then
-                  lastwritten:=ref;
-             end
-           else if not ref.is_written then
-             move_last:=false
-           else if move_last then
-             lastwritten:=ref;
-           ref:=ref.nextref;
-         end;
-        if symref_written then
-          ppufile.writeentry(ibsymref);
-        write_references:=symref_written;
-      end;
-
-
-    function Tsym.is_visible_for_object(currobjdef:Tdef):boolean;
-      begin
-        is_visible_for_object:=false;
-
-        { private symbols are allowed when we are in the same
-          module as they are defined }
-        if (sp_private in symoptions) and
-           assigned(owner.defowner) and
-           (owner.defowner.owner.symtabletype in [globalsymtable,staticsymtable]) and
-           (not owner.defowner.owner.iscurrentunit) then
-          exit;
-
-        { protected symbols are vissible in the module that defines them and
-          also visible to related objects }
-        if (sp_protected in symoptions) and
-           (
-            (
-             assigned(owner.defowner) and
-             (owner.defowner.owner.symtabletype in [globalsymtable,staticsymtable]) and
-             (not owner.defowner.owner.iscurrentunit)
-            ) and
-            not(
-                assigned(currobjdef) and
-                (currobjdef.owner.symtabletype in [globalsymtable,staticsymtable]) and
-                (currobjdef.owner.iscurrentunit) and
-                currobjdef.is_related(tdef(owner.defowner))
-               )
-           ) then
-          exit;
-
-        is_visible_for_object:=true;
-      end;
-
-{****************************************************************************
-                               TRef
-****************************************************************************}
-
-    constructor tref.create(ref :tref;pos : pfileposinfo);
-      begin
-        nextref:=nil;
-        if pos<>nil then
-          posinfo:=pos^;
-        if assigned(current_module) then
-          moduleindex:=current_module.unit_index;
-        if assigned(ref) then
-          ref.nextref:=self;
-        is_written:=false;
-      end;
-
-    procedure tref.freechain;
-      var
-        p,q : tref;
-      begin
-        p:=nextref;
-        nextref:=nil;
-        while assigned(p) do
-          begin
-            q:=p.nextref;
-            p.free;
-            p:=q;
-          end;
-      end;
-
-    destructor tref.destroy;
-      begin
-         nextref:=nil;
+        Owner:=st;
+        inherited ChangeOwner(Owner.SymList);
       end;
 
 
 {****************************************************************************
-                                   TType
+                                 tpropaccesslist
 ****************************************************************************}
 
-    procedure ttype.reset;
-      begin
-        def:=nil;
-        sym:=nil;
-      end;
-
-
-    procedure ttype.setdef(p:tdef);
-      begin
-        def:=p;
-        sym:=nil;
-      end;
-
-
-    procedure ttype.setsym(p:tsym);
-      begin
-        sym:=p;
-        def:=p.gettypedef;
-        if not assigned(def) then
-         internalerror(1234005);
-      end;
-
-
-    procedure ttype.resolve;
-      var
-        p : tsymtableentry;
-      begin
-        p:=deref.resolve;
-        if assigned(p) then
-          begin
-            if p is tsym then
-              begin
-                setsym(tsym(p));
-                if not assigned(def) then
-                 internalerror(200212272);
-              end
-            else
-              begin
-                setdef(tdef(p));
-              end;
-          end
-        else
-          reset;
-      end;
-
-
-    procedure ttype.buildderef;
-      begin
-        { Write symbol references when the symbol is a redefine,
-          but don't write symbol references for the current unit
-          and for the system unit }
-        if assigned(sym) and
-           (
-            (sym<>def.typesym) or
-            (
-             not((sym.owner.symtabletype in [globalsymtable,staticsymtable]) and
-                 sym.owner.iscurrentunit)
-            )
-           ) then
-          deref.build(sym)
-        else
-          deref.build(def);
-      end;
-
-
-{****************************************************************************
-                                 TSymList
-****************************************************************************}
-
-    constructor tsymlist.create;
+    constructor tpropaccesslist.create;
       begin
         procdef:=nil; { needed for procedures }
         firstsym:=nil;
@@ -626,21 +437,21 @@ implementation
       end;
 
 
-    destructor tsymlist.destroy;
+    destructor tpropaccesslist.destroy;
       begin
         clear;
       end;
 
 
-    function tsymlist.empty:boolean;
+    function tpropaccesslist.empty:boolean;
       begin
         empty:=(firstsym=nil);
       end;
 
 
-    procedure tsymlist.clear;
+    procedure tpropaccesslist.clear;
       var
-        hp : psymlistitem;
+        hp : ppropaccesslistitem;
       begin
         while assigned(firstsym) do
          begin
@@ -654,14 +465,12 @@ implementation
       end;
 
 
-    procedure tsymlist.addsym(slt:tsltype;p:tsym);
+    procedure tpropaccesslist.addsym(slt:tsltype;p:tsym);
       var
-        hp : psymlistitem;
+        hp : ppropaccesslistitem;
       begin
-        if not assigned(p) then
-         internalerror(200110203);
         new(hp);
-        fillchar(hp^,sizeof(tsymlistitem),0);
+        fillchar(hp^,sizeof(tpropaccesslistitem),0);
         hp^.sltype:=slt;
         hp^.sym:=p;
         hp^.symderef.reset;
@@ -673,30 +482,16 @@ implementation
       end;
 
 
-    procedure tsymlist.addsymderef(slt:tsltype;const d:tderef);
+    procedure tpropaccesslist.addconst(slt:tsltype;v:TConstExprInt;d:tdef);
       var
-        hp : psymlistitem;
+        hp : ppropaccesslistitem;
       begin
         new(hp);
-        fillchar(hp^,sizeof(tsymlistitem),0);
-        hp^.sltype:=slt;
-        hp^.symderef:=d;
-        if assigned(lastsym) then
-         lastsym^.next:=hp
-        else
-         firstsym:=hp;
-        lastsym:=hp;
-      end;
-
-
-    procedure tsymlist.addconst(slt:tsltype;v:TConstExprInt);
-      var
-        hp : psymlistitem;
-      begin
-        new(hp);
-        fillchar(hp^,sizeof(tsymlistitem),0);
+        fillchar(hp^,sizeof(tpropaccesslistitem),0);
         hp^.sltype:=slt;
         hp^.value:=v;
+        hp^.valuedef:=d;
+        hp^.valuedefderef.reset;
         if assigned(lastsym) then
          lastsym^.next:=hp
         else
@@ -705,14 +500,15 @@ implementation
       end;
 
 
-    procedure tsymlist.addtype(slt:tsltype;const tt:ttype);
+    procedure tpropaccesslist.addtype(slt:tsltype;d:tdef);
       var
-        hp : psymlistitem;
+        hp : ppropaccesslistitem;
       begin
         new(hp);
-        fillchar(hp^,sizeof(tsymlistitem),0);
+        fillchar(hp^,sizeof(tpropaccesslistitem),0);
         hp^.sltype:=slt;
-        hp^.tt:=tt;
+        hp^.def:=d;
+        hp^.defderef.reset;
         if assigned(lastsym) then
          lastsym^.next:=hp
         else
@@ -721,34 +517,30 @@ implementation
       end;
 
 
-    function tsymlist.getcopy:tsymlist;
-      var
-        hp  : tsymlist;
-        hp2 : psymlistitem;
-        hpn : psymlistitem;
+    procedure tpropaccesslist.addsymderef(slt:tsltype;d:tderef);
       begin
-        hp:=tsymlist.create;
-        hp.procdef:=procdef;
-        hp2:=firstsym;
-        while assigned(hp2) do
-         begin
-           new(hpn);
-           hpn^:=hp2^;
-           hpn^.next:=nil;
-           if assigned(hp.lastsym) then
-            hp.lastsym^.next:=hpn
-           else
-            hp.firstsym:=hpn;
-           hp.lastsym:=hpn;
-           hp2:=hp2^.next;
-         end;
-        getcopy:=hp;
+        addsym(slt,nil);
+        lastsym^.symderef:=d;
       end;
 
 
-    procedure tsymlist.resolve;
+    procedure tpropaccesslist.addconstderef(slt:tsltype;v:TConstExprInt;d:tderef);
+      begin
+        addconst(slt,v,nil);
+        lastsym^.valuedefderef:=d;
+      end;
+
+
+    procedure tpropaccesslist.addtypederef(slt:tsltype;d:tderef);
+      begin
+        addtype(slt,nil);
+        lastsym^.defderef:=d;
+      end;
+
+
+    procedure tpropaccesslist.resolve;
       var
-        hp : psymlistitem;
+        hp : ppropaccesslistitem;
       begin
         procdef:=tdef(procdefderef.resolve);
         hp:=firstsym;
@@ -759,10 +551,11 @@ implementation
              sl_load,
              sl_subscript :
                hp^.sym:=tsym(hp^.symderef.resolve);
+             sl_absolutetype,
              sl_typeconv :
-               hp^.tt.resolve;
-             sl_vec :
-               ;
+               hp^.def:=tdef(hp^.defderef.resolve);
+             sl_vec:
+               hp^.valuedef:=tdef(hp^.valuedefderef.resolve);
              else
               internalerror(200110205);
            end;
@@ -771,9 +564,9 @@ implementation
       end;
 
 
-    procedure tsymlist.buildderef;
+    procedure tpropaccesslist.buildderef;
       var
-        hp : psymlistitem;
+        hp : ppropaccesslistitem;
       begin
         procdefderef.build(procdef);
         hp:=firstsym;
@@ -784,10 +577,11 @@ implementation
              sl_load,
              sl_subscript :
                hp^.symderef.build(hp^.sym);
+             sl_absolutetype,
              sl_typeconv :
-               hp^.tt.buildderef;
-             sl_vec :
-               ;
+               hp^.defderef.build(hp^.def);
+             sl_vec:
+               hp^.valuedefderef.build(hp^.valuedef);
              else
               internalerror(200110205);
            end;
@@ -807,221 +601,72 @@ implementation
       end;
 
 
-    procedure tderef.build(s:tsymtableentry);
+    procedure tderef.build(s:TObject);
       var
         len  : byte;
+        st   : TSymtable;
         data : array[0..255] of byte;
-
-        function is_child(currdef,ownerdef:tdef):boolean;
-        begin
-          while assigned(currdef) and
-                (currdef<>ownerdef) do
-            currdef:=currdef.getparentdef;
-          result:=assigned(currdef);
-        end;
-
-        procedure addowner(s:tsymtableentry);
-        var
-          idx : longint;
-        begin
-          if not assigned(s.owner) then
-            internalerror(200306063);
-          case s.owner.symtabletype of
-            globalsymtable :
-              begin
-                if s.owner.iscurrentunit then
-                  begin
-                    data[len]:=ord(deref_aktglobal);
-                    inc(len);
-                  end
-                else
-                  begin
-                    { register that the unit is needed for resolving }
-                    idx:=current_module.derefidx_unit(s.owner.moduleid);
-                    data[len]:=ord(deref_unit);
-                    data[len+1]:=idx shr 8;
-                    data[len+2]:=idx and $ff;
-                    inc(len,3);
-                  end;
-              end;
-            staticsymtable :
-              begin
-                { only references to the current static symtable are allowed }
-                if not s.owner.iscurrentunit then
-                  internalerror(200306233);
-                data[len]:=ord(deref_aktstatic);
-                inc(len);
-              end;
-            localsymtable :
-              begin
-                addowner(s.owner.defowner);
-                data[len]:=ord(deref_def);
-                data[len+1]:=s.owner.defowner.indexnr shr 8;
-                data[len+2]:=s.owner.defowner.indexnr and $ff;
-                data[len+3]:=ord(deref_local);
-                inc(len,4);
-              end;
-            parasymtable :
-              begin
-                addowner(s.owner.defowner);
-                data[len]:=ord(deref_def);
-                data[len+1]:=s.owner.defowner.indexnr shr 8;
-                data[len+2]:=s.owner.defowner.indexnr and $ff;
-                data[len+3]:=ord(deref_para);
-                inc(len,4);
-              end;
-            objectsymtable,
-            recordsymtable :
-              begin
-                addowner(s.owner.defowner);
-                data[len]:=ord(deref_def);
-                data[len+1]:=s.owner.defowner.indexnr shr 8;
-                data[len+2]:=s.owner.defowner.indexnr and $ff;
-                data[len+3]:=ord(deref_record);
-                inc(len,4);
-              end;
-            else
-              internalerror(200306065);
-          end;
-          if len>252 then
-            internalerror(200306062);
-        end;
-
-        procedure addparentobject(currdef,ownerdef:tdef);
-        var
-          nextdef : tdef;
-        begin
-          if not assigned(currdef) then
-            internalerror(200306185);
-          { Already handled by derefaktrecordindex }
-          if currdef=ownerdef then
-            internalerror(200306188);
-          { Generate a direct reference to the top parent
-            class available in the current unit, this is required because
-            the parent class is maybe not resolved yet and therefor
-            has the childof value not available yet }
-          while (currdef<>ownerdef) do
-            begin
-              nextdef:=currdef.getparentdef;
-              { objects are only allowed in globalsymtable,staticsymtable  }
-              if not(nextdef.owner.symtabletype in [globalsymtable,staticsymtable]) then
-                internalerror(200306187);
-              { Next parent is in a different unit, then stop }
-              if not(nextdef.owner.iscurrentunit) then
-                break;
-              currdef:=nextdef;
-            end;
-          { Add reference where to start the parent lookup }
-          if currdef=aktrecordsymtable.defowner then
-            begin
-              data[len]:=ord(deref_aktrecord);
-              inc(len);
-            end
-          else
-            begin
-              if currdef.owner.symtabletype=globalsymtable then
-                data[len]:=ord(deref_aktglobal)
-              else
-                data[len]:=ord(deref_aktstatic);
-              data[len+1]:=ord(deref_def);
-              data[len+2]:=currdef.indexnr shr 8;
-              data[len+3]:=currdef.indexnr and $ff;
-              data[len+4]:=ord(deref_record);
-              inc(len,5);
-            end;
-          { When the current found parent in this module is not the owner we
-            add derefs for the parent classes not available in this unit }
-          while (currdef<>ownerdef) do
-            begin
-              data[len]:=ord(deref_parent_object);
-              inc(len);
-              currdef:=currdef.getparentdef;
-              { It should be valid as it is checked by is_child }
-              if not assigned(currdef) then
-                internalerror(200306186);
-            end;
-        end;
-
+        idx : word;
       begin
         { skip length byte }
         len:=1;
+
         if assigned(s) then
          begin
-           { Static symtable of current unit ? }
-           if (s.owner.symtabletype=staticsymtable) and
-              s.owner.iscurrentunit then
-            begin
-              data[len]:=ord(deref_aktstatic);
-              inc(len);
-            end
-           { Global symtable of current unit ? }
-           else if (s.owner.symtabletype=globalsymtable) and
-                   s.owner.iscurrentunit then
-            begin
-              data[len]:=ord(deref_aktglobal);
-              inc(len);
-            end
-           { Current record/object symtable ? }
-           else if (s.owner=aktrecordsymtable) then
-            begin
-              data[len]:=ord(deref_aktrecord);
-              inc(len);
-            end
-           { Current local symtable ? }
-           else if (s.owner=aktlocalsymtable) then
-            begin
-              data[len]:=ord(deref_aktlocal);
-              inc(len);
-            end
-           { Current para symtable ? }
-           else if (s.owner=aktparasymtable) then
-            begin
-              data[len]:=ord(deref_aktpara);
-              inc(len);
-            end
-           { Parent class? }
-           else if assigned(aktrecordsymtable) and
-                   (aktrecordsymtable.symtabletype=objectsymtable) and
-                   (s.owner.symtabletype=objectsymtable) and
-                   is_child(tdef(aktrecordsymtable.defowner),tdef(s.owner.defowner)) then
-            begin
-              addparentobject(tdef(aktrecordsymtable.defowner),tdef(s.owner.defowner));
-            end
-           else
-           { Default, start by building from unit symtable }
-            begin
-              addowner(s);
-            end;
-           { Add index of the symbol/def }
+{ TODO: ugly hack}
            if s is tsym then
-             data[len]:=ord(deref_sym)
+             st:=FindUnitSymtable(tsym(s).owner)
            else
-             data[len]:=ord(deref_def);
-           data[len+1]:=s.indexnr shr 8;
-           data[len+2]:=s.indexnr and $ff;
-           inc(len,3);
+             st:=FindUnitSymtable(tdef(s).owner);
+           if not st.iscurrentunit then
+             begin
+               { register that the unit is needed for resolving }
+               data[len]:=ord(deref_unit);
+               idx:=current_module.derefidx_unit(st.moduleid);
+               data[len+1]:=idx shr 8 and $ff;
+               data[len+2]:=idx and $ff;
+               inc(len,3);
+             end;
+           if s is tsym then
+             begin
+               data[len]:=ord(deref_symid);
+               data[len+1]:=tsym(s).symid shr 24 and $ff;
+               data[len+2]:=tsym(s).symid shr 16 and $ff;
+               data[len+3]:=tsym(s).symid shr 8 and $ff;
+               data[len+4]:=tsym(s).symid and $ff;
+               inc(len,5);
+             end
+           else
+             begin
+               data[len]:=ord(deref_defid);
+               data[len+1]:=tdef(s).defid shr 24 and $ff;
+               data[len+2]:=tdef(s).defid shr 16 and $ff;
+               data[len+3]:=tdef(s).defid shr 8 and $ff;
+               data[len+4]:=tdef(s).defid and $ff;
+               inc(len,5);
+             end;
          end
         else
          begin
            { nil pointer }
-           data[len]:=0;
+           data[len]:=ord(deref_nil);
            inc(len);
          end;
+
         { store data length in first byte }
         data[0]:=len-1;
+
         { store index and write to derefdata }
         dataidx:=current_module.derefdata.size;
         current_module.derefdata.write(data,len);
       end;
 
 
-    function tderef.resolve:tsymtableentry;
+    function tderef.resolve:TObject;
       var
-        pd     : tdef;
         pm     : tmodule;
         typ    : tdereftype;
-        st     : tsymtable;
-        idx    : word;
+        idx    : longint;
         i      : aint;
         len    : byte;
         data   : array[0..255] of byte;
@@ -1040,13 +685,31 @@ implementation
               internalerror(200310222);
           end;
         { process data }
-        st:=nil;
+        pm:=current_module;
         i:=0;
         while (i<len) do
           begin
             typ:=tdereftype(data[i]);
             inc(i);
             case typ of
+              deref_unit :
+                begin
+                  idx:=(data[i] shl 8) or data[i+1];
+                  inc(i,2);
+                  pm:=current_module.resolve_unit(idx);
+                end;
+              deref_defid :
+                begin
+                  idx:=longint((data[i] shl 24) or (data[i+1] shl 16) or (data[i+2] shl 8) or data[i+3]);
+                  inc(i,4);
+                  result:=tdef(pm.deflist[idx]);
+                end;
+              deref_symid :
+                begin
+                  idx:=longint((data[i] shl 24) or (data[i+1] shl 16) or (data[i+2] shl 8) or data[i+3]);
+                  inc(i,4);
+                  result:=tsym(pm.symlist[idx]);
+                end;
               deref_nil :
                 begin
                   result:=nil;
@@ -1054,90 +717,12 @@ implementation
                   if len<>1 then
                     internalerror(200306232);
                 end;
-              deref_sym :
-                begin
-                  if not assigned(st) then
-                    internalerror(200309141);
-                  idx:=(data[i] shl 8) or data[i+1];
-                  inc(i,2);
-                  result:=st.getsymnr(idx);
-                end;
-              deref_def :
-                begin
-                  if not assigned(st) then
-                    internalerror(200309142);
-                  idx:=(data[i] shl 8) or data[i+1];
-                  inc(i,2);
-                  result:=st.getdefnr(idx);
-                end;
-              deref_aktrecord :
-                st:=aktrecordsymtable;
-              deref_aktstatic :
-                st:=current_module.localsymtable;
-              deref_aktglobal :
-                st:=current_module.globalsymtable;
-              deref_aktlocal :
-                st:=aktlocalsymtable;
-              deref_aktpara :
-                st:=aktparasymtable;
-              deref_unit :
-                begin
-                  idx:=(data[i] shl 8) or data[i+1];
-                  inc(i,2);
-                  pm:=current_module.resolve_unit(idx);
-                  st:=pm.globalsymtable;
-                end;
-              deref_local :
-                begin
-                  if not assigned(result) then
-                    internalerror(200306069);
-                  st:=tdef(result).getsymtable(gs_local);
-                  result:=nil;
-                  if not assigned(st) then
-                    internalerror(200212275);
-                end;
-              deref_para :
-                begin
-                  if not assigned(result) then
-                    internalerror(2003060610);
-                  st:=tdef(result).getsymtable(gs_para);
-                  result:=nil;
-                  if not assigned(st) then
-                    internalerror(200212276);
-                end;
-              deref_record :
-                begin
-                  if not assigned(result) then
-                    internalerror(200306068);
-                  st:=tdef(result).getsymtable(gs_record);
-                  result:=nil;
-                  if not assigned(st) then
-                    internalerror(200212274);
-                end;
-              deref_parent_object :
-                begin
-                  { load current object symtable if no
-                    symtable is available yet }
-                  if st=nil then
-                    begin
-                      st:=aktrecordsymtable;
-                      if not assigned(st) then
-                        internalerror(200306068);
-                    end;
-                  if st.symtabletype<>objectsymtable then
-                    internalerror(200306189);
-                  pd:=tdef(st.defowner).getparentdef;
-                  if not assigned(pd) then
-                    internalerror(200306184);
-                  st:=pd.getsymtable(gs_record);
-                  if not assigned(st) then
-                    internalerror(200212274);
-                end;
               else
                 internalerror(200212277);
             end;
           end;
       end;
+
 
 {*****************************************************************************
                             TCompilerPPUFile
@@ -1152,25 +737,29 @@ implementation
 
     procedure tcompilerppufile.getguid(var g: tguid);
       begin
-        getdata(g,sizeof(g));
+        longint(g.d1):=getlongint;
+        g.d2:=getword;
+        g.d3:=getword;
+        getdata(g.d4,sizeof(g.d4));
       end;
 
 
-    function tcompilerppufile.getexprint:tconstexprint;
-      begin
-        if sizeof(tconstexprint)=8 then
-          result:=tconstexprint(getint64)
-        else
-          result:=tconstexprint(getlongint);
-      end;
+    function tcompilerppufile.getexprint:Tconstexprint;
+
+    begin
+      getexprint.overflow:=false;
+      getexprint.signed:=boolean(getbyte);
+      getexprint.svalue:=getint64;
+    end;
 
 
     function tcompilerppufile.getPtrUInt:TConstPtrUInt;
       begin
-        if sizeof(TConstPtrUInt)=8 then
-          result:=tconstptruint(getint64)
-        else
+        {$if sizeof(TConstPtrUInt)=8}
+          result:=tconstptruint(getint64);
+        {$else}
           result:=TConstPtrUInt(getlongint);
+        {$endif}
       end;
 
 
@@ -1203,6 +792,7 @@ implementation
          2 : p.column:=(getbyte shl 16) or getword;
          3 : p.column:=getlongint;
         end;
+        p.moduleindex:=current_module.unit_index;
       end;
 
 
@@ -1212,15 +802,14 @@ implementation
       end;
 
 
-    function tcompilerppufile.getsymlist:tsymlist;
+    function tcompilerppufile.getpropaccesslist:tpropaccesslist;
       var
-        symderef : tderef;
-        tt  : ttype;
+        hderef : tderef;
         slt : tsltype;
         idx : longint;
-        p   : tsymlist;
+        p   : tpropaccesslist;
       begin
-        p:=tsymlist.create;
+        p:=tpropaccesslist.create;
         getderef(p.procdefderef);
         repeat
           slt:=tsltype(getbyte);
@@ -1231,38 +820,33 @@ implementation
             sl_load,
             sl_subscript :
               begin
-                getderef(symderef);
-                p.addsymderef(slt,symderef);
+                getderef(hderef);
+                p.addsymderef(slt,hderef);
               end;
+            sl_absolutetype,
             sl_typeconv :
               begin
-                gettype(tt);
-                p.addtype(slt,tt);
+                getderef(hderef);
+                p.addtypederef(slt,hderef);
               end;
             sl_vec :
               begin
                 idx:=getlongint;
-                p.addconst(slt,idx);
+                getderef(hderef);
+                p.addconstderef(slt,idx,hderef);
               end;
             else
               internalerror(200110204);
           end;
         until false;
-        getsymlist:=tsymlist(p);
-      end;
-
-
-    procedure tcompilerppufile.gettype(var t:ttype);
-      begin
-        getderef(t.deref);
-        t.def:=nil;
-        t.sym:=nil;
+        getpropaccesslist:=tpropaccesslist(p);
       end;
 
 
     function  tcompilerppufile.getasmsymbol:tasmsymbol;
       begin
-        getasmsymbol:=tasmsymbol(pointer(ptrint(getlongint)));
+        getlongint;
+        getasmsymbol:=nil;
       end;
 
 
@@ -1284,6 +868,8 @@ implementation
         { calculate info byte }
         if (p.fileindex>$ff) then
          begin
+           info:=info or $1;
+           { uncomment this code if tfileposinfo.fileindex type was changed
            if (p.fileindex<=$ffff) then
             info:=info or $1
            else
@@ -1291,6 +877,7 @@ implementation
              info:=info or $2
            else
             info:=info or $3;
+           }
           end;
         if (p.line>$ff) then
          begin
@@ -1304,6 +891,8 @@ implementation
           end;
         if (p.column>$ff) then
          begin
+           info:=info or $10;
+           { uncomment this code if tfileposinfo.column type was changed
            if (p.column<=$ffff) then
             info:=info or $10
            else
@@ -1311,6 +900,7 @@ implementation
              info:=info or $20
            else
             info:=info or $30;
+           }
           end;
         { write data }
         putbyte(info);
@@ -1347,29 +937,30 @@ implementation
 
     procedure tcompilerppufile.putguid(const g: tguid);
       begin
-        putdata(g,sizeof(g));
+        putlongint(longint(g.d1));
+        putword(g.d2);
+        putword(g.d3);
+        putdata(g.d4,sizeof(g.d4));
       end;
 
 
-    procedure tcompilerppufile.putexprint(v:tconstexprint);
-      begin
-        if sizeof(TConstExprInt)=8 then
-          putint64(int64(v))
-        else if sizeof(TConstExprInt)=4 then
-          putlongint(longint(v))
-        else
-          internalerror(2002082601);
-      end;
+    procedure Tcompilerppufile.putexprint(const v:Tconstexprint);
+
+    begin
+      if v.overflow then
+        internalerror(200706102);
+      putbyte(byte(v.signed));
+      putint64(v.svalue);
+    end;
 
 
     procedure tcompilerppufile.PutPtrUInt(v:TConstPtrUInt);
       begin
-        if sizeof(TConstPtrUInt)=8 then
-          putint64(int64(v))
-        else if sizeof(TConstPtrUInt)=4 then
-          putlongint(longint(v))
-        else
-          internalerror(2002082601);
+        {$if sizeof(TConstPtrUInt)=8}
+          putint64(int64(v));
+        {$else}
+          putlongint(longint(v));
+        {$endif}
       end;
 
 
@@ -1384,9 +975,9 @@ implementation
       end;
 
 
-    procedure tcompilerppufile.putsymlist(p:tsymlist);
+    procedure tcompilerppufile.putpropaccesslist(p:tpropaccesslist);
       var
-        hp : psymlistitem;
+        hp : ppropaccesslistitem;
       begin
         putderef(p.procdefderef);
         hp:=p.firstsym;
@@ -1398,10 +989,14 @@ implementation
              sl_load,
              sl_subscript :
                putderef(hp^.symderef);
+             sl_absolutetype,
              sl_typeconv :
-               puttype(hp^.tt);
+               putderef(hp^.defderef);
              sl_vec :
-               putlongint(hp^.value);
+               begin
+                 putlongint(int64(hp^.value));
+                 putderef(hp^.valuedefderef);
+               end;
              else
               internalerror(200110205);
            end;
@@ -1411,33 +1006,13 @@ implementation
       end;
 
 
-    procedure tcompilerppufile.puttype(const t:ttype);
-      begin
-        putderef(t.deref);
-      end;
-
-
     procedure tcompilerppufile.putasmsymbol(s:tasmsymbol);
       begin
-        if assigned(s) then
-         begin
-           if s.ppuidx=-1 then
-            begin
-              inc(objectlibrary.asmsymbolppuidx);
-              s.ppuidx:=objectlibrary.asmsymbolppuidx;
-            end;
-           putlongint(s.ppuidx);
-         end
-        else
-         putlongint(0);
+        putlongint(0);
       end;
 
 {$ifdef MEMDEBUG}
 initialization
-  membrowser:=TMemDebug.create('BrowserRefs');
-  membrowser.stop;
-  memrealnames:=TMemDebug.create('Realnames');
-  memrealnames.stop;
   memmanglednames:=TMemDebug.create('Manglednames');
   memmanglednames.stop;
   memprocpara:=TMemDebug.create('ProcPara');
@@ -1450,8 +1025,6 @@ initialization
   memprocnodetree.stop;
 
 finalization
-  membrowser.free;
-  memrealnames.free;
   memmanglednames.free;
   memprocpara.free;
   memprocparast.free;
@@ -1460,16 +1033,4 @@ finalization
 {$endif MEMDEBUG}
 
 end.
-{
-  $Log: symtype.pas,v $
-  Revision 1.52  2005/03/07 17:58:27  peter
-    * fix protected checking
 
-  Revision 1.51  2005/02/14 17:13:09  peter
-    * truncate log
-
-  Revision 1.50  2005/01/19 22:19:41  peter
-    * unit mapping rewrite
-    * new derefmap added
-
-}

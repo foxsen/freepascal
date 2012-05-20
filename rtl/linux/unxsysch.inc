@@ -1,5 +1,4 @@
 {
-    $Id: unxsysch.inc,v 1.9 2005/02/14 17:13:30 peter Exp $
     Copyright (c) 2002 by Marco van de Voort
 
     deeper calls exported by unit unix
@@ -16,12 +15,9 @@
 
 function fpgettimeofday(tp: ptimeval;tzp:ptimezone):cint; external name 'FPC_SYSC_GETTIMEOFDAY';
 
-{
-  $Log: unxsysch.inc,v $
-  Revision 1.9  2005/02/14 17:13:30  peter
-    * truncate log
+function  fpfStatFS (Fd: cint; Info:pstatfs):cint;
+function  fpStatFS  (Path:pchar; Info:pstatfs):cint;
+function  fpfsync (fd : cint) : cint;
+Function  fpFlock   (fd,mode : cint)   : cint ;
 
-  Revision 1.8  2005/02/13 20:01:38  peter
-    * include file cleanup
 
-}

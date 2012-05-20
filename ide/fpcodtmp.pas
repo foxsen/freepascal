@@ -1,5 +1,4 @@
 {
-    $Id: fpcodtmp.pas,v 1.7 2005/02/14 17:13:18 peter Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 1998 by Berczi Gabor
 
@@ -15,6 +14,12 @@
  **********************************************************************}
 
 unit FPCodTmp; { Code Templates }
+
+{2.0 compatibility}
+{$ifdef VER2_0}
+  {$macro on}
+  {$define resourcestring := const}
+{$endif}
 
 interface
 
@@ -94,7 +99,21 @@ implementation
 
 uses Views,App,Validate,
      FVConsts,
-     FPConst,FPString;
+     FPConst;
+
+resourcestring  label_codetemplate_shortcut = '~S~hortcut';
+                label_codetemplate_content = '~T~emplate content';
+                label_codetemplate_templates = '~T~emplates';
+                msg_codetemplate_alreadyinlist = 'A template named "%s" is already in the list';
+                dialog_modifytemplate = 'Modify template';
+                dialog_newtemplate = 'New template';
+
+                { standard button texts }
+                button_OK          = 'O~K~';
+                button_Cancel      = 'Cancel';
+                button_New         = '~N~ew';
+                button_Edit        = '~E~dit';
+                button_Delete      = '~D~elete';
 
 {$ifndef NOOBJREG}
 const
@@ -637,10 +656,3 @@ begin
 end;
 
 END.
-
-{
- $Log: fpcodtmp.pas,v $
- Revision 1.7  2005/02/14 17:13:18  peter
-   * truncate log
-
-}

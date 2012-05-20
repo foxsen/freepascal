@@ -1,5 +1,4 @@
 {
-    $Id: fpmwnd.inc,v 1.8 2005/02/14 17:13:18 peter Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 1998 by Berczi Gabor
 
@@ -16,7 +15,7 @@
 
 procedure TIDEApp.CloseAll;
 
-  procedure SendClose(P: PView); {$ifndef FPC}far;{$endif}
+  procedure SendClose(P: PView);
   begin
     Message(P,evCommand,cmClose,nil);
   end;
@@ -112,7 +111,7 @@ begin
   HelpCtx:=hcWindowList;
   New(C, Init(20,10));
 
-  GetExtent(R); R.Grow(-2,-2); Inc(R.A.Y); R.B.X:=R.B.X-13;
+  GetExtent(R); R.Grow(-2,-2); Inc(R.A.Y); R.B.X:=R.B.X-14;
   R2.Copy(R); R2.Move(1,0); R2.A.X:=R2.B.X-1;
   New(SB, Init(R2)); Insert(SB);
   New(LB, Init(R, SB));
@@ -145,7 +144,7 @@ end;
 
 procedure TWindowListDialog.UpdateList;
 var VisState: boolean;
-procedure AddIt(P: PView); {$ifndef FPC}far;{$endif}
+procedure AddIt(P: PView);
 begin
   if (P<>pointer(Desktop^.Background)) and
      (P^.GetState(sfDisabled)=false) and
@@ -183,6 +182,7 @@ end;
 
 procedure TWindowListDialog.HandleEvent(var Event: TEvent);
 var W: PWindow;
+    KeePOwner : PGroup;
 begin
   case Event.What of
     evKeyDown :
@@ -204,7 +204,22 @@ begin
         cmDeleteItem :
           if C^.Count>0 then
           begin
-            Message(C^.At(LB^.Focused),evCommand,cmClose,nil);
+            W:=PWindow(C^.At(LB^.Focused));
+            { we need to remove the window from the list
+              because otherwise
+              IDEApp.SourceWindowClosed
+              is called after the object has been freed
+              but the ListBox.Redraw will still try to
+              read the title PM }
+            KeepOwner:=W^.Owner;
+            if assigned(KeepOwner) then
+              KeepOwner^.Delete(W);
+            UpdateList;
+            { But reinsert it as Close might only
+              trigger Hide in some cases }
+            if assigned(KeepOwner) then
+              KeepOwner^.Insert(W);
+            Message(W,evCommand,cmClose,nil);
             UpdateList;
             ClearEvent(Event);
           end;
@@ -257,12 +272,3 @@ begin
     end;
 end;
 
-{
-  $Log: fpmwnd.inc,v $
-  Revision 1.8  2005/02/14 17:13:18  peter
-    * truncate log
-
-  Revision 1.7  2005/01/08 11:43:18  florian
-    + vector unit window
-
-}

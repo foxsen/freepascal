@@ -1,7 +1,7 @@
 {
-    $Id: classesh.inc,v 1.55 2005/05/07 17:03:34 florian Exp $
     This file is part of the Free Pascal Run Time Library (rtl)
-    Copyright (c) 1999-2000 by Michael Van Canneyt and Florian Klaempfl
+    Copyright (c) 1999-2008 by Michael Van Canneyt, Florian Klaempfl,
+    and Micha Nelissen
 
     See the file COPYING.FPC, included in this distribution,
     for details about the copyright.
@@ -14,47 +14,29 @@
 
 {$H+}
 
-{ The 1.0 compiler cannot compile the Seek(int64) overloading correct }
-{$ifndef ver1_0}
-  {$define seek64bit}
-{$endif ver1_0}
+
+{$IFDEF VER2_0}
+// Sanity check
+{$UNDEF FPC_TESTGENERICS}
+{$ENDIF}
+
+{$ifdef CLASSESINLINE}{$inline on}{$endif}
+
 
 type
    { extra types to compile with FPC }
-   HRSRC = longint;
+   HRSRC =  TFPResourceHandle {$ifndef ver2_2} deprecated {$endif};
    TComponentName = string;
-{$ifdef ver1_0}
-   // 1.0 doesn't have threads
-   TRTLCriticalSection = record
-     locked : longint;
-   end;
-   // 1.1 and above has interfaces
-   IUnknown = class(TObject);
-   TGUID = longint;
-   THandle = longint;
-{$else}
    THandle = System.THandle;
-{$endif ver1_0}
 
-{$ifdef ver1_0}
-   TPoint = record
-      x,y : integer;
-   end;
-   TRect = record
-      Case Integer of
-       0 : ( Left,Top,Right,Bottom : integer);
-       1 : ( TopLeft,BottomRight : TPoint);
-   end;
-{$else}
    TPoint=Types.TPoint;
    TRect=Types.TRect;
-{$endif}
 
-{$if defined(ver1_0) or not(defined(win32))}
+{$ifndef windows}
    TSmallPoint = record
       x,y : smallint;
    end;
-   HMODULE = longint;
+   HMODULE = ptrint; // hmodule is handle on windows. Pointer eq.
 {$else}
    TSmallPoint = Windows.TSmallPoint;
    HModule = System.HModule;
@@ -81,10 +63,17 @@ const
 
 type
   TSeekOrigin = (soBeginning, soCurrent, soEnd);
+  TDuplicates = Types.TDuplicates;
+
+// For Delphi and backwards compatibility.
+const
+  dupIgnore = Types.dupIgnore;
+  dupAccept = Types.dupAccept;
+  dupError  = Types.dupError;
 
 { TFileStream create mode }
 const
-  fmCreate        = $FFFF;
+  fmCreate        = $FF00;
   fmOpenRead      = 0;
   fmOpenWrite     = 1;
   fmOpenReadWrite = 2;
@@ -96,27 +85,30 @@ const
   toString  = Char(2);
   toInteger = Char(3);
   toFloat   = Char(4);
+  toWString = Char(5);
 
 Const
   FilerSignature : Array[1..4] of char = 'TPF0';
 
 type
-
 { Text alignment types }
-
   TAlignment = (taLeftJustify, taRightJustify, taCenter);
 
-  { TLeftRight = taLeftJustify..taRightJustify; }
+  TLeftRight = taLeftJustify..taRightJustify;
+
+  TBiDiMode = (bdLeftToRight,bdRightToLeft,bdRightToLeftNoAlign,bdRightToLeftReadingOnly);
+
 
 { Types used by standard events }
-
   TShiftStateEnum = (ssShift, ssAlt, ssCtrl,
     ssLeft, ssRight, ssMiddle, ssDouble,
     // Extra additions
     ssMeta, ssSuper, ssHyper, ssAltGr, ssCaps, ssNum,
-    ssScroll,ssTriple,ssQuad);
+    ssScroll,ssTriple,ssQuad,ssExtra1,ssExtra2);
 
+{$packset 1}
   TShiftState = set of TShiftStateEnum;
+{$packset default}
 
   THelpContext = -MaxLongint..MaxLongint;
   THelpType = (htKeyword, htContext);
@@ -124,7 +116,6 @@ type
   TShortCut = Low(Word)..High(Word);
 
 { Standard events }
-
 
   TNotifyEvent = procedure(Sender: TObject) of object;
   THelpEvent = function (Command: Word; Data: Longint;
@@ -143,13 +134,18 @@ type
   EMethodNotFound = class(EFilerError);
   EInvalidImage = class(EFilerError);
   EResNotFound = class(Exception);
+{$ifdef FPC_TESTGENERICS}
+  EListError = fgl.EListError;
+{$else}
   EListError = class(Exception);
+{$endif}
   EBitsError = class(Exception);
   EStringListError = class(Exception);
   EComponentError = class(Exception);
   EParserError = class(Exception);
   EOutOfResources = class(EOutOfMemory);
   EInvalidOperation = class(Exception);
+  TExceptionClass = Class of Exception;
 
 { Forward class declarations }
 
@@ -164,50 +160,124 @@ type
   PPointerList = ^TPointerList;
   TPointerList = array[0..MaxListSize - 1] of Pointer;
   TListSortCompare = function (Item1, Item2: Pointer): Integer;
-  TListNotification = (lnAdded, lnExtracted, lnDeleted);
+  TListCallback = Types.TListCallback;
+  TListStaticCallback = Types.TListStaticCallback;
 
-{$inline on}
+
+{$IFNDEF FPC_TESTGENERICS}
+
+  TListAssignOp = (laCopy, laAnd, laOr, laXor, laSrcUnique, laDestUnique);
+  TFPList = class;
+
+  TFPListEnumerator = class
+  private
+    FList: TFPList;
+    FPosition: Integer;
+  public
+    constructor Create(AList: TFPList);
+    function GetCurrent: Pointer;
+    function MoveNext: Boolean;
+    property Current: Pointer read GetCurrent;
+  end;
+
+{$ifdef VER2_4}
+type
+  TDirection = (FromBeginning, FromEnd);
+{$endif}
 
   TFPList = class(TObject)
   private
     FList: PPointerList;
     FCount: Integer;
     FCapacity: Integer;
+    procedure CopyMove (aList : TFPList);
+    procedure MergeMove (aList : TFPList);
+    procedure DoCopy(ListA, ListB : TFPList);
+    procedure DoSrcUnique(ListA, ListB : TFPList);
+    procedure DoAnd(ListA, ListB : TFPList);
+    procedure DoDestUnique(ListA, ListB : TFPList);
+    procedure DoOr(ListA, ListB : TFPList);
+    procedure DoXOr(ListA, ListB : TFPList);
   protected
-    function Get(Index: Integer): Pointer; {$ifdef HASINLINE} inline;{$endif}
-    procedure Put(Index: Integer; Item: Pointer); {$ifdef HASINLINE} inline;{$endif}
+    function Get(Index: Integer): Pointer; {$ifdef CLASSESINLINE} inline; {$endif CLASSESINLINE}
+    procedure Put(Index: Integer; Item: Pointer); {$ifdef CLASSESINLINE} inline; {$endif CLASSESINLINE}
     procedure SetCapacity(NewCapacity: Integer);
     procedure SetCount(NewCount: Integer);
-    Procedure RaiseIndexError(Index : Integer);
+    Procedure RaiseIndexError(Index: Integer);
   public
+{$IFNDEF VER2_4}
+    Type
+      TDirection = (FromBeginning, FromEnd);
+{$ENDIF}
     destructor Destroy; override;
-    function Add(Item: Pointer): Integer; {$ifdef HASINLINE} inline;{$endif}
+    Procedure AddList(AList : TFPList);
+    function Add(Item: Pointer): Integer; {$ifdef CLASSESINLINE} inline; {$endif CLASSESINLINE}
     procedure Clear;
-    procedure Delete(Index: Integer); {$ifdef HASINLINE} inline;{$endif}
-    class procedure Error(const Msg: string; Data: Integer);
+    procedure Delete(Index: Integer); {$ifdef CLASSESINLINE} inline; {$endif CLASSESINLINE}
+    class procedure Error(const Msg: string; Data: PtrInt);
     procedure Exchange(Index1, Index2: Integer);
-    function Expand: TFPList; {$ifdef HASINLINE} inline;{$endif}
-    function Extract(item: Pointer): Pointer;
+    function Expand: TFPList; {$ifdef CLASSESINLINE} inline; {$endif CLASSESINLINE}
+    function Extract(Item: Pointer): Pointer;
     function First: Pointer;
+    function GetEnumerator: TFPListEnumerator;
     function IndexOf(Item: Pointer): Integer;
-    procedure Insert(Index: Integer; Item: Pointer); {$ifdef HASINLINE} inline;{$endif}
+    function IndexOfItem(Item: Pointer; Direction: TDirection): Integer;
+    procedure Insert(Index: Integer; Item: Pointer); {$ifdef CLASSESINLINE} inline; {$endif CLASSESINLINE}
     function Last: Pointer;
     procedure Move(CurIndex, NewIndex: Integer);
-    procedure Assign(Obj:TFPList);
+    procedure Assign (ListA: TFPList; AOperator: TListAssignOp=laCopy; ListB: TFPList=nil);
     function Remove(Item: Pointer): Integer;
     procedure Pack;
     procedure Sort(Compare: TListSortCompare);
+    procedure ForEachCall(proc2call:TListCallback;arg:pointer);
+    procedure ForEachCall(proc2call:TListStaticCallback;arg:pointer);
     property Capacity: Integer read FCapacity write SetCapacity;
     property Count: Integer read FCount write SetCount;
     property Items[Index: Integer]: Pointer read Get write Put; default;
     property List: PPointerList read FList;
   end;
 
+{$else}
+
+  TFPPtrList = specialize TFPGList<Pointer>;
+
+  TFPList = class(TFPPtrList)
+  public
+    procedure Assign(Source: TFPList);
+    procedure Sort(Compare: TListSortCompare);
+    procedure ForEachCall(Proc2call: TListCallback; Arg: Pointer);
+    procedure ForEachCall(Proc2call: TListStaticCallback; Arg: Pointer);
+  end;
+
+{$endif}
+
 { TList class}
+
+  TListNotification = (lnAdded, lnExtracted, lnDeleted);
+  TList = class;
+
+  TListEnumerator = class
+  private
+    FList: TList;
+    FPosition: Integer;
+  public
+    constructor Create(AList: TList);
+    function GetCurrent: Pointer;
+    function MoveNext: Boolean;
+    property Current: Pointer read GetCurrent;
+  end;
 
   TList = class(TObject)
   private
     FList: TFPList;
+    procedure CopyMove (aList : TList);
+    procedure MergeMove (aList : TList);
+    procedure DoCopy(ListA, ListB : TList);
+    procedure DoSrcUnique(ListA, ListB : TList);
+    procedure DoAnd(ListA, ListB : TList);
+    procedure DoDestUnique(ListA, ListB : TList);
+    procedure DoOr(ListA, ListB : TList);
+    procedure DoXOr(ListA, ListB : TList);
   protected
     function Get(Index: Integer): Pointer;
     procedure Grow; virtual;
@@ -221,19 +291,21 @@ type
   public
     constructor Create;
     destructor Destroy; override;
+    Procedure AddList(AList : TList);
     function Add(Item: Pointer): Integer;
     procedure Clear; virtual;
     procedure Delete(Index: Integer);
-    class procedure Error(const Msg: string; Data: Integer); virtual;
+    class procedure Error(const Msg: string; Data: PtrInt); virtual;
     procedure Exchange(Index1, Index2: Integer);
     function Expand: TList;
     function Extract(item: Pointer): Pointer;
     function First: Pointer;
+    function GetEnumerator: TListEnumerator;
     function IndexOf(Item: Pointer): Integer;
     procedure Insert(Index: Integer; Item: Pointer);
     function Last: Pointer;
     procedure Move(CurIndex, NewIndex: Integer);
-    procedure Assign(Obj:TList);
+    procedure Assign (ListA: TList; AOperator: TListAssignOp=laCopy; ListB: TList=nil);
     function Remove(Item: Pointer): Integer;
     procedure Pack;
     procedure Sort(Compare: TListSortCompare);
@@ -248,9 +320,8 @@ type
   TThreadList = class
   private
     FList: TList;
-{$ifdef FPC_THREADING}
+    FDuplicates: TDuplicates;
     FLock: TRTLCriticalSection;
-{$endif FPC_THREADING}
   public
     constructor Create;
     destructor Destroy; override;
@@ -259,14 +330,17 @@ type
     function  LockList: TList;
     procedure Remove(Item: Pointer);
     procedure UnlockList;
+    property Duplicates: TDuplicates read FDuplicates write FDuplicates;
   end;
+
+{TBits Class}
 
 const
    BITSHIFT = 5;
    MASK = 31; {for longs that are 32-bit in size}
-   MaxBitRec = $FFFF Div (SizeOf(longint));
-   MaxBitFlags = MaxBitRec * 32;
-
+   // to further increase, signed integer limits have to be researched.
+   MaxBitFlags = $7FFFFFE0;
+   MaxBitRec = MaxBitFlags Div (SizeOf(cardinal)*8);
 type
    TBitArray = array[0..MaxBitRec - 1] of cardinal;
 
@@ -275,18 +349,17 @@ type
       { Private declarations }
       FBits : ^TBitArray;
       FSize : longint;  { total longints currently allocated }
+      FBSize: longint;  {total bits currently allocated}
       findIndex : longint;
       findState : boolean;
 
       { functions and properties to match TBits class }
       procedure SetBit(bit : longint; value : Boolean);
-      function GetSize : longint;
       procedure SetSize(value : longint);
       procedure CheckBitIndex (Bit : longint;CurrentSize : Boolean);
-
    public
       { Public declarations }
-      constructor Create(TheSize : longint {$ifndef VER1_0} = 0 {$endif}); virtual;
+      constructor Create(TheSize : longint = 0); virtual;
       destructor Destroy; override;
       function  GetFSize : longint;
       procedure SetOn(Bit : longint);
@@ -298,7 +371,8 @@ type
       procedure NotBits(BitSet : TBits);
       function  Get(Bit : longint) : boolean;
       procedure Grow(NBit : longint);
-      function  Equals(BitSet : TBits) : Boolean;
+      function  Equals(Obj : TObject): Boolean; override; overload;
+      function  Equals(BitSet : TBits) : Boolean; overload;
       procedure SetIndex(Index : longint);
       function  FindFirstBit(State : boolean) : longint;
       function  FindNextBit : longint;
@@ -307,7 +381,7 @@ type
       { functions and properties to match TBits class }
       function OpenBit: longint;
       property Bits[Bit: longint]: Boolean read get write SetBit; default;
-      property Size: longint read getSize write setSize;
+      property Size: longint read FBSize write setSize;
    end;
 
 { TPersistent abstract class }
@@ -322,7 +396,6 @@ type
     procedure DefineProperties(Filer: TFiler); virtual;
     function  GetOwner: TPersistent; dynamic;
   public
-    destructor Destroy; override;
     procedure Assign(Source: TPersistent); virtual;
     function  GetNamePath: string; virtual; {dynamic;}
   end;
@@ -335,19 +408,17 @@ type
 
 { TInterfaced Persistent }
 
-{$ifdef HASINTF}
   TInterfacedPersistent = class(TPersistent, IInterface)
   private
     FOwnerInterface: IInterface;
   protected
     { IInterface }
-    function _AddRef: Integer; stdcall;
-    function _Release: Integer; stdcall;
+    function _AddRef: Integer; {$IFNDEF WINDOWS}cdecl{$ELSE}stdcall{$ENDIF};
+    function _Release: Integer; {$IFNDEF WINDOWS}cdecl{$ELSE}stdcall{$ENDIF};
   public
-    function QueryInterface(const IID: TGUID; out Obj): HResult; virtual; stdcall;
+    function QueryInterface({$IFDEF FPC_HAS_CONSTREF}constref{$ELSE}const{$ENDIF} IID: TGUID; out Obj): HResult; virtual; {$IFNDEF WINDOWS}cdecl{$ELSE}stdcall{$ENDIF};
     procedure AfterConstruction; override;
   end;
-{$endif HASINTF}
 
 { TRecall class }
 
@@ -375,7 +446,6 @@ type
   protected
     procedure SetCollection(Value: TCollection);virtual;
     procedure Changed(AllItems: Boolean);
-    function GetNamePath: string; override;
     function GetOwner: TPersistent; override;
     function GetDisplayName: string; virtual;
     procedure SetIndex(Value: Integer); virtual;
@@ -384,19 +454,32 @@ type
   public
     constructor Create(ACollection: TCollection); virtual;
     destructor Destroy; override;
+    function GetNamePath: string; override;
     property Collection: TCollection read FCollection write SetCollection;
     property ID: Integer read FID;
     property Index: Integer read GetIndex write SetIndex;
     property DisplayName: string read GetDisplayName write SetDisplayName;
   end;
 
+  TCollectionEnumerator = class
+  private
+    FCollection: TCollection;
+    FPosition: Integer;
+  public
+    constructor Create(ACollection: TCollection);
+    function GetCurrent: TCollectionItem;
+    function MoveNext: Boolean;
+    property Current: TCollectionItem read GetCurrent;
+  end;
+
   TCollectionItemClass = class of TCollectionItem;
   TCollectionNotification = (cnAdded, cnExtracting, cnDeleting);
+  TCollectionSortCompare = function (Item1, Item2: TCollectionItem): Integer;
 
   TCollection = class(TPersistent)
   private
     FItemClass: TCollectionItemClass;
-    FItems: TList;
+    FItems: TFpList;
     FUpdateCount: Integer;
     FNextID: Integer;
     FPropName: string;
@@ -404,12 +487,12 @@ type
     function GetPropName: string;
     procedure InsertItem(Item: TCollectionItem);
     procedure RemoveItem(Item: TCollectionItem);
+    procedure DoClear;
   protected
     { Design-time editor support }
     function GetAttrCount: Integer; dynamic;
     function GetAttr(Index: Integer): string; dynamic;
     function GetItemAttr(Index, ItemIndex: Integer): string; dynamic;
-    function GetNamePath: string; override;
     procedure Changed;
     function GetItem(Index: Integer): TCollectionItem;
     procedure SetItem(Index: Integer; Value: TCollectionItem);
@@ -425,12 +508,16 @@ type
     function Owner: TPersistent;
     function Add: TCollectionItem;
     procedure Assign(Source: TPersistent); override;
-    procedure BeginUpdate;
+    procedure BeginUpdate; virtual;
     procedure Clear;
-    procedure EndUpdate;
+    procedure EndUpdate; virtual;
     procedure Delete(Index: Integer);
+    function GetEnumerator: TCollectionEnumerator;
+    function GetNamePath: string; override;
     function Insert(Index: Integer): TCollectionItem;
     function FindItemID(ID: Integer): TCollectionItem;
+    procedure Exchange(Const Index1, index2: integer);
+    procedure Sort(Const Compare : TCollectionSortCompare);
     property Count: Integer read GetCount;
     property ItemClass: TCollectionItemClass read FItemClass;
     property Items[Index: Integer]: TCollectionItem read GetItem write SetItem;
@@ -450,15 +537,24 @@ type
 
 { IStringsAdapter interface }
 
-{$ifdef HASINTF}
   { Maintains link between TStrings and IStrings implementations }
   IStringsAdapter = interface ['{739C2F34-52EC-11D0-9EA6-0020AF3D82DA}']
     procedure ReferenceStrings(S: TStrings);
     procedure ReleaseStrings;
   end;
-{$else HASINTF}
-  IStringsAdapter = class(TObject);
-{$endif HASINTF}
+
+{ TStringsEnumerator class }
+
+  TStringsEnumerator = class
+  private
+    FStrings: TStrings;
+    FPosition: Integer;
+  public
+    constructor Create(AStrings: TStrings);
+    function GetCurrent: String;
+    function MoveNext: Boolean;
+    property Current: String read GetCurrent;
+  end;
 
 { TStrings class }
 
@@ -470,16 +566,20 @@ type
     FNameValueSeparator : Char;
     FUpdateCount: Integer;
     FAdapter: IStringsAdapter;
+    FLBS : TTextLineBreakStyle;
+    FStrictDelimiter : Boolean;
     function GetCommaText: string;
     function GetName(Index: Integer): string;
     function GetValue(const Name: string): string;
+    Function GetLBS : TTextLineBreakStyle;
+    Procedure SetLBS (AValue : TTextLineBreakStyle);
     procedure ReadData(Reader: TReader);
     procedure SetCommaText(const Value: string);
     procedure SetStringsAdapter(const Value: IStringsAdapter);
     procedure SetValue(const Name, Value: string);
-		procedure SetDelimiter(c:Char);
-		procedure SetQuoteChar(c:Char);
-		procedure SetNameValueSeparator(c:Char);
+    procedure SetDelimiter(c:Char);
+    procedure SetQuoteChar(c:Char);
+    procedure SetNameValueSeparator(c:Char);
     procedure WriteData(Writer: TWriter);
   protected
     procedure DefineProperties(Filer: TFiler); override;
@@ -507,14 +607,17 @@ type
     function Add(const S: string): Integer; virtual;
     function AddObject(const S: string; AObject: TObject): Integer; virtual;
     procedure Append(const S: string);
-    procedure AddStrings(TheStrings: TStrings); virtual;
+    procedure AddStrings(TheStrings: TStrings); overload; virtual;
+    procedure AddStrings(const TheStrings: array of string); overload; virtual;
     procedure Assign(Source: TPersistent); override;
     procedure BeginUpdate;
     procedure Clear; virtual; abstract;
     procedure Delete(Index: Integer); virtual; abstract;
     procedure EndUpdate;
-    function Equals(TheStrings: TStrings): Boolean;
+    function Equals(Obj: TObject): Boolean; override; overload;
+    function Equals(TheStrings: TStrings): Boolean; overload;
     procedure Exchange(Index1, Index2: Integer); virtual;
+    function GetEnumerator: TStringsEnumerator;
     function GetText: PChar; virtual;
     function IndexOf(const S: string): Integer; virtual;
     function IndexOfName(const Name: string): Integer; virtual;
@@ -528,9 +631,12 @@ type
     procedure SaveToFile(const FileName: string); virtual;
     procedure SaveToStream(Stream: TStream); virtual;
     procedure SetText(TheText: PChar); virtual;
-    procedure GetNameValue(Index : Integer; Var AName,AValue : String);
+    procedure GetNameValue(Index : Integer; Out AName,AValue : String);
+    function  ExtractName(Const S:String):String;
+    Property TextLineBreakStyle : TTextLineBreakStyle Read GetLBS Write SetLBS;
     property Delimiter: Char read FDelimiter write SetDelimiter;
     property DelimitedText: string read GetDelimitedText write SetDelimitedText;
+    Property StrictDelimiter : Boolean Read FStrictDelimiter Write FStrictDelimiter;
     property QuoteChar: Char read FQuoteChar write SetQuoteChar;
     Property NameValueSeparator : Char Read FNameValueSeparator Write SetNameValueSeparator;
     property ValueFromIndex[Index: Integer]: string read GetValueFromIndex write SetValueFromIndex;
@@ -547,8 +653,11 @@ type
 
 { TStringList class }
 
-  TDuplicates = (dupIgnore, dupAccept, dupError);
   TStringList = class;
+
+  TStringListSortCompare = function(List: TStringList; Index1, Index2: Integer): Integer;
+
+{$IFNDEF FPC_TESTGENERICS}
 
   PStringItem = ^TStringItem;
   TStringItem = record
@@ -558,7 +667,6 @@ type
 
   PStringItemList = ^TStringItemList;
   TStringItemList = array[0..MaxListSize] of TStringItem;
-  TStringListSortCompare = function(List: TStringList; Index1, Index2: Integer): Integer;
 
   TStringList = class(TStrings)
   private
@@ -570,8 +678,10 @@ type
     FDuplicates: TDuplicates;
     FCaseSensitive : Boolean;
     FSorted: Boolean;
+    FOwnsObjects : Boolean;
     procedure ExchangeItems(Index1, Index2: Integer);
     procedure Grow;
+    procedure InternalClear;
     procedure QuickSort(L, R: Integer; CompareFn: TStringListSortCompare);
     procedure SetSorted(Value: Boolean);
     procedure SetCaseSensitive(b : boolean);
@@ -596,44 +706,99 @@ type
     procedure Clear; override;
     procedure Delete(Index: Integer); override;
     procedure Exchange(Index1, Index2: Integer); override;
+    function Find(const S: string; Out Index: Integer): Boolean; virtual;
+    function IndexOf(const S: string): Integer; override;
+    procedure Insert(Index: Integer; const S: string); override;
+    procedure Sort; virtual;
+    procedure CustomSort(CompareFn: TStringListSortCompare); virtual;
+    property Duplicates: TDuplicates read FDuplicates write FDuplicates;
+    property Sorted: Boolean read FSorted write SetSorted;
+    property CaseSensitive: Boolean read FCaseSensitive write SetCaseSensitive;
+    property OnChange: TNotifyEvent read FOnChange write FOnChange;
+    property OnChanging: TNotifyEvent read FOnChanging write FOnChanging;
+    property OwnsObjects : boolean read FOwnsObjects write FOwnsObjects;
+  end;
+
+{$else}
+
+  TFPStrObjMap = specialize TFPGMap<string, TObject>;
+
+  TStringListTextCompare = function(const s1, s2: string): PtrInt of object;
+
+  TStringList = class(TStrings)
+  private
+    FMap: TFPStrObjMap;
+    FCaseSensitive: Boolean;
+    FOnChange: TNotifyEvent;
+    FOnChanging: TNotifyEvent;
+    FOnCompareText: TStringListTextCompare;
+    FOwnsObjects : Boolean;
+    procedure SetCaseSensitive(NewSensitive: Boolean);
+  protected
+    procedure Changed; virtual;
+    procedure Changing; virtual;
+    function DefaultCompareText(const s1, s2: string): PtrInt;
+    function DoCompareText(const s1, s2: string): PtrInt; override;
+    function Get(Index: Integer): string; override;
+    function GetCapacity: Integer; override;
+    function GetDuplicates: TDuplicates;
+    function GetCount: Integer; override;
+    function GetObject(Index: Integer): TObject; override;
+    function GetSorted: Boolean; {$ifdef CLASSESINLINE} inline; {$endif}
+    function MapPtrCompare(Key1, Key2: Pointer): Integer;
+    procedure Put(Index: Integer; const S: string); override;
+    procedure PutObject(Index: Integer; AObject: TObject); override;
+    procedure QuickSort(L, R: Integer; CompareFn: TStringListSortCompare);
+    procedure SetCapacity(NewCapacity: Integer); override;
+    procedure SetDuplicates(NewDuplicates: TDuplicates);
+    procedure SetSorted(NewSorted: Boolean); {$ifdef CLASSESINLINE} inline; {$endif}
+    procedure SetUpdateState(Updating: Boolean); override;
+  public
+    constructor Create;
+    destructor Destroy; override;
+    function Add(const S: string): Integer; override;
+    procedure Clear; override;
+    procedure Delete(Index: Integer); override;
+    procedure Exchange(Index1, Index2: Integer); override;
     function Find(const S: string; var Index: Integer): Boolean; virtual;
     function IndexOf(const S: string): Integer; override;
     procedure Insert(Index: Integer; const S: string); override;
     procedure Sort; virtual;
     procedure CustomSort(CompareFn: TStringListSortCompare);
-    property Duplicates: TDuplicates read FDuplicates write FDuplicates;
-    property Sorted: Boolean read FSorted write SetSorted;
-    property CaseSensitive: Boolean read FCaseSensitive write SetSorted;
+    property Duplicates: TDuplicates read GetDuplicates write SetDuplicates;
+    property Sorted: Boolean read GetSorted write SetSorted;
+    property CaseSensitive: Boolean read FCaseSensitive write SetCaseSensitive;
     property OnChange: TNotifyEvent read FOnChange write FOnChange;
     property OnChanging: TNotifyEvent read FOnChanging write FOnChanging;
+    property OnCompareText: TStringListTextCompare read FOnCompareText write FOnCompareText;
+    property OwnsObjects : boolean read FOwnsObjects write FOwnsObjects;
   end;
+
+{$endif}
+
 
 { TStream abstract class }
 
   TStream = class(TObject)
+  private
   protected
-{$ifdef seek64bit}
+    procedure InvalidSeek; virtual;
+    procedure Discard(const Count: Int64);
+    procedure DiscardLarge(Count: int64; const MaxBufferSize: Longint);
+    procedure FakeSeekForward(Offset: Int64; const Origin: TSeekOrigin; const Pos: Int64);
     function  GetPosition: Int64; virtual;
     procedure SetPosition(const Pos: Int64); virtual;
     function  GetSize: Int64; virtual;
     procedure SetSize64(const NewSize: Int64); virtual;
     procedure SetSize(NewSize: Longint); virtual;overload;
     procedure SetSize(const NewSize: Int64); virtual;overload;
-{$else seek64bit}
-    function  GetPosition: Longint;
-    procedure SetPosition(Pos: Longint);
-    function  GetSize: Longint;
-    procedure SetSize(NewSize: Longint); virtual;
-{$endif seek64bit}
+    procedure ReadNotImplemented;
+    procedure WriteNotImplemented;
   public
-    function Read(var Buffer; Count: Longint): Longint; virtual; abstract;
-    function Write(const Buffer; Count: Longint): Longint; virtual; abstract;
-{$ifdef seek64bit}
+    function Read(var Buffer; Count: Longint): Longint; virtual;
+    function Write(const Buffer; Count: Longint): Longint; virtual;
     function Seek(Offset: Longint; Origin: Word): Longint; virtual; overload;
     function Seek(const Offset: Int64; Origin: TSeekOrigin): Int64; virtual; overload;
-{$else seek64bit}
-    function Seek(Offset: Longint; Origin: Word): Longint; virtual; abstract;
-{$endif seek64bit}
     procedure ReadBuffer(var Buffer; Count: Longint);
     procedure WriteBuffer(const Buffer; Count: Longint);
     function CopyFrom(Source: TStream; Count: Int64): Int64;
@@ -649,18 +814,28 @@ type
     function ReadByte : Byte;
     function ReadWord : Word;
     function ReadDWord : Cardinal;
+    function ReadQWord : QWord;
     function ReadAnsiString : String;
     procedure WriteByte(b : Byte);
     procedure WriteWord(w : Word);
     procedure WriteDWord(d : Cardinal);
-    Procedure WriteAnsiString (S : String);
-{$ifdef seek64bit}
+    procedure WriteQWord(q : QWord);
+    Procedure WriteAnsiString (const S : String);
     property Position: Int64 read GetPosition write SetPosition;
     property Size: Int64 read GetSize write SetSize64;
-{$else seek64bit}
-    property Position: Longint read GetPosition write SetPosition;
-    property Size: Longint read GetSize write SetSize;
-{$endif seek64bit}
+  end;
+
+  TProxyStream = class(TStream)
+  private
+    FStream: IStream;
+  protected
+    function GetIStream: IStream;
+  public
+    constructor Create(const Stream: IStream);
+    function Read(var Buffer; Count: Longint): Longint; override;
+    function Write(const Buffer; Count: Longint): Longint; override;
+    function Seek(const Offset: int64; Origin: TSeekOrigin): int64; override;
+    procedure Check(err:longint); virtual;
   end;
 
   { TOwnerStream }
@@ -676,35 +851,25 @@ type
   end;
 
 
-{$ifdef HASINTF}
   IStreamPersist = interface ['{B8CD12A3-267A-11D4-83DA-00C04F60B2DD}']
     procedure LoadFromStream(Stream: TStream);
     procedure SaveToStream(Stream: TStream);
   end;
-{$endif HASINTF}
 
 { THandleStream class }
 
   THandleStream = class(TStream)
   private
-    FHandle: Integer;
+    FHandle: THandle;
   protected
-{$ifdef seek64bit}
     procedure SetSize(NewSize: Longint); override;
     procedure SetSize(const NewSize: Int64); override;
-{$else seek64bit}
-    procedure SetSize(NewSize: Longint); override;
-{$endif seek64bit}
   public
-    constructor Create(AHandle: Integer);
+    constructor Create(AHandle: THandle);
     function Read(var Buffer; Count: Longint): Longint; override;
     function Write(const Buffer; Count: Longint): Longint; override;
-{$ifdef seek64bit}
     function Seek(const Offset: Int64; Origin: TSeekOrigin): Int64; override;
-{$else seek64bit}
-    function Seek(Offset: Longint; Origin: Word): Longint; override;
-{$endif seek64bit}
-    property Handle: Integer read FHandle;
+    property Handle: THandle read FHandle;
   end;
 
 { TFileStream class }
@@ -724,15 +889,14 @@ type
   TCustomMemoryStream = class(TStream)
   private
     FMemory: Pointer;
-    FSize, FPosition: Longint;
+    FSize, FPosition: PtrInt;
   protected
-    procedure SetPointer(Ptr: Pointer; ASize: Longint);
-  public
-{$ifdef seek64bit}
     Function GetSize : Int64; Override;
-{$endif seek64bit}
-    function Read(var Buffer; Count: Longint): Longint; override;
-    function Seek(Offset: Longint; Origin: Word): Longint; override;
+    function GetPosition: Int64; Override;
+    procedure SetPointer(Ptr: Pointer; ASize: PtrInt);
+  public
+    function Read(var Buffer; Count: LongInt): LongInt; override;
+    function Seek(const Offset: Int64; Origin: TSeekOrigin): Int64; override;
     procedure SaveToStream(Stream: TStream);
     procedure SaveToFile(const FileName: string);
     property Memory: Pointer read FMemory;
@@ -742,18 +906,30 @@ type
 
   TMemoryStream = class(TCustomMemoryStream)
   private
-    FCapacity: Longint;
-    procedure SetCapacity(NewCapacity: Longint);
+    FCapacity: PtrInt;
+    procedure SetCapacity(NewCapacity: PtrInt);
   protected
-    function Realloc(var NewCapacity: Longint): Pointer; virtual;
-    property Capacity: Longint read FCapacity write SetCapacity;
+    function Realloc(var NewCapacity: PtrInt): Pointer; virtual;
+    property Capacity: PtrInt read FCapacity write SetCapacity;
   public
     destructor Destroy; override;
     procedure Clear;
     procedure LoadFromStream(Stream: TStream);
     procedure LoadFromFile(const FileName: string);
-    procedure SetSize(NewSize: Longint); override;
-    function Write(const Buffer; Count: Longint): Longint; override;
+    procedure SetSize({$ifdef CPU64}const{$endif CPU64} NewSize: PtrInt); override;
+    function Write(const Buffer; Count: LongInt): LongInt; override;
+  end;
+
+{ TBytesStream }
+
+  TBytesStream = class(TMemoryStream)
+  private
+    FBytes: TBytes;
+  protected
+    function Realloc(var NewCapacity: PtrInt): Pointer; override;
+  public
+    constructor Create(const ABytes: TBytes); overload;
+    property Bytes: TBytes read FBytes;
   end;
 
 { TStringStream }
@@ -763,6 +939,8 @@ type
     FDataString: string;
     FPosition: Integer;
   protected
+    Function GetSize : Int64; Override;
+    function GetPosition: Int64; Override;
     procedure SetSize(NewSize: Longint); override;
   public
     constructor Create(const AString: string);
@@ -776,52 +954,64 @@ type
 
 { TResourceStream }
 
+{$ifdef UNICODE}
   TResourceStream = class(TCustomMemoryStream)
   private
-    HResInfo: HRSRC;
-    HGlobal: THandle;
-    procedure Initialize(Instance: THandle; Name, ResType: PChar);
+    Res: TFPResourceHandle;
+    Handle: TFPResourceHGLOBAL;
+    procedure Initialize(Instance: THandle; Name, ResType: PWideChar; NameIsID: Boolean);
+  public
+    constructor Create(Instance: THandle; const ResName: WideString; ResType: PWideChar);
+    constructor CreateFromID(Instance: THandle; ResID: Integer; ResType: PWideChar);
+    destructor Destroy; override;
+  end;
+{$else}
+  TResourceStream = class(TCustomMemoryStream)
+  private
+    Res: TFPResourceHandle;
+    Handle: TFPResourceHGLOBAL;
+    procedure Initialize(Instance: THandle; Name, ResType: PChar; NameIsID: Boolean);
   public
     constructor Create(Instance: THandle; const ResName: string; ResType: PChar);
     constructor CreateFromID(Instance: THandle; ResID: Integer; ResType: PChar);
     destructor Destroy; override;
-    function Write(const Buffer; Count: Longint): Longint; override;
   end;
+{$endif UNICODE}
 
 { TStreamAdapter }
-{ Implements OLE IStream on VCL TStream }
-{ we don't need that yet
+
+  TStreamOwnership = (soReference, soOwned);
+
+{ Implements OLE IStream on TStream }
   TStreamAdapter = class(TInterfacedObject, IStream)
   private
-    FStream: TStream;
+    FStream    : TStream;
+    FOwnership : TStreamOwnership;
+    m_bReverted: Boolean;
   public
-    constructor Create(Stream: TStream);
-    function Read(pv: Pointer; cb: Longint;
-      pcbRead: PLongint): HResult; stdcall;
-    function Write(pv: Pointer; cb: Longint;
-      pcbWritten: PLongint): HResult; stdcall;
-    function Seek(dlibMove: Largeint; dwOrigin: Longint;
-      out libNewPosition: Largeint): HResult; stdcall;
-    function SetSize(libNewSize: Largeint): HResult; stdcall;
-    function CopyTo(stm: IStream; cb: Largeint; out cbRead: Largeint;
-      out cbWritten: Largeint): HResult; stdcall;
-    function Commit(grfCommitFlags: Longint): HResult; stdcall;
-    function Revert: HResult; stdcall;
-    function LockRegion(libOffset: Largeint; cb: Largeint;
-      dwLockType: Longint): HResult; stdcall;
-    function UnlockRegion(libOffset: Largeint; cb: Largeint;
-      dwLockType: Longint): HResult; stdcall;
-    function Stat(out statstg: TStatStg;
-      grfStatFlag: Longint): HResult; stdcall;
-    function Clone(out stm: IStream): HResult; stdcall;
+    constructor Create(Stream: TStream; Ownership: TStreamOwnership = soReference);
+    destructor Destroy; override;
+    function Read(pv: Pointer; cb: DWORD; pcbRead: PDWORD): HResult; virtual; stdcall;
+    function Write(pv: Pointer; cb: DWORD; pcbWritten: PDWORD): HResult; virtual; stdcall;
+    function Seek(dlibMove: Largeint; dwOrigin: Longint; out libNewPosition: Largeint): HResult; virtual; stdcall;
+    function SetSize(libNewSize: Largeint): HResult; virtual; stdcall;
+    function CopyTo(stm: IStream; cb: Largeint; out cbRead: Largeint; out cbWritten: Largeint): HResult; virtual; stdcall;
+    function Commit(grfCommitFlags: Longint): HResult; virtual; stdcall;
+    function Revert: HResult; virtual; stdcall;
+    function LockRegion(libOffset: Largeint; cb: Largeint; dwLockType: Longint): HResult; virtual; stdcall;
+    function UnlockRegion(libOffset: Largeint; cb: Largeint; dwLockType: Longint): HResult; virtual; stdcall;
+    function Stat(out statstg: TStatStg; grfStatFlag: Longint): HResult; virtual; stdcall;
+    function Clone(out stm: IStream): HResult; virtual; stdcall;
+    property Stream: TStream read FStream;
+    property StreamOwnership: TStreamOwnership read FOwnership write FOwnership;
   end;
-}
 
 { TFiler }
 
   TValueType = (vaNull, vaList, vaInt8, vaInt16, vaInt32, vaExtended,
     vaString, vaIdent, vaFalse, vaTrue, vaBinary, vaSet, vaLString,
-    vaNil, vaCollection, vaSingle, vaCurrency, vaDate, vaWString, vaInt64, vaUTF8String);
+    vaNil, vaCollection, vaSingle, vaCurrency, vaDate, vaWString, vaInt64,
+    vaUTF8String, vaUString, vaQWord);
 
   TFilerFlag = (ffInherited, ffChildPos, ffInline);
   TFilerFlags = set of TFilerFlag;
@@ -868,14 +1058,16 @@ type
       var CompClassName, CompName: String); virtual; abstract;
     function BeginProperty: String; virtual; abstract;
 
+    //Please don't use read, better use ReadBinary whenever possible
+    procedure Read(var Buf; Count: LongInt); virtual; abstract;
     { All ReadXXX methods are called _after_ the value type has been read! }
     procedure ReadBinary(const DestData: TMemoryStream); virtual; abstract;
+{$ifndef FPUNONE}
     function ReadFloat: Extended; virtual; abstract;
     function ReadSingle: Single; virtual; abstract;
-{$ifdef HASCURRENCY}
-    function ReadCurrency: Currency; virtual; abstract;
-{$endif HASCURRENCY}
     function ReadDate: TDateTime; virtual; abstract;
+{$endif}
+    function ReadCurrency: Currency; virtual; abstract;
     function ReadIdent(ValueType: TValueType): String; virtual; abstract;
     function ReadInt8: ShortInt; virtual; abstract;
     function ReadInt16: SmallInt; virtual; abstract;
@@ -884,9 +1076,8 @@ type
     function ReadSet(EnumType: Pointer): Integer; virtual; abstract;
     function ReadStr: String; virtual; abstract;
     function ReadString(StringType: TValueType): String; virtual; abstract;
-{$ifdef HASWIDESTRING}
     function ReadWideString: WideString;virtual;abstract;
-{$endif HASWIDESTRING}
+    function ReadUnicodeString: UnicodeString;virtual;abstract;
     procedure SkipComponent(SkipComponentInfos: Boolean); virtual; abstract;
     procedure SkipValue; virtual; abstract;
   end;
@@ -900,7 +1091,13 @@ type
     FBufSize: Integer;
     FBufPos: Integer;
     FBufEnd: Integer;
-    procedure Read(var Buf; Count: LongInt);
+
+    function ReadWord : word; {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
+    function ReadDWord : longword; {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
+    function ReadQWord : qword; {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
+{$ifndef FPUNONE}
+    function ReadExtended : extended; {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
+{$endif}
     procedure SkipProperty;
     procedure SkipSetBody;
   public
@@ -914,13 +1111,15 @@ type
       var CompClassName, CompName: String); override;
     function BeginProperty: String; override;
 
+    //Please don't use read, better use ReadBinary whenever possible
+    procedure Read(var Buf; Count: LongInt); override;
     procedure ReadBinary(const DestData: TMemoryStream); override;
+{$ifndef FPUNONE}
     function ReadFloat: Extended; override;
     function ReadSingle: Single; override;
-{$ifdef HASCURRENCY}
-    function ReadCurrency: Currency; override;
-{$endif HASCURRENCY}
     function ReadDate: TDateTime; override;
+{$endif}
+    function ReadCurrency: Currency; override;
     function ReadIdent(ValueType: TValueType): String; override;
     function ReadInt8: ShortInt; override;
     function ReadInt16: SmallInt; override;
@@ -929,9 +1128,8 @@ type
     function ReadSet(EnumType: Pointer): Integer; override;
     function ReadStr: String; override;
     function ReadString(StringType: TValueType): String; override;
-{$ifdef HASWIDESTRING}
     function ReadWideString: WideString;override;
-{$endif HASWIDESTRING}
+    function ReadUnicodeString: UnicodeString;override;
     procedure SkipComponent(SkipComponentInfos: Boolean); override;
     procedure SkipValue; override;
   end;
@@ -969,8 +1167,8 @@ type
     FDriver: TAbstractObjectReader;
     FOwner: TComponent;
     FParent: TComponent;
-    FFixups: TList;
-    FLoaded: TList;
+    FFixups: TObject;
+    FLoaded: TFpList;
     FOnFindMethod: TFindMethodEvent;
     FOnSetMethodProperty: TSetMethodPropertyEvent;
     FOnSetName: TSetNameEvent;
@@ -984,7 +1182,6 @@ type
     FCanHandleExcepts: Boolean;
     FOnReadStringProperty:TReadWriteStringPropertyEvent;
     procedure DoFixupReferences;
-    procedure FreeFixups;
     function FindComponentClass(const AClassName: string): TComponentClass;
   protected
     function Error(const Message: string): Boolean; virtual;
@@ -1011,28 +1208,35 @@ type
     procedure EndReferences;
     procedure FixupReferences;
     function NextValue: TValueType;
+    //Please don't use read, better use ReadBinary whenever possible
+    //uuups, ReadBinary is protected ..
+    procedure Read(var Buf; Count: LongInt); virtual;
+
     function ReadBoolean: Boolean;
     function ReadChar: Char;
+    function ReadWideChar: WideChar;
+    function ReadUnicodeChar: UnicodeChar;
     procedure ReadCollection(Collection: TCollection);
     function ReadComponent(Component: TComponent): TComponent;
     procedure ReadComponents(AOwner, AParent: TComponent;
       Proc: TReadComponentsProc);
+{$ifndef FPUNONE}
     function ReadFloat: Extended;
     function ReadSingle: Single;
-{$ifdef HASCURRENCY}
-    function ReadCurrency: Currency;
-{$endif HASCURRENCY}
     function ReadDate: TDateTime;
+{$endif}
+    function ReadCurrency: Currency;
     function ReadIdent: string;
     function ReadInteger: Longint;
     function ReadInt64: Int64;
+    function ReadSet(EnumType: Pointer): Integer;
     procedure ReadListBegin;
     procedure ReadListEnd;
     function ReadRootComponent(ARoot: TComponent): TComponent;
+    function ReadVariant: Variant;
     function ReadString: string;
-{$ifdef HASWIDESTRING}
     function ReadWideString: WideString;
-{$endif HASWIDESTRING}
+    function ReadUnicodeString: UnicodeString;
     function ReadValue: TValueType;
     procedure CopyValue(Writer: TWriter);
     property Driver: TAbstractObjectReader read FDriver;
@@ -1066,24 +1270,27 @@ type
     procedure EndList; virtual; abstract;
     procedure BeginProperty(const PropName: String); virtual; abstract;
     procedure EndProperty; virtual; abstract;
+    //Please don't use write, better use WriteBinary whenever possible
+    procedure Write(const Buffer; Count: Longint); virtual;abstract;
 
     procedure WriteBinary(const Buffer; Count: Longint); virtual; abstract;
     procedure WriteBoolean(Value: Boolean); virtual; abstract;
     // procedure WriteChar(Value: Char);
+{$ifndef FPUNONE}
     procedure WriteFloat(const Value: Extended); virtual; abstract;
     procedure WriteSingle(const Value: Single); virtual; abstract;
-{$ifdef HASCURRENCY}
-    procedure WriteCurrency(const Value: Currency); virtual; abstract;
-{$endif HASCURRENCY}
     procedure WriteDate(const Value: TDateTime); virtual; abstract;
+{$endif}
+    procedure WriteCurrency(const Value: Currency); virtual; abstract;
     procedure WriteIdent(const Ident: string); virtual; abstract;
     procedure WriteInteger(Value: Int64); virtual; abstract;
+    procedure WriteUInt64(Value: QWord); virtual; abstract;
+    procedure WriteVariant(const Value: Variant); virtual; abstract;
     procedure WriteMethodName(const Name: String); virtual; abstract;
     procedure WriteSet(Value: LongInt; SetType: Pointer); virtual; abstract;
     procedure WriteString(const Value: String); virtual; abstract;
-{$ifdef HASWIDESTRING}
     procedure WriteWideString(const Value: WideString);virtual;abstract;
-{$endif HASWIDESTRING}
+    procedure WriteUnicodeString(const Value: UnicodeString);virtual;abstract;
   end;
 
   { TBinaryObjectWriter }
@@ -1096,8 +1303,14 @@ type
     FBufPos: Integer;
     FBufEnd: Integer;
     FSignatureWritten: Boolean;
+
+    procedure WriteWord(w : word); {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
+    procedure WriteDWord(lw : longword); {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
+    procedure WriteQWord(qw : qword); {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
+{$ifndef FPUNONE}
+    procedure WriteExtended(e : extended); {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
+{$endif}
     procedure FlushBuffer;
-    procedure Write(const Buffer; Count: Longint);
     procedure WriteValue(Value: TValueType);
     procedure WriteStr(const Value: String);
   public
@@ -1112,22 +1325,25 @@ type
     procedure BeginProperty(const PropName: String); override;
     procedure EndProperty; override;
 
+    //Please don't use write, better use WriteBinary whenever possible
+    procedure Write(const Buffer; Count: Longint); override;
     procedure WriteBinary(const Buffer; Count: LongInt); override;
     procedure WriteBoolean(Value: Boolean); override;
+{$ifndef FPUNONE}
     procedure WriteFloat(const Value: Extended); override;
     procedure WriteSingle(const Value: Single); override;
-{$ifdef HASCURRENCY}
-    procedure WriteCurrency(const Value: Currency); override;
-{$endif HASCURRENCY}
     procedure WriteDate(const Value: TDateTime); override;
+{$endif}
+    procedure WriteCurrency(const Value: Currency); override;
     procedure WriteIdent(const Ident: string); override;
     procedure WriteInteger(Value: Int64); override;
+    procedure WriteUInt64(Value: QWord); override;
     procedure WriteMethodName(const Name: String); override;
     procedure WriteSet(Value: LongInt; SetType: Pointer); override;
     procedure WriteString(const Value: String); override;
-{$ifdef HASWIDESTRING}
     procedure WriteWideString(const Value: WideString); override;
-{$endif HASWIDESTRING}
+    procedure WriteUnicodeString(const Value: UnicodeString); override;
+    procedure WriteVariant(const VarValue: Variant);override;
   end;
 
   TTextObjectWriter = class(TAbstractObjectWriter)
@@ -1137,8 +1353,9 @@ type
   TFindAncestorEvent = procedure (Writer: TWriter; Component: TComponent;
     const Name: string; var Ancestor, RootAncestor: TComponent) of object;
   TWriteMethodPropertyEvent = procedure (Writer: TWriter; Instance: TPersistent;
-    PropInfo: PPropInfo; const MethodValue: TMethod;
-    const DefMethodCodeValue: Pointer; var Handled: boolean) of object;
+    PropInfo: PPropInfo;
+    const MethodValue, DefMethodValue: TMethod;
+    var Handled: boolean) of object;
 
   TWriter = class(TFiler)
   private
@@ -1146,19 +1363,22 @@ type
     FDestroyDriver: Boolean;
     FRootAncestor: TComponent;
     FPropPath: String;
-    FAncestorList: TList;
+    FAncestors: TStringList;
     FAncestorPos: Integer;
-    FChildPos: Integer;
+    FCurrentPos: Integer;
     FOnFindAncestor: TFindAncestorEvent;
     FOnWriteMethodProperty: TWriteMethodPropertyEvent;
     FOnWriteStringProperty:TReadWriteStringPropertyEvent;
     procedure AddToAncestorList(Component: TComponent);
     procedure WriteComponentData(Instance: TComponent);
+    Procedure DetermineAncestor(Component: TComponent);
+    procedure DoFindAncestor(Component : TComponent);
   protected
     procedure SetRoot(ARoot: TComponent); override;
     procedure WriteBinary(AWriteData: TStreamProc);
     procedure WriteProperty(Instance: TPersistent; PropInfo: Pointer);
     procedure WriteProperties(Instance: TPersistent);
+    procedure WriteChildren(Component: TComponent);
     function CreateDriver(Stream: TStream; BufSize: Integer): TAbstractObjectWriter; virtual;
   public
     constructor Create(ADriver: TAbstractObjectWriter);
@@ -1170,33 +1390,39 @@ type
     procedure DefineBinaryProperty(const Name: string;
       ReadData, AWriteData: TStreamProc;
       HasData: Boolean); override;
+    //Please don't use write, better use WriteBinary whenever possible
+    //uuups, WriteBinary is protected ..
+    procedure Write(const Buffer; Count: Longint); virtual;
     procedure WriteBoolean(Value: Boolean);
     procedure WriteCollection(Value: TCollection);
     procedure WriteComponent(Component: TComponent);
     procedure WriteChar(Value: Char);
+    procedure WriteWideChar(Value: WideChar);
     procedure WriteDescendent(ARoot: TComponent; AAncestor: TComponent);
+{$ifndef FPUNONE}
     procedure WriteFloat(const Value: Extended);
     procedure WriteSingle(const Value: Single);
-{$ifdef HASCURRENCY}
-    procedure WriteCurrency(const Value: Currency);
-{$endif HASCURRENCY}
     procedure WriteDate(const Value: TDateTime);
+{$endif}
+    procedure WriteCurrency(const Value: Currency);
     procedure WriteIdent(const Ident: string);
     procedure WriteInteger(Value: Longint); overload;
     procedure WriteInteger(Value: Int64); overload;
+    procedure WriteSet(Value: LongInt; SetType: Pointer);
     procedure WriteListBegin;
     procedure WriteListEnd;
     procedure WriteRootComponent(ARoot: TComponent);
     procedure WriteString(const Value: string);
-{$ifdef HASWIDESTRING}
     procedure WriteWideString(const Value: WideString);
-{$endif HASWIDESTRING}
+    procedure WriteUnicodeString(const Value: UnicodeString);
+    procedure WriteVariant(const VarValue: Variant);
     property RootAncestor: TComponent read FRootAncestor write FRootAncestor;
     property OnFindAncestor: TFindAncestorEvent read FOnFindAncestor write FOnFindAncestor;
     property OnWriteMethodProperty: TWriteMethodPropertyEvent read FOnWriteMethodProperty write FOnWriteMethodProperty;
     property OnWriteStringProperty: TReadWriteStringPropertyEvent read FOnWriteStringProperty write FOnWriteStringProperty;
 
     property Driver: TAbstractObjectWriter read FDriver;
+    property PropertyPath: string read FPropPath;
   end;
 
 
@@ -1204,24 +1430,41 @@ type
 
   TParser = class(TObject)
   private
-    FStream: TStream;
-    FOrigin: Longint;
-    FBuffer: PChar;
-    FBufPtr: PChar;
-    FBufEnd: PChar;
-    FSourcePtr: PChar;
-    FSourceEnd: PChar;
-    FTokenPtr: PChar;
-{$ifdef HASWIDESTRING}
-    FString: widestring;
-{$else HASWIDESTRING}
-    FString: ansistring;
-{$endif HASWIDESTRING}
-    FSourceLine: Integer;
-    FSaveChar: Char;
-    FToken: Char;
-    procedure ReadBuffer;
-    procedure SkipBlanks;
+    fStream : TStream;
+    fBuf : pchar;
+    fBufLen : integer;
+    fPos : integer;
+    fDeltaPos : integer;
+    fFloatType : char;
+    fSourceLine : integer;
+    fToken : char;
+    fEofReached : boolean;
+    fLastTokenStr : string;
+    fLastTokenWStr : widestring;
+    function GetTokenName(aTok : char) : string;
+    procedure LoadBuffer;
+    procedure CheckLoadBuffer; {$ifdef CLASSESINLINE} inline; {$endif CLASSESINLINE}
+    procedure ProcessChar; {$ifdef CLASSESINLINE} inline; {$endif CLASSESINLINE}
+    function IsNumber : boolean; {$ifdef CLASSESINLINE} inline; {$endif CLASSESINLINE}
+    function IsHexNum : boolean; {$ifdef CLASSESINLINE} inline; {$endif CLASSESINLINE}
+    function IsAlpha : boolean; {$ifdef CLASSESINLINE} inline; {$endif CLASSESINLINE}
+    function IsAlphaNum : boolean; {$ifdef CLASSESINLINE} inline; {$endif CLASSESINLINE}
+    function GetHexValue(c : char) : byte; {$ifdef CLASSESINLINE} inline; {$endif CLASSESINLINE}
+    function GetAlphaNum : string;
+    procedure HandleNewLine;
+    procedure SkipBOM;
+    procedure SkipSpaces;
+    procedure SkipWhitespace;
+    procedure HandleEof;
+    procedure HandleAlphaNum;
+    procedure HandleNumber;
+    procedure HandleHexNumber;
+    function HandleQuotedString : string;
+    procedure HandleDecimalCharacter(var ascii : boolean;
+                                     out WideChr: widechar; out StringChr: char);
+    procedure HandleString;
+    procedure HandleMinus;
+    procedure HandleUnknown;
   public
     constructor Create(Stream: TStream);
     destructor Destroy; override;
@@ -1233,21 +1476,20 @@ type
     procedure HexToBinary(Stream: TStream);
     function NextToken: Char;
     function SourcePos: Longint;
-    function TokenComponentIdent: String;
+    function TokenComponentIdent: string;
+{$ifndef FPUNONE}
     function TokenFloat: Extended;
-    function TokenInt: Longint;
+{$endif}
+    function TokenInt: Int64;
     function TokenString: string;
-{$ifdef HASWIDESTRING}
-    function TokenWideString: widestring;
-{$endif HASWIDESTRING}
+    function TokenWideString: WideString;
     function TokenSymbolIs(const S: string): Boolean;
-    property SourceLine: Integer read FSourceLine;
-    property Token: Char read FToken;
+    property FloatType: Char read fFloatType;
+    property SourceLine: Integer read fSourceLine;
+    property Token: Char read fToken;
   end;
 
-
 { TThread }
-{$ifndef VER1_0}
 
   EThread = class(Exception);
   EThreadDestroyCalled = class(EThread);
@@ -1259,36 +1501,38 @@ type
 
   TThread = class
   private
-    FHandle: THandle;
+    FHandle: TThreadID;
     FTerminated: Boolean;
-    FSuspended: Boolean;
     FFreeOnTerminate: Boolean;
     FFinished: Boolean;
+    FSuspended: LongBool;
     FReturnValue: Integer;
     FOnTerminate: TNotifyEvent;
-    FMethod: TThreadMethod;
-    FSynchronizeException: TObject;
     FFatalException: TObject;
     procedure CallOnTerminate;
     function GetPriority: TThreadPriority;
     procedure SetPriority(Value: TThreadPriority);
     procedure SetSuspended(Value: Boolean);
+    function GetSuspended: Boolean;
   protected
-    FThreadID: THandle; // someone might need it for pthread_* calls
+    FThreadID: TThreadID; // someone might need it for pthread_* calls
     procedure DoTerminate; virtual;
     procedure Execute; virtual; abstract;
-    procedure Synchronize(Method: TThreadMethod);
+    procedure Synchronize(AMethod: TThreadMethod);
     property ReturnValue: Integer read FReturnValue write FReturnValue;
     property Terminated: Boolean read FTerminated;
+{$ifdef windows}
+  private
+    FInitialSuspended: boolean;
+{$endif}
 {$ifdef Unix}
   private
     // see tthread.inc, ThreadFunc and TThread.Resume
     FSem: Pointer;
     FInitialSuspended: boolean;
     FSuspendedExternal: boolean;
-  {$ifdef linux}
-    FPid: LongInt;
-  {$endif}
+    FSuspendedInternal: longbool;
+    FThreadReaped: boolean;
 {$endif}
 {$ifdef netwlibc}
   private
@@ -1299,22 +1543,25 @@ type
     FPid: LongInt;
 {$endif}
   public
-    constructor Create(CreateSuspended: Boolean);
+    constructor Create(CreateSuspended: Boolean;
+                       const StackSize: SizeUInt = DefaultStackSize);
     destructor Destroy; override;
-    procedure Resume;
-    procedure Suspend;
+    procedure AfterConstruction; override;
+    procedure Start;
+    procedure Resume; deprecated;
+    procedure Suspend; deprecated;
     procedure Terminate;
     function WaitFor: Integer;
+    class procedure Synchronize(AThread: TThread; AMethod: TThreadMethod);
     property FreeOnTerminate: Boolean read FFreeOnTerminate write FFreeOnTerminate;
-    property Handle: THandle read FHandle;
+    property Handle: TThreadID read FHandle;
     property Priority: TThreadPriority read GetPriority write SetPriority;
-    property Suspended: Boolean read FSuspended write SetSuspended;
-    property ThreadID: THandle read FThreadID;
+    property Suspended: Boolean read GetSuspended write SetSuspended;
+    property ThreadID: TThreadID read FThreadID;
     property OnTerminate: TNotifyEvent read FOnTerminate write FOnTerminate;
     property FatalException: TObject read FFatalException;
   end;
 
-{$endif}
 
 { TComponent class }
 
@@ -1326,45 +1573,55 @@ type
     csTransient);
   TGetChildProc = procedure (Child: TComponent) of object;
 
-  {
-  TComponentName = type string;
-
   IVCLComObject = interface
-    function GetTypeInfoCount(out Count: Integer): Integer; stdcall;
-    function GetTypeInfo(Index, LocaleID: Integer; out TypeInfo): Integer; stdcall;
+    ['{E07892A0-F52F-11CF-BD2F-0020AF0E5B81}']
+    function GetTypeInfoCount(out Count: Integer): HResult; stdcall;
+    function GetTypeInfo(Index, LocaleID: Integer; out TypeInfo): HResult; stdcall;
     function GetIDsOfNames(const IID: TGUID; Names: Pointer;
-      NameCount, LocaleID: Integer; DispIDs: Pointer): Integer; stdcall;
+      NameCount, LocaleID: Integer; DispIDs: Pointer): HResult; stdcall;
     function Invoke(DispID: Integer; const IID: TGUID; LocaleID: Integer;
-      Flags: Word; var Params; VarResult, ExcepInfo, ArgErr: Pointer): Integer; stdcall;
-    function SafeCallException(ExceptObject: TObject;
-      ExceptAddr: Pointer): Integer;
+      Flags: Word; var Params; VarResult, ExcepInfo, ArgErr: Pointer): HResult; stdcall;
+    function SafeCallException(ExceptObject: TObject; ExceptAddr: Pointer): HResult;
     procedure FreeOnRelease;
   end;
-  }
 
-{$ifdef HASINTF}
+  IInterfaceComponentReference = interface
+    ['{3FEEC8E1-E400-4A24-BCAC-1F01476439B1}']
+    function GetComponent:TComponent;
+   end;
+
   IDesignerNotify = interface
     ['{B971E807-E3A6-11D1-AAB1-00C04FB16FBC}']
     procedure Modified;
     procedure Notification(AnObject: TPersistent; Operation: TOperation);
   end;
-{$endif HASINTF}
+
+  TComponentEnumerator = class
+  private
+    FComponent: TComponent;
+    FPosition: Integer;
+  public
+    constructor Create(AComponent: TComponent);
+    function GetCurrent: TComponent;
+    function MoveNext: Boolean;
+    property Current: TComponent read GetCurrent;
+  end;
 
   TBasicAction = class;
 
   { TComponent }
 
-  TComponent = class(TPersistent)
+  TComponent = class(TPersistent,IUnknown,IInterfaceComponentReference)
   private
     FOwner: TComponent;
     FName: TComponentName;
-    FTag: Longint;
-    FComponents: TList;
-    FFreeNotifies: TList;
+    FTag: Ptrint;
+    FComponents: TFpList;
+    FFreeNotifies: TFpList;
     FDesignInfo: Longint;
     FVCLComObject: Pointer;
     FComponentState: TComponentState;
-    // function GetComObject: IUnknown;
+    function GetComObject: IUnknown;
     function GetComponent(AIndex: Integer): TComponent;
     function GetComponentCount: Integer;
     function GetComponentIndex: Integer;
@@ -1384,15 +1641,17 @@ type
     procedure GetChildren(Proc: TGetChildProc; Root: TComponent); dynamic;
     function GetChildOwner: TComponent; dynamic;
     function GetChildParent: TComponent; dynamic;
-    function GetNamePath: string; override;
     function GetOwner: TPersistent; override;
     procedure Loaded; virtual;
+    procedure Loading; virtual;
     procedure Notification(AComponent: TComponent;
       Operation: TOperation); virtual;
     procedure PaletteCreated; dynamic;
     procedure ReadState(Reader: TReader); virtual;
     procedure SetAncestor(Value: Boolean);
-    procedure SetDesigning(Value: Boolean);
+    procedure SetDesigning(Value: Boolean; SetChildren : Boolean = True);
+    procedure SetDesignInstance(Value: Boolean);
+    procedure SetInline(Value: Boolean);
     procedure SetName(const NewName: TComponentName); virtual;
     procedure SetChildOrder(Child: TComponent; Order: Integer); dynamic;
     procedure SetParentComponent(Value: TComponent); dynamic;
@@ -1403,25 +1662,28 @@ type
       const CurName, NewName: string); virtual;
     procedure ValidateContainer(AComponent: TComponent); dynamic;
     procedure ValidateInsert(AComponent: TComponent); dynamic;
-{$ifdef HASINTF}
     { IUnknown }
-    function QueryInterface(const IID: TGUID; out Obj): Hresult; virtual; stdcall;
-    function _AddRef: Integer; stdcall;
-    function _Release: Integer; stdcall;
-{$endif HASINTF}
+    function QueryInterface({$IFDEF FPC_HAS_CONSTREF}constref{$ELSE}const{$ENDIF} IID: TGUID; out Obj): Hresult; virtual; {$IFNDEF WINDOWS}cdecl{$ELSE}stdcall{$ENDIF};
+    function _AddRef: Integer; {$IFNDEF WINDOWS}cdecl{$ELSE}stdcall{$ENDIF};
+    function _Release: Integer; {$IFNDEF WINDOWS}cdecl{$ELSE}stdcall{$ENDIF};
+    function iicrGetComponent: TComponent;
     { IDispatch }
-    //!!!! function GetTypeInfoCount(out Count: Integer): Integer; stdcall;
-    //!!!! function GetTypeInfo(Index, LocaleID: Integer; out TypeInfo): Integer; stdcall;
-    //!!!! function GetIDsOfNames(const IID: TGUID; Names: Pointer;
-    //!!!!   NameCount, LocaleID: Integer; DispIDs: Pointer): Integer; stdcall;
-    //!!!! function Invoke(DispID: Integer; const IID: TGUID; LocaleID: Integer;
-    //!!!!   Flags: Word; var Params; VarResult, ExcepInfo, ArgErr: Pointer): Integer; stdcall;
+    function GetTypeInfoCount(out Count: Integer): HResult; stdcall;
+    function GetTypeInfo(Index, LocaleID: Integer; out TypeInfo): HResult; stdcall;
+    function GetIDsOfNames(const IID: TGUID; Names: Pointer;
+      NameCount, LocaleID: Integer; DispIDs: Pointer): HResult; stdcall;
+    function Invoke(DispID: Integer; const IID: TGUID; LocaleID: Integer;
+      Flags: Word; var Params; VarResult, ExcepInfo, ArgErr: Pointer): HResult; stdcall;
   public
     //!! Moved temporary
+    // fpdoc doesn't handle this yet :(
+{$ifndef fpdocsystem}
+    function IInterfaceComponentReference.GetComponent=iicrgetcomponent;
+{$endif}
     procedure WriteState(Writer: TWriter); virtual;
     constructor Create(AOwner: TComponent); virtual;
-    procedure BeforeDestruction; override;
     destructor Destroy; override;
+    procedure BeforeDestruction; override;
     procedure DestroyComponents;
     procedure Destroying;
     function ExecuteAction(Action: TBasicAction): Boolean; dynamic;
@@ -1429,15 +1691,19 @@ type
     procedure FreeNotification(AComponent: TComponent);
     procedure RemoveFreeNotification(AComponent: TComponent);
     procedure FreeOnRelease;
+    function GetEnumerator: TComponentEnumerator;
+    function GetNamePath: string; override;
     function GetParentComponent: TComponent; dynamic;
     function HasParent: Boolean; dynamic;
     procedure InsertComponent(AComponent: TComponent);
     procedure RemoveComponent(AComponent: TComponent);
     function SafeCallException(ExceptObject: TObject;
-      ExceptAddr: Pointer): Integer; override;
+      ExceptAddr: Pointer): HResult; override;
     procedure SetSubComponent(ASubComponent: Boolean);
     function UpdateAction(Action: TBasicAction): Boolean; dynamic;
-    // property ComObject: IUnknown read GetComObject;
+    property ComObject: IUnknown read GetComObject;
+    function IsImplementorOf (const Intf:IInterface):boolean;
+    procedure ReferenceInterface(const intf:IInterface;op:TOperation);
     property Components[Index: Integer]: TComponent read GetComponent;
     property ComponentCount: Integer read GetComponentCount;
     property ComponentIndex: Integer read GetComponentIndex write SetComponentIndex;
@@ -1448,7 +1714,7 @@ type
     property VCLComObject: Pointer read FVCLComObject write FVCLComObject;
   published
     property Name: TComponentName read FName write SetName stored False;
-    property Tag: Longint read FTag write FTag default 0;
+    property Tag: PtrInt read FTag write FTag default 0;
   end;
 
 { TBasicActionLink }
@@ -1466,7 +1732,7 @@ type
   public
     constructor Create(AClient: TObject); virtual;
     destructor Destroy; override;
-    function Execute(AComponent: TComponent{$ifndef VER1_0} = nil{$endif}): Boolean; virtual;
+    function Execute(AComponent: TComponent = nil): Boolean; virtual;
     function Update: Boolean; virtual;
     property Action: TBasicAction read FAction write SetAction;
     property OnChange: TNotifyEvent read FOnChange write FOnChange;
@@ -1483,7 +1749,7 @@ type
     FOnExecute: TNotifyEvent;
     FOnUpdate: TNotifyEvent;
   protected
-    FClients: TList;
+    FClients: TFpList;
     procedure Change; virtual;
     procedure SetOnExecute(Value: TNotifyEvent); virtual;
     property OnChange: TNotifyEvent read FOnChange write FOnChange;
@@ -1510,7 +1776,6 @@ type
 
   TActiveXRegType = (axrComponentOnly, axrIncludeDescendants);
 
-{$ifdef HASINTF}
   IInterfaceList = interface ['{285DEA8A-B865-11D1-AAA7-00C04FB17A72}']
     function Get(i : Integer) : IUnknown;
     function GetCapacity : Integer;
@@ -1534,6 +1799,19 @@ type
     property Items[index : Integer] : IUnknown read Get write Put;default;
   end;
 
+  TInterfaceList = class;
+
+  TInterfaceListEnumerator = class
+  private
+    FList: TInterfaceList;
+    FPosition: Integer;
+  public
+    constructor Create(AList: TInterfaceList);
+    function GetCurrent: IUnknown;
+    function MoveNext: Boolean;
+    property Current: IUnknown read GetCurrent;
+  end;
+
   TInterfaceList = class(TInterfacedObject,IInterfaceList)
   private
     FList : TThreadList;
@@ -1546,12 +1824,13 @@ type
     procedure SetCount(NewCount : Integer);
   public
     constructor Create;
-    destructor Destroy;
+    destructor Destroy; override;
 
     procedure Clear;
     procedure Delete(index : Integer);
     procedure Exchange(index1,index2 : Integer);
     function First : IUnknown;
+    function GetEnumerator: TInterfaceListEnumerator;
     function IndexOf(item : IUnknown) : Integer;
     function Add(item : IUnknown) : Integer;
     procedure Insert(i : Integer;item : IUnknown);
@@ -1566,7 +1845,6 @@ type
     property Count : Integer read GetCount write SetCount;
     property Items[Index : Integer] : IUnknown read Get write Put;default;
   end;
-{$endif HASINTF}
 
 { ---------------------------------------------------------------------
     TDatamodule support
@@ -1607,6 +1885,7 @@ type
     property OnDestroy: TNotifyEvent read FOnDestroy write FOnDestroy;
     property OldCreateOrder: Boolean read FOldOrder write FOldOrder;
   end;
+  TDataModuleClass = Class of TDataModule;
 
 var
   // IDE hooks for TDatamodule support.
@@ -1615,20 +1894,19 @@ var
   ApplicationHandleException : procedure (Sender: TObject) of object;
   ApplicationShowException   : procedure (E: Exception) of object;
 
-{$ifndef VER1_0}
 { ---------------------------------------------------------------------
     tthread helpers
   ---------------------------------------------------------------------}
 
-{ procedure to be called when gui thread is ready to execute method
+{ function to be called when gui thread is ready to execute method
+  result is true if a method has been executed
 }
-procedure CheckSynchronize(timeout : longint=0);
+function CheckSynchronize(timeout : longint=0) : boolean;
 
 var
   { method proc that is called to trigger gui thread to execute a
 method }
   WakeMainThread : TNotifyEvent = nil;
-{$endif}
 
 { ---------------------------------------------------------------------
     General streaming and registration routines
@@ -1641,8 +1919,8 @@ var
   RegisterNoIconProc: procedure(ComponentClasses: array of TComponentClass);
 {!!!!  RegisterNonActiveXProc: procedure(ComponentClasses: array of TComponentClass;
     AxRegType: TActiveXRegType) = nil;
-  CurrentGroup: Integer = -1;
-  CreateVCLComObjectProc: procedure(Component: TComponent) = nil;}
+  CurrentGroup: Integer = -1;}
+  CreateVCLComObjectProc: procedure(Component: TComponent) = nil;
 
 { Point and rectangle constructors }
 
@@ -1650,6 +1928,12 @@ function Point(AX, AY: Integer): TPoint;
 function SmallPoint(AX, AY: SmallInt): TSmallPoint;
 function Rect(ALeft, ATop, ARight, ABottom: Integer): TRect;
 function Bounds(ALeft, ATop, AWidth, AHeight: Integer): TRect;
+
+function PointsEqual(const P1, P2: TPoint): Boolean; {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
+function PointsEqual(const P1, P2: TSmallPoint): Boolean; {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
+function InvalidPoint(X, Y: Integer): Boolean;
+function InvalidPoint(const At: TPoint): Boolean;
+function InvalidPoint(const At: TSmallPoint): Boolean;
 
 { Class registration routines }
 
@@ -1675,10 +1959,8 @@ procedure RegisterNoIcon(ComponentClasses: array of TComponentClass);
 procedure RegisterNonActiveX(ComponentClasses: array of TComponentClass;
   AxRegType: TActiveXRegType);
 
-{$ifdef HASINTF}
 var
   GlobalNameSpace: IReadWriteSync;
-{$endif HASINTF}
 
 { Object filing routines }
 
@@ -1700,6 +1982,8 @@ procedure RegisterIntegerConsts(IntegerType: Pointer; IdentToIntFn: TIdentToInt;
   IntToIdentFn: TIntToIdent);
 function IdentToInt(const Ident: string; var Int: Longint; const Map: array of TIdentMapEntry): Boolean;
 function IntToIdent(Int: Longint; var Ident: string; const Map: array of TIdentMapEntry): Boolean;
+function FindIntToIdent(AIntegerType: Pointer): TIntToIdent;
+function FindIdentToInt(AIntegerType: Pointer): TIdentToInt;
 
 procedure RegisterFindGlobalComponentProc(AFindGlobalComponent: TFindGlobalComponent);
 procedure UnregisterFindGlobalComponentProc(AFindGlobalComponent: TFindGlobalComponent);
@@ -1721,16 +2005,24 @@ procedure RedirectFixupReferences(Root: TComponent; const OldRootName,
   NewRootName: string);
 procedure RemoveFixupReferences(Root: TComponent; const RootName: string);
 procedure RemoveFixups(Instance: TPersistent);
-function FindNestedComponent(Root: TComponent; const NamePath: string): TComponent;
+Function FindNestedComponent(Root : TComponent; APath : String; CStyle : Boolean = True) : TComponent;
 
 procedure BeginGlobalLoading;
 procedure NotifyGlobalLoading;
 procedure EndGlobalLoading;
 
 function CollectionsEqual(C1, C2: TCollection): Boolean;
+function CollectionsEqual(C1, C2: TCollection; Owner1, Owner2: TComponent): Boolean;
 
 { Object conversion routines }
 
+type
+  TObjectTextEncoding = (
+    oteDFM,
+    oteLFM
+    );
+
+procedure ObjectBinaryToText(Input, Output: TStream; Encoding: TObjectTextEncoding);
 procedure ObjectBinaryToText(Input, Output: TStream);
 procedure ObjectTextToBinary(Input, Output: TStream);
 
@@ -1742,101 +2034,5 @@ procedure ObjectTextToResource(Input, Output: TStream);
 function LineStart(Buffer, BufPos: PChar): PChar;
 procedure BinToHex(BinValue, HexValue: PChar; BinBufSize: Integer);
 function HexToBin(HexValue, BinValue: PChar; BinBufSize: Integer): Integer;
+function ExtractStrings(Separators, WhiteSpace: TSysCharSet; Content: PChar; Strings: TStrings): Integer;
 
-{
-  $Log: classesh.inc,v $
-  Revision 1.55  2005/05/07 17:03:34  florian
-    + UpdateCount property
-
-  Revision 1.54  2005/05/04 06:53:06  michael
-  * Removed TFPList.grow
-
-  Revision 1.53  2005/04/15 07:21:09  michael
-  +  Streaming of subcomponents added by Marc Weustink
-
-  Revision 1.52  2005/04/13 20:10:50  florian
-    + TThreadID
-
-  Revision 1.51  2005/04/10 16:26:55  michael
-  + Made TCollectionItem.SetCollection Protected&virtual, as in Delphi (Reported by Uberto Barbini)
-
-  Revision 1.50  2005/04/09 20:37:08  michael
-  + Patch from Uberto Barbini to allow creating streams with different drivers
-
-  Revision 1.49  2005/04/09 17:26:08  florian
-    + classes.mainthreadid is set now
-    + rtleventresetevent
-    + rtleventwairfor with timeout
-    + checksynchronize with timeout
-    * race condition in synchronize fixed
-
-  Revision 1.48  2005/04/05 21:05:31  peter
-    * call initspecialchars if one of the specialchars is configured
-      for the first time
-
-  Revision 1.47  2005/03/25 20:07:43  peter
-    * add const to 64bit seeks
-
-  Revision 1.46  2005/03/16 20:48:03  michael
-  + Faster TList from Dean Zobec
-
-  Revision 1.45  2005/03/09 20:50:11  florian
-    * C. Western: utf-8 reading from resource files
-
-  Revision 1.44  2005/03/07 17:57:25  peter
-    * renamed rtlconst to rtlconsts
-
-  Revision 1.43  2005/03/07 17:25:46  peter
-    * use separate boolean to initialize specialchars
-
-  Revision 1.42  2005/03/07 16:35:19  peter
-    * Object text format of widestrings patch from Martin Schreiber
-
-  Revision 1.41  2005/03/03 22:15:32  florian
-    + tcollection.insert implementation
-
-  Revision 1.40  2005/02/25 23:02:05  florian
-    + implemented D7 compliant FindGlobalComponents
-
-  Revision 1.39  2005/02/25 21:41:09  florian
-    * generic tthread.synchronize
-    * delphi compatible wakemainthread
-
-  Revision 1.38  2005/02/17 12:14:10  marco
-   * shiftstateenum
-
-  Revision 1.37  2005/02/14 17:13:31  peter
-    * truncate log
-
-  Revision 1.36  2005/02/06 20:31:35  florian
-    + GlobalNameSpace
-
-  Revision 1.35  2005/02/05 22:03:49  michael
-  + Implemented DelimitedText, FDelimiter etc.
-
-  Revision 1.34  2005/02/03 20:17:05  florian
-    + BinToHex and HexToBin from Marco added
-
-  Revision 1.33  2005/02/03 20:11:06  florian
-    + added case sensitivity to tstringlist
-
-  Revision 1.32  2005/02/03 19:51:48  florian
-    * made the tstrings.index* functions virtual
-
-  Revision 1.31  2005/02/03 19:10:16  florian
-    + tcollection.owner
-
-  Revision 1.30  2005/02/03 18:42:42  florian
-    * some delphi compatibility fixes
-
-  Revision 1.29  2005/02/02 20:22:15  florian
-    + TCollection nofication mechanisms added
-
-  Revision 1.28  2005/02/02 19:56:11  florian
-    + PaletteCreated added
-    + TCollectionNotification added
-
-  Revision 1.27  2005/02/02 19:39:59  florian
-    * empty class grouping functions
-
-}

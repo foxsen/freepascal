@@ -1,5 +1,4 @@
 {
-    $Id: cpunode.pas,v 1.12 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 2000 by Florian Klaempfl
 
     Includes the x86-64 code generator
@@ -43,26 +42,22 @@ unit cpunode;
        ncgcal,
        ncgset,
        ncgopt,
+       ncgobjc,
        // n386con,n386flw,n386mat,n386mem,
        // n386set,n386inl,n386opt,
        { the cpu specific node units must be used after the generic ones to
          get the correct class pointer }
        nx86set,
+       nx86con,
+       nx86mem,
        nx64add,
        nx64cal,
        nx64cnv,
        nx64mat,
+{$ifdef TEST_WIN64_SEH}
+       nx64flw,
+{$endif TEST_WIN64_SEH}
        nx64inl
        ;
 
 end.
-{
-  $Log: cpunode.pas,v $
-  Revision 1.12  2005/02/14 17:13:10  peter
-    * truncate log
-
-  Revision 1.11  2005/01/24 22:08:33  peter
-    * interface wrapper generation moved to cgobj
-    * generate interface wrappers after the module is parsed
-
-}

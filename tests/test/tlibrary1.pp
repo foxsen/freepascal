@@ -1,10 +1,20 @@
 { %NORUN }
-{ %SKIPTARGET=macos }
+{ %SKIPTARGET=macos,go32v2 }
+
+{$ifdef darwin}
+{$PIC+}
+{$endif darwin}
+
+{$ifdef CPUX86_64}
+{$ifndef WINDOWS}
+{$PIC+}
+{$endif WINDOWS}
+{$endif CPUX86_64}
 
 { The .so of the library needs to be in the current dir when
   testing the loading at runtime }
 
-{$ifdef win32}
+{$ifdef mswindows}
  {$define supported}
  {$define supportidx}
 {$endif win32}
@@ -26,6 +36,10 @@ const
 procedure Test;export;
 
  begin
+   if not islibrary then
+     halt(1);
+   if not moduleislib then
+     halt(2);
    writeln('Hoi');
  end;
 

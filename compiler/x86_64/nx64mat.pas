@@ -1,5 +1,4 @@
 {
-    $Id: nx64mat.pas,v 1.9 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl
 
     Generate x86-64 assembler for math nodes
@@ -31,11 +30,11 @@ interface
 
     type
       tx8664moddivnode = class(tmoddivnode)
-         procedure pass_2;override;
+         procedure pass_generate_code;override;
       end;
 
       tx8664shlshrnode = class(tshlshrnode)
-         procedure pass_2;override;
+         procedure pass_generate_code;override;
       end;
 
       tx8664unaryminusnode = class(tx86unaryminusnode)
@@ -47,20 +46,20 @@ interface
 implementation
 
     uses
-      globtype,systems,
+      globtype,systems,constexp,
       cutils,verbose,globals,
-      symconst,symdef,aasmbase,aasmtai,defutil,
+      symconst,symdef,aasmbase,aasmtai,aasmdata,defutil,
       pass_1,pass_2,
       ncon,
       cpubase,cpuinfo,
-      cgbase,cgutils,cga,cgobj,cgx86,
+      cgbase,cgutils,cga,cgobj,hlcgobj,cgx86,
       ncgutil;
 
 {*****************************************************************************
                              TX8664MODDIVNODE
 *****************************************************************************}
 
-    procedure tx8664moddivnode.pass_2;
+    procedure tx8664moddivnode.pass_generate_code;
       var
         hreg1,hreg2:Tregister;
         power:longint;
@@ -74,8 +73,8 @@ implementation
           exit;
 
         { put numerator in register }
-        location_reset(location,LOC_REGISTER,OS_INT);
-        location_force_reg(exprasmlist,left.location,OS_INT,false);
+        location_reset(location,LOC_REGISTER,def_cgsize(resultdef));
+        hlcg.location_force_reg(current_asmdata.CurrAsmList,left.location,left.resultdef,resultdef,false);
         hreg1:=left.location.register;
 
         if (nodetype=divn) and (right.nodetype=ordconstn) and
@@ -84,17 +83,19 @@ implementation
             { for signed numbers, the numerator must be adjusted before the
               shift instruction, but not wih unsigned numbers! Otherwise,
               "Cardinal($ffffffff) div 16" overflows! (JM) }
-            if is_signed(left.resulttype.def) Then
+            if is_signed(left.resultdef) Then
               begin
                   { use a sequence without jumps, saw this in
                     comp.compilers (JM) }
                   { no jumps, but more operations }
-                  hreg2:=cg.getintregister(exprasmlist,OS_INT);
+                  hreg2:=cg.getintregister(current_asmdata.CurrAsmList,OS_INT);
                   emit_reg_reg(A_MOV,S_Q,hreg1,hreg2);
                   {If the left value is signed, hreg2=$ffffffff, otherwise 0.}
                   emit_const_reg(A_SAR,S_Q,63,hreg2);
                   {If signed, hreg2=right value-1, otherwise 0.}
-                  emit_const_reg(A_AND,S_Q,tordconstnode(right).value-1,hreg2);
+                  { (don't use emit_const_reg, because if value>high(longint)
+                     then it must first be loaded into a register) }
+                  cg.a_op_const_reg(current_asmdata.CurrAsmList,OP_AND,OS_S64,tordconstnode(right).value-1,hreg2);
                   { add to the left value }
                   emit_reg_reg(A_ADD,S_Q,hreg2,hreg1);
                   { do the shift }
@@ -107,17 +108,17 @@ implementation
         else
           begin
             {Bring denominator to a register.}
-            cg.getcpuregister(exprasmlist,NR_RAX);
+            cg.getcpuregister(current_asmdata.CurrAsmList,NR_RAX);
             emit_reg_reg(A_MOV,S_Q,hreg1,NR_RAX);
-            cg.getcpuregister(exprasmlist,NR_RDX);
+            cg.getcpuregister(current_asmdata.CurrAsmList,NR_RDX);
             {Sign extension depends on the left type.}
-            if torddef(left.resulttype.def).typ=u64bit then
+            if torddef(left.resultdef).ordtype=u64bit then
               emit_reg_reg(A_XOR,S_Q,NR_RDX,NR_RDX)
             else
-              emit_none(A_CDO,S_NO);
+              emit_none(A_CQO,S_NO);
 
             {Division depends on the right type.}
-            if Torddef(right.resulttype.def).typ=u64bit then
+            if Torddef(right.resultdef).ordtype=u64bit then
               op:=A_DIV
             else
               op:=A_IDIV;
@@ -128,19 +129,19 @@ implementation
               emit_reg(op,S_Q,right.location.register)
             else
               begin
-                hreg1:=cg.getintregister(exprasmlist,right.location.size);
-                cg.a_load_loc_reg(exprasmlist,OS_64,right.location,hreg1);
+                hreg1:=cg.getintregister(current_asmdata.CurrAsmList,right.location.size);
+                hlcg.a_load_loc_reg(current_asmdata.CurrAsmList,right.resultdef,u64inttype,right.location,hreg1);
                 emit_reg(op,S_Q,hreg1);
               end;
 
             { Copy the result into a new register. Release RAX & RDX.}
-            cg.ungetcpuregister(exprasmlist,NR_RDX);
-            cg.ungetcpuregister(exprasmlist,NR_RAX);
-            location.register:=cg.getintregister(exprasmlist,OS_INT);
+            cg.ungetcpuregister(current_asmdata.CurrAsmList,NR_RDX);
+            cg.ungetcpuregister(current_asmdata.CurrAsmList,NR_RAX);
+            location.register:=cg.getintregister(current_asmdata.CurrAsmList,OS_INT);
             if nodetype=divn then
-              cg.a_load_reg_reg(exprasmlist,OS_INT,OS_INT,NR_RAX,location.register)
+              cg.a_load_reg_reg(current_asmdata.CurrAsmList,OS_INT,OS_INT,NR_RAX,location.register)
             else
-              cg.a_load_reg_reg(exprasmlist,OS_INT,OS_INT,NR_RDX,location.register);
+              cg.a_load_reg_reg(current_asmdata.CurrAsmList,OS_INT,OS_INT,NR_RDX,location.register);
           end;
       end;
 
@@ -150,7 +151,7 @@ implementation
 *****************************************************************************}
 
 
-    procedure tx8664shlshrnode.pass_2;
+    procedure tx8664shlshrnode.pass_generate_code;
       var
         op : Tasmop;
         opsize : tcgsize;
@@ -166,20 +167,27 @@ implementation
           op:=A_SHR;
 
         { special treatment of 32bit values for backwards compatibility }
-        if left.resulttype.def.size<=4 then
+        { mul optimizations require to keep the sign (FK) }
+        if left.resultdef.size<=4 then
           begin
-            opsize:=OS_32;
+            if is_signed(left.resultdef) then
+              opsize:=OS_S32
+            else
+              opsize:=OS_32;
             mask:=31;
           end
         else
           begin
-            opsize:=OS_64;
+            if is_signed(left.resultdef) then
+              opsize:=OS_S64
+            else
+              opsize:=OS_64;
             mask:=63;
           end;
 
         { load left operators in a register }
         location_copy(location,left.location);
-        location_force_reg(exprasmlist,location,opsize,false);
+        hlcg.location_force_reg(current_asmdata.CurrAsmList,location,left.resultdef,hlcg.tcgsize2orddef(opsize),false);
 
         { shifting by a constant directly coded: }
         if (right.nodetype=ordconstn) then
@@ -187,11 +195,11 @@ implementation
         else
           begin
             { load right operators in a RCX }
-            cg.getcpuregister(exprasmlist,NR_RCX);
-            cg.a_load_loc_reg(exprasmlist,OS_INT,right.location,NR_RCX);
+            cg.getcpuregister(current_asmdata.CurrAsmList,NR_RCX);
+            hlcg.a_load_loc_reg(current_asmdata.CurrAsmList,right.resultdef,osuinttype,right.location,NR_RCX);
 
             { right operand is in ECX }
-            cg.ungetcpuregister(exprasmlist,NR_RCX);
+            cg.ungetcpuregister(current_asmdata.CurrAsmList,NR_RCX);
             emit_reg_reg(op,tcgsize2opsize[opsize],NR_CL,location.register);
           end;
       end;
@@ -203,9 +211,3 @@ begin
    cshlshrnode:=tx8664shlshrnode;
    cnotnode:=tx8664notnode;
 end.
-{
-  $Log: nx64mat.pas,v $
-  Revision 1.9  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

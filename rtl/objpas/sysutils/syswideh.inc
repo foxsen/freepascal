@@ -1,6 +1,5 @@
 {
     *********************************************************************
-    $Id: syswideh.inc,v 1.6 2005/03/12 14:56:22 florian Exp $
     Copyright (C) 2002 by Florian Klaempfl
 
     This program is free software; you can redistribute it and/or modify
@@ -19,6 +18,10 @@
     *********************************************************************
 }
 
+function Trim(const S: widestring): widestring;
+function TrimLeft(const S: widestring): widestring;
+function TrimRight(const S: widestring): widestring;
+
 function WideUpperCase(const s : WideString) : WideString;{$ifdef SYSUTILSINLINE}inline;{$endif}
 function WideLowerCase(const s : WideString) : WideString;{$ifdef SYSUTILSINLINE}inline;{$endif}
 function WideCompareStr(const s1, s2 : WideString) : PtrInt;{$ifdef SYSUTILSINLINE}inline;{$endif}
@@ -27,33 +30,14 @@ function WideCompareText(const s1, s2 : WideString) : PtrInt;{$ifdef SYSUTILSINL
 function WideSameText(const s1, s2 : WideString) : Boolean;{$ifdef SYSUTILSINLINE}inline;{$endif}
 
 Function WideFormat (Const Fmt : WideString; const Args : Array of const) : WideString;
-Function WideFormatBuf (Var Buffer; BufLen : Cardinal;
-                     Const Fmt; fmtLen : Cardinal;
-                     Const Args : Array of const) : Cardinal;
+Function WideFormat (Const Fmt : WideString; const Args : Array of const; Const FormatSettings: TFormatSettings) : WideString;
+Function WideFormatBuf (Var Buffer; BufLen : Cardinal; Const Fmt; fmtLen : Cardinal; Const Args : Array of const) : Cardinal;
+Function WideFormatBuf (Var Buffer; BufLen : Cardinal; Const Fmt; fmtLen : Cardinal; Const Args : Array of const; Const FormatSettings: TFormatSettings) : Cardinal;
 Procedure WideFmtStr(Var Res: WideString; Const Fmt : WideString; Const args: Array of const);
+Procedure WideFmtStr(Var Res: WideString; Const Fmt : WideString; Const args: Array of const; Const FormatSettings: TFormatSettings);
 
+function StrLen(p: pwidechar): sizeint; external name 'FPC_PWIDECHAR_LENGTH'; overload;
 
-{
-  $Log: syswideh.inc,v $
-  Revision 1.6  2005/03/12 14:56:22  florian
-    + added Ansi* routines to widestring manager
-    * made them using OS calls on windows
-
-  Revision 1.5  2005/03/06 18:28:23  florian
-    + WideFormatBuf and WideFmtStr implemented
-
-  Revision 1.4  2005/02/26 15:00:14  florian
-    + WideSameStr
-
-  Revision 1.3  2005/02/26 10:21:17  florian
-    + implemented WideFormat
-    + some Widestring stuff implemented
-    * some Widestring stuff fixed
-
-  Revision 1.2  2005/02/03 18:40:02  florian
-    * compilation with 1.0.x fixed
-    + infrastructure for WideCompareText implemented
-
-  Revision 1.1  2005/02/01 20:22:50  florian
-    * improved widestring infrastructure manager
-}
+function StrCopy(Dest, Source: PWideChar): PWideChar; overload;
+function StrLCopy(Dest,Source: PWideChar; MaxLen: SizeInt): PWideChar; overload;
+Function CharInSet(Ch:WideChar;Const CSet : TSysCharSet) : Boolean;

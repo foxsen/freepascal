@@ -4,8 +4,6 @@
 { Submitted by "Sergey Kosarevsky" on  2003-01-09 }
 { e-mail: netsurfer@au.ru }
 
-{$static on}
-
 {$R+}
 
 Type tObject=Object
@@ -41,4 +39,3 @@ Begin
        halt(1);
      end;
 End.
-

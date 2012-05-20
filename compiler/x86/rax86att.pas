@@ -1,5 +1,4 @@
 {
-    $Id: rax86att.pas,v 1.11 2005/04/25 09:51:07 florian Exp $
     Copyright (c) 1998-2002 by Carl Eric Codere and Peter Vreman
 
     Does the parsing for the x86 GNU AS styled inline assembler.
@@ -39,8 +38,13 @@ Interface
       procedure BuildOperand(oper : tx86operand);
       procedure BuildOpCode(instr : tx86instruction);
       procedure handlepercent;override;
+     protected
+      procedure MaybeGetPICModifier(var oper: tx86operand);
     end;
 
+    Tx86attInstruction = class(Tx86Instruction)
+      procedure FixupOpcode;override;
+    end;
 
 Implementation
 
@@ -51,7 +55,7 @@ Implementation
       globtype,verbose,
       systems,
       { aasm }
-      aasmbase,aasmtai,aasmcpu,
+      aasmbase,aasmtai,aasmdata,aasmcpu,
       { symtable }
       symconst,
       { parser }
@@ -61,6 +65,37 @@ Implementation
       rabase,rautils,
       cgbase
       ;
+
+    { Tx86attInstruction }
+
+    procedure Tx86attInstruction.FixupOpcode;
+      begin
+        if (OpOrder=op_intel) then
+          SwapOperands;
+
+        case opcode of
+          A_MOVQ:
+            begin
+              { May be either real 'movq' or a generic 'mov' with 'q' suffix. Convert to mov
+                if source is a constant, or if neither operand is an mmx/xmm register }
+{$ifdef x86_64}
+              if (ops=2) and
+                (
+                  (operands[1].opr.typ=OPR_CONSTANT) or not
+                    (
+                      ((operands[1].opr.typ=OPR_REGISTER) and
+                        (getregtype(operands[1].opr.reg) in [R_MMXREGISTER,R_MMREGISTER])) or
+                      ((operands[2].opr.typ=OPR_REGISTER) and
+                        (getregtype(operands[2].opr.reg) in [R_MMXREGISTER,R_MMREGISTER]))
+                    )
+                ) then
+                opcode:=A_MOV;
+{$endif x86_64}
+            end;
+        end;
+      end;
+
+    { Tx86attReader }
 
     procedure tx86attreader.handlepercent;
       var
@@ -175,6 +210,12 @@ Implementation
                  ((oper.opr.typ=OPR_LOCAL) and (oper.opr.localsym.localloc.loc<>LOC_REGISTER)) then
                 message(asmr_e_cannot_index_relative_var);
               oper.opr.ref.base:=actasmregister;
+{$ifdef x86_64}
+              { non-GOT based RIP-relative accesses are also position-independent }
+              if (oper.opr.ref.base=NR_RIP) and
+                 (oper.opr.ref.refaddr<>addr_pic) then
+                oper.opr.ref.refaddr:=addr_pic_no_got;
+{$endif x86_64}
               Consume(AS_REGISTER);
               { can either be a register or a right parenthesis }
               { (reg)        }
@@ -260,6 +301,65 @@ Implementation
       end;
 
 
+    Procedure tx86attreader.MaybeGetPICModifier(var oper: tx86operand);
+      var
+        relsym: string;
+        asmsymtyp: tasmsymtype;
+        l: aint;
+      begin
+        case actasmtoken of
+          AS_AT:
+            begin
+              { darwin/i386 needs a relsym instead, and we can't }
+              { generate this automatically                      }
+              if (target_info.system in [system_i386_darwin,system_i386_iphonesim]) then
+                Message(asmr_e_invalid_reference_syntax);
+              consume(AS_AT);
+              if actasmtoken=AS_ID then
+                begin
+{$ifdef x86_64}
+                  if (actasmpattern='GOTPCREL') or
+		     (actasmpattern='PLT') then
+{$endif x86_64}
+{$ifdef i386}
+                  if actasmpattern='GOT' then
+{$endif i386}
+                    begin
+                      oper.opr.ref.refaddr:=addr_pic;
+{$ifdef x86_64}
+                      { local symbols don't have to
+                        be accessed via the GOT
+                      }
+                      if (actasmpattern='GOTPCREL') and
+                         assigned(oper.opr.ref.symbol) and
+                         (oper.opr.ref.symbol.bind=AB_LOCAL) then
+			Message(asmr_w_useless_got_for_local);
+{$endif x86_64}
+                      consume(AS_ID);
+                    end
+                  else
+                    Message(asmr_e_invalid_reference_syntax);
+                end
+              else
+                Message(asmr_e_invalid_reference_syntax);
+            end;
+          AS_MINUS:
+            begin
+              { relsym? }
+              Consume(AS_MINUS);
+              BuildConstSymbolExpression(true,true,false,l,relsym,asmsymtyp);
+              if (relsym<>'') then
+                if not assigned(oper.opr.ref.relsymbol) then
+                  oper.opr.ref.relsymbol:=current_asmdata.RefAsmSymbol(relsym)
+                else
+                  Message(asmr_e_invalid_reference_syntax)
+              else
+                dec(oper.opr.ref.offset,l);
+            end;
+        end;
+      end;
+
+
     Procedure tx86attreader.BuildOperand(oper : tx86operand);
       var
         tempstr,
@@ -285,6 +385,7 @@ Implementation
 
         procedure MaybeRecordOffset;
           var
+            mangledname: string;
             hasdot  : boolean;
             l,
             toffset,
@@ -298,7 +399,10 @@ Implementation
              begin
                if expr<>'' then
                  begin
-                   BuildRecordOffsetSize(expr,toffset,tsize);
+                   BuildRecordOffsetSize(expr,toffset,tsize,mangledname,false);
+                   if (oper.opr.typ<>OPR_CONSTANT) and
+                      (mangledname<>'') then
+                    Message(asmr_e_wrong_sym_type);
                    inc(l,toffset);
                    oper.SetSize(tsize,true);
                  end;
@@ -318,27 +422,57 @@ Implementation
                   inc(oper.opr.localsymofs,l)
                 end;
               OPR_CONSTANT :
-                inc(oper.opr.val,l);
+                if (mangledname<>'') then
+                  begin
+                    if (oper.opr.val<>0) then
+                      Message(asmr_e_wrong_sym_type);
+                    oper.opr.typ:=OPR_SYMBOL;
+                    oper.opr.symbol:=current_asmdata.RefAsmSymbol(mangledname);
+                  end
+                else
+                  inc(oper.opr.val,l);
               OPR_REFERENCE :
                 inc(oper.opr.ref.offset,l);
+              OPR_SYMBOL:
+                Message(asmr_e_invalid_symbol_ref);
               else
                 internalerror(200309221);
             end;
           end;
 
 
-        procedure handleat;
-          begin
-          end;
-
-
         function MaybeBuildReference:boolean;
           { Try to create a reference, if not a reference is found then false
             is returned }
+          var
+            mangledname: string;
           begin
             MaybeBuildReference:=true;
             case actasmtoken of
-              AS_INTNUM,
+              AS_INTNUM:
+                Begin
+                  { allow %segmentregister:number }
+                  if oper.opr.ref.segment<>NR_NO then
+                    begin
+                      // already done before calling oper.InitRef;
+                      if oper.opr.Ref.Offset <> 0 Then
+                        Message(asmr_e_invalid_reference_syntax)
+                      else
+                        begin
+                          oper.opr.Ref.Offset:=BuildConstExpression(true,false);
+                          if actasmtoken=AS_LPAREN then
+                            BuildReference(oper)
+                          else if (oper.opr.ref.segment <> NR_FS) and
+                            (oper.opr.ref.segment <> NR_GS) then
+                           Message(asmr_w_general_segment_with_constant);
+                        end;
+                    end
+                  else
+                    begin
+                      oper.opr.ref.offset:=BuildConstExpression(True,False);
+                      BuildReference(oper);
+                    end;
+                end;
               AS_MINUS,
               AS_PLUS:
                 Begin
@@ -371,22 +505,12 @@ Implementation
                   { record.field ? }
                   if actasmtoken=AS_DOT then
                    begin
-                     BuildRecordOffsetSize(tempstr,l,k);
+                     BuildRecordOffsetSize(tempstr,l,k,mangledname,false);
+                     if (mangledname<>'') then
+                       Message(asmr_e_invalid_reference_syntax);
                      inc(oper.opr.ref.offset,l);
                    end;
-                  if actasmtoken=AS_AT then
-                    begin
-                      consume(AS_AT);
-                      if actasmtoken=AS_ID then
-                        begin
-                          if actasmpattern='GOTPCREL' then
-                            oper.opr.ref.refaddr:=addr_pic
-                          else
-                            Message(asmr_e_invalid_reference_syntax);
-                        end
-                      else
-                        Message(asmr_e_invalid_reference_syntax);
-                    end;
+                  MaybeGetPICModifier(oper);
                   case actasmtoken of
                     AS_END,
                     AS_SEPARATOR,
@@ -503,24 +627,7 @@ Implementation
                     else
                      begin
                        if oper.SetupVar(expr,false) then
-                        begin
-                          if actasmtoken=AS_AT then
-                            begin
-                              consume(AS_AT);
-                              if actasmtoken=AS_ID then
-                                begin
-                                  if actasmpattern='GOTPCREL' then
-                                    begin
-                                      oper.opr.ref.refaddr:=addr_pic;
-                                      consume(AS_ID);
-                                    end
-                                  else
-                                    Message(asmr_e_invalid_reference_syntax);
-                                end
-                              else
-                                Message(asmr_e_invalid_reference_syntax);
-                            end;
-                          end
+                         MaybeGetPICModifier(oper)
                        else
                         Begin
                           { look for special symbols ... }
@@ -546,23 +653,26 @@ Implementation
                         end;
                      end;
                   end;
-                  if actasmtoken=AS_DOT then
-                    MaybeRecordOffset;
-                  { add a constant expression? }
-                  if (actasmtoken=AS_PLUS) then
-                   begin
-                     l:=BuildConstExpression(true,false);
-                     case oper.opr.typ of
-                       OPR_CONSTANT :
-                         inc(oper.opr.val,l);
-                       OPR_LOCAL :
-                         inc(oper.opr.localsymofs,l);
-                       OPR_REFERENCE :
-                         inc(oper.opr.ref.offset,l);
-                       else
-                         internalerror(200309202);
-                     end;
-                   end
+                  if oper.opr.typ<>OPR_NONE Then
+                    begin
+                      if (actasmtoken=AS_DOT) then
+                        MaybeRecordOffset;
+                      { add a constant expression? }
+                      if (actasmtoken=AS_PLUS) then
+                        begin
+                          l:=BuildConstExpression(true,false);
+                          case oper.opr.typ of
+                            OPR_CONSTANT :
+                              inc(oper.opr.val,l);
+                            OPR_LOCAL :
+                              inc(oper.opr.localsymofs,l);
+                            OPR_REFERENCE :
+                              inc(oper.opr.ref.offset,l);
+                            else
+                              internalerror(200309202);
+                          end;
+                        end;
+                    end;
                end;
               { Do we have a indexing reference, then parse it also }
               if actasmtoken=AS_LPAREN then
@@ -706,28 +816,13 @@ Implementation
 
 
     function tx86attreader.is_asmopcode(const s: string):boolean;
-      const
-        { We need first to check the long prefixes, else we get probs
-          with things like movsbl }
-        att_sizesuffixstr : array[0..9] of string[2] = (
-          '','BW','BL','WL','B','W','L','S','Q','T'
-        );
-        att_sizesuffix : array[0..9] of topsize = (
-          S_NO,S_BW,S_BL,S_WL,S_B,S_W,S_L,S_FS,S_IQ,S_FX
-        );
-        att_sizefpusuffix : array[0..9] of topsize = (
-          S_NO,S_NO,S_NO,S_NO,S_NO,S_NO,S_FL,S_FS,S_IQ,S_FX
-        );
-        att_sizefpuintsuffix : array[0..9] of topsize = (
-          S_NO,S_NO,S_NO,S_NO,S_NO,S_NO,S_IL,S_IS,S_IQ,S_NO
-        );
       var
-        str2opentry: tstr2opentry;
         cond : string[4];
         cnd  : tasmcond;
         len,
         j,
-        sufidx : longint;
+        sufidx,
+        suflen : longint;
       Begin
         is_asmopcode:=FALSE;
 
@@ -738,25 +833,36 @@ Implementation
         { search for all possible suffixes }
         for sufidx:=low(att_sizesuffixstr) to high(att_sizesuffixstr) do
          begin
-           len:=length(s)-length(att_sizesuffixstr[sufidx]);
-           if copy(s,len+1,length(att_sizesuffixstr[sufidx]))=att_sizesuffixstr[sufidx] then
+           suflen:=length(att_sizesuffixstr[sufidx]);
+           len:=length(s)-suflen;
+           if copy(s,len+1,suflen)=att_sizesuffixstr[sufidx] then
             begin
-              { here we search the entire table... }
-              str2opentry:=nil;
-              if {(length(s)>0) and} (len>0) then
-                str2opentry:=tstr2opentry(iasmops.search(copy(s,1,len)));
-              if assigned(str2opentry) then
+              { Search opcodes }
+              if len>0 then
                 begin
-                  actopcode:=str2opentry.op;
-                  if gas_needsuffix[actopcode]=attsufFPU then
-                   actopsize:=att_sizefpusuffix[sufidx]
-                  else if gas_needsuffix[actopcode]=attsufFPUint then
-                   actopsize:=att_sizefpuintsuffix[sufidx]
-                  else
-                   actopsize:=att_sizesuffix[sufidx];
-                  actasmtoken:=AS_OPCODE;
-                  is_asmopcode:=TRUE;
-                  exit;
+                  actopcode:=tasmop(PtrUInt(iasmops.Find(copy(s,1,len))));
+
+                  { two-letter suffix is allowed by just a few instructions (movsx,movzx),
+                    and it is always required whenever allowed }
+                  if (gas_needsuffix[actopcode]=attsufINTdual) xor (suflen=2) then
+                    continue;
+
+                  if actopcode<>A_NONE then
+                    begin
+                      if gas_needsuffix[actopcode]=attsufFPU then
+                       actopsize:=att_sizefpusuffix[sufidx]
+                      else if gas_needsuffix[actopcode]=attsufFPUint then
+                       actopsize:=att_sizefpuintsuffix[sufidx]
+                      else
+                       actopsize:=att_sizesuffix[sufidx];
+                      { only accept suffix from the same category that the opcode belongs to }
+                      if (actopsize<>S_NO) or (suflen=0) then
+                        begin
+                          actasmtoken:=AS_OPCODE;
+                          is_asmopcode:=TRUE;
+                          exit;
+                        end;
+                    end;
                 end;
               { not found, check condition opcodes }
               j:=0;
@@ -777,10 +883,14 @@ Implementation
                             actopsize:=att_sizefpuintsuffix[sufidx]
                            else
                             actopsize:=att_sizesuffix[sufidx];
-                           actcondition:=cnd;
-                           actasmtoken:=AS_OPCODE;
-                           is_asmopcode:=TRUE;
-                           exit;
+                           { only accept suffix from the same category that the opcode belongs to }
+                           if (actopsize<>S_NO) or (suflen=0) then
+                             begin
+                               actcondition:=cnd;
+                               actasmtoken:=AS_OPCODE;
+                               is_asmopcode:=TRUE;
+                               exit;
+                             end;
                          end;
                      end;
                   end;
@@ -795,25 +905,16 @@ Implementation
       var
         instr : Tx86Instruction;
       begin
-        instr:=Tx86Instruction.Create(Tx86Operand);
+        instr:=Tx86attInstruction.Create(Tx86Operand);
         instr.OpOrder:=op_att;
         BuildOpcode(instr);
         instr.AddReferenceSizes;
         instr.SetInstructionOpsize;
         instr.CheckOperandSizes;
+        instr.FixupOpcode;
         instr.ConcatInstruction(curlist);
         instr.Free;
       end;
 
 
 end.
-{
-  $Log: rax86att.pas,v $
-  Revision 1.11  2005/04/25 09:51:07  florian
-    + pic code reading for the assembler readers
-    * loadaddr generates pic code as well now
-
-  Revision 1.10  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

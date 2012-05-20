@@ -1,5 +1,4 @@
 {
-   $Id: gensigset.inc,v 1.5 2005/02/14 17:13:31 peter Exp $
    This file is part of the Free Pascal run time library.
    (c) 2002 by Marco van de Voort
    members of the Free Pascal development team.
@@ -53,7 +52,7 @@ function fpsigfillset(var nset : tsigset):cint;
 var i :longint;
 
 Begin
-  for i:=0 to wordsinsigset DO nset[i]:=NOT 0;
+  for i:=0 to wordsinsigset-1 DO nset[i]:=high(nset[i]);
   fpsigfillset:=0;
 End;
 
@@ -71,9 +70,3 @@ Begin
      fpsigismember:=0;
 End;
 
-{
-   $Log: gensigset.inc,v $
-   Revision 1.5  2005/02/14 17:13:31  peter
-     * truncate log
-
-}

@@ -1,6 +1,5 @@
 {
     *********************************************************************
-    $Id: sysstr.inc,v 1.38 2005/05/09 18:35:06 michael Exp $
     Copyright (C) 1997, 1998 Gertjan Schouten
 
     This program is free software; you can redistribute it and/or modify
@@ -36,6 +35,22 @@ begin
    end;
 end;
 
+{$ifdef dummy}
+{ declaring this breaks delphi compatibility and e.g. tw3721.pp }
+FUNCTION NewStr (Const S: ShortString): PShortString;
+VAR P: PShortString;
+BEGIN
+   If (S = '') Then
+     P := Nil
+    Else
+     Begin               { Return nil }
+     GetMem(P, Length(S) + 1);                        { Allocate memory }
+     If (P<>Nil) Then P^ := S;                        { Hold string }
+     End;
+   NewStr := P;                                       { Return result }
+END;
+{$endif dummy}
+
 {   DisposeStr frees the memory occupied by S   }
 
 procedure DisposeStr(S: PString);
@@ -46,6 +61,12 @@ begin
      S:=nil;
    end;
 end;
+
+PROCEDURE DisposeStr (S: PShortString);
+BEGIN
+   If (S <> Nil) Then FreeMem(S, Length(S^) + 1);     { Release memory }
+END;
+
 
 {   AssignStr assigns S to P^   }
 
@@ -64,30 +85,51 @@ end ;
 {   UpperCase returns a copy of S where all lowercase characters ( from a to z )
     have been converted to uppercase   }
 
-function UpperCase(const S: string): string;
-var i: integer;
+
+Function UpperCase(Const S : String) : String;
+
+Var
+  i : Integer;
+  P : PChar;
+
 begin
-result := S;
-i := Length(S);
-while i <> 0 do begin
-   if (result[i] in ['a'..'z']) then result[i] := char(byte(result[i]) - 32);
-   Dec(i);
-   end;
+  Result := S;
+  if not assigned(pointer(result)) then exit;
+  UniqueString(Result);
+  P:=Pchar(pointer(Result));
+  for i := 1 to Length(Result) do
+    begin
+    if (P^ in ['a'..'z']) then P^ := char(byte(p^) - 32);
+      Inc(P);
+    end;
 end;
 
 {   LowerCase returns a copy of S where all uppercase characters ( from A to Z )
     have been converted to lowercase  }
 
-function LowerCase(const S: string): string;
-var i: integer;
+Function Lowercase(Const S : String) : String;
+
+Var
+  i : Integer;
+  P : PChar;
+
 begin
-result := S;
-i := Length(result);
-while i <> 0 do begin
-   if (result[i] in ['A'..'Z']) then result[i] := char(byte(result[i]) + 32);
-   dec(i);
-   end;
+  Result := S;
+  if not assigned(pointer(result)) then exit;
+  UniqueString(Result);
+  P:=Pchar(pointer(Result));
+  for i := 1 to Length(Result) do
+    begin
+    if (P^ in ['A'..'Z']) then P^ := char(byte(p^) + 32);
+      Inc(P);
+    end;
 end;
+
+function LowerCase(const V: variant): string; overload;{$ifdef SYSUTILSINLINE}inline;{$endif}
+  begin
+    result:=LowerCase(ansistring(V));
+  end;
+
 
 {   CompareStr compares S1 and S2, the result is the based on
     substraction of the ascii values of the characters in S1 and S2
@@ -117,37 +159,14 @@ end;
     P1 > P2    > 0
     P1 = P2    = 0    }
 
-function CompareMemRange(P1, P2: Pointer; Length: cardinal): integer;
-
-var
-  i: cardinal;
-
+function CompareMemRange(P1, P2: Pointer; Length: PtrUInt): integer;{$ifdef SYSUTILSINLINE}inline;{$endif}
 begin
-  i := 0;
-  result := 0;
-  while (result=0) and (I<length) do
-    begin
-    result:=byte(P1^)-byte(P2^);
-    P1:=pchar(P1)+1;            // VP compat.
-    P2:=pchar(P2)+1;
-    i := i + 1;
-   end ;
-end ;
+  Result:=CompareByte(P1^,P2^,Length);
+end;
 
-function CompareMem(P1, P2: Pointer; Length: cardinal): Boolean;
-var
-  i: cardinal;
+function CompareMem(P1, P2: Pointer; Length: PtrUInt): Boolean;{$ifdef SYSUTILSINLINE}inline;{$endif}
 begin
-  Result:=True;
-  I:=0;
-  If (P1)<>(P2) then
-    While Result and (i<Length) do
-      begin
-      Result:=PByte(P1)^=PByte(P2)^;
-      Inc(I);
-      Inc(pchar(P1));
-      Inc(pchar(P2));
-      end;
+  Result:=CompareByte(P1^,P2^,Length)=0;
 end;
 
 
@@ -163,8 +182,8 @@ function CompareText(const S1, S2: string): integer;
 
 var
   i, count, count1, count2: integer; Chr1, Chr2: byte;
+  P1, P2: PChar;
 begin
-  result := 0;
   Count1 := Length(S1);
   Count2 := Length(S2);
   if (Count1>Count2) then
@@ -172,19 +191,30 @@ begin
   else
     Count := Count1;
   i := 0;
-  while (result=0) and (i<count) do
+  if count>0 then
     begin
-    inc (i);
-     Chr1 := byte(s1[i]);
-     Chr2 := byte(s2[i]);
-     if Chr1 in [97..122] then
-       dec(Chr1,32);
-     if Chr2 in [97..122] then
-       dec(Chr2,32);
-     result := Chr1 - Chr2;
-     end ;
-  if (result = 0) then
-    result:=(count1-count2);
+      P1 := @S1[1];
+      P2 := @S2[1];
+      while i < Count do
+        begin
+          Chr1 := byte(p1^);
+          Chr2 := byte(p2^);
+          if Chr1 <> Chr2 then
+            begin
+              if Chr1 in [97..122] then
+                dec(Chr1,32);
+              if Chr2 in [97..122] then
+                dec(Chr2,32);
+              if Chr1 <> Chr2 then
+                Break;
+            end;
+          Inc(P1); Inc(P2); Inc(I);
+        end;
+    end;
+  if i < Count then
+    result := Chr1-Chr2
+  else
+    result := count1-count2;
 end;
 
 function SameText(const s1,s2:String):Boolean;
@@ -193,13 +223,23 @@ begin
  Result:=CompareText(S1,S2)=0;
 end;
 
+{$ifndef FPC_NOGENERICANSIROUTINES}
 {==============================================================================}
 {   Ansi string functions                                                      }
 {   these functions rely on the character set loaded by the OS                 }
 {==============================================================================}
 
+type
+  TCaseTranslationTable = array[0..255] of char;
+
+var
+  { Tables with upper and lowercase forms of character sets.
+    MUST be initialized with the correct code-pages }
+  UpperCaseTable: TCaseTranslationTable;
+  LowerCaseTable: TCaseTranslationTable;
+
 function GenericAnsiUpperCase(const s: string): string;
-  var 
+  var
     len, i: integer;
 begin
   len := length(s);
@@ -210,7 +250,7 @@ end;
 
 
 function GenericAnsiLowerCase(const s: string): string;
-  var 
+  var
     len, i: integer;
 begin
   len := length(s);
@@ -221,7 +261,7 @@ end;
 
 
 function GenericAnsiCompareStr(const S1, S2: string): PtrInt;
-  Var 
+  Var
     I,L1,L2 : SizeInt;
 begin
   Result:=0;
@@ -238,7 +278,7 @@ begin
 end;
 
 function GenericAnsiCompareText(const S1, S2: string): PtrInt;
-  Var 
+  Var
     I,L1,L2 : SizeInt;
 begin
   Result:=0;
@@ -254,38 +294,31 @@ begin
     Result:=L1-L2;
 end;
 
-function AnsiSameText(const s1,s2:String):Boolean;{$ifdef SYSUTILSINLINE}inline;{$endif}
-
-begin
- AnsiSameText:=AnsiCompareText(S1,S2)=0;
-end;
-
-function AnsiSameStr(const s1,s2:String):Boolean;{$ifdef SYSUTILSINLINE}inline;{$endif}
-
-begin
-  AnsiSameStr:=AnsiCompareStr(S1,S2)=0;
-end;
-
 function GenericAnsiStrComp(S1, S2: PChar): PtrInt;
 
 begin
   Result:=0;
   If S1=Nil then
     begin
-    If S2=Nil Then Exit;
-    result:=-1;
-    exit;
+      If S2=Nil Then Exit;
+      result:=-1;
+      exit;
     end;
   If S2=Nil then
     begin
-    Result:=1;
-    exit;
+      Result:=1;
+      exit;
     end;
-  Repeat
-    Result:=Ord(S1[0])-Ord(S2[0]); //!! Must be replaced by ansi characters !!
+  While (Result=0) and (S1^<>#0) and (S2^<>#0) do begin
+    Result:=Ord(S1^)-Ord(S2^); //!! Must be replaced by ansi characters !!
     Inc(S1);
     Inc(S2);
-  Until (Result<>0) or ((S1[0]=#0) or (S2[0]=#0))
+  end;
+  if (Result=0) and (S1^<>S2^) then // loop ended because exactly one has #0
+    if S1^=#0 then // shorter string is smaller
+      result:=-1
+    else
+      result:=1;
 end;
 
 
@@ -304,11 +337,16 @@ begin
     Result:=1;
     exit;
     end;
-  Repeat
+  While (Result=0) and (S1^<>#0) and (S2^<>#0) do begin
     Result:=Ord(LowerCaseTable[Ord(S1[0])])-Ord(LowerCaseTable[Ord(S2[0])]); //!! Must be replaced by ansi characters !!
     Inc(S1);
     Inc(S2);
-  Until (Result<>0) or ((S1[0]=#0) or (S2[0]=#0))
+  end;
+  if (Result=0) and (s1[0]<>s2[0]) then //length(s1)<>length(s2)
+    if s1[0]=#0 then
+      Result:=-1 //s1 shorter than s2
+    else
+      Result:=1; //s1 longer than s2
 end;
 
 
@@ -336,7 +374,7 @@ begin
     Inc(S1);
     Inc(S2);
     Inc(I);
-  Until (Result<>0) or ((S1[0]=#0) or (S2[0]=#0)) or (I=MaxLen)
+  Until (Result<>0) or (I=MaxLen)
 end;
 
 
@@ -364,7 +402,7 @@ begin
     Inc(S1);
     Inc(S2);
     Inc(I);
-  Until (Result<>0) or ((S1[0]=#0) or (S2[0]=#0)) or (I=MaxLen)
+  Until (Result<>0) or (I=MaxLen)
 end;
 
 
@@ -390,12 +428,25 @@ if Str <> Nil then begin
       end ;
    end ;
 end ;
+{$endif FPC_NOGENERICANSIROUTINES}
+
+function AnsiSameText(const s1,s2:String):Boolean;{$ifdef SYSUTILSINLINE}inline;{$endif}
+
+begin
+ AnsiSameText:=AnsiCompareText(S1,S2)=0;
+end;
+
+function AnsiSameStr(const s1,s2:String):Boolean;{$ifdef SYSUTILSINLINE}inline;{$endif}
+
+begin
+  AnsiSameStr:=AnsiCompareStr(S1,S2)=0;
+end;
 
 function AnsiLastChar(const S: string): PChar;
 
 begin
   //!! No multibyte yet, so we return the last one.
-  result:=StrEnd(Pchar(S));
+  result:=StrEnd(Pchar(pointer(S)));  // strend checks for nil
   Dec(Result);
 end ;
 
@@ -409,81 +460,61 @@ end ;
 
 function AnsiUpperCase(const s: string): string;{$ifdef SYSUTILSINLINE}inline;{$endif}
   begin
-  {$ifndef ver1_0}
     result:=widestringmanager.UpperAnsiStringProc(s);
-  {$endif}
   end;
-  
-  
+
+
 function AnsiLowerCase(const s: string): string;{$ifdef SYSUTILSINLINE}inline;{$endif}
   begin
-  {$ifndef ver1_0}
     result:=widestringmanager.LowerAnsiStringProc(s);
-  {$endif}
   end;
-  
-  
+
+
 function AnsiCompareStr(const S1, S2: string): integer;{$ifdef SYSUTILSINLINE}inline;{$endif}
   begin
-  {$ifndef ver1_0}
     result:=widestringmanager.CompareStrAnsiStringProc(s1,s2);
-  {$endif}
   end;
-  
-  
+
+
 function AnsiCompareText(const S1, S2: string): integer;{$ifdef SYSUTILSINLINE}inline;{$endif}
   begin
-  {$ifndef ver1_0}
     result:=widestringmanager.CompareTextAnsiStringProc(s1,s2);
-  {$endif}
   end;
-  
-  
+
+
 function AnsiStrComp(S1, S2: PChar): integer;{$ifdef SYSUTILSINLINE}inline;{$endif}
   begin
-  {$ifndef ver1_0}
     result:=widestringmanager.StrCompAnsiStringProc(s1,s2);
-  {$endif}
   end;
 
-  
+
 function AnsiStrIComp(S1, S2: PChar): integer;{$ifdef SYSUTILSINLINE}inline;{$endif}
   begin
-  {$ifndef ver1_0}
-    result:=widestringmanager.StrICompAnsiStringProc(s1,s2); 
-  {$endif}
+    result:=widestringmanager.StrICompAnsiStringProc(s1,s2);
   end;
 
-  
+
 function AnsiStrLComp(S1, S2: PChar; MaxLen: cardinal): integer;{$ifdef SYSUTILSINLINE}inline;{$endif}
   begin
-  {$ifndef ver1_0}
     result:=widestringmanager.StrLCompAnsiStringProc(s1,s2,maxlen);
-  {$endif}
   end;
 
-  
+
 function AnsiStrLIComp(S1, S2: PChar; MaxLen: cardinal): integer;{$ifdef SYSUTILSINLINE}inline;{$endif}
   begin
-  {$ifndef ver1_0}
     result:=widestringmanager.StrLICompAnsiStringProc(s1,s2,maxlen);
-  {$endif}
   end;
 
-  
+
 function AnsiStrLower(Str: PChar): PChar;{$ifdef SYSUTILSINLINE}inline;{$endif}
   begin
-  {$ifndef ver1_0}
     result:=widestringmanager.StrLowerAnsiStringProc(Str);
-  {$endif}
   end;
-  
-  
+
+
 function AnsiStrUpper(Str: PChar): PChar;{$ifdef SYSUTILSINLINE}inline;{$endif}
   begin
-  {$ifndef ver1_0}
     result:=widestringmanager.StrUpperAnsiStringProc(Str);
-  {$endif}
   end;
 
 
@@ -493,7 +524,7 @@ function AnsiStrUpper(Str: PChar): PChar;{$ifdef SYSUTILSINLINE}inline;{$endif}
 
 {   Trim returns a copy of S with blanks characters on the left and right stripped off   }
 
-Const WhiteSpace = [' ',#10,#13,#9];
+Const WhiteSpace = [#0..' '];
 
 function Trim(const S: string): string;
 var Ofs, Len: integer;
@@ -703,12 +734,10 @@ begin
 end ;
 
 
-{$IFNDEF VIRTUALPASCAL}
 function IntToStr(Value: int64): string;
 begin
  System.Str(Value, result);
 end ;
-{$ENDIF}
 
 function IntToStr(Value: QWord): string;
 begin
@@ -724,6 +753,8 @@ const
 function IntToHex(Value: integer; Digits: integer): string;
 var i: integer;
 begin
+ If Digits=0 then 
+   Digits:=1;
  SetLength(result, digits);
  for i := 0 to digits - 1 do
   begin
@@ -736,10 +767,11 @@ begin
  end;
 end ;
 
-{$IFNDEF VIRTUALPASCAL} // overloading
 function IntToHex(Value: int64; Digits: integer): string;
 var i: integer;
 begin
+ If Digits=0 then 
+   Digits:=1;
  SetLength(result, digits);
  for i := 0 to digits - 1 do
   begin
@@ -751,10 +783,13 @@ begin
    value := value shr 4;
  end;
 end ;
-{$ENDIF}
 
+function IntToHex(Value: QWord; Digits: integer): string;
+begin
+  result:=IntToHex(Int64(Value),Digits);
+end;
 
-function TryStrToInt(const s: string; var i : integer) : boolean;
+function TryStrToInt(const s: string; out i : integer) : boolean;
 var Error : word;
 begin
   Val(s, i, Error);
@@ -765,31 +800,22 @@ end;
     if S does not represent a valid integer value EConvertError is raised  }
 
 function StrToInt(const S: string): integer;
-{$IFDEF VIRTUALPASCAL}
-var Error: longint;
-{$ELSE}
 var Error: word;
-{$ENDIF}
 begin
   Val(S, result, Error);
-  if Error <> 0 then raise EConvertError.createfmt(SInValidInteger,[S]);
+  if Error <> 0 then raise EConvertError.createfmt(SInvalidInteger,[S]);
 end ;
 
 
 function StrToInt64(const S: string): int64;
-{$IFDEF VIRTUALPASCAL}
-var Error: longint;
-{$ELSE}
 var Error: word;
-{$ENDIF}
-
 begin
   Val(S, result, Error);
-  if Error <> 0 then raise EConvertError.createfmt(SInValidInteger,[S]);
+  if Error <> 0 then raise EConvertError.createfmt(SInvalidInteger,[S]);
 end;
 
 
-function TryStrToInt64(const s: string; var i : int64) : boolean;
+function TryStrToInt64(const s: string; Out i : int64) : boolean;
 var Error : word;
 begin
   Val(s, i, Error);
@@ -797,35 +823,50 @@ begin
 end;
 
 
+function StrToQWord(const s: string): QWord;
+var Error: word;
+begin
+  Val(S, result, Error);
+  if Error <> 0 then raise EConvertError.createfmt(SInvalidInteger,[S]);
+end;
+
+
+function TryStrToQWord(const s: string; Out Q: QWord): boolean;
+var Error : word;
+begin
+  Val(s, Q, Error);
+  TryStrToQWord:=Error=0
+end;
 
 {   StrToIntDef converts the string S to an integer value,
     Default is returned in case S does not represent a valid integer value  }
 
 function StrToIntDef(const S: string; Default: integer): integer;
-{$IFDEF VIRTUALPASCAL}
-var Error: longint;
-{$ELSE}
 var Error: word;
-{$ENDIF}
 begin
-Val(S, result, Error);
-if Error <> 0 then result := Default;
+  Val(S, result, Error);
+  if Error <> 0 then result := Default;
 end ;
 
-{   StrToIntDef converts the string S to an integer value,
-    Default is returned in case S does not represent a valid integer value  }
+{   StrToInt64Def converts the string S to an int64 value,
+    Default is returned in case S does not represent a valid int64 value  }
 
 function StrToInt64Def(const S: string; Default: int64): int64;
-{$IFDEF VIRTUALPASCAL}
-var Error: longint;
-{$ELSE}
 var Error: word;
-{$ENDIF}
 begin
-Val(S, result, Error);
-if Error <> 0 then result := Default;
+  Val(S, result, Error);
+  if Error <> 0 then result := Default;
 end ;
 
+{   StrToQWordDef converts the string S to an QWord value,
+    Default is returned in case S does not represent a valid QWord value  }
+
+function StrToQWordDef(const S: string; Default: QWord): QWord;
+var Error: word;
+begin
+  Val(S, result, Error);
+  if Error <> 0 then result := Default;
+end;
 
 {   LoadStr returns the string resource Ident.   }
 
@@ -855,19 +896,18 @@ end;
 {$endif}
 
 
-Procedure DoFormatError (ErrCode : Longint);
+Procedure DoFormatError (ErrCode : Longint;const fmt:ansistring);
 Var
   S : String;
 begin
   //!! must be changed to contain format string...
-  S:='';
+  S:=fmt;
   Case ErrCode of
    feInvalidFormat : raise EConvertError.Createfmt(SInvalidFormat,[s]);
    feMissingArgument : raise EConvertError.Createfmt(SArgumentMissing,[s]);
    feInvalidArgIndex : raise EConvertError.Createfmt(SInvalidArgIndex,[s]);
  end;
 end;
-
 
 { we've no templates, but with includes we can simulate this :) }
 
@@ -876,7 +916,7 @@ end;
 {$define TFormatString:=ansistring}
 {$define TFormatChar:=char}
 
-Function Format (Const Fmt : AnsiString; const Args : Array of const) : AnsiString;
+Function Format (Const Fmt : AnsiString; const Args : Array of const; const FormatSettings: TFormatSettings) : AnsiString;
 {$i sysformt.inc}
 
 {$undef TFormatString}
@@ -884,9 +924,13 @@ Function Format (Const Fmt : AnsiString; const Args : Array of const) : AnsiStri
 {$undef INFORMAT}
 {$macro off}
 
-Function FormatBuf (Var Buffer; BufLen : Cardinal;
-                     Const Fmt; fmtLen : Cardinal;
-                     Const Args : Array of const) : Cardinal;
+Function Format (Const Fmt : AnsiString; const Args : Array of const) : AnsiString;
+
+begin
+  Result:=Format(Fmt,Args,DefaultFormatSettings);
+end;
+
+Function FormatBuf (Var Buffer; BufLen : Cardinal; Const Fmt; fmtLen : Cardinal; Const Args : Array of const; Const FormatSettings: TFormatSettings) : Cardinal;
 
 Var S,F : String;
 
@@ -894,7 +938,7 @@ begin
   Setlength(F,fmtlen);
   if fmtlen > 0 then
     Move(fmt,F[1],fmtlen);
-  S:=Format (F,Args);
+  S:=Format (F,Args,FormatSettings);
   If Cardinal(Length(S))<Buflen then
     Result:=Length(S)
   else
@@ -902,41 +946,82 @@ begin
   Move(S[1],Buffer,Result);
 end;
 
+Function FormatBuf (Var Buffer; BufLen : Cardinal;
+                     Const Fmt; fmtLen : Cardinal;
+                     Const Args : Array of const) : Cardinal;
+
+begin
+  Result:=FormatBuf(Buffer,BufLen,Fmt,FmtLen,Args,DefaultFormatSettings);
+end;
+
+Procedure FmtStr(Var Res: string; const Fmt : string; Const args: Array of const; Const FormatSettings: TFormatSettings);
+
+begin
+  Res:=Format(fmt,Args,FormatSettings);
+end;
+
 Procedure FmtStr(Var Res: String; Const Fmt : String; Const args: Array of const);
 
 begin
-  Res:=Format(fmt,Args);
+  FmtStr(Res,Fmt,Args,DefaultFormatSettings);
 end;
+
 
 Function StrFmt(Buffer,Fmt : PChar; Const args: Array of const) : Pchar;
 
 begin
-  Buffer[FormatBuf(Buffer^,Maxint,Fmt^,strlen(fmt),args)]:=#0;
+  Result:=StrFmt(Buffer,Fmt,Args,DefaultFormatSettings);
+end;
+
+Function StrFmt(Buffer,Fmt : PChar; Const Args: Array of const; Const FormatSettings: TFormatSettings): PChar;
+
+begin
+  Buffer[FormatBuf(Buffer^,Maxint,Fmt^,strlen(fmt),args,FormatSettings)]:=#0;
   Result:=Buffer;
 end;
 
 Function StrLFmt(Buffer : PCHar; Maxlen : Cardinal;Fmt : PChar; Const args: Array of const) : Pchar;
 
 begin
-  Buffer[FormatBuf(Buffer^,MaxLen,Fmt^,strlen(fmt),args)]:=#0;
+  Result:=StrLFmt(Buffer,MaxLen,Fmt,Args,DefaultFormatSettings);
+end;
+
+Function StrLFmt(Buffer : PCHar; Maxlen : Cardinal;Fmt : PChar; Const args: Array of const; Const FormatSettings: TFormatSettings) : Pchar;
+
+begin
+  Buffer[FormatBuf(Buffer^,MaxLen,Fmt^,strlen(fmt),args,FormatSettings)]:=#0;
   Result:=Buffer;
 end;
 
+{$ifndef FPUNONE}
+
 Function StrToFloat(Const S: String): Extended;
 
-Begin
-  If Not TextToFloat(Pchar(S),Result) then
+begin
+  Result:=StrToFloat(S,DefaultFormatSettings);
+end;
+
+Function StrToFloat(Const S : String; Const FormatSettings: TFormatSettings) : Extended;
+
+Begin // texttofloat handles NIL properly
+  If Not TextToFloat(Pchar(pointer(S)),Result,FormatSettings) then
     Raise EConvertError.createfmt(SInValidFLoat,[S]);
 End;
 
 function StrToFloatDef(const S: string; const Default: Extended): Extended;
 
 begin
-   if not TextToFloat(PChar(S),Result,fvExtended) then
+  Result:=StrToFloatDef(S,Default,DefaultFormatSettings);
+end;
+
+Function StrToFloatDef(Const S: String; Const Default: Extended; Const FormatSettings: TFormatSettings): Extended;
+
+begin
+   if not TextToFloat(PChar(pointer(S)),Result,fvExtended,FormatSettings) then
      Result:=Default;
 end;
 
-Function TextToFloat(Buffer: PChar; Var Value: Extended): Boolean;
+Function TextToFloat(Buffer: PChar; Out Value: Extended; Const FormatSettings: TFormatSettings): Boolean;
 
 Var
   E,P : Integer;
@@ -944,33 +1029,78 @@ Var
 
 Begin
   S:=StrPas(Buffer);
-  P:=Pos(DecimalSeparator,S);
+  //ThousandSeparator not allowed as by Delphi specs
+  if (FormatSettings.ThousandSeparator <> FormatSettings.DecimalSeparator) and
+     (Pos(FormatSettings.ThousandSeparator, S) <> 0) then
+    begin
+      Result := False;
+      Exit;
+    end;
+  if (FormatSettings.DecimalSeparator <> '.') and
+     (Pos('.', S) <>0) then
+    begin
+      Result := False;
+      Exit;
+    end;
+  P:=Pos(FormatSettings.DecimalSeparator,S);
   If (P<>0) Then
     S[P] := '.';
   Val(trim(S),Value,E);
   Result:=(E=0);
 End;
 
-Function TextToFloat(Buffer: PChar; Var Value; ValueType: TFloatValue): Boolean;
+
+Function TextToFloat(Buffer: PChar; Out Value: Extended): Boolean;
+
+begin
+  Result:=TextToFloat(Buffer,Value,DefaultFormatSettings);
+end;
+
+Function TextToFloat(Buffer: PChar; Out Value; ValueType: TFloatValue): Boolean;
+
+begin
+  Result:=TextToFloat(Buffer,Value,ValueType,DefaultFormatSettings);
+end;
+
+Function TextToFloat(Buffer: PChar; Out Value; ValueType: TFloatValue; Const FormatSettings: TFormatSettings): Boolean;
 
 Var
   E,P : Integer;
   S : String;
+{$ifndef FPC_HAS_STR_CURRENCY}
+  TempValue: extended;
+{$endif FPC_HAS_STR_CURRENCY}
 
 Begin
   S:=StrPas(Buffer);
-  P:=Pos(ThousandSeparator,S);
-  While (P<>0) do
+  //ThousandSeparator not allowed as by Delphi specs
+  if (FormatSettings.ThousandSeparator <> FormatSettings.DecimalSeparator) and
+     (Pos(FormatSettings.ThousandSeparator, S) <> 0) then
     begin
-    Delete(S,P,1);
-    P:=Pos(ThousandSeparator,S);
+      Result := False;
+      Exit;
     end;
-  P:=Pos(DecimalSeparator,S);
+  if (FormatSettings.DecimalSeparator <> '.') and
+     (Pos('.', S) <>0) then
+    begin
+      Result := False;
+      Exit;
+    end;
+
+  P:=Pos(FormatSettings.DecimalSeparator,S);
   If (P<>0) Then
     S[P] := '.';
   case ValueType of
     fvCurrency:
+{$ifdef FPC_HAS_STR_CURRENCY}
       Val(S,Currency(Value),E);
+{$else FPC_HAS_STR_CURRENCY}
+      begin
+        // needed for platforms where Currency = Int64
+        Val(S,TempValue,E);
+        Currency(Value) := TempValue;
+      end;
+{$endif FPC_HAS_STR_CURRENCY}
     fvExtended:
       Val(S,Extended(Value),E);
     fvDouble:
@@ -985,101 +1115,232 @@ Begin
   Result:=(E=0);
 End;
 
-Function TryStrToFloat(Const S : String; Var Value: Single): Boolean;
+
+Function TryStrToFloat(Const S : String; Out Value: Single): Boolean;
+
+begin
+  Result:=TryStrToFloat(S,Value,DefaultFormatSettings);
+end;
+
+Function TryStrToFloat(Const S : String; Out Value: Single; Const FormatSettings: TFormatSettings): Boolean;
 Begin
-  Result := TextToFloat(PChar(S), Value, fvSingle);
+  Result := TextToFloat(PChar(pointer(S)), Value, fvSingle,FormatSettings);
 End;
 
-Function TryStrToFloat(Const S : String; Var Value: Double): Boolean;
+Function TryStrToFloat(Const S : String; Out Value: Double): Boolean;
+
+begin
+  Result:=TryStrToFloat(S,Value,DefaultFormatSettings);
+end;
+
+Function TryStrToFloat(Const S : String; Out Value: Double; Const FormatSettings: TFormatSettings): Boolean;
 Begin
-  Result := TextToFloat(PChar(S), Value, fvDouble);
+  Result := TextToFloat(PChar(pointer(S)), Value, fvDouble,FormatSettings);
 End;
 
 {$ifdef FPC_HAS_TYPE_EXTENDED}
-Function TryStrToFloat(Const S : String; Var Value: Extended): Boolean;
+Function TryStrToFloat(Const S : String; Out Value: Extended): Boolean;
+
+begin
+  Result:=TryStrToFloat(S,Value,DefaultFormatSettings);
+end;
+
+Function TryStrToFloat(Const S : String; Out Value: Extended; Const FormatSettings: TFormatSettings): Boolean;
 Begin
-  Result := TextToFloat(PChar(S), Value);
+  Result := TextToFloat(PChar(pointer(S)), Value,FormatSettings);
 End;
 {$endif FPC_HAS_TYPE_EXTENDED}
 
-Function FloatToStr(Value: Extended): String;
-Begin
-  Result := FloatToStrF(Value, ffGeneral, 15, 0);
-End;
 
-Function FloatToText(Buffer: PChar; Value: Extended; format: TFloatFormat; Precision, Digits: Integer): Longint;
+const
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+  maxdigits = 17;
+{$else}
+  maxdigits = 15;
+{$endif}
+
+Function FloatToStrFIntl(const Value; format: TFloatFormat; Precision, Digits: Integer; ValueType: TFloatValue; Const FormatSettings: TFormatSettings): String;
 Var
-  Tmp: String[40];
+  P, PE, Q, Exponent: Integer;
+  Negative: Boolean;
+  DS: Char;
+
+  function RemoveLeadingNegativeSign(var AValue: String): Boolean;
+  // removes negative sign in case when result is zero eg. -0.00
+  var
+    i: PtrInt;
+    TS: Char;
+    StartPos: PtrInt;
+  begin
+    Result := False;
+    if Format = ffCurrency then
+      StartPos := 1
+    else
+      StartPos := 2;
+    TS := FormatSettings.ThousandSeparator;
+    for i := StartPos to length(AValue) do
+    begin
+      Result := (AValue[i] in ['0', DS, 'E', '+', TS]);
+      if not Result then
+        break;
+    end;
+    if (Result) and (Format <> ffCurrency) then
+      Delete(AValue, 1, 1);
+  end;
+
 Begin
-  Tmp := FloatToStrF(Value, format, Precision, Digits);
-  Result := Length(Tmp);
-  Move(Tmp[1], Buffer[0], Result);
-End;
-
-
-Function FloatToStrF(Value: Extended; format: TFloatFormat; Precision, Digits: Integer): String;
-Var
-  P: Integer;
-  Negative, TooSmall, TooLarge: Boolean;
-
-
-Begin
+  DS:=FormatSettings.DecimalSeparator;
   Case format Of
 
     ffGeneral:
 
       Begin
-        If (Precision = -1) Or (Precision > 15) Then Precision := 15;
-        TooSmall := (Abs(Value) < 0.00001) and (Value>0.0);
-        If Not TooSmall Then
-        Begin
-          Str(Value:digits:precision, Result);
-          P := Pos('.', Result);
-          if P<>0 then
-            Result[P] := DecimalSeparator;
-          TooLarge := P > Precision + 1;
-        End;
-
-        If TooSmall Or TooLarge Then
-          begin
-          Result := FloatToStrF(Value, ffExponent, Precision, Digits);
-          // Strip unneeded zeroes.
-          P:=Pos('E',result)-1;
-          If P<>-1 then
-             While (P>1) and (Result[P]='0') do
-               begin
-               system.Delete(Result,P,1);
-               Dec(P);
-               end;
-          end
-        else if (P<>0) then // we have a decimalseparator
-          begin
-          P := Length(Result);
-          While (P>0) and (Result[P] = '0') Do 
-            Dec(P);
-          If (P>0) and (Result[P]=DecimalSeparator) Then 
-            Dec(P);
-          SetLength(Result, P);
+        case ValueType of
+          fvCurrency:
+              If (Precision = -1) Or (Precision > 19) Then Precision := 19;
+          else
+              If (Precision = -1) Or (Precision > maxdigits) Then Precision := maxdigits;
+        end;
+        { First convert to scientific format, with correct precision }
+        case ValueType of
+          fvDouble:
+            Str(Double(Extended(Value)):precision+7, Result);
+          fvSingle:
+            Str(Single(Extended(Value)):precision+6, Result);
+          fvCurrency:
+{$ifdef FPC_HAS_STR_CURRENCY}
+            Str(Currency(Value):precision+6, Result);
+{$else}
+            Str(Extended(Currency(Value)):precision+8, Result);
+{$endif FPC_HAS_STR_CURRENCY}
+          else
+            Str(Extended(Value):precision+8, Result);
+        end;
+        { Delete leading spaces }
+        while Result[1] = ' ' do
+          System.Delete(Result, 1, 1);
+        P := Pos('.', Result);
+        if P<>0 then
+          Result[P] := DS
+        else
+          Exit; { NAN or other special case }
+        { Consider removing exponent }
+        PE:=Pos('E',Result);
+        if PE > 0 then begin
+          { Read exponent }
+          Q := PE+2;
+          Exponent := 0;
+          while (Q <= Length(Result)) do begin
+            Exponent := Exponent*10 + Ord(Result[Q])-Ord('0');
+            Inc(Q);
           end;
+          if Result[PE+1] = '-' then
+            Exponent := -Exponent;
+          if (P+Exponent < PE) and (Exponent > -6) then begin
+            { OK to remove exponent }
+            SetLength(Result,PE-1); { Trim exponent }
+            if Exponent >= 0 then begin
+              { Shift point to right }
+              for Q := 0 to Exponent-1 do begin
+                Result[P] := Result[P+1];
+                Inc(P);
+              end;
+              Result[P] := DS;
+              P := 1;
+              if Result[P] = '-' then
+                Inc(P);
+              while (Result[P] = '0') and (P < Length(Result)) and (Result[P+1] <> DS) do
+                { Trim leading zeros; conversion above should not give any, but occasionally does
+                  because of rounding }
+                System.Delete(Result,P,1);
+            end else begin
+              { Add zeros at start }
+              Insert(Copy('00000',1,-Exponent),Result,P-1);
+              Result[P-Exponent] := Result[P-Exponent-1]; { Copy leading digit }
+              Result[P] := DS;
+              if Exponent <> -1 then
+                Result[P-Exponent-1] := '0';
+            end;
+            { Remove trailing zeros }
+            Q := Length(Result);
+            while (Q > 0) and (Result[Q] = '0') do
+              Dec(Q);
+            if Result[Q] = DS then
+              Dec(Q); { Remove trailing decimal point }
+            if (Q = 0) or ((Q=1) and (Result[1] = '-')) then
+              Result := '0'
+            else
+              SetLength(Result,Q);
+          end else begin
+            { Need exponent, but remove superfluous characters }
+            { Delete trailing zeros }
+            while Result[PE-1] = '0' do begin
+              System.Delete(Result,PE-1,1);
+              Dec(PE);
+            end;
+            { If number ends in decimal point, remove it }
+            if Result[PE-1] = DS then begin
+              System.Delete(Result,PE-1,1);
+              Dec(PE);
+            end;
+            { delete superfluous + in exponent }
+            if Result[PE+1]='+' then
+              System.Delete(Result,PE+1,1)
+            else
+              Inc(PE);
+            while Result[PE+1] = '0' do
+              { Delete leading zeros in exponent }
+              System.Delete(Result,PE+1,1)
+          end;
+        end;
       End;
 
     ffExponent:
 
       Begin
-        If (Precision = -1) Or (Precision > 15) Then Precision := 15;
-        Str(Value:Precision + 8, Result);
-        Result[3] := DecimalSeparator;
-        P:=4;
-        While (P>0) and (Digits < P) And (Result[Precision + 5] = '0') do
-          Begin
-          If P<>1 then
-            system.Delete(Result, Precision + 5, 1)
+        If (Precision = -1) Or (Precision > maxdigits) Then Precision := maxdigits;
+        case ValueType of
+          fvDouble:
+            Str(Double(Extended(Value)):Precision+7, Result);
+          fvSingle:
+            Str(Single(Extended(Value)):Precision+6, Result);
+          fvCurrency:
+{$ifdef FPC_HAS_STR_CURRENCY}
+            Str(Currency(Value):Precision+6, Result);
+{$else}
+            Str(Extended(Currency(Value)):Precision+8, Result);
+{$endif FPC_HAS_STR_CURRENCY}
           else
-            system.Delete(Result, Precision + 3, 3);
-          Dec(P);
-          end;
-        If Result[1] = ' ' Then
+            Str(Extended(Value):Precision+8, Result);
+        end;
+        { Delete leading spaces }
+        while Result[1] = ' ' do
           System.Delete(Result, 1, 1);
+        if Result[1] = '-' then
+          Result[3] := DS
+        else
+          Result[2] := DS;
+        P:=Pos('E',Result);
+        if P <> 0 then
+          begin
+            Inc(P, 2);
+            if Digits > 4 then
+              Digits:=4;
+            Digits:=Length(Result) - P - Digits + 1;
+            if Digits < 0 then
+              insert(copy('0000',1,-Digits),Result,P)
+            else
+              while (Digits > 0) and (Result[P] = '0') do
+                begin
+                  System.Delete(Result, P, 1);
+                  if P > Length(Result) then
+                    begin
+                      System.Delete(Result, P - 2, 2);
+                      break;
+                    end;
+                  Dec(Digits);
+                end;
+          end;
       End;
 
     ffFixed:
@@ -1087,29 +1348,56 @@ Begin
       Begin
         If Digits = -1 Then Digits := 2
         Else If Digits > 18 Then Digits := 18;
-        Str(Value:0:Digits, Result);
+        case ValueType of
+          fvDouble:
+            Str(Double(Extended(Value)):0:Digits, Result);
+          fvSingle:
+            Str(Single(Extended(Value)):0:Digits, Result);
+          fvCurrency:
+{$ifdef FPC_HAS_STR_CURRENCY}
+            Str(Currency(Value):0:Digits, Result);
+{$else}
+            Str(Extended(Currency(Value)):0:Digits, Result);
+{$endif FPC_HAS_STR_CURRENCY}
+          else
+            Str(Extended(Value):0:Digits, Result);
+        end;
         If Result[1] = ' ' Then
           System.Delete(Result, 1, 1);
         P := Pos('.', Result);
-        If P <> 0 Then Result[P] := DecimalSeparator;
+        If P <> 0 Then Result[P] := DS;
       End;
 
     ffNumber:
 
       Begin
         If Digits = -1 Then Digits := 2
-        Else If Digits > 15 Then Digits := 15;
-        Str(Value:0:Digits, Result);
+        Else If Digits > maxdigits Then Digits := maxdigits;
+        case ValueType of
+          fvDouble:
+            Str(Double(Extended(Value)):0:Digits, Result);
+          fvSingle:
+            Str(Single(Extended(Value)):0:Digits, Result);
+          fvCurrency:
+{$ifdef FPC_HAS_STR_CURRENCY}
+            Str(Currency(Value):0:Digits, Result);
+{$else}
+            Str(Extended(Currency(Value)):0:Digits, Result);
+{$endif FPC_HAS_STR_CURRENCY}
+          else
+            Str(Extended(Value):0:Digits, Result);
+        end;
         If Result[1] = ' ' Then System.Delete(Result, 1, 1);
         P := Pos('.', Result);
         If P <> 0 Then
-          Result[P] := DecimalSeparator
+          Result[P] := DS
         else
           P := Length(Result)+1;
         Dec(P, 3);
         While (P > 1) Do
         Begin
-          If Result[P - 1] <> '-' Then Insert(ThousandSeparator, Result, P);
+          If (Result[P - 1] <> '-') And (FormatSettings.ThousandSeparator <> #0) Then
+            Insert(FormatSettings.ThousandSeparator, Result, P);
           Dec(P, 3);
         End;
       End;
@@ -1117,54 +1405,297 @@ Begin
     ffCurrency:
 
       Begin
-        If Value < 0 Then
-        Begin
-          Negative := True;
-          Value := -Value;
-        End
-        Else Negative := False;
-
-        If Digits = -1 Then Digits := CurrencyDecimals
+        If Digits = -1 Then Digits := FormatSettings.CurrencyDecimals
         Else If Digits > 18 Then Digits := 18;
-        Str(Value:0:Digits, Result);
-        If Result[1] = ' ' Then System.Delete(Result, 1, 1);
+        case ValueType of
+          fvDouble:
+            Str(Double(Extended(Value)):0:Digits, Result);
+          fvSingle:
+            Str(Single(Extended(Value)):0:Digits, Result);
+          fvCurrency:
+{$ifdef FPC_HAS_STR_CURRENCY}
+            Str(Currency(Value):0:Digits, Result);
+{$else}
+            Str(Extended(Currency(Value)):0:Digits, Result);
+{$endif FPC_HAS_STR_CURRENCY}
+          else
+            Str(Extended(Value):0:Digits, Result);
+        end;
+        Negative:=Result[1] = '-';
+        if Negative then
+          System.Delete(Result, 1, 1);
         P := Pos('.', Result);
-        If P <> 0 Then Result[P] := DecimalSeparator;
+        If P <> 0 Then Result[P] := DS;
         Dec(P, 3);
         While (P > 1) Do
         Begin
-          Insert(ThousandSeparator, Result, P);
+          If FormatSettings.ThousandSeparator<>#0 Then
+            Insert(FormatSettings.ThousandSeparator, Result, P);
           Dec(P, 3);
         End;
 
+        if (length(Result) > 1) and Negative then
+          Negative := not RemoveLeadingNegativeSign(Result);
+
         If Not Negative Then
         Begin
-          Case CurrencyFormat Of
-            0: Result := CurrencyString + Result;
-            1: Result := Result + CurrencyString;
-            2: Result := CurrencyString + ' ' + Result;
-            3: Result := Result + ' ' + CurrencyString;
+          Case FormatSettings.CurrencyFormat Of
+            0: Result := FormatSettings.CurrencyString + Result;
+            1: Result := Result + FormatSettings.CurrencyString;
+            2: Result := FormatSettings.CurrencyString + ' ' + Result;
+            3: Result := Result + ' ' + FormatSettings.CurrencyString;
           End
         End
         Else
         Begin
-          Case NegCurrFormat Of
-            0: Result := '(' + CurrencyString + Result + ')';
-            1: Result := '-' + CurrencyString + Result;
-            2: Result := CurrencyString + '-' + Result;
-            3: Result := CurrencyString + Result + '-';
-            4: Result := '(' + Result + CurrencyString + ')';
-            5: Result := '-' + Result + CurrencyString;
-            6: Result := Result + '-' + CurrencyString;
-            7: Result := Result + CurrencyString + '-';
-            8: Result := '-' + Result + ' ' + CurrencyString;
-            9: Result := '-' + CurrencyString + ' ' + Result;
-            10: Result := CurrencyString + ' ' + Result + '-';
+          Case FormatSettings.NegCurrFormat Of
+            0: Result := '(' + FormatSettings.CurrencyString + Result + ')';
+            1: Result := '-' + FormatSettings.CurrencyString + Result;
+            2: Result := FormatSettings.CurrencyString + '-' + Result;
+            3: Result := FormatSettings.CurrencyString + Result + '-';
+            4: Result := '(' + Result + FormatSettings.CurrencyString + ')';
+            5: Result := '-' + Result + FormatSettings.CurrencyString;
+            6: Result := Result + '-' + FormatSettings.CurrencyString;
+            7: Result := Result + FormatSettings.CurrencyString + '-';
+            8: Result := '-' + Result + ' ' + FormatSettings.CurrencyString;
+            9: Result := '-' + FormatSettings.CurrencyString + ' ' + Result;
+            10: Result := Result + ' ' + FormatSettings.CurrencyString + '-';
+            11: Result := FormatSettings.CurrencyString + ' ' + Result + '-';
+            12: Result := FormatSettings.CurrencyString + ' ' + '-' + Result;
+            13: Result := Result + '-' + ' ' + FormatSettings.CurrencyString;
+            14: Result := '(' + FormatSettings.CurrencyString + ' ' + Result + ')';
+            15: Result := '(' + Result + ' ' + FormatSettings.CurrencyString + ')';
           End;
         End;
       End;
   End;
+  if not (format in [ffCurrency]) and (length(Result) > 1) and (Result[1] = '-') then
+    RemoveLeadingNegativeSign(Result);
 End;
+
+
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+Function FloatToStr(Value: Extended; Const FormatSettings: TFormatSettings): String;
+Begin
+  Result := FloatToStrFIntl(Value, ffGeneral, 15, 0, fvExtended,FormatSettings);
+End;
+
+
+Function FloatToStr(Value: Extended): String;
+
+begin
+  Result:=FloatToStr(Value,DefaultFormatSettings);
+end;
+{$endif FPC_HAS_TYPE_EXTENDED}
+
+
+Function FloatToStr(Value: Currency; Const FormatSettings: TFormatSettings): String;
+Begin
+  Result := FloatToStrFIntl(Value, ffGeneral, 15, 0, fvCurrency,FormatSettings);
+End;
+
+
+Function FloatToStr(Value: Currency): String;
+
+begin
+  Result:=FloatToStr(Value,DefaultFormatSettings);
+end;
+
+
+Function FloatToStr(Value: Double; Const FormatSettings: TFormatSettings): String;
+var
+  e: Extended;
+Begin
+  e := Value;
+  Result := FloatToStrFIntl(e, ffGeneral, 15, 0, fvDouble,FormatSettings);
+End;
+
+
+Function FloatToStr(Value: Double): String;
+
+begin
+  Result:=FloatToStr(Value,DefaultFormatSettings);
+end;
+
+
+Function FloatToStr(Value: Single; Const FormatSettings: TFormatSettings): String;
+var
+  e: Extended;
+Begin
+  e := Value;
+  Result := FloatToStrFIntl(e, ffGeneral, 15, 0, fvSingle,FormatSettings);
+End;
+
+
+Function FloatToStr(Value: Single): String;
+
+begin
+  Result:=FloatToStr(Value,DefaultFormatSettings);
+end;
+
+
+Function FloatToStr(Value: Comp; Const FormatSettings: TFormatSettings): String;
+var
+  e: Extended;
+Begin
+  e := Value;
+  Result := FloatToStrFIntl(e, ffGeneral, 15, 0, fvComp,FormatSettings);
+End;
+
+
+Function FloatToStr(Value: Comp): String;
+
+begin
+  Result:=FloatToStr(Value,DefaultFormatSettings);
+end;
+
+{$ifndef FPC_COMP_IS_INT64}
+Function FloatToStr(Value: Int64): String;
+
+begin
+  Result:=FloatToStr(Value,DefaultFormatSettings);
+end;
+
+Function FloatToStr(Value: Int64; Const FormatSettings: TFormatSettings): String;
+
+var
+  e: Extended;
+
+Begin
+  e := Comp(Value);
+  Result := FloatToStrFIntl(e, ffGeneral, 15, 0, fvComp,FormatSettings);
+End;
+{$endif FPC_COMP_IS_INT64}
+
+
+Function FloatToText(Buffer: PChar; Value: Extended; format: TFloatFormat; Precision, Digits: Integer; Const FormatSettings: TFormatSettings): Longint;
+Var
+  Tmp: String[40];
+Begin
+  Tmp := FloatToStrF(Value, format, Precision, Digits,FormatSettings);
+  Result := Length(Tmp);
+  Move(Tmp[1], Buffer[0], Result);
+End;
+
+
+Function FloatToText(Buffer: PChar; Value: Extended; format: TFloatFormat; Precision, Digits: Integer): Longint;
+
+begin
+  Result:=FloatToText(Buffer,Value,Format,Precision,Digits,DefaultFormatSettings);
+end;
+
+
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+Function FloatToStrF(Value: Extended; format: TFloatFormat; Precision, Digits: Integer; Const FormatSettings: TFormatSettings): String;
+begin
+  Result := FloatToStrFIntl(value,format,precision,digits,fvExtended,FormatSettings);
+end;
+
+
+Function FloatToStrF(Value: Extended; format: TFloatFormat; Precision, Digits: Integer): String;
+
+begin
+  Result:=FloatToStrF(Value,Format,Precision,Digits,DefaultFormatSettings);
+end;
+{$endif}
+
+
+Function FloatToStrF(Value: Currency; format: TFloatFormat; Precision, Digits: Integer; Const FormatSettings: TFormatSettings): String;
+begin
+  Result := FloatToStrFIntl(value,format,precision,digits,fvCurrency,FormatSettings);
+end;
+
+
+Function FloatToStrF(Value: Currency; format: TFloatFormat; Precision, Digits: Integer): String;
+
+begin
+  Result:=FloatToStrF(Value,format,Precision,Digits,DefaultFormatSettings);
+end;
+
+
+Function FloatToStrF(Value: Double; format: TFloatFormat; Precision, Digits: Integer; Const FormatSettings: TFormatSettings): String;
+var
+  e: Extended;
+begin
+  e := Value;
+  result := FloatToStrFIntl(e,format,precision,digits,fvDouble,FormatSettings);
+end;
+
+
+Function FloatToStrF(Value: Double; format: TFloatFormat; Precision, Digits: Integer): String;
+
+begin
+  Result:= FloatToStrF(Value,Format,Precision,Digits,DefaultFormatSettings);
+end;
+
+
+Function FloatToStrF(Value: Single; format: TFloatFormat; Precision, Digits: Integer; Const FormatSettings: TFormatSettings): String;
+
+var
+  e: Extended;
+begin
+  e:=Value;
+  result := FloatToStrFIntl(e,format,precision,digits,fvSingle,FormatSettings);
+end;
+
+
+Function FloatToStrF(Value: Single; format: TFloatFormat; Precision, Digits: Integer): String;
+
+begin
+  Result:= FloatToStrF(Value,Format,Precision,Digits,DefaultFormatSettings);
+end;
+
+
+Function FloatToStrF(Value: Comp; format: TFloatFormat; Precision, Digits: Integer; Const FormatSettings: TFormatSettings): String;
+
+var
+  e: Extended;
+begin
+  e := Value;
+  Result := FloatToStrFIntl(e,format,precision,digits,fvComp,FormatSettings);
+end;
+
+
+Function FloatToStrF(Value: Comp; format: TFloatFormat; Precision, Digits: Integer): String;
+
+begin
+  Result:=FloatToStrF(Value,Format,Precision,Digits,DefaultFormatSettings);
+end;
+
+
+
+{$ifndef FPC_COMP_IS_INT64}
+Function FloatToStrF(Value: Int64; format: TFloatFormat; Precision, Digits: Integer; Const FormatSettings: TFormatSettings): String;
+
+var
+  e: Extended;
+begin
+  e := Comp(Value);
+  result := FloatToStrFIntl(e,format,precision,digits,fvComp,FormatSettings);
+end;
+
+
+Function FloatToStrF(Value: Int64; format: TFloatFormat; Precision, Digits: Integer): String;
+
+begin
+  Result:=FloatToStrF(Value,Format,Precision,Digits,DefaultFormatSettings);
+end;
+{$endif FPC_COMP_IS_INT64}
+
+
+Function CurrToStrF(Value: Currency; Format: TFloatFormat; Digits: Integer; Const FormatSettings: TFormatSettings): string;
+
+begin
+  result:=FloatToStrF(Value,Format,19,Digits,FormatSettings);
+end;
+
+
+Function CurrToStrF(Value: Currency; Format: TFloatFormat; Digits: Integer): string;
+
+begin
+  Result:=CurrToStrF(Value,Format,Digits,DefaultFormatSettings);
+end;
+
 
 Function FloatToDateTime (Const Value : Extended) : TDateTime;
 begin
@@ -1176,13 +1707,9 @@ end;
 function TryFloatToCurr(const Value: Extended; var AResult: Currency): Boolean;
 
 begin
-{$ifndef VER1_0}
   Result:=(Value>=MinCurrency) and (Value<=MaxCurrency);
   if Result then
     AResult := Value;
-{$else VER1_0}
-  Result:=false;
-{$endif VER1_0}
 end;
 
 function FloatToCurr(const Value: Extended): Currency;
@@ -1195,61 +1722,164 @@ end;
 
 Function CurrToStr(Value: Currency): string;
 begin
-  Result:=FloatToStrF(Value,ffNumber,15,2);
+  Result:=FloatToStrF(Value,ffGeneral,-1,0);
 end;
+
+
+Function CurrToStr(Value: Currency; Const FormatSettings: TFormatSettings): string;
+begin
+  Result:=FloatToStrF(Value,ffGeneral,-1,0,FormatSettings);
+end;  
+
 
 function StrToCurr(const S: string): Currency;
 begin
-  if not TextToFloat(PChar(S), Result, fvCurrency) then
+  if not TextToFloat(PChar(pointer(S)), Result, fvCurrency) then
     Raise EConvertError.createfmt(SInValidFLoat,[S]);
 end;
 
 
-Function TryStrToCurr(Const S : String; Var Value: Currency): Boolean;
+function StrToCurr(const S: string; Const FormatSettings: TFormatSettings): Currency; 
+begin
+  if not TextToFloat(PChar(pointer(S)), Result, fvCurrency,FormatSettings) then
+    Raise EConvertError.createfmt(SInValidFLoat,[S]);
+end;
+
+
+Function TryStrToCurr(Const S : String; Out Value: Currency): Boolean;
 Begin
-  Result := TextToFloat(PChar(S), Value, fvCurrency);
+  Result := TextToFloat(PChar(pointer(S)), Value, fvCurrency);
 End;
+
+
+function TryStrToCurr(const S: string;Out Value : Currency; Const FormatSettings: TFormatSettings): Boolean;       
+Begin
+  Result := TextToFloat(PChar(pointer(S)), Value, fvCurrency,FormatSettings);
+End;  
 
 
 function StrToCurrDef(const S: string; Default : Currency): Currency;
 begin
-  if not TextToFloat(PChar(S), Result, fvCurrency) then
+  if not TextToFloat(PChar(pointer(S)), Result, fvCurrency) then
     Result:=Default;
 end;
 
-function StrToBool(const S: string): Boolean;
+function StrToCurrDef(const S: string; Default : Currency; Const FormatSettings: TFormatSettings): Currency;  
+begin
+  if not TextToFloat(PChar(pointer(S)), Result, fvCurrency,FormatSettings) then
+    Result:=Default;
+end; 
+{$endif FPUNONE}
 
-Var
-  Temp : String;
-  D : Double;
-{$IFDEF VIRTUALPASCAL}
-  Code: longint;
-{$ELSE}
-  Code: word;
-{$ENDIF}
+function AnsiDequotedStr(const S: string; AQuote: Char): string;
+
+var p : pchar;
 
 begin
-  Temp:=upcase(S);
-  Val(temp,D,code);
-  If Code=0 then
-    Result:=(D<>0.0)
-  else If Temp='TRUE' then
-    result:=true
-  else if Temp='FALSE' then
-    result:=false
-  else
+  p:=pchar(pointer(s)); // work around CONST. Ansiextract is safe for nil
+  result:=AnsiExtractquotedStr(p,AQuote);
+  if result='' Then
+    result:=s;
+end;
+
+function StrToBool(const S: string): Boolean;
+begin
+  if not(TryStrToBool(S,Result)) then
     Raise EConvertError.CreateFmt(SInvalidBoolean,[S]);
 end;
 
-function BoolToStr(B: Boolean): string;
+procedure CheckBoolStrs;
 begin
-  If B then
-    Result:='TRUE'
-  else
-    Result:='FALSE';
+    If Length(TrueBoolStrs)=0 then
+      begin
+        SetLength(TrueBoolStrs,1);
+        TrueBoolStrs[0]:='True';
+      end;
+    If Length(FalseBoolStrs)=0 then
+      begin
+        SetLength(FalseBoolStrs,1);
+        FalseBoolStrs[0]:='False';
+      end;
 end;
 
+
+function BoolToStr(B: Boolean;UseBoolStrs:Boolean=False): string;
+begin
+ if UseBoolStrs Then
+  begin
+    CheckBoolStrs;
+    if B then
+      Result:=TrueBoolStrs[0]
+    else
+      Result:=FalseBoolStrs[0];
+  end
+ else
+  If B then
+    Result:='-1'
+  else
+    Result:='0';
+end;
+
+// from textmode IDE util funcs.
+function BoolToStr(B: boolean; const TrueS, FalseS: string): string;
+begin
+  if B then Result:=TrueS else BoolToStr:=FalseS;
+end;
+
+function StrToBoolDef(const S: string; Default: Boolean): Boolean;
+begin
+  if not(TryStrToBool(S,Result)) then
+    Result:=Default;
+end;
+
+function TryStrToBool(const S: string; out Value: Boolean): Boolean;
+Var
+  Temp : String;
+  I    : Longint;
+{$ifdef FPUNONE}
+  D : Longint;
+{$else}
+  D : Double;
+{$endif}
+  Code: word;
+begin
+  Temp:=upcase(S);
+  Val(temp,D,code);
+  Result:=true;
+  If Code=0 then
+{$ifdef FPUNONE}
+    Value:=(D<>0)
+{$else}
+    Value:=(D<>0.0)
+{$endif}
+  else
+    begin
+      CheckBoolStrs;
+      for I:=low(TrueBoolStrs) to High(TrueBoolStrs) do
+        if Temp=upcase(TrueBoolStrs[I]) then
+          begin
+            Value:=true;
+            exit;
+          end;
+      for I:=low(FalseBoolStrs) to High(FalseBoolStrs) do
+        if Temp=upcase(FalseBoolStrs[I]) then
+          begin
+            Value:=false;
+            exit;
+          end;
+      Result:=false;
+    end;
+end;
+
+{$ifndef FPUNONE}
+
 Function FloatToTextFmt(Buffer: PChar; Value: Extended; format: PChar): Integer;
+
+begin
+  Result:=FloatToTextFmt(Buffer,Value,Format,DefaultFormatSettings);
+end;
+
+Function FloatToTextFmt(Buffer: PChar; Value: Extended; format: PChar;FormatSettings : TFormatSettings): Integer;
 
 Var
   Digits: String[40];                         { String Of Digits                 }
@@ -1365,8 +1995,8 @@ Var
           Inc(Fmt);
           End;
       Else
-        { This was 'if not SQ or DQ'. Looked wrong... }
-        If Not SQ Or DQ Then
+       { if not in quotes, then interpret}
+        If Not (SQ Or DQ) Then
           Begin
           Case Fmt[0] Of
             '0':
@@ -1400,7 +2030,7 @@ Var
               End;
             ',':
               Begin
-              thousand := True;
+              thousand := DefaultFormatSettings.ThousandSeparator<>#0;
               Inc(Fmt);
               End;
             'e', 'E':
@@ -1441,7 +2071,9 @@ Var
           Else { Case }
             Inc(Fmt);
           End; { Case }
-          End; { Begin }
+          End  { Begin }
+        Else
+          Inc(Fmt);
       End; { Case }
       End; { While .. Begin }
   End;
@@ -1459,8 +2091,10 @@ Var
       Width:=Placehold[1]+Placehold[2]+Decimals;
       If (Decimals=0) Then
         Str(Value:Width:0,Digits)
-      Else
-        Str(Value:Width+1:Decimals,Digits);
+      Else if Value>=0 then
+        Str(Value:Width+1:Decimals,Digits)
+      else
+        Str(Value:Width+2:Decimals,Digits);
       len:=Length(Digits);
       { Find the decimal point }
       If (Decimals=0) Then
@@ -1476,7 +2110,6 @@ Var
         Else
           Digits[DecimalPoint-1]:=' ';
         End;
-
       { Convert optional zeroes to spaces. }
       I:=len;
       J:=DecimalPoint+Placehold[3];
@@ -1489,13 +2122,19 @@ Var
         places, remove decimal point. }
       If (DecimalPoint < len) And (Digits[DecimalPoint + 1] = ' ') Then
           Digits[DecimalPoint] := ' ';
-      { Convert spaces left from obligatory decimal point to zeroes. }
+      { Convert spaces left from obligatory decimal point to zeroes.
+        MVC : If - sign is encountered, replace it too, and put at position 1}
       I:=DecimalPoint-Placehold[2];
-      While (I<DecimalPoint) And (Digits[I]=' ') Do
+      J:=0;
+      While (I<DecimalPoint) And (Digits[I] in [' ','-']) Do
         Begin
+        If Digits[i]='-' then
+          J:=I;
         Digits[I] := '0';
         Inc(I);
         End;
+      If (J<>0) then
+        Digits[1]:='-';
       Exp := 0;
       End
     Else
@@ -1506,14 +2145,27 @@ Var
         Placehold[1]:=1;
       Decimals := Placehold[3] + Placehold[4];
       Width:=Placehold[1]+Placehold[2]+Decimals;
+      { depending on the maximally supported precision, the exponent field }
+      { is longer/shorter                                                  }
+{$ifdef FPC_HAS_TYPE_EXTENDED}
       Str(Value:Width+8,Digits);
+{$else FPC_HAS_TYPE_EXTENDED}
+{$ifdef FPC_HAS_TYPE_DOUBLE}
+      Str(Value:Width+7,Digits);
+{$else FPC_HAS_TYPE_DOUBLE}
+      Str(Value:Width+6,Digits);
+{$endif FPC_HAS_TYPE_DOUBLE}
+{$endif FPC_HAS_TYPE_EXTENDED}
+
       { Find and cut out exponent. Always the
         last 6 characters in the string.
-        -> 0000E+0000                         }
-      I:=Length(Digits)-5;
-      Val(Copy(Digits,I+1,5),Exp,J);
+        -> 0000E+0000
+        *** No, not always the last 6 characters, this depends on
+            the maximally supported precision (JM)}
+      I:=Pos('E',Digits);
+      Val(Copy(Digits,I+1,255),Exp,J);
       Exp:=Exp+1-(Placehold[1]+Placehold[2]);
-      Delete(Digits, I, 6);
+      Delete(Digits, I, 255);
       { Str() always returns at least one digit after the decimal point.
         If we don't want it, we have to remove it. }
       If (Decimals=0) And (Placehold[1]+Placehold[2]<= 1) Then
@@ -1620,13 +2272,16 @@ Var
                 { Everything unexpected is written before the first digit }
                 For N := 1 To UnexpectedDigits Do
                   Begin
-                  Buf[0] := Digits[N];
-                  Inc(Buf);
+                    if (Digits[N]<>' ') Then
+                    begin
+                      Buf[0] := Digits[N];
+                      Inc(Buf);
+                    end;
                   If thousand And (Digits[N]<>'-') Then
                     Begin
                     If (DigitExponent Mod 3 = 0) And (DigitExponent>0) Then
                       Begin
-                      Buf[0] := ThousandSeparator;
+                      Buf[0] := FormatSettings.ThousandSeparator;
                       Inc(Buf);
                       End;
                     Dec(DigitExponent);
@@ -1637,13 +2292,13 @@ Var
               If (Digits[Dig]<>' ') Then
                 Begin
                 If (Digits[Dig]='.') Then
-                  Buf[0] := DecimalSeparator
+                  Buf[0] := FormatSettings.DecimalSeparator
                 Else
                   Buf[0] := Digits[Dig];
                 Inc(Buf);
-                If thousand And (DigitExponent Mod 3 = 0) And (DigitExponent > 0) Then
+                If thousand And (DigitExponent Mod 3 = 0) And (DigitExponent > 0) and (Digits[Dig]<>'-') Then
                   Begin
-                  Buf[0] := ThousandSeparator;
+                  Buf[0] := FormatSettings.ThousandSeparator;
                   Inc(Buf);
                   End;
                 End;
@@ -1697,7 +2352,7 @@ Var
           End;
       End; { Case }
     End; { While .. Begin }
-    Result:=PtrInt(Buf)-PtrInt(Buffer);
+    Result:=PtrUInt(Buf)-PtrUInt(Buffer);
   End;
 
 Begin
@@ -1709,13 +2364,13 @@ Begin
     GetSectionRange(3);
   If FmtStart = Nil Then
     Begin
-    Result := FloatToText(Buffer, Value, ffGeneral, 15, 4);
+    Result := FloatToText(Buffer, Value, ffGeneral, 15, 4, FormatSettings);
     End
   Else
     Begin
     GetFormatOptions;
     If (ExpFmt = 0) And (Abs(Value) >= 1E18) Then
-      Result := FloatToText(Buffer, Value, ffGeneral, 15, 4)
+      Result := FloatToText(Buffer, Value, ffGeneral, 15, 4, FormatSettings)
     Else
       Begin
       FloatToStr;
@@ -1725,86 +2380,175 @@ Begin
 End;
 
 
+Procedure FloatToDecimal(Out Result: TFloatRec; const Value; ValueType: TFloatValue; Precision, Decimals : integer);
+var
+  Buffer: String[254];  //Though str func returns only 25 chars, this might change in the future
+  InfNan: string[3];
+  Error, N, L, Start, C: Integer;
+  GotNonZeroBeforeDot, BeforeDot : boolean;
+begin
+  case ValueType of
+    fvExtended:
+      Str(Extended(Value):25, Buffer);
+    fvDouble,
+    fvReal:
+      Str(Double(Value):23, Buffer);
+    fvSingle:
+      Str(Single(Value):16, Buffer);
+    fvCurrency:
+      Str(Currency(Value):25, Buffer);
+    fvComp:
+      Str(Currency(Value):23, Buffer);
+  end;
 
-Procedure FloatToDecimal(Var Result: TFloatRec; Value: Extended; Precision, Decimals : integer);
-
-Var
-  Buffer: String[24];
-  Error, N: Integer;
-
-Begin
-  Str(Value:23, Buffer);
-  Result.Negative := (Buffer[1] = '-');
-  Val(Copy(Buffer, 19, 5), Result.Exponent, Error);
-  Inc(Result. Exponent);
-  Result.Digits[0] := Buffer[2];
-  Move(Buffer[4], Result.Digits[1], 14);
-  If Decimals + Result.Exponent < Precision Then
+  N := 1;
+  L := Byte(Buffer[0]);
+  while Buffer[N]=' ' do
+    Inc(N);
+  Result.Negative := (Buffer[N] = '-');
+  if Result.Negative then
+    Inc(N)
+  else if (Buffer[N] = '+') then
+    inc(N);
+  { special cases for Inf and Nan }
+  if (L>=N+2) then
+    begin
+      InfNan:=copy(Buffer,N,3);
+      if (InfNan='Inf') then
+        begin
+          Result.Digits[0]:=#0;
+          Result.Exponent:=32767;
+          exit
+        end;
+      if (InfNan='Nan') then
+        begin
+          Result.Digits[0]:=#0;
+          Result.Exponent:=-32768;
+          exit
+        end;
+    end;
+  Start := N;  //Start of digits
+  Result.Exponent := 0; BeforeDot := true;
+  GotNonZeroBeforeDot := false;
+  while (L>=N) and (Buffer[N]<>'E') do
+    begin
+      if Buffer[N]='.' then
+        BeforeDot := false
+      else
+        begin
+          if BeforeDot then
+            begin  // Currently this is always 1 char
+              Inc(Result.Exponent);
+              Result.Digits[N-Start] := Buffer[N];
+              if Buffer[N] <> '0' then
+                GotNonZeroBeforeDot := true;
+            end
+          else
+            Result.Digits[N-Start-1] := Buffer[N]
+        end;
+      Inc(N);
+    end;
+  Inc(N); // Pass through 'E'
+  if N<=L then
+    begin
+      Val(Copy(Buffer, N, L-N+1), C, Error); // Get exponent after 'E'
+      Inc(Result.Exponent, C);
+    end;
+  // Calculate number of digits we have from str
+  if BeforeDot then
+    N := N - Start - 1
+  else
+    N := N - Start - 2;
+  L := SizeOf(Result.Digits);
+  if N<L then
+    FillChar(Result.Digits[N], L-N, '0');  //Zero remaining space
+  if Decimals + Result.Exponent < Precision Then //After this it is the same as in FloatToDecimal
     N := Decimals + Result.Exponent
   Else
     N := Precision;
-  If N > 15 Then
-    N := 15;
-  If N = 0 Then
-    Begin
-    If Result.Digits[0] >= '5' Then
-      Begin
-      Result.Digits[0] := '1';
-      Result.Digits[1] := #0;
-      Inc(Result.Exponent);
-      End
-    Else
-      Result.Digits[0] := #0;
-    End
-  Else If N > 0 Then
-    Begin
-    If Result.Digits[N] >= '5' Then
-      Begin
-      Repeat
-        Result.Digits[N] := #0;
-        Dec(N);
-        Inc(Result.Digits[N]);
-      Until (N = 0) Or (Result.Digits[N] < ':');
-      If Result.Digits[0] = ':' Then
-        Begin
-        Result.Digits[0] := '1';
-        Inc(Result.Exponent);
-        End;
-      End
-    Else
-      Begin
-      Result.Digits[N] := '0';
-      While (Result.Digits[N] = '0') And (N > -1) Do
-        Begin
-        Result.Digits[N] := #0;
-        Dec(N);
-        End;
-      End;
-    End
+  if N >= L Then
+    N := L-1;
+  if N = 0 Then
+    begin
+      if Result.Digits[0] >= '5' Then
+        begin
+          Result.Digits[0] := '1';
+          Result.Digits[1] := #0;
+          Inc(Result.Exponent);
+        end
+      Else
+        Result.Digits[0] := #0;
+    end  //N=0
+  Else if N > 0 Then
+    begin
+      if Result.Digits[N] >= '5' Then
+        begin
+          Repeat
+            Result.Digits[N] := #0;
+            Dec(N);
+            Inc(Result.Digits[N]);
+          Until (N = 0) Or (Result.Digits[N] < ':');
+          If Result.Digits[0] = ':' Then
+            begin
+              Result.Digits[0] := '1';
+              Inc(Result.Exponent);
+            end;
+        end
+      Else
+        begin
+          Result.Digits[N] := '0';
+          While (N > -1) And (Result.Digits[N] = '0') Do
+            begin
+              Result.Digits[N] := #0;
+              Dec(N);
+            end;
+        end;
+      end //N>0
   Else
     Result.Digits[0] := #0;
-  If Result.Digits[0] = #0 Then
-    Begin
-    Result.Exponent := 0;
-    Result.Negative := False;
-    End;
-End;
+  if (Result.Digits[0] = #0) and
+     not GotNonZeroBeforeDot then
+    begin
+      Result.Exponent := 0;
+      Result.Negative := False;
+    end;
+end;
 
-Function FormatFloat(Const format: String; Value: Extended): String;
+
+Procedure FloatToDecimal(Out Result: TFloatRec; Value: Extended; Precision, Decimals : integer);
+
+begin
+  FloatToDecimal(Result,Value,fvExtended,Precision,Decimals);
+end;
+
+Function FormatFloat(Const Format : String; Value : Extended; Const FormatSettings: TFormatSettings) : String;
 
 Var
   buf : Array[0..1024] of char;
 
-Begin
-  Buf[FloatToTextFmt(@Buf[0],Value,Pchar(Format))]:=#0;
-  Result:=StrPas(@Buf);
+Begin // not changed to pchar(pointer(). Possibly not safe
+  Buf[FloatToTextFmt(@Buf[0],Value,Pchar(Format),FormatSettings)]:=#0;
+  Result:=StrPas(@Buf[0]);
 End;
 
-function FormatCurr(const Format: string; Value: Currency): string;
+Function FormatFloat(Const format: String; Value: Extended): String;
+
 begin
-  Result := FormatFloat(Format, Value);
+  Result:=FormatFloat(Format,Value,DefaultFormatSettings);
 end;
-  
+
+Function FormatCurr(const Format: string; Value: Currency; Const FormatSettings: TFormatSettings): string;
+begin
+  Result := FormatFloat(Format, Value,FormatSettings);
+end;
+
+function FormatCurr(const Format: string; Value: Currency): string;
+
+begin
+  Result:=FormatCurr(Format,Value,DefaultFormatSettings);
+end;
+
+{$endif}
 
 {==============================================================================}
 {   extra functions                                                            }
@@ -1829,44 +2573,62 @@ end;
 {    BCDToInt converts the BCD value Value to an integer   }
 
 function BCDToInt(Value: integer): integer;
-var i, j: integer;
+var i, j, digit: integer;
 begin
 result := 0;
 j := 1;
-for i := 0 to SizeOf(Value) shr 1 - 1 do begin
-   result := result + j * (Value and 15);
-   j := j * 10;
+
+for i := 0 to SizeOf(Value) shl 1 - 1 do begin
+   digit := Value and 15;
+
+   if digit > $9 then
+   begin
+       if i = 0 then
+       begin
+           if digit in [$B, $D] then j := -1
+       end
+       else raise EConvertError.createfmt(SInvalidBCD,[Value]);
+   end
+   else
+   begin
+      result := result + j * digit;
+      j := j * 10;
+      end ;
    Value := Value shr 4;
    end ;
 end ;
 
 Function LastDelimiter(const Delimiters, S: string): Integer;
-
+var
+  chs: TSysCharSet;
+  I: LongInt;
 begin
+  chs := [];
+  for I := 1 to Length(Delimiters) do
+    Include(chs, Delimiters[I]);
   Result:=Length(S);
-  While (Result>0) and (Pos(S[Result],Delimiters)=0) do
+  While (Result>0) and not (S[Result] in chs) do
     Dec(Result);
 end;
 
-Function StringReplace(const S, OldPattern, NewPattern: string;  Flags: TReplaceFlags): string;
 
+Function StringReplace(const S, OldPattern, NewPattern: string;  Flags: TReplaceFlags): string;
 var
   Srch,OldP,RemS: string; // Srch and Oldp can contain uppercase versions of S,OldPattern
   P : Integer;
-
 begin
   Srch:=S;
   OldP:=OldPattern;
   if rfIgnoreCase in Flags then
     begin
-    Srch:=UpperCase(Srch);
-    OldP:=UpperCase(OldP);
+    Srch:=AnsiUpperCase(Srch);
+    OldP:=AnsiUpperCase(OldP);
     end;
   RemS:=S;
   Result:='';
   while (Length(Srch)<>0) do
     begin
-    P:=Pos(OldP, Srch);
+    P:=AnsiPos(OldP, Srch);
     if P=0 then
       begin
       Result:=Result+RemS;
@@ -1887,6 +2649,7 @@ begin
       end;
     end;
 end;
+
 
 Function IsDelimiter(const Delimiters, S: string; Index: Integer): Boolean;
 
@@ -1931,8 +2694,8 @@ begin
   Result:=mbSingleByte;
 end;
 
-Function StrByteType(Str: PChar; Index: Cardinal): TMbcsByteType;
 
+Function StrByteType(Str: PChar; Index: Cardinal): TMbcsByteType;
 begin
   Result:=mbSingleByte;
 end;
@@ -1940,9 +2703,13 @@ end;
 
 Function StrCharLength(const Str: PChar): Integer;
 begin
-{$ifdef HASWIDESTRING}
   result:=widestringmanager.CharLengthPCharProc(Str);
-{$endif HASWIDESTRING}
+end;
+
+
+function StrNextChar(const Str: PChar): PChar;
+begin
+  result:=Str+StrCharLength(Str);
 end;
 
 
@@ -2047,12 +2814,13 @@ begin
 end;
 
 
+{$ifndef FPC_NOGENERICANSIROUTINES}
 {
    Case Translation Tables
    Can be used in internationalization support.
 
    Although these tables can be obtained through system calls
-   it is better to not use those, since most implementation are not 100%
+cd    it is better to not use those, since most implementation are not 100%
    WARNING:
    before modifying a translation table make sure that the current codepage
    of the OS corresponds to the one you make changes to
@@ -2063,25 +2831,25 @@ end;
 const
    { upper case translation table for character set 850 }
    CP850UCT: array[128..255] of char =
-   ('€', 'š', '', '¶', 'Ž', '¶', '', '€', 'Ò', 'Ó', 'Ô', 'Ø', '×', 'Þ', 'Ž', '',
-    '', '’', '’', 'â', '™', 'ã', 'ê', 'ë', 'Y', '™', 'š', '', 'œ', '', 'ž', 'Ÿ',
-    'µ', 'Ö', 'à', 'é', '¥', '¥', '¦', '§', '¨', '©', 'ª', '«', '¬', '­', '®', '¯',
-    '°', '±', '²', '³', '´', 'µ', '¶', '·', '¸', '¹', 'º', '»', '¼', '½', '¾', '¿',
-    'À', 'Á', 'Â', 'Ã', 'Ä', 'Å', 'Ç', 'Ç', 'È', 'É', 'Ê', 'Ë', 'Ì', 'Í', 'Î', 'Ï',
-    'Ð', 'Ñ', 'Ò', 'Ó', 'Ô', 'Õ', 'Ö', '×', 'Ø', 'Ù', 'Ú', 'Û', 'Ü', 'Ý', 'Þ', 'ß',
-    'à', 'á', 'â', 'ã', 'å', 'å', 'æ', 'í', 'è', 'é', 'ê', 'ë', 'í', 'í', 'î', 'ï',
-    'ð', 'ñ', 'ò', 'ó', 'ô', 'õ', 'ö', '÷', 'ø', 'ù', 'ú', 'û', 'ü', 'ý', 'þ', 'ÿ');
+   (#128,#154,#144,#182,#142,#182,#143,#128,#210,#211,#212,#216,#215,#222,#142,#143,
+    #144,#146,#146,#226,#153,#227,#234,#235,'Y',#153,#154,#157,#156,#157,#158,#159,
+    #181,#214,#224,#233,#165,#165,#166,#167,#168,#169,#170,#171,#172,#173,#174,#175,
+    #176,#177,#178,#179,#180,#181,#182,#183,#184,#185,#186,#187,#188,#189,#190,#191,
+    #192,#193,#194,#195,#196,#197,#199,#199,#200,#201,#202,#203,#204,#205,#206,#207,
+    #208,#209,#210,#211,#212,#213,#214,#215,#216,#217,#218,#219,#220,#221,#222,#223,
+    #224,#225,#226,#227,#229,#229,#230,#237,#232,#233,#234,#235,#237,#237,#238,#239,
+    #240,#241,#242,#243,#244,#245,#246,#247,#248,#249,#250,#251,#252,#253,#254,#255);
 
    { lower case translation table for character set 850 }
    CP850LCT: array[128..255] of char =
-   ('‡', '', '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', '', '„', '†',
-    '‚', '‘', '‘', '“', '”', '•', '–', '—', '˜', '”', '', '›', 'œ', '›', 'ž', 'Ÿ',
-    ' ', '¡', '¢', '£', '¤', '¤', '¦', '§', '¨', '©', 'ª', '«', '¬', '­', '®', '¯',
-    '°', '±', '²', '³', '´', ' ', 'ƒ', '…', '¸', '¹', 'º', '»', '¼', '½', '¾', '¿',
-    'À', 'Á', 'Â', 'Ã', 'Ä', 'Å', 'Æ', 'Æ', 'È', 'É', 'Ê', 'Ë', 'Ì', 'Í', 'Î', 'Ï',
-    'Ð', 'Ñ', 'ˆ', '‰', 'Š', 'Õ', '¡', 'Œ', '‹', 'Ù', 'Ú', 'Û', 'Ü', 'Ý', '', 'ß',
-    '¢', 'á', '“', '•', 'ä', 'ä', 'æ', 'í', 'è', '£', '–', '—', 'ì', 'ì', 'î', 'ï',
-    'ð', 'ñ', 'ò', 'ó', 'ô', 'õ', 'ö', '÷', 'ø', 'ù', 'ú', 'û', 'ü', 'ý', 'þ', 'ÿ');
+   (#135,#129,#130,#131,#132,#133,#134,#135,#136,#137,#138,#139,#140,#141,#132,#134,
+    #130,#145,#145,#147,#148,#149,#150,#151,#152,#148,#129,#155,#156,#155,#158,#159,
+    #160,#161,#162,#163,#164,#164,#166,#167,#168,#169,#170,#171,#172,#173,#174,#175,
+    #176,#177,#178,#179,#180,#160,#131,#133,#184,#185,#186,#187,#188,#189,#190,#191,
+    #192,#193,#194,#195,#196,#197,#198,#198,#200,#201,#202,#203,#204,#205,#206,#207,
+    #208,#209,#136,#137,#138,#213,#161,#140,#139,#217,#218,#219,#220,#221,#141,#223,
+    #162,#225,#147,#149,#228,#228,#230,#237,#232,#163,#150,#151,#236,#236,#238,#239,
+    #240,#241,#242,#243,#244,#245,#246,#247,#248,#249,#250,#251,#252,#253,#254,#255);
 
    { upper case translation table for character set ISO 8859/1  Latin 1  }
    CPISO88591UCT: array[192..255] of char =
@@ -2105,52 +2873,184 @@ const
      #240, #241, #242, #243, #244, #245, #246, #247,
      #248, #249, #250, #251, #252, #253, #254, #255 );
 
-{
-  $Log: sysstr.inc,v $
-  Revision 1.38  2005/05/09 18:35:06  michael
-  + Fixed bug 3957
+{$endif FPC_NOGENERICANSIROUTINES}
 
-  Revision 1.37  2005/04/28 09:15:44  florian
-    + variants: string -> float/int casts
+function sscanf(const s: string; const fmt : string;const Pointers : array of Pointer) : Integer;
+  var
+    i,j,n,m : SizeInt;
+    s1      : string;
 
-  Revision 1.36  2005/04/26 16:40:51  michael
-  + Added FormatCurr by Uberto Barbini
+  function GetInt(unsigned : boolean=false) : Integer;
+    begin
+      s1 := '';
+      while (Length(s) > n) and (s[n] = ' ') do
+        inc(n);
+      { read sign }
+      if (Length(s)>= n) and (s[n] in ['+', '-']) then
+        begin
+          { don't accept - when reading unsigned }
+          if unsigned and (s[n]='-') then
+            begin
+              result:=length(s1);
+              exit;
+            end
+          else
+            begin
+              s1:=s1+s[n];
+              inc(n);
+            end;
+        end;
+      { read numbers }
+      while (Length(s) >= n) and
+            (s[n] in ['0'..'9']) do
+        begin
+          s1 := s1+s[n];
+          inc(n);
+        end;
+      Result := Length(s1);
+    end;
 
-  Revision 1.35  2005/03/25 22:53:39  jonas
-    * fixed several warnings and notes about unused variables (mainly) or
-      uninitialised use of variables/function results (a few)
 
-  Revision 1.34  2005/03/13 14:30:24  marco
-   * some 1.0.x fixes
+  function GetFloat : Integer;
+    begin
+      s1 := '';
+      while (Length(s) > n) and (s[n] = ' ')  do
+        inc(n);
+      while (Length(s) >= n) and
+            (s[n] in ['0'..'9', '+', '-', FormatSettings.DecimalSeparator, 'e', 'E']) do
+        begin
+          s1 := s1+s[n];
+          inc(n);
+        end;
+      Result := Length(s1);
+    end;
 
-  Revision 1.33  2005/03/12 14:56:22  florian
-    + added Ansi* routines to widestring manager
-    * made them using OS calls on windows
 
-  Revision 1.32  2005/03/01 19:23:03  jonas
-    * fixed newstr() and disposestr()
+  function GetString : Integer;
+    begin
+      s1 := '';
+      while (Length(s) > n) and (s[n] = ' ') do
+        inc(n);
+      while (Length(s) >= n) and (s[n] <> ' ')do
+        begin
+          s1 := s1+s[n];
+          inc(n);
+        end;
+      Result := Length(s1);
+    end;
 
-  Revision 1.31  2005/02/28 11:12:17  jonas
-    * fixed web bug 3708
 
-  Revision 1.30  2005/02/26 10:21:17  florian
-    + implemented WideFormat
-    + some Widestring stuff implemented
-    * some Widestring stuff fixed
+  function ScanStr(c : Char) : Boolean;
+    begin
+      while (Length(s) > n) and (s[n] <> c) do
+        inc(n);
+      inc(n);
+      If (n <= Length(s)) then
+        Result := True
+      else
+        Result := False;
+    end;
 
-  Revision 1.29  2005/02/14 17:13:31  peter
-    * truncate log
 
-  Revision 1.28  2005/02/07 08:29:00  michael
-  + Patch from peter to fix 1.0 compile
+  function GetFmt : Integer;
+    begin
+      Result := -1;
+      while true do
+        begin
 
-  Revision 1.27  2005/02/06 09:38:45  florian
-    +  StrCharLength infrastructure
+          while (Length(fmt) > m) and (fmt[m] = ' ') do
+            inc(m);
 
-  Revision 1.26  2005/01/17 18:38:48  peter
-    * extended overload disabled for powerpc
+          if (m >= Length(fmt)) then
+            break;
 
-  Revision 1.25  2005/01/16 17:53:27  michael
-  + Patch from Colin Western to implemenet TryStrToFLoat
+          if (fmt[m] = '%') then
+            begin
+              inc(m);
+              case fmt[m] of
+                'd':
+                  Result:=vtInteger;
+{$ifndef FPUNONE}
+                'f':
+                  Result:=vtExtended;
+{$endif}
+                's':
+                  Result:=vtString;
+                'c':
+                  Result:=vtChar;
+                else
+                  raise EFormatError.CreateFmt(SInvalidFormat,[fmt]);
+              end;
+              inc(m);
+              break;
+            end;
 
-}
+          if not(ScanStr(fmt[m])) then
+            break;
+          inc(m);
+        end;
+    end;
+
+
+  begin
+    n := 1;
+    m := 1;
+    Result := 0;
+
+    for i:=0 to High(Pointers) do
+      begin
+        j := GetFmt;
+        case j of
+          vtInteger :
+            begin
+              if GetInt>0 then
+                begin
+                  pLongint(Pointers[i])^:=StrToInt(s1);
+                  inc(Result);
+                end
+              else
+                break;
+
+            end;
+
+          vtchar :
+            begin
+              if Length(s)>n then
+                begin
+                  pchar(Pointers[i])^:=s[n];
+                  inc(n);
+                  inc(Result);
+                end
+              else
+                break;
+
+            end;
+
+{$ifndef FPUNONE}
+          vtExtended :
+            begin
+              if GetFloat>0 then
+                begin
+                  pextended(Pointers[i])^:=StrToFloat(s1);
+                  inc(Result);
+                end
+              else
+                break;
+            end;
+{$endif}
+
+          vtString :
+            begin
+              if GetString > 0 then
+                begin
+                  pansistring(Pointers[i])^:=s1;
+                  inc(Result);
+                end
+              else
+                break;
+            end;
+          else
+            break;
+        end;
+      end;
+   end;

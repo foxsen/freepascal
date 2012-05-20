@@ -1,5 +1,4 @@
 {
-    $Id: execd.inc,v 1.4 2005/02/14 17:13:30 peter Exp $
     This file is part of the Free Pascal run time library.
 
     exec definitions (V50) for MorphOS/PowerPC
@@ -1732,12 +1731,3 @@ const
 {$include utild2.inc}
 
 
-{
-  $Log: execd.inc,v $
-  Revision 1.4  2005/02/14 17:13:30  peter
-    * truncate log
-
-  Revision 1.3  2005/01/12 07:59:05  karoly
-    * Integers changed to SmallInt to be compatible with all modes
-
-}

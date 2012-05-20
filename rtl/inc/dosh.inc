@@ -1,5 +1,4 @@
 {
-    $Id: dosh.inc,v 1.6 2005/02/14 17:13:22 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team.
 
@@ -82,11 +81,7 @@ Type
     Sec   : word;
   End;
 
-{$ifdef HASTHREADVAR}
 threadvar
-{$else HASTHREADVAR}
-var
-{$endif HASTHREADVAR}
   DosError : integer;
 
 {$ifdef cpui386}
@@ -151,9 +146,3 @@ Function  GetMsCount: int64;
  startup on DOS-like x86 platforms, derived from Unix time on Unix etc.}
 
 
-{
-  $Log: dosh.inc,v $
-  Revision 1.6  2005/02/14 17:13:22  peter
-    * truncate log
-
-}

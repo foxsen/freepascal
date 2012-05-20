@@ -1,5 +1,4 @@
 {
-    $Id: sysfile.inc,v 1.1 2005/02/06 16:57:18 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2001 by Free Pascal development team
 
@@ -20,16 +19,6 @@
 
 ****************************************************************************}
 
-procedure allowslash(p:Pchar);
-
-{Allow slash as backslash.}
-
-var i:longint;
-
-begin
-    for i:=0 to strlen(p) do
-        if p[i]='/' then p[i]:='\';
-end;
 
 procedure do_close (H: THandle);
 
@@ -54,7 +43,7 @@ end;
 procedure do_erase(p:Pchar);
 
 begin
-    allowslash(p);
+    DoDirSeparators(p);
     asm
         movl P,%edx
         movb $0x41,%ah
@@ -68,8 +57,8 @@ end;
 procedure do_rename(p1,p2:Pchar);
 
 begin
-    allowslash(p1);
-    allowslash(p2);
+    DoDirSeparators(p1);
+    DoDirSeparators(p2);
     asm
         movl P1, %edx
         movl P2, %edi
@@ -278,7 +267,7 @@ procedure do_open(var f;p:pchar;flags:longint);
 var Action: cardinal;
 
 begin
-    allowslash(p);
+    DoDirSeparators(p);
     { close first if opened }
     if ((flags and $10000)=0) then
         begin
@@ -402,14 +391,4 @@ end {['eax', 'ebx', 'edx']};
 
 
 
-{
-   $Log: sysfile.inc,v $
-   Revision 1.1  2005/02/06 16:57:18  peter
-     * threads for go32v2,os,emx,netware
-
-   Revision 1.1  2005/02/06 13:06:20  peter
-     * moved file and dir functions to sysfile/sysdir
-     * win32 thread in systemunit
-
-}
 

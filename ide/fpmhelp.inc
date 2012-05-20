@@ -1,5 +1,4 @@
 {
-    $Id: fpmhelp.inc,v 1.5 2005/02/14 17:13:18 peter Exp $
     This file is part of the ffff
     Copyright (c) 1998 by Berczi Gabor
 
@@ -24,7 +23,7 @@ begin
   if Found then
      Help(FileID,Ctx,false)
   else
-     Help(0,hcContents,false);
+     HelpIndex('');
 end;
 
 procedure TIDEApp.HelpHelpIndex;
@@ -33,8 +32,28 @@ begin
 end;
 
 procedure TIDEApp.HelpTopicSearch;
+var FileID: word;
+    Ctx   : THelpCtx;
+var Found: boolean;
+var
+    EditorWindow : PSourceWindow;
+    S : string;
 begin
+  EditorWindow:=FirstEditorWindow;
+  If assigned(EditorWindow) then
+    S:=LowerCaseStr(EditorWindow^.Editor^.GetCurrentWord)
+  else
+    S:='';
+  CheckHelpSystem;
+  Found:=false;
+  if S<>'' then
+    Found:=HelpFacility^.TopicSearch(S,FileID,Ctx);
+  if Found then
+     Help(FileID,Ctx,false)
+  else
+     HelpIndex('');
 end;
+
 
 procedure TIDEApp.HelpPrevTopic;
 begin
@@ -264,9 +283,3 @@ begin
   ExecuteDialog(New(PFPAboutDialog, Init), nil);
 end;
 
-{
-  $Log: fpmhelp.inc,v $
-  Revision 1.5  2005/02/14 17:13:18  peter
-    * truncate log
-
-}

@@ -1,5 +1,4 @@
 {
-    $Id: i_morph.pas,v 1.7 2005/03/20 22:36:45 olle Exp $
     Copyright (c) 2004 by Free Pascal Development Team
 
     This unit implements support information structures for MorphOS
@@ -22,6 +21,8 @@
 { This unit implements support information structures for the MorphOS. }
 unit i_morph;
 
+{$i fpcdefs.inc}
+
   interface
 
     uses
@@ -33,7 +34,7 @@ unit i_morph;
             system       : system_powerpc_MorphOS;
             name         : 'MorphOS';
             shortname    : 'MorphOS';
-            flags        : [];
+            flags        : [tf_files_case_aware,tf_smartlink_library];
             cpu          : cpu_powerpc;
             unit_env     : '';
             extradefines : '';
@@ -55,17 +56,18 @@ unit i_morph;
             staticClibext : '.a';
             staticClibprefix : 'lib';
             sharedClibprefix : '';
-            p_ext_support : false;
+            importlibprefix : 'libimp';
+            importlibext : '.a';
             Cprefix      : '';
             newline      : #10;
             dirsep       : '/';
-            files_case_relevent : true;
             assem        : as_gas;
             assemextern  : as_gas;
             link         : nil;
             linkextern   : nil;
             ar           : ar_gnu_ar;
             res          : res_none;
+            dbg          : dbg_stabs;
             script       : script_amiga;
             endian       : endian_big;
             alignment    :
@@ -85,8 +87,6 @@ unit i_morph;
               );
             first_parm_offset : 8;
             stacksize    : 262144;
-            DllScanSupported:false;
-            use_function_relative_addresses : true;
             abi : abi_powerpc_sysv;
           );
 
@@ -99,13 +99,3 @@ initialization
   {$endif MORPHOS}
 {$endif CPUPOWERPC}
 end.
-{
-  $Log: i_morph.pas,v $
-  Revision 1.7  2005/03/20 22:36:45  olle
-    * Cleaned up handling of source file extension.
-    + Added support for .p extension for macos and darwin
-
-  Revision 1.6  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

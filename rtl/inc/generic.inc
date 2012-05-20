@@ -1,5 +1,4 @@
 {
-    $Id: generic.inc,v 1.90 2005/02/14 17:13:22 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team.
 
@@ -22,24 +21,109 @@
 type
   pstring = ^shortstring;
 
+
+{$ifndef FPC_HAS_SHORTSTR_SHORTSTR_INTERN_CHARMOVE}
+{$define FPC_HAS_SHORTSTR_SHORTSTR_INTERN_CHARMOVE}
+procedure fpc_shortstr_shortstr_intern_charmove(const src: shortstring; const srcindex: byte; var dst: shortstring; const dstindex, len: byte); {$ifdef SYSTEMINLINE}inline;{$endif}
+begin
+  move(src[srcindex],dst[dstindex],len);
+end;
+{$endif FPC_HAS_SHORTSTR_SHORTSTR_INTERN_CHARMOVE}
+
+{$ifndef FPC_HAS_SHORTSTR_CHARARRAY_INTERN_CHARMOVE}
+{$define FPC_HAS_SHORTSTR_CHARARRAY_INTERN_CHARMOVE}
+procedure fpc_shortstr_chararray_intern_charmove(const src: shortstring; out dst: array of char; const len: sizeint);
+begin
+  move(src[1],pchar(@dst)^,len);
+end;
+{$endif FPC_HAS_SHORTSTR_CHARARRAY_INTERN_CHARMOVE}
+
+
 {$ifndef FPC_SYSTEM_HAS_MOVE}
 procedure Move(const source;var dest;count:SizeInt);[public, alias: 'FPC_MOVE'];
-type
-  bytearray    = array [0..high(sizeint)-1] of byte;
 var
-  i:longint;
+  aligncount : sizeint;
+  pdest,psrc,pend : pbyte;
 begin
-  if count <= 0 then exit;
-  Dec(count);
-  if @source<@dest then
+  if (@dest=@source) or (count<=0) then
+    exit;
+  if (@dest<@source) or (@source+count<@dest) then
     begin
-      for i:=count downto 0 do
-        bytearray(dest)[i]:=bytearray(source)[i];
+      { Forward Move }
+      psrc:=@source;
+      pdest:=@dest;
+      if (Count>4*sizeof(ptruint)-11)
+{$ifdef FPC_REQUIRES_PROPER_ALIGNMENT}
+        and ((PtrUInt(pdest) and (sizeof(PtrUInt)-1))=(PtrUInt(psrc) and (sizeof(PtrUInt)-1)))
+{$endif FPC_REQUIRES_PROPER_ALIGNMENT}
+        then
+        begin
+          { Align on native pointer size }
+          aligncount:=(PtrUInt(pdest) and (sizeof(PtrUInt)-1));
+          dec(count,aligncount);
+          pend:=psrc+aligncount;
+          while psrc<pend do
+            begin
+              pdest^:=psrc^;
+              inc(pdest);
+              inc(psrc);
+            end;
+          { use sizeuint typecast to force shr optimization }
+          pptruint(pend):=pptruint(psrc)+(sizeuint(count) div sizeof(ptruint));
+          while psrc<pend do
+            begin
+              pptruint(pdest)^:=pptruint(psrc)^;
+              inc(pptruint(pdest));
+              inc(pptruint(psrc));
+            end;
+          count:=count and (sizeof(PtrUInt)-1);
+        end;
+      pend:=psrc+count;
+      while psrc<pend do
+        begin
+          pdest^:=psrc^;
+          inc(pdest);
+          inc(psrc);
+        end;
     end
   else
     begin
-      for i:=0 to count do
-        bytearray(dest)[i]:=bytearray(source)[i];
+      { Backward Move }
+      psrc:=@source+count;
+      pdest:=@dest+count;
+      if (Count>4*sizeof(ptruint)-11)
+{$ifdef FPC_REQUIRES_PROPER_ALIGNMENT}
+        and ((PtrUInt(pdest) and (sizeof(PtrUInt)-1))=(PtrUInt(psrc) and (sizeof(PtrUInt)-1)))
+{$endif FPC_REQUIRES_PROPER_ALIGNMENT}
+        then
+        begin
+          { Align on native pointer size }
+          aligncount:=(PtrUInt(pdest) and (sizeof(PtrUInt)-1));
+          dec(count,aligncount);
+          pend:=psrc-aligncount;
+          while psrc>pend do
+            begin
+              dec(pdest);
+              dec(psrc);
+              pdest^:=psrc^;
+            end;
+          { use sizeuint typecast to force shr optimization }
+          pptruint(pend):=pptruint(psrc)-(sizeuint(count) div sizeof(ptruint));
+          while psrc>pend do
+            begin
+              dec(pptruint(pdest));
+              dec(pptruint(psrc));
+              pptruint(pdest)^:=pptruint(psrc)^;
+            end;
+          count:=count and (sizeof(PtrUInt)-1);
+        end;
+      pend:=psrc-count;
+      while psrc>pend do
+        begin
+          dec(pdest);
+          dec(psrc);
+          pdest^:=psrc^;
+        end;
     end;
 end;
 {$endif not FPC_SYSTEM_HAS_MOVE}
@@ -47,242 +131,535 @@ end;
 
 {$ifndef FPC_SYSTEM_HAS_FILLCHAR}
 Procedure FillChar(var x;count:SizeInt;value:byte);
-type
-  longintarray = array [0..high(sizeint) div 4-1] of longint;
-  bytearray    = array [0..high(sizeint)-1] of byte;
 var
-  i,v : longint;
+  pdest,pend : pbyte;
+  v : ptruint;
 begin
-  if count <= 0 then exit;
-  v := 0;
-  { aligned? }
-  if (PtrUInt(@x) mod sizeof(PtrUInt))<>0 then
+  if count <= 0 then
+    exit;
+  pdest:=@x;
+  if Count>4*sizeof(ptruint)-1 then
     begin
-      for i:=0 to count-1 do
-        bytearray(x)[i]:=value;
-    end
-  else
+      v:=(value shl 8) or value;
+      v:=(v shl 16) or v;
+{$ifdef CPU64}
+      v:=(v shl 32) or v;
+{$endif CPU64}
+      { Align on native pointer size }
+      pend:=pbyte(align(pdest,sizeof(PtrUInt)));
+      dec(count,pend-pdest);
+      while pdest<pend do
+        begin
+          pdest^:=value;
+          inc(pdest);
+        end;
+      { use sizeuint typecast to force shr optimization }
+      pptruint(pend):=pptruint(pdest)+(sizeuint(count) div sizeof(ptruint));
+      while pdest<pend do
+        begin
+          pptruint(pdest)^:=v;
+          inc(pptruint(pdest));
+        end;
+      count:=count and (sizeof(ptruint)-1);
+    end;
+  pend:=pdest+count;
+  while pdest<pend do
     begin
-      v:=(value shl 8) or (value and $FF);
-      v:=(v shl 16) or (v and $ffff);
-      for i:=0 to (count div 4)-1 do
-        longintarray(x)[i]:=v;
-      for i:=(count div 4)*4 to count-1 do
-        bytearray(x)[i]:=value;
+      pdest^:=value;
+      inc(pdest);
     end;
 end;
 {$endif FPC_SYSTEM_HAS_FILLCHAR}
 
 
-{$ifndef FPC_SYSTEM_HAS_FILLBYTE}
-procedure FillByte (var x;count : SizeInt;value : byte );
-begin
-  FillChar (X,Count,CHR(VALUE));
-end;
-{$endif not FPC_SYSTEM_HAS_FILLBYTE}
-
-
 {$ifndef FPC_SYSTEM_HAS_FILLWORD}
 procedure fillword(var x;count : SizeInt;value : word);
-type
-  longintarray = array [0..high(sizeint) div 4-1] of longint;
-  wordarray    = array [0..high(sizeint) div 2-1] of word;
 var
-  i,v : longint;
+  aligncount : sizeint;
+  pdest,pend : pword;
+  v : ptruint;
 begin
-  if Count <= 0 then exit;
-  { aligned? }
-  if (PtrUInt(@x) mod sizeof(PtrUInt))<>0 then
+  if count <= 0 then
+    exit;
+  pdest:=@x;
+  if Count>4*sizeof(ptruint)-1 then
     begin
-      for i:=0 to count-1 do
-        wordarray(x)[i]:=value;
-    end
-  else
+      v:=(value shl 16) or value;
+{$ifdef CPU64}
+      v:=(v shl 32) or v;
+{$endif CPU64}
+      { Align on native pointer size }
+      aligncount:=(PtrUInt(pdest) and (sizeof(PtrUInt)-1)) shr 1;
+      dec(count,aligncount);
+      pend:=pdest+aligncount;
+      while pdest<pend do
+        begin
+          pdest^:=value;
+          inc(pdest);
+        end;
+      { use sizeuint typecast to force shr optimization }
+      pptruint(pend):=pptruint(pdest)+((sizeuint(count)*2) div sizeof(ptruint));
+      while pdest<pend do
+        begin
+          pptruint(pdest)^:=v;
+          inc(pptruint(pdest));
+        end;
+      count:=((count*2) and (sizeof(ptruint)-1)) shr 1;
+    end;
+  pend:=pdest+count;
+  while pdest<pend do
     begin
-      v:=value*$10000+value;
-      for i:=0 to (count div 2) -1 do
-        longintarray(x)[i]:=v;
-      for i:=(count div 2)*2 to count-1 do
-        wordarray(x)[i]:=value;
+      pdest^:=value;
+      inc(pdest);
     end;
 end;
 {$endif not FPC_SYSTEM_HAS_FILLWORD}
 
 
 {$ifndef FPC_SYSTEM_HAS_FILLDWORD}
-procedure FillDWord(var x;count : SizeInt;value : DWord);
-type
-  longintarray = array [0..high(sizeint) div 4-1] of longint;
+procedure filldword(var x;count : SizeInt;value : dword);
+var
+  aligncount : sizeint;
+  pdest,pend : pdword;
+  v : ptruint;
 begin
-  if count <= 0 then exit;
-  while Count<>0 do
-   begin
-     { range checking must be disabled here }
-     longintarray(x)[count-1]:=longint(value);
-     Dec(count);
-   end;
+  if count <= 0 then
+    exit;
+  pdest:=@x;
+  if Count>4*sizeof(ptruint)-1 then
+    begin
+      v:=value;
+{$ifdef CPU64}
+      v:=(v shl 32) or v;
+{$endif CPU64}
+      { Align on native pointer size }
+      aligncount:=(PtrUInt(pdest) and (sizeof(PtrUInt)-1)) shr 2;
+      dec(count,aligncount);
+      pend:=pdest+aligncount;
+      while pdest<pend do
+        begin
+          pdest^:=value;
+          inc(pdest);
+        end;
+      { use sizeuint typecast to force shr optimization }
+      pptruint(pend):=pptruint(pdest)+((sizeuint(count)*4) div sizeof(ptruint));
+      while pdest<pend do
+        begin
+          pptruint(pdest)^:=v;
+          inc(pptruint(pdest));
+        end;
+      count:=((count*4) and (sizeof(ptruint)-1)) shr 2;
+    end;
+  pend:=pdest+count;
+  while pdest<pend do
+    begin
+      pdest^:=value;
+      inc(pdest);
+    end;
 end;
 {$endif FPC_SYSTEM_HAS_FILLDWORD}
 
 
-{$ifndef FPC_SYSTEM_HAS_INDEXCHAR}
-function IndexChar(Const buf;len:SizeInt;b:char):SizeInt;
+{$ifndef FPC_SYSTEM_HAS_FILLQWORD}
+procedure fillqword(var x;count : SizeInt;value : qword);
+var
+  pdest,pend : pqword;
 begin
-  IndexChar:=IndexByte(Buf,Len,byte(B));
+  if count <= 0 then
+    exit;
+  pdest:=@x;
+  pend:=pdest+count;
+  while pdest<pend do
+    begin
+      pdest^:=value;
+      inc(pdest);
+    end;
 end;
-{$endif not FPC_SYSTEM_HAS_INDEXCHAR}
+{$endif FPC_SYSTEM_HAS_FILLQWORD}
 
 
 {$ifndef FPC_SYSTEM_HAS_INDEXBYTE}
 function IndexByte(Const buf;len:SizeInt;b:byte):SizeInt;
-type
-  bytearray    = array [0..high(sizeint)-1] of byte;
 var
-  I : longint;
+  psrc,pend : pbyte;
 begin
-  I:=0;
+  psrc:=@buf;
   { simulate assembler implementations behaviour, which is expected }
   { fpc_pchar_to_ansistr in astrings.inc                            }
-  if (len < 0) then
-    len := high(longint);
-  while (I<Len) and (bytearray(buf)[I]<>b) do
-   inc(I);
-  if (i=Len) then
-   i:=-1;                      {Can't use 0, since it is a possible value}
-  IndexByte:=I;
+  if (len < 0) or
+     (psrc+len < psrc) then
+    pend:=pbyte(high(PtrUInt)-sizeof(byte))
+  else
+    pend:=psrc+len;
+  while (psrc<pend) do
+    begin
+      if psrc^=b then
+        begin
+          result:=psrc-pbyte(@buf);
+          exit;
+        end;
+      inc(psrc);
+    end;
+  result:=-1;
 end;
 {$endif not FPC_SYSTEM_HAS_INDEXBYTE}
 
 
 {$ifndef FPC_SYSTEM_HAS_INDEXWORD}
 function Indexword(Const buf;len:SizeInt;b:word):SizeInt;
-type
-  wordarray    = array [0..high(sizeint) div 2-1] of word;
 var
-  I : longint;
+  psrc,pend : pword;
 begin
-  I:=0;
-  if (len < 0) then
-    len := high(longint);
-  while (I<Len) and (wordarray(buf)[I]<>b) do
-   inc(I);
-  if (i=Len) then
-   i:=-1;           {Can't use 0, since it is a possible value for index}
-  Indexword:=I;
+  psrc:=@buf;
+  { simulate assembler implementations behaviour, which is expected }
+  { fpc_pchar_to_ansistr in astrings.inc                            }
+  if (len < 0) or
+     { is this ever true? }
+     (len > high(PtrInt)) or
+     (psrc+len < psrc) then
+    pend:=pword(high(PtrUInt)-sizeof(word))
+  else
+    pend:=psrc+len;
+{$ifdef FPC_REQUIRES_PROPER_ALIGNMENT}
+  if (ptruint(psrc) mod 2)<>0 then
+    while psrc<pend do
+      begin
+        if unaligned(psrc^)=b then
+          begin
+            result:=psrc-pword(@buf);
+            exit;
+          end;
+        inc(psrc);
+      end
+  else
+{$endif FPC_REQUIRES_PROPER_ALIGNMENT}
+    while psrc<pend do
+      begin
+        if psrc^=b then
+          begin
+            result:=psrc-pword(@buf);
+            exit;
+          end;
+        inc(psrc);
+      end;
+  result:=-1;
 end;
 {$endif not FPC_SYSTEM_HAS_INDEXWORD}
 
 
 {$ifndef FPC_SYSTEM_HAS_INDEXDWORD}
 function IndexDWord(Const buf;len:SizeInt;b:DWord):SizeInt;
-type
-  dwordarray = array [0..high(sizeint) div 4-1] of dword;
 var
-  I : longint;
+  psrc,pend : pdword;
 begin
-  I:=0;
-  if (len < 0) then
-    len := high(longint);
-  while (I<Len) and (dwordarray(buf)[I]<>b) do
-    inc(I);
-  if (i=Len) then
-   i:=-1;           {Can't use 0, since it is a possible value for index}
-  IndexDWord:=I;
+  psrc:=@buf;
+  { simulate assembler implementations behaviour, which is expected }
+  { fpc_pchar_to_ansistr in astrings.inc                            }
+  if (len < 0) or
+     (len > high(PtrInt) div 2) or
+     (psrc+len < psrc) then
+    pend:=pdword(high(PtrUInt)-sizeof(dword))
+  else
+    pend:=psrc+len;
+{$ifdef FPC_REQUIRES_PROPER_ALIGNMENT}
+  if (ptruint(psrc) mod 4)<>0 then
+    while psrc<pend do
+      begin
+        if unaligned(psrc^)=b then
+          begin
+            result:=psrc-pdword(@buf);
+            exit;
+          end;
+        inc(psrc);
+      end
+  else
+{$endif FPC_REQUIRES_PROPER_ALIGNMENT}
+    while psrc<pend do
+      begin
+        if psrc^=b then
+          begin
+            result:=psrc-pdword(@buf);
+            exit;
+          end;
+        inc(psrc);
+      end;
+  result:=-1;
 end;
 {$endif not FPC_SYSTEM_HAS_INDEXDWORD}
 
 
-{$ifndef FPC_SYSTEM_HAS_COMPARECHAR}
-function CompareChar(Const buf1,buf2;len:SizeInt):SizeInt;
+{$ifndef FPC_SYSTEM_HAS_INDEXQWORD}
+function IndexQWord(Const buf;len:SizeInt;b:QWord):SizeInt;
+var
+  psrc,pend : pqword;
 begin
-  CompareChar:=CompareByte(buf1,buf2,len);
+  psrc:=@buf;
+  { simulate assembler implementations behaviour, which is expected }
+  { fpc_pchar_to_ansistr in astrings.inc                            }
+  if (len < 0) or
+     (len > high(PtrInt) div 4) or
+     (psrc+len < psrc) then
+    pend:=pqword(high(PtrUInt)-sizeof(qword))
+  else
+    pend:=psrc+len;
+{$ifdef FPC_REQUIRES_PROPER_ALIGNMENT}
+  if (ptruint(psrc) mod 8)<>0 then
+    while psrc<pend do
+      begin
+        if unaligned(psrc^)=b then
+          begin
+            result:=psrc-pqword(@buf);
+            exit;
+          end;
+        inc(psrc);
+      end
+  else
+{$endif FPC_REQUIRES_PROPER_ALIGNMENT}
+    while psrc<pend do
+      begin
+        if psrc^=b then
+          begin
+            result:=psrc-pqword(@buf);
+            exit;
+          end;
+        inc(psrc);
+      end;
+  result:=-1;
 end;
-{$endif not FPC_SYSTEM_HAS_COMPARECHAR}
+{$endif not FPC_SYSTEM_HAS_INDEXQWORD}
 
 
 {$ifndef FPC_SYSTEM_HAS_COMPAREBYTE}
 function CompareByte(Const buf1,buf2;len:SizeInt):SizeInt;
-type
-  bytearray = array [0..high(sizeint)-1] of byte;
 var
-  I : longint;
+  aligncount : sizeint;
+  psrc,pdest,pend : pbyte;
+  b : ptrint;
 begin
-  I:=0;
-  if (Len<>0) and (@Buf1<>@Buf2) then
-   begin
-     while (bytearray(Buf1)[I]=bytearray(Buf2)[I]) and (I<Len) do
-      inc(I);
-     if I=Len then  {No difference}
-      I:=0
-     else
-      begin
-        I:=bytearray(Buf1)[I]-bytearray(Buf2)[I];
-        if I>0 then
-         I:=1
-        else
-         if I<0 then
-          I:=-1;
-      end;
-   end;
-  CompareByte:=I;
+  b:=0;
+  psrc:=@buf1;
+  pdest:=@buf2;
+  if (len>4*sizeof(ptruint)-1)
+{$ifdef FPC_REQUIRES_PROPER_ALIGNMENT}
+    and ((PtrUInt(pdest) and (sizeof(PtrUInt)-1))=(PtrUInt(psrc) and (sizeof(PtrUInt)-1)))
+{$endif FPC_REQUIRES_PROPER_ALIGNMENT}
+    then
+    begin
+      { Align on native pointer size }
+      aligncount:=(sizeof(PtrUInt)-(PtrUInt(pdest) and (sizeof(PtrUInt)-1))) and (sizeof(PtrUInt)-1);
+      dec(len,aligncount);
+      pend:=psrc+aligncount;
+      while psrc<pend do
+        begin
+          b:=(ptrint(psrc^)-ptrint(pdest^));
+          if b<>0 then
+            begin
+              if b<0 then
+                exit(-1)
+              else
+                exit(1);
+            end;
+          inc(pdest);
+          inc(psrc);
+        end;
+      { use sizeuint typecast to force shr optimization }
+      pptruint(pend):=pptruint(psrc)+(sizeuint(len) div sizeof(ptruint));
+      len:=len and (sizeof(PtrUInt)-1);
+      while psrc<pend do
+        begin
+          b:=(pptrint(psrc)^-pptrint(pdest)^);
+          if b<>0 then
+            begin
+              len:=sizeof(ptruint);
+              break;
+            end;
+          inc(pptruint(pdest));
+          inc(pptruint(psrc));
+        end;
+    end;
+  if (psrc+len >= psrc) then
+    pend:=psrc+len
+  else
+    pend:=pbyte(high(ptruint)-1);
+  while psrc<pend do
+    begin
+      b:=(ptrint(psrc^)-ptrint(pdest^));
+      if b<>0 then
+        begin
+          if b<0 then
+            exit(-1)
+          else
+            exit(1);
+        end;
+      inc(pdest);
+      inc(psrc);
+    end;
+  result:=0;
 end;
 {$endif not FPC_SYSTEM_HAS_COMPAREBYTE}
 
 
 {$ifndef FPC_SYSTEM_HAS_COMPAREWORD}
 function CompareWord(Const buf1,buf2;len:SizeInt):SizeInt;
-type
-  wordarray = array [0..high(sizeint) div 2-1] of word;
 var
-  I : longint;
+  aligncount : sizeint;
+  psrc,pdest,pend : pword;
+  b : ptrint;
 begin
-  I:=0;
-  if (Len<>0) and (@Buf1<>@Buf2) then
-   begin
-     while (wordarray(Buf1)[I]=wordarray(Buf2)[I]) and (I<Len) do
-      inc(I);
-     if I=Len then  {No difference}
-      I:=0
-     else
+  b:=0;
+  psrc:=@buf1;
+  pdest:=@buf2;
+  if (len>4*sizeof(ptruint)-1)
+{$ifdef FPC_REQUIRES_PROPER_ALIGNMENT}
+    and ((PtrUInt(pdest) and (sizeof(PtrUInt)-1))=(PtrUInt(psrc) and (sizeof(PtrUInt)-1)))
+    and (((PtrUInt(pdest) and 1) or (PtrUInt(psrc) and 1))=0)
+{$endif FPC_REQUIRES_PROPER_ALIGNMENT}
+    then
+     begin
+      { Align on native pointer size }
+      aligncount:=((sizeof(PtrUInt)-(PtrUInt(pdest) and (sizeof(PtrUInt)-1))) and (sizeof(PtrUInt)-1)) shr 1;
+      dec(len,aligncount);
+      pend:=psrc+aligncount;
+      while psrc<pend do
+        begin
+          b:=(ptrint(psrc^)-ptrint(pdest^));
+          if b<>0 then
+            begin
+              if b<0 then
+                exit(-1)
+              else
+                exit(1);
+            end;
+          inc(pdest);
+          inc(psrc);
+        end;
+      { use sizeuint typecast to force shr optimization }
+      pptruint(pend):=pptruint(psrc)+(sizeuint(len)*2 div sizeof(ptruint));
+      len:=((len*2) and (sizeof(PtrUInt)-1)) shr 1;
+      while psrc<pend do
+        begin
+          b:=(pptrint(psrc)^-pptrint(pdest)^);
+          if b<>0 then
+            begin
+              len:=sizeof(ptruint) shr 1;
+              break;
+            end;
+          inc(pptruint(pdest));
+          inc(pptruint(psrc));
+        end;
+    end;
+  if (len <= high(ptrint)) and
+     (psrc+len >= psrc) then
+    pend:=psrc+len
+  else
+    pend:=pword(high(ptruint)-2);
+{$ifdef FPC_REQUIRES_PROPER_ALIGNMENT}
+  if ((PtrUInt(pdest) and 1) or (PtrUInt(psrc) and 1))<>0 then
+    while psrc<pend do
       begin
-        I:=wordarray(Buf1)[I]-wordarray(Buf2)[I];
-        if I>0 then
-         I:=1
-        else
-         if I<0 then
-          I:=-1;
+        b:=(ptrint(unaligned(psrc^))-ptrint(unaligned(pdest^)));
+        if b<>0 then
+          begin
+            if b<0 then
+              exit(-1)
+            else
+              exit(1);
+          end;
+        inc(pdest);
+        inc(psrc);
+      end
+  else
+{$endif FPC_REQUIRES_PROPER_ALIGNMENT}
+    while psrc<pend do
+      begin
+        b:=(ptrint(psrc^)-ptrint(pdest^));
+        if b<>0 then
+          begin
+            if b<0 then
+              exit(-1)
+            else
+              exit(1);
+          end;
+        inc(pdest);
+        inc(psrc);
       end;
-   end;
-  CompareWord:=I;
+  result:=0;
 end;
 {$endif not FPC_SYSTEM_HAS_COMPAREWORD}
 
 
 {$ifndef FPC_SYSTEM_HAS_COMPAREDWORD}
 function CompareDWord(Const buf1,buf2;len:SizeInt):SizeInt;
-type
-  longintarray = array [0..high(sizeint) div 4-1] of longint;
 var
-  I : longint;
+  aligncount : sizeint;
+  psrc,pdest,pend : pdword;
 begin
-  I:=0;
-  if (Len<>0) and (@Buf1<>@Buf2) then
-   begin
-     while (longintarray(Buf1)[I]=longintarray(Buf2)[I]) and (I<Len) do
-      inc(I);
-     if I=Len then  {No difference}
-      I:=0
-     else
+  psrc:=@buf1;
+  pdest:=@buf2;
+  if (len>4*sizeof(ptruint)-11)
+{$ifdef FPC_REQUIRES_PROPER_ALIGNMENT}
+    and (((PtrUInt(pdest) and 3) or (PtrUInt(psrc) and 3))=0)
+{$endif FPC_REQUIRES_PROPER_ALIGNMENT}
+    then
+    begin
+      { Align on native pointer size }
+      aligncount:=((sizeof(PtrUInt)-(PtrUInt(pdest) and (sizeof(PtrUInt)-1))) and (sizeof(PtrUInt)-1)) shr 2;
+      dec(len,aligncount);
+      pend:=psrc+aligncount;
+      while psrc<pend do
+        begin
+          if psrc^<>pdest^ then
+            if psrc^>pdest^ then
+              exit(1)
+            else
+              exit(-1);
+          inc(pdest);
+          inc(psrc);
+        end;
+      { use sizeuint typecast to force shr optimization }
+      pptruint(pend):=pptruint(psrc)+(sizeuint(len)*4 div sizeof(ptruint));
+      len:=((len*4) and (sizeof(PtrUInt)-1)) shr 2;
+      while psrc<pend do
+        begin
+          if pptrint(psrc)^<>pptrint(pdest)^ then
+            begin
+              len:=sizeof(ptruint) shr 2;
+              break;
+            end;
+          inc(pptruint(pdest));
+          inc(pptruint(psrc));
+        end;
+    end;
+  if (len <= high(ptrint) div 2) and
+     (psrc+len >= psrc) then
+    pend:=psrc+len
+  else
+    pend:=pdword(high(ptruint)-4);
+{$ifdef FPC_REQUIRES_PROPER_ALIGNMENT}
+  if ((PtrUInt(pdest) and 3) or (PtrUInt(psrc) and 3))<>0 then
+    while psrc<pend do
       begin
-        I:=longintarray(Buf1)[I]-longintarray(Buf2)[I];
-        if I>0 then
-         I:=1
-        else
-         if I<0 then
-          I:=-1;
+        if unaligned(psrc^)<>unaligned(pdest^) then
+          if unaligned(psrc^)>unaligned(pdest^) then
+            exit(1)
+          else
+            exit(-1);
+        inc(pdest);
+        inc(psrc);
+      end
+  else
+{$endif FPC_REQUIRES_PROPER_ALIGNMENT}
+    while psrc<pend do
+      begin
+        if psrc^<>pdest^ then
+          if psrc^>pdest^ then
+            exit(1)
+          else
+            exit(-1);
+        inc(pdest);
+        inc(psrc);
       end;
-   end;
-  CompareDWord:=I;
+  result:=0;
 end;
 {$endif ndef FPC_SYSTEM_HAS_COMPAREDWORD}
 
@@ -290,9 +667,10 @@ end;
 {$ifndef FPC_SYSTEM_HAS_MOVECHAR0}
 procedure MoveChar0(Const buf1;var buf2;len:SizeInt);
 var
-  I : longint;
+  I : SizeInt;
 begin
-  if Len = 0 then exit;
+  if Len = 0 then
+    exit;
   I:=IndexByte(Buf1,Len,0);
   if I<>-1 then
     Move(Buf1,Buf2,I)
@@ -305,50 +683,52 @@ end;
 {$ifndef FPC_SYSTEM_HAS_INDEXCHAR0}
 function IndexChar0(Const buf;len:SizeInt;b:Char):SizeInt;
 var
-  I : longint;
+  psrc,pend : pbyte;
 begin
-  if Len<>0 then
-   begin
-     I:=IndexByte(Buf,Len,0);
-     If (I=-1) then
-       I:=Len;
-     IndexChar0:=IndexByte(Buf,I,byte(b));
-   end
+  psrc:=@buf;
+  { simulate assembler implementations behaviour, which is expected }
+  { fpc_pchar_to_ansistr in astrings.inc                            }
+  if (len < 0) then
+    pend:=pbyte(high(PtrUInt)-sizeof(byte))
   else
-   IndexChar0:=0;
+    pend:=psrc+len;
+  while (psrc<pend) and (psrc^<>0) do
+    begin
+      if (psrc^=byte(b)) then
+        begin
+          result:=psrc-pbyte(@buf);
+          exit;
+        end;
+      inc(psrc);
+    end;
+  result:=-1;
 end;
 {$endif ndef FPC_SYSTEM_HAS_INDEXCHAR0}
 
 
 {$ifndef FPC_SYSTEM_HAS_COMPARECHAR0}
 function CompareChar0(Const buf1,buf2;len:SizeInt):SizeInt;
-type
-  bytearray = array [0..high(sizeint)-1] of byte;
 var
-  i : longint;
+  psrc,pdest,pend : pbyte;
+  b : ptrint;
 begin
-  I:=0;
-  if (Len<>0) and (@Buf1<>@Buf2) then
-   begin
-     while (I<Len) And
-           ((Pbyte(@Buf1)[i]<>0) and (PByte(@buf2)[i]<>0)) and
-           (pbyte(@Buf1)[I]=pbyte(@Buf2)[I])  do
-      inc(I);
-     if (I=Len) or
-        (PByte(@Buf1)[i]=0) or
-        (PByte(@buf2)[I]=0) then  {No difference or 0 reached }
-      I:=0
-     else
-      begin
-        I:=bytearray(Buf1)[I]-bytearray(Buf2)[I];
-        if I>0 then
-         I:=1
-        else
-         if I<0 then
-          I:=-1;
-      end;
-   end;
-  CompareChar0:=I;
+  b:=0;
+  psrc:=@buf1;
+  pdest:=@buf2;
+  pend:=psrc+len;
+  while psrc<pend do
+    begin
+      b:=(ptrint(psrc^)-ptrint(pdest^));
+      if b<0 then
+        exit(-1)
+      else if b>0 then
+        exit(1);
+      if (psrc^=0) or (pdest^=0) then
+        exit(0);
+      inc(pdest);
+      inc(psrc);
+    end;
+  result:=0;
 end;
 {$endif not FPC_SYSTEM_HAS_COMPARECHAR0}
 
@@ -357,15 +737,17 @@ end;
                               Object Helpers
 ****************************************************************************}
 
+{$ifdef FPC_HAS_FEATURE_OBJECTS}
+
 {$ifndef FPC_SYSTEM_HAS_FPC_HELP_CONSTRUCTOR}
 { Note: _vmt will be reset to -1 when memory is allocated,
   this is needed for fpc_help_fail }
-function fpc_help_constructor(_self:pointer;var _vmt:pointer;_vmt_pos:cardinal):pointer;[public,alias:'FPC_HELP_CONSTRUCTOR'];{$ifdef hascompilerproc}compilerproc;{$endif}
+function fpc_help_constructor(_self:pointer;var _vmt:pointer;_vmt_pos:cardinal):pointer;[public,alias:'FPC_HELP_CONSTRUCTOR'];compilerproc;
 type
   ppointer = ^pointer;
   pvmt = ^tvmt;
   tvmt=packed record
-    size,msize:ptrint;
+    size,msize:ptruint;
     parent:pointer;
   end;
 var
@@ -388,7 +770,7 @@ begin
     end;
   if _self<>nil then
     begin
-      fillchar(_self^,pvmt(vmtcopy)^.size,#0);
+      fillchar(_self^,pvmt(vmtcopy)^.size,0);
       ppointer(_self+_vmt_pos)^:=vmtcopy;
     end;
   fpc_help_constructor:=_self;
@@ -398,12 +780,12 @@ end;
 
 {$ifndef FPC_SYSTEM_HAS_FPC_HELP_DESTRUCTOR}
 { Note: _self will not be reset, the compiler has to generate the reset }
-procedure fpc_help_destructor(_self,_vmt:pointer;vmt_pos:cardinal);[public,alias:'FPC_HELP_DESTRUCTOR'];  {$ifdef hascompilerproc} compilerproc; {$endif}
+procedure fpc_help_destructor(_self,_vmt:pointer;vmt_pos:cardinal);[public,alias:'FPC_HELP_DESTRUCTOR'];  compilerproc;
 type
   ppointer = ^pointer;
   pvmt = ^tvmt;
   tvmt = packed record
-    size,msize : ptrint;
+    size,msize : ptruint;
     parent : pointer;
   end;
 begin
@@ -425,18 +807,11 @@ end;
 {$ifndef FPC_SYSTEM_HAS_FPC_HELP_FAIL}
 { Note: _self will not be reset, the compiler has to generate the reset }
 procedure fpc_help_fail(_self:pointer;var _vmt:pointer;vmt_pos:cardinal);[public,alias:'FPC_HELP_FAIL'];compilerproc;
-type
-  ppointer = ^pointer;
-  pvmt = ^tvmt;
-  tvmt = packed record
-    size,msize : ptrint;
-    parent : pointer;
-  end;
 begin
    if (_self=nil) or (_vmt=nil) then
      exit;
-   { vmt=-1 when memory was allocated }
-   if ptrint(_vmt)=-1 then
+   { vmt=$ffffffff when memory was allocated }
+   if ptruint(_vmt)=high(ptruint) then
      begin
        if (_self=nil) or (ppointer(_self+vmt_pos)^=nil) then
          HandleError(210)
@@ -454,43 +829,12 @@ begin
 end;
 {$endif FPC_SYSTEM_HAS_FPC_HELP_FAIL}
 
-
-{$ifndef NOCLASSHELPERS}
-
-{$ifndef FPC_SYSTEM_HAS_FPC_NEW_CLASS}
-function fpc_new_class(_self,_vmt:pointer):pointer;[public,alias:'FPC_NEW_CLASS']; {$ifdef hascompilerproc} compilerproc; {$endif}
-begin
-  { Inherited call? }
-  if _vmt=nil then
-    begin
-      fpc_new_class:=_self;
-      exit;
-    end;
-
-  fpc_new_class := tclass(_vmt).NewInstance
-end;
-{$endif FPC_SYSTEM_HAS_FPC_NEW_CLASS}
-
-
-{$ifndef FPC_SYSTEM_HAS_FPC_DISPOSE_CLASS}
-procedure fpc_dispose_class(_self: pointer; flag : longint);[public,alias:'FPC_DISPOSE_CLASS'];compilerproc;
-begin
-  { inherited -> flag = 0 -> no destroy }
-  { normal -> flag = 1 -> destroy }
-  if (_self <> nil) and (flag = 1) then
-    tobject(_self).FreeInstance;
-end;
-{$endif ndef FPC_SYSTEM_HAS_FPC_DISPOSE_CLASS}
-
-{$endif NOCLASSHELPERS}
-
-
 {$ifndef FPC_SYSTEM_HAS_FPC_CHECK_OBJECT}
-procedure fpc_check_object(_vmt : pointer);{$ifndef NOSAVEREGISTERS}saveregisters;{$endif}[public,alias:'FPC_CHECK_OBJECT'];  {$ifdef hascompilerproc} compilerproc; {$endif}
+procedure fpc_check_object(_vmt : pointer); [public,alias:'FPC_CHECK_OBJECT'];  compilerproc;
 type
   pvmt = ^tvmt;
   tvmt = packed record
-    size,msize : ptrint;
+    size,msize : ptruint;
     parent : pointer;
   end;
 begin
@@ -507,11 +851,11 @@ end;
 { checks for a correct vmt pointer }
 { deeper check to see if the current object is }
 { really related to the true }
-procedure fpc_check_object_ext(vmt, expvmt : pointer);{$ifndef NOSAVEREGISTERS}saveregisters;{$endif}[public,alias:'FPC_CHECK_OBJECT_EXT']; {$ifdef hascompilerproc} compilerproc; {$endif}
+procedure fpc_check_object_ext(vmt, expvmt : pointer); [public,alias:'FPC_CHECK_OBJECT_EXT']; compilerproc;
 type
   pvmt = ^tvmt;
   tvmt = packed record
-    size,msize : ptrint;
+    size,msize : ptruint;
     parent : pointer;
   end;
 begin
@@ -529,35 +873,30 @@ end;
 {$endif not FPC_SYSTEM_HAS_FPC_CHECK_OBJECT_EXT}
 
 
+{$endif FPC_HAS_FEATURE_OBJECTS}
+
 {****************************************************************************
                                  String
 ****************************************************************************}
 
 {$ifndef FPC_SYSTEM_HAS_FPC_SHORTSTR_ASSIGN}
 
-function fpc_shortstr_to_shortstr(len:longint;const sstr:shortstring): shortstring;[public,alias:'FPC_SHORTSTR_TO_SHORTSTR']; {$ifdef hascompilerproc} compilerproc; {$endif}
+procedure fpc_shortstr_to_shortstr(out res:shortstring; const sstr: shortstring);[public,alias:'FPC_SHORTSTR_TO_SHORTSTR']; compilerproc;
 var
   slen : byte;
 begin
   slen:=length(sstr);
-  if slen<len then
-    len:=slen;
-  move(sstr[0],result[0],len+1);
-  if slen>len then
-    result[0]:=chr(len);
+  if slen>high(res) then
+    slen:=high(res);
+  move(sstr[0],res[0],slen+1);
+  res[0]:=chr(slen);
 end;
 
-{$ifdef interncopy}
-procedure fpc_shortstr_assign(len:longint;sstr,dstr:pointer);[public,alias:'FPC_SHORTSTR_ASSIGN']; {$ifdef HAS_COMPILER_PROC} compilerproc; {$endif}
-{$else}
-procedure fpc_shortstr_copy(len:longint;sstr,dstr:pointer);[public,alias:'FPC_SHORTSTR_COPY']; {$ifdef HAS_COMPILER_PROC} compilerproc; {$endif}
-{$endif}
+procedure fpc_shortstr_assign(len:longint;sstr,dstr:pointer);[public,alias:'FPC_SHORTSTR_ASSIGN'];
 var
   slen : byte;
-type
-  pstring = ^string;
 begin
-  slen:=length(pstring(sstr)^);
+  slen:=length(pshortstring(sstr)^);
   if slen<len then
     len:=slen;
   move(sstr^,dstr^,len+1);
@@ -567,28 +906,110 @@ end;
 
 {$endif ndef FPC_SYSTEM_HAS_FPC_SHORTSTR_ASSIGN}
 
-{$ifndef FPC_SYSTEM_HAS_FPC_SHORTSTR_CONCAT}
+{$push}
+{ ensure that comparing addresses of openshortstrings with regular shortstrings
+  doesn't cause errors }
+{$t-}
 
-function fpc_shortstr_concat(const s1,s2:shortstring): shortstring;[public,alias:'FPC_SHORTSTR_CONCAT']; {$ifdef hascompilerproc} compilerproc; {$endif}
+{$ifndef FPC_SYSTEM_HAS_FPC_SHORTSTR_CONCAT}
+procedure fpc_shortstr_concat(var dests:shortstring;const s1,s2:shortstring);compilerproc;
 var
-  s1l, s2l : byte;
+  s1l, s2l : longint;
 begin
   s1l:=length(s1);
   s2l:=length(s2);
-  if s1l+s2l>255 then
-    s2l:=255-s1l;
-  move(s1[1],fpc_shortstr_concat[1],s1l);
-  move(s2[1],fpc_shortstr_concat[s1l+1],s2l);
-  fpc_shortstr_concat[0]:=chr(s1l+s2l);
+  if s1l+s2l>high(dests) then
+    begin
+      if s1l>high(dests) then
+        s1l:=high(dests);
+      s2l:=high(dests)-s1l;
+    end;
+  if @dests=@s1 then
+    fpc_shortstr_shortstr_intern_charmove(s2,1,dests,s1l+1,s2l)
+  else
+    if @dests=@s2 then
+      begin
+        fpc_shortstr_shortstr_intern_charmove(dests,1,dests,s1l+1,s2l);
+        fpc_shortstr_shortstr_intern_charmove(s1,1,dests,1,s1l);
+      end
+  else
+    begin
+      fpc_shortstr_shortstr_intern_charmove(s1,1,dests,1,s1l);
+      fpc_shortstr_shortstr_intern_charmove(s2,1,dests,s1l+1,s2l);
+    end;
+  dests[0]:=chr(s1l+s2l);
+end;
+
+procedure fpc_shortstr_concat_multi(var dests:shortstring;const sarr:array of pshortstring);compilerproc;
+var
+  s2l : byte;
+  LowStart,i,
+  Len : longint;
+  needtemp : boolean;
+  tmpstr  : shortstring;
+  p,pdest  : pshortstring;
+begin
+  if high(sarr)=0 then
+    begin
+      DestS:='';
+      exit;
+    end;
+  lowstart:=low(sarr);
+  if Pointer(@DestS)=Pointer(sarr[lowstart]) then
+    inc(lowstart);
+  { Check for another reuse, then we can't use
+    the append optimization and need to use a temp }
+  needtemp:=false;
+  for i:=lowstart to high(sarr) do
+    begin
+      if Pointer(@DestS)=Pointer(sarr[i]) then
+        begin
+          needtemp:=true;
+          break;
+        end;
+    end;
+  if needtemp then
+    begin
+      lowstart:=low(sarr);
+      tmpstr:='';
+      pdest:=@tmpstr
+    end
+  else
+    begin
+      { Start with empty DestS if we start with concatting
+        the first array element }
+      if lowstart=low(sarr) then
+        DestS:='';
+      pdest:=@DestS;
+    end;
+  { Concat all strings, except the string we already
+    copied in DestS }
+  Len:=length(pdest^);
+  for i:=lowstart to high(sarr) do
+    begin
+      p:=sarr[i];
+      if assigned(p) then
+        begin
+          s2l:=length(p^);
+          if Len+s2l>high(dests) then
+            s2l:=high(dests)-Len;
+          fpc_shortstr_shortstr_intern_charmove(p^,1,pdest^,Len+1,s2l);
+          inc(Len,s2l);
+        end;
+    end;
+  pdest^[0]:=Chr(Len);
+  if needtemp then
+    DestS:=TmpStr;
 end;
 {$endif ndef FPC_SYSTEM_HAS_FPC_SHORTSTR_CONCAT}
 
+{$pop}
 
 {$ifndef FPC_SYSTEM_HAS_FPC_SHORTSTR_APPEND_SHORTSTR}
-procedure fpc_shortstr_append_shortstr(var s1:shortstring;const s2:shortstring);{$ifdef hascompilerproc} compilerproc; {$endif}
+procedure fpc_shortstr_append_shortstr(var s1:shortstring;const s2:shortstring);compilerproc;
     [public,alias:'FPC_SHORTSTR_APPEND_SHORTSTR'];
 var
-  s1l, s2l : byte;
+  s1l, s2l : sizeint;
 begin
   s1l:=length(s1);
   s2l:=length(s2);
@@ -601,7 +1022,7 @@ end;
 
 
 {$ifndef FPC_SYSTEM_HAS_FPC_SHORTSTR_COMPARE}
-function fpc_shortstr_compare(const left,right:shortstring) : longint;[public,alias:'FPC_SHORTSTR_COMPARE']; {$ifdef hascompilerproc} compilerproc; {$endif}
+function fpc_shortstr_compare(const left,right:shortstring) : longint;[public,alias:'FPC_SHORTSTR_COMPARE']; compilerproc;
 var
    s1,s2,max,i : byte;
    d : longint;
@@ -627,12 +1048,23 @@ begin
   else
     exit(0);
 end;
-
 {$endif ndef FPC_SYSTEM_HAS_FPC_SHORTSTR_COMPARE}
+
+
+{$ifndef FPC_SYSTEM_HAS_FPC_SHORTSTR_COMPARE_EQUAL}
+function fpc_shortstr_compare_equal(const left,right:shortstring): longint; [public,alias:'FPC_SHORTSTR_COMPARE_EQUAL']; compilerproc;
+begin
+  Result := longint(left[0]) - longint(right[0]);
+  if Result = 0 then
+    Result := CompareByte(left[1],right[1], longint(left[0]));
+end;
+{$endif ndef FPC_SYSTEM_HAS_FPC_SHORTSTR_COMPARE_EQUAL}
+
 
 {$ifndef FPC_SYSTEM_HAS_FPC_PCHAR_TO_SHORTSTR}
 
-function fpc_pchar_to_shortstr(p:pchar):shortstring;[public,alias:'FPC_PCHAR_TO_SHORTSTR']; {$ifdef hascompilerproc} compilerproc; {$endif}
+
+procedure fpc_pchar_to_shortstr(out res : shortstring;p:pchar);[public,alias:'FPC_PCHAR_TO_SHORTSTR']; compilerproc;
 var
   l : longint;
   s: shortstring;
@@ -641,141 +1073,106 @@ begin
     l:=0
   else
     l:=strlen(p);
-  if l>255 then
-    l:=255;
+  if l>high(res) then
+    l:=high(res);
   if l>0 then
     move(p^,s[1],l);
   s[0]:=chr(l);
-  fpc_pchar_to_shortstr := s;
+  res:=s;
 end;
+
 
 {$endif ndef FPC_SYSTEM_HAS_FPC_PCHAR_TO_SHORTSTR}
 
+{$ifndef cpujvm}
+
+{ also define alias which can be used inside the system unit }
+procedure fpc_pchar_to_shortstr(out res : shortstring;p:pchar);[external name 'FPC_PCHAR_TO_SHORTSTR'];
+
+
+function strpas(p:pchar):shortstring;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    fpc_pchar_to_shortstr(result,p);
+  end;
+
+{$endif not cpujvm}
 
 {$ifndef FPC_SYSTEM_HAS_FPC_CHARARRAY_TO_SHORTSTR}
 
-{$ifdef hascompilerproc}
-function fpc_chararray_to_shortstr(const arr: array of char):shortstring;[public,alias:'FPC_CHARARRAY_TO_SHORTSTR']; compilerproc;
+procedure fpc_chararray_to_shortstr(out res : shortstring;const arr: array of char; zerobased: boolean = true);[public,alias:'FPC_CHARARRAY_TO_SHORTSTR']; compilerproc;
 var
-  l: longint;
-{$else hascompilerproc}
-function fpc_chararray_to_shortstr(arr:pchar; l : longint):shortstring;[public,alias:'FPC_CHARARRAY_TO_SHORTSTR'];
-var
-{$endif hascompilerproc}
+ l: longint;
  index: longint;
  len: byte;
 begin
-{$ifdef hascompilerproc}
-  l := high(arr)+1;
-{$endif hascompilerproc}
-  if l>=256 then
-    l:=255
+  l:=high(arr)+1;
+  if l>=high(res)+1 then
+    l:=high(res)
   else if l<0 then
     l:=0;
-  index:=IndexByte(arr[0],l,0);
-  if (index < 0) then
-    len := l
+  if zerobased then
+    begin
+      index:=IndexByte(arr[0],l,0);
+      if index<0 then
+        len:=l
+      else
+        len:=index;
+    end
   else
-    len := index;
-  move(arr[0],fpc_chararray_to_shortstr[1],len);
-  fpc_chararray_to_shortstr[0]:=chr(len);
+    len:=l;
+  move(arr[0],res[1],len);
+  res[0]:=chr(len);
 end;
 
 {$endif ndef FPC_SYSTEM_HAS_FPC_CHARARRAY_TO_SHORTSTR}
 
-{$ifdef hascompilerproc}
 
 {$ifndef FPC_SYSTEM_HAS_FPC_SHORTSTR_TO_CHARARRAY}
 
-{ inside the compiler, the resulttype is modified to that of the actual }
-{ chararray we're converting to (JM)                                    }
-function fpc_shortstr_to_chararray(arraysize: longint; const src: ShortString): fpc_big_chararray;[public,alias: 'FPC_SHORTSTR_TO_CHARARRAY']; compilerproc;
+procedure fpc_shortstr_to_chararray(out res: array of char; const src: ShortString); compilerproc;
 var
   len: longint;
 begin
   len := length(src);
-  if len > arraysize then
-    len := arraysize;
+  if len > length(res) then
+    len := length(res);
+{$push}{$r-}
   { make sure we don't access char 1 if length is 0 (JM) }
   if len > 0 then
-    move(src[1],fpc_shortstr_to_chararray[0],len);
-  fillchar(fpc_shortstr_to_chararray[len],arraysize-len,0);
+    move(src[1],res[0],len);
+  fillchar(res[len],length(res)-len,0);
+{$pop}
 end;
 
 {$endif FPC_SYSTEM_HAS_FPC_SHORTSTR_TO_CHARARRAY}
 
-{$else hascompilerproc}
-
-{$ifopt r+}
-{$define rangeon}
-{$r-}
-{$endif}
-
-{$ifndef FPC_SYSTEM_HAS_FPC_STR_TO_CHARARRAY}
-procedure fpc_str_to_chararray(strtyp, arraysize: longint; src,dest: pchar);[public,alias:'FPC_STR_TO_CHARARRAY'];  {$ifdef hascompilerproc} compilerproc; {$endif}
-type
-  plongint = ^longint;
-var
-  len: longint;
-begin
-  case strtyp of
-    { shortstring }
-    0:
-      begin
-        len := byte(src[0]);
-        inc(src);
-      end;
-{$ifdef SUPPORT_ANSISTRING}
-    { ansistring}
-    1: len := length(ansistring(pointer(src)));
-{$endif SUPPORT_ANSISTRING}
-    { longstring }
-    2:;
-    { widestring }
-    3: ;
-  end;
-  if len > arraysize then
-    len := arraysize;
-  { make sure we don't dereference src if it can be nil (JM) }
-  if len > 0 then
-    move(src^,dest^,len);
-  fillchar(dest[len],arraysize-len,0);
-end;
-
-{$endif FPC_SYSTEM_HAS_FPC_STR_TO_CHARARRAY}
-
-{$ifdef rangeon}
-{$r+}
-{undef rangeon}
-{$endif rangeon}
-
-{$endif hascompilerproc}
-
 {$ifndef FPC_SYSTEM_HAS_FPC_PCHAR_LENGTH}
 
-function fpc_pchar_length(p:pchar):longint;[public,alias:'FPC_PCHAR_LENGTH']; {$ifdef hascompilerproc} compilerproc; {$endif}
-var i : longint;
+function fpc_pchar_length(p:pchar):sizeint;[public,alias:'FPC_PCHAR_LENGTH']; compilerproc;
+var i : sizeint;
 begin
   i:=0;
-  while p[i]<>#0 do inc(i);
+  if assigned(p) then
+    while p[i]<>#0 do
+      inc(i);
   exit(i);
 end;
 
 {$endif ndef FPC_SYSTEM_HAS_FPC_PCHAR_LENGTH}
 
-{$ifdef HASWIDESTRING}
 {$ifndef FPC_SYSTEM_HAS_FPC_PWIDECHAR_LENGTH}
 
-function fpc_pwidechar_length(p:pwidechar):longint;[public,alias:'FPC_PWIDECHAR_LENGTH']; {$ifdef hascompilerproc} compilerproc; {$endif}
-var i : longint;
+function fpc_pwidechar_length(p:pwidechar):sizeint;[public,alias:'FPC_PWIDECHAR_LENGTH']; compilerproc;
+var i : sizeint;
 begin
   i:=0;
-  while p[i]<>#0 do inc(i);
+  if assigned(p) then
+    while p[i]<>#0 do
+      inc(i);
   exit(i);
 end;
 
 {$endif ndef FPC_SYSTEM_HAS_FPC_PWIDECHAR_LENGTH}
-{$endif HASWIDESTRING}
 
 {****************************************************************************
                        Caller/StackFrame Helpers
@@ -796,6 +1193,167 @@ end;
 {****************************************************************************
                                  Math
 ****************************************************************************}
+
+{****************************************************************************
+                          Software multiplication
+****************************************************************************}
+{$ifdef FPC_INCLUDE_SOFTWARE_MUL}
+
+{$ifndef FPC_SYSTEM_HAS_MUL_INTEGER}
+    function fpc_mul_integer(f1,f2 : integer;checkoverflow : boolean) : integer;[public,alias: 'FPC_MUL_INTEGER']; compilerproc;
+      var
+        sign : boolean;
+        q1,q2,q3 : word;
+      begin
+        begin
+           sign:=false;
+           if f1<0 then
+             begin
+                sign:=not(sign);
+                q1:=word(-f1);
+             end
+           else
+             q1:=f1;
+           if f2<0 then
+             begin
+                sign:=not(sign);
+                q2:=word(-f2);
+             end
+           else
+             q2:=f2;
+           { the q1*q2 is coded as call to mulqword }
+           q3:=q1*q2;
+
+           if checkoverflow and (q1 <> 0) and (q2 <>0) and
+           ((q1>q3) or (q2>q3) or
+             { the bit 63 can be only set if we have $8000 }
+             { and sign is true                            }
+             (q3 shr 15<>0) and
+              ((q3<>word(word(1) shl 15)) or not(sign))
+             ) then
+             HandleErrorFrame(215,get_frame);
+
+           if sign then
+             fpc_mul_integer:=-q3
+           else
+             fpc_mul_integer:=q3;
+        end;
+      end;
+{$endif FPC_SYSTEM_HAS_MUL_INTEGER}
+
+
+{$ifndef FPC_SYSTEM_HAS_MUL_WORD}
+    function fpc_mul_word(f1,f2 : word;checkoverflow : boolean) : word;[public,alias: 'FPC_MUL_WORD']; compilerproc;
+      var
+        _f1,bitpos : word;
+        b : byte;
+        f1overflowed : boolean;
+      begin
+        fpc_mul_word:=0;
+        bitpos:=1;
+        f1overflowed:=false;
+
+        for b:=0 to 15 do
+          begin
+            if (f2 and bitpos)<>0 then
+              begin
+                _f1:=fpc_mul_word;
+                fpc_mul_word:=fpc_mul_word+f1;
+
+                { if one of the operands is greater than the result an
+                  overflow occurs                                      }
+                if checkoverflow and (f1overflowed or ((_f1<>0) and (f1<>0) and
+                  ((_f1>fpc_mul_word) or (f1>fpc_mul_word)))) then
+                  HandleErrorFrame(215,get_frame);
+              end;
+            { when bootstrapping, we forget about overflow checking for qword :) }
+            f1overflowed:=f1overflowed or ((f1 and (1 shl 15))<>0);
+            f1:=f1 shl 1;
+            bitpos:=bitpos shl 1;
+          end;
+      end;
+{$endif FPC_SYSTEM_HAS_MUL_WORD}
+
+
+{$ifndef FPC_SYSTEM_HAS_MUL_LONGINT}
+    function fpc_mul_longint(f1,f2 : longint;checkoverflow : boolean) : longint;[public,alias: 'FPC_MUL_LONGINT']; compilerproc;
+      var
+        sign : boolean;
+        q1,q2,q3 : dword;
+      begin
+        begin
+           sign:=false;
+           if f1<0 then
+             begin
+                sign:=not(sign);
+                q1:=dword(-f1);
+             end
+           else
+             q1:=f1;
+           if f2<0 then
+             begin
+                sign:=not(sign);
+                q2:=dword(-f2);
+             end
+           else
+             q2:=f2;
+           { the q1*q2 is coded as call to mulqword }
+           q3:=q1*q2;
+
+           if checkoverflow and (q1 <> 0) and (q2 <>0) and
+           ((q1>q3) or (q2>q3) or
+             { the bit 31 can be only set if we have $8000 0000 }
+             { and sign is true                                 }
+             (q3 shr 15<>0) and
+              ((q3<>dword(dword(1) shl 31)) or not(sign))
+             ) then
+             HandleErrorFrame(215,get_frame);
+
+           if sign then
+             fpc_mul_longint:=-q3
+           else
+             fpc_mul_longint:=q3;
+        end;
+      end;
+{$endif FPC_SYSTEM_HAS_MUL_INTEGER}
+
+
+{$ifndef FPC_SYSTEM_HAS_MUL_DWORD}
+    { multiplies two dwords
+      the longbool for checkoverflow avoids a misaligned stack
+    }
+    function fpc_mul_dword(f1,f2 : dword;checkoverflow : boolean) : dword;[public,alias: 'FPC_MUL_DWORD']; compilerproc;
+      var
+        _f1,bitpos : dword;
+        b : byte;
+        f1overflowed : boolean;
+      begin
+        fpc_mul_dword:=0;
+        bitpos:=1;
+        f1overflowed:=false;
+
+        for b:=0 to 31 do
+          begin
+            if (f2 and bitpos)<>0 then
+              begin
+                _f1:=fpc_mul_dword;
+                fpc_mul_dword:=fpc_mul_dword+f1;
+
+                { if one of the operands is greater than the result an
+                  overflow occurs                                      }
+                if checkoverflow and (f1overflowed or ((_f1<>0) and (f1<>0) and
+                  ((_f1>fpc_mul_dword) or (f1>fpc_mul_dword)))) then
+                  HandleErrorFrame(215,get_frame);
+              end;
+            { when bootstrapping, we forget about overflow checking for qword :) }
+            f1overflowed:=f1overflowed or ((f1 and (1 shl 31))<>0);
+            f1:=f1 shl 1;
+            bitpos:=bitpos shl 1;
+          end;
+      end;
+{$endif FPC_SYSTEM_HAS_MUL_DWORD}
+
+{$endif FPC_INCLUDE_SOFTWARE_MUL}
 
 {****************************************************************************
                           Software longint/dword division
@@ -819,7 +1377,7 @@ function count_leading_zeros_32bit(l : longint) : longint;
 
 
 {$ifndef FPC_SYSTEM_HAS_DIV_DWORD}
-function fpc_div_dword(n,z : dword) : dword; [public,alias: 'FPC_DIV_DWORD']; {$ifdef hascompilerproc} compilerproc; {$endif}
+function fpc_div_dword(n,z : dword) : dword; [public,alias: 'FPC_DIV_DWORD']; compilerproc;
   var
      shift,lzz,lzn : longint;
   begin
@@ -849,7 +1407,7 @@ function fpc_div_dword(n,z : dword) : dword; [public,alias: 'FPC_DIV_DWORD']; {$
 
 
 {$ifndef FPC_SYSTEM_HAS_MOD_DWORD}
-function fpc_mod_dword(n,z : dword) : dword; [public,alias: 'FPC_MOD_DWORD']; {$ifdef hascompilerproc} compilerproc; {$endif}
+function fpc_mod_dword(n,z : dword) : dword; [public,alias: 'FPC_MOD_DWORD']; compilerproc;
   var
      shift,lzz,lzn : longint;
   begin
@@ -880,7 +1438,7 @@ function fpc_mod_dword(n,z : dword) : dword; [public,alias: 'FPC_MOD_DWORD']; {$
 
 
 {$ifndef FPC_SYSTEM_HAS_DIV_LONGINT}
-function fpc_div_longint(n,z : longint) : longint; [public,alias: 'FPC_DIV_LONGINT']; {$ifdef hascompilerproc} compilerproc; {$endif}
+function fpc_div_longint(n,z : longint) : longint; [public,alias: 'FPC_DIV_LONGINT']; compilerproc;
   var
      sign : boolean;
      d1,d2 : dword;
@@ -913,7 +1471,7 @@ function fpc_div_longint(n,z : longint) : longint; [public,alias: 'FPC_DIV_LONGI
 
 
 {$ifndef FPC_SYSTEM_HAS_MOD_LONGINT}
-function fpc_mod_longint(n,z : longint) : longint; [public,alias: 'FPC_MOD_LONGINT']; {$ifdef hascompilerproc} compilerproc; {$endif}
+function fpc_mod_longint(n,z : longint) : longint; [public,alias: 'FPC_MOD_LONGINT']; compilerproc;
   var
      signed : boolean;
      r,nq,zq : dword;
@@ -947,7 +1505,7 @@ function fpc_mod_longint(n,z : longint) : longint; [public,alias: 'FPC_MOD_LONGI
 {****************************************************************************}
 
 {$ifndef FPC_SYSTEM_HAS_ABS_LONGINT}
-function abs(l:longint):longint;{$ifdef SYSTEMINLINE}inline;{$endif}{$ifndef INTERNCONSTINTF}[internconst:fpc_in_const_abs];{$endif}
+function abs(l:longint):longint;{$ifdef SYSTEMINLINE}inline;{$endif}
 begin
    if l<0 then
      abs:=-l
@@ -959,7 +1517,7 @@ end;
 
 {$ifndef FPC_SYSTEM_HAS_ODD_LONGINT}
 
-function odd(l:longint):boolean;{$ifdef SYSTEMINLINE}inline;{$endif}{$ifndef INTERNCONSTINTF}[internconst:fpc_in_const_odd];{$endif}
+function odd(l:longint):boolean;{$ifdef SYSTEMINLINE}inline;{$endif}
 begin
    odd:=boolean(l and 1);
 end;
@@ -968,7 +1526,7 @@ end;
 
 {$ifndef FPC_SYSTEM_HAS_ODD_LONGWORD}
 
-function odd(l:longword):boolean;{$ifdef SYSTEMINLINE}inline;{$endif}{$ifndef INTERNCONSTINTF}[internconst:fpc_in_const_odd];{$endif}
+function odd(l:longword):boolean;{$ifdef SYSTEMINLINE}inline;{$endif}
 begin
    odd:=boolean(l and 1);
 end;
@@ -978,7 +1536,7 @@ end;
 
 {$ifndef FPC_SYSTEM_HAS_ODD_INT64}
 
-function odd(l:int64):boolean;{$ifdef SYSTEMINLINE}inline;{$endif}{$ifndef INTERNCONSTINTF}[internconst:fpc_in_const_odd];{$endif}
+function odd(l:int64):boolean;{$ifdef SYSTEMINLINE}inline;{$endif}
 begin
    odd:=boolean(longint(l) and 1);
 end;
@@ -987,7 +1545,7 @@ end;
 
 {$ifndef FPC_SYSTEM_HAS_ODD_QWORD}
 
-function odd(l:qword):boolean;{$ifdef SYSTEMINLINE}inline;{$endif}{$ifndef INTERNCONSTINTF}[internconst:fpc_in_const_odd];{$endif}
+function odd(l:qword):boolean;{$ifdef SYSTEMINLINE}inline;{$endif}
 begin
    odd:=boolean(longint(l) and 1);
 end;
@@ -996,7 +1554,7 @@ end;
 
 {$ifndef FPC_SYSTEM_HAS_SQR_LONGINT}
 
-function sqr(l:longint):longint;{$ifdef SYSTEMINLINE}inline;{$endif}{$ifndef INTERNCONSTINTF}[internconst:fpc_in_const_sqr];{$endif}
+function sqr(l:longint):longint;{$ifdef SYSTEMINLINE}inline;{$endif}
 begin
    sqr:=l*l;
 end;
@@ -1006,7 +1564,7 @@ end;
 
 {$ifndef FPC_SYSTEM_HAS_ABS_INT64}
 
-function abs(l: Int64): Int64;{$ifdef SYSTEMINLINE}inline;{$endif}{$ifndef INTERNCONSTINTF}[internconst:fpc_in_const_abs];{$endif}
+function abs(l: Int64): Int64;{$ifdef SYSTEMINLINE}inline;{$endif}
 begin
   if l < 0 then
     abs := -l
@@ -1019,7 +1577,7 @@ end;
 
 {$ifndef FPC_SYSTEM_HAS_SQR_INT64}
 
-function sqr(l: Int64): Int64;{$ifdef SYSTEMINLINE}inline;{$endif}{$ifndef INTERNCONSTINTF}[internconst:fpc_in_const_sqr];{$endif}
+function sqr(l: Int64): Int64;{$ifdef SYSTEMINLINE}inline;{$endif}
 begin
   sqr := l*l;
 end;
@@ -1029,12 +1587,22 @@ end;
 
 {$ifndef FPC_SYSTEM_HAS_SQR_QWORD}
 
-function sqr(l: QWord): QWord;{$ifdef SYSTEMINLINE}inline;{$endif}{$ifndef INTERNCONSTINTF}[internconst:fpc_in_const_sqr];{$endif}
+function sqr(l: QWord): QWord;{$ifdef SYSTEMINLINE}inline;{$endif}
 begin
   sqr := l*l;
 end;
 
 {$endif ndef FPC_SYSTEM_HAS_SQR_INT64}
+
+{$ifdef CPU16}
+{$ifndef FPC_SYSTEM_HAS_DECLOCKED_SMALLINT}
+function declocked(var l:smallint):boolean;
+  begin
+    Dec(l);
+    declocked:=(l=0);
+  end;
+{$endif FPC_SYSTEM_HAS_DECLOCKED_SMALLINT}
+{$endif CPU16}
 
 {$ifndef FPC_SYSTEM_HAS_DECLOCKED_LONGINT}
 function declocked(var l:longint):boolean;
@@ -1053,6 +1621,15 @@ function declocked(var l:int64):boolean;
   end;
 {$endif FPC_SYSTEM_HAS_DECLOCKED_INT64}
 
+
+{$ifdef CPU16}
+{$ifndef FPC_SYSTEM_HAS_INCLOCKED_SMALLINT}
+procedure inclocked(var l:smallint);
+  begin
+    Inc(l);
+  end;
+{$endif FPC_SYSTEM_HAS_INCLOCKED_SMALLINT}
+{$endif CPU16}
 
 {$ifndef FPC_SYSTEM_HAS_INCLOCKED_LONGINT}
 procedure inclocked(var l:longint);
@@ -1075,28 +1652,25 @@ procedure inclocked(var l:int64);
 {$endif ndef FPC_SYSTEM_HAS_SPTR}
 
 
-{$ifndef INTERNCONSTINTF}
-procedure prefetch(const mem);[internproc:fpc_in_prefetch_var];
+
+function align(addr : PtrUInt;alignment : PtrUInt) : PtrUInt;{$ifdef SYSTEMINLINE}inline;{$endif}
+  var
+    tmp: PtrUInt;
+  begin
+    tmp:=addr+(alignment-1);
+    result:=tmp-(tmp mod alignment)
+  end;
+
+
+{$ifndef cpujvm}
+function align(addr : Pointer;alignment : PtrUInt) : Pointer;{$ifdef SYSTEMINLINE}inline;{$endif}
+  var
+    tmp: PtrUInt;
+  begin
+    tmp:=PtrUInt(addr)+(alignment-1);
+    result:=pointer(tmp-(tmp mod alignment));
+  end;
 {$endif}
-
-
-function align(addr : PtrInt;alignment : PtrInt) : PtrInt;{$ifdef SYSTEMINLINE}inline;{$endif}
-  begin
-    if addr mod alignment<>0 then
-      result:=addr+(alignment-(addr mod alignment))
-    else
-      result:=addr;
-  end;
-
-
-function align(addr : Pointer;alignment : PtrInt) : Pointer;{$ifdef SYSTEMINLINE}inline;{$endif}
-  begin
-    if PtrInt(addr) mod alignment<>0 then
-      result:=pointer(addr+(alignment-(PtrInt(addr) mod alignment)))
-    else
-      result:=addr;
-  end;
-
 
 {****************************************************************************
                                  Str()
@@ -1104,140 +1678,769 @@ function align(addr : Pointer;alignment : PtrInt) : Pointer;{$ifdef SYSTEMINLINE
 
 {$ifndef FPC_SYSTEM_HAS_INT_STR_LONGINT}
 
-procedure int_str(l : longint;var s : string);
+procedure int_str(l:longint;out s:shortstring);
 var
-  value: longint;
-  negative: boolean;
-
-  begin
-     negative := false;
-     s:='';
-     { Workaround: }
-     if l=longint($80000000) then
-       begin
-         s:='-2147483648';
-         exit;
-       end;
-     { handle case where l = 0 }
-     if l = 0 then
-       begin
-         s:='0';
-         exit;
-       end;
-     If l < 0 then
-       begin
-         negative := true;
-         value:=abs(l);
-       end
-     else
-         value:=l;
-     { handle non-zero case }
-     while value>0 do
-       begin
-         s:=char((value mod 10)+ord('0'))+s;
-         value := value div 10;
-       end;
-     if negative then
-       s := '-' + s;
-  end;
+  m,m1 : longword;
+  pcstart,
+  pc2start,
+  pc,pc2 : pchar;
+  hs : string[32];
+  overflow : longint;
+begin
+  pc2start:=@s[1];
+  pc2:=pc2start;
+  if (l<0) then
+    begin
+      pc2^:='-';
+      inc(pc2);
+      m:=longword(-l);
+    end
+  else
+    m:=longword(l);
+  pcstart:=pchar(@hs[0]);
+  pc:=pcstart;
+  repeat
+    m1:=m div 10;
+    inc(pc);
+    pc^:=char(m-(m1*10)+byte('0'));
+    m:=m1;
+  until m=0;
+  overflow:=(pc-pcstart)+(pc2-pc2start)-high(s);
+  if overflow>0 then
+    inc(pcstart,overflow);
+  while (pc>pcstart) do
+    begin
+      pc2^:=pc^;
+      inc(pc2);
+      dec(pc);
+    end;
+  s[0]:=char(pc2-pc2start);
+end;
 
 {$endif ndef FPC_SYSTEM_HAS_INT_STR_LONGINT}
 
 {$ifndef FPC_SYSTEM_HAS_INT_STR_LONGWORD}
 
-procedure int_str(l : longword;var s : string);
+procedure int_str_unsigned(l:longword;out s:shortstring);
+var
+  m1 : longword;
+  pcstart,
+  pc2start,
+  pc,pc2 : pchar;
+  hs : string[32];
+  overflow : longint;
 begin
-  s:='';
-  if l = 0 then
-  begin
-    s := '0';
-    exit;
-  end;
-  while l>0 do
+  pc2start:=@s[1];
+  pc2:=pc2start;
+  pcstart:=pchar(@hs[0]);
+  pc:=pcstart;
+  repeat
+    inc(pc);
+    m1:=l div 10;
+    pc^:=char(l-(m1*10)+byte('0'));
+    l:=m1;
+  until l=0;
+  overflow:=(pc-pcstart)-high(s);
+  if overflow>0 then
+    inc(pcstart,overflow);
+  while (pc>pcstart) do
     begin
-       s:=char(ord('0')+(l mod 10))+s;
-       l:=l div 10;
+      pc2^:=pc^;
+      inc(pc2);
+      dec(pc);
     end;
+  s[0]:=char(pc2-pc2start);
 end;
 
 {$endif ndef FPC_SYSTEM_HAS_INT_STR_LONGWORD}
 
 {$ifndef FPC_SYSTEM_HAS_INT_STR_INT64}
 
-procedure int_str(l : int64;var s : string);
+procedure int_str(l:int64;out s:shortstring);
 var
-  value: int64;
-  negative: boolean;
-
-  begin
-     negative := false;
-     s:='';
-     { Workaround: }
-{$ifdef ver1_0}
-     if (l shr 32=$80000000) and ((l and $ffffffff)=0) then
-{$else}
-     if l=int64($8000000000000000) then
-{$endif}
-       begin
-         s:='-9223372036854775808';
-         exit;
-       end;
-     { handle case where l = 0 }
-     if l = 0 then
-       begin
-         s:='0';
-         exit;
-       end;
-     If l < 0 then
-       begin
-         negative := true;
-         value:=abs(l);
-       end
-     else
-         value:=l;
-     { handle non-zero case }
-     while value>0 do
-       begin
-         s:=char((value mod 10)+ord('0'))+s;
-         value := value div 10;
-       end;
-     if negative then
-       s := '-' + s;
-  end;
+  m,m1 : qword;
+  pcstart,
+  pc2start,
+  pc,pc2 : pchar;
+  hs : string[32];
+  overflow : longint;
+begin
+  pc2start:=@s[1];
+  pc2:=pc2start;
+  if (l<0) then
+    begin
+      pc2^:='-';
+      inc(pc2);
+      m:=qword(-l);
+    end
+  else
+    m:=qword(l);
+  pcstart:=pchar(@hs[0]);
+  pc:=pcstart;
+  repeat
+    m1:=m div 10;
+    inc(pc);
+    pc^:=char(m-(m1*10)+byte('0'));
+    m:=m1;
+  until m=0;
+  overflow:=(pc-pcstart)+(pc2-pc2start)-high(s);
+  if overflow>0 then
+    inc(pcstart,overflow);
+  while (pc>pcstart) do
+    begin
+      pc2^:=pc^;
+      inc(pc2);
+      dec(pc);
+    end;
+  s[0]:=char(pc2-pc2start);
+end;
 
 {$endif ndef FPC_SYSTEM_HAS_INT_STR_INT64}
 
 {$ifndef FPC_SYSTEM_HAS_INT_STR_QWORD}
 
-procedure int_str(l : qword;var s : string);
+procedure int_str_unsigned(l:qword;out s:shortstring);
+var
+  m1 : qword;
+  pcstart,
+  pc2start,
+  pc,pc2 : pchar;
+  hs : string[64];
+  overflow : longint;
 begin
-  s:='';
-  if l = 0 then
-  begin
-    s := '0';
-    exit;
-  end;
-  while l>0 do
+  pc2start:=@s[1];
+  pc2:=pc2start;
+  pcstart:=pchar(@hs[0]);
+  pc:=pcstart;
+  repeat
+    inc(pc);
+    m1:=l div 10;
+    pc^:=char(l-(m1*10)+byte('0'));
+    l:=m1;
+  until l=0;
+  overflow:=(pc-pcstart)-high(s);
+  if overflow>0 then
+    inc(pcstart,overflow);
+  while (pc>pcstart) do
     begin
-       s:=char(ord('0')+(l mod 10))+s;
-       l:=l div 10;
+      pc2^:=pc^;
+      inc(pc2);
+      dec(pc);
     end;
+  s[0]:=char(pc2-pc2start);
 end;
 
 {$endif ndef FPC_SYSTEM_HAS_INT_STR_QWORD}
 
+{$ifndef FPUNONE}
 {$ifndef FPC_SYSTEM_HAS_SYSRESETFPU}
 
 procedure SysResetFpu;{$ifdef SYSTEMINLINE}inline;{$endif}
 begin
-  { nothing todo }
+  softfloat_exception_flags:=0;
 end;
 
 {$endif FPC_SYSTEM_HAS_SYSRESETFPU}
 
-{
-  $Log: generic.inc,v $
-  Revision 1.90  2005/02/14 17:13:22  peter
-    * truncate log
+{$ifndef FPC_SYSTEM_HAS_SYSINITFPU}
 
-}
+procedure SysInitFpu;{$ifdef SYSTEMINLINE}inline;{$endif}
+begin
+  softfloat_exception_mask:=float_flag_underflow or float_flag_inexact or float_flag_denormal;
+end;
+
+{$endif FPC_SYSTEM_HAS_SYSINITFPU}
+{$endif}
+
+{$ifndef FPC_SYSTEM_HAS_SWAPENDIAN}
+function SwapEndian(const AValue: SmallInt): SmallInt;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    { the extra Word type cast is necessary because the "AValue shr 8" }
+    { is turned into "longint(AValue) shr 8", so if AValue < 0 then    }
+    { the sign bits from the upper 16 bits are shifted in rather than  }
+    { zeroes.                                                          }
+    Result := SmallInt((Word(AValue) shr 8) or (Word(AValue) shl 8));
+  end;
+
+{$ifndef cpujvm}
+function SwapEndian(const AValue: Word): Word;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    Result := Word((AValue shr 8) or (AValue shl 8));
+  end;
+{$endif}
+
+function SwapEndian(const AValue: LongInt): LongInt;
+  begin
+    Result := (AValue shl 24)
+           or ((AValue and $0000FF00) shl 8)
+           or ((AValue and $00FF0000) shr 8)
+           or (AValue shr 24);
+  end;
+
+{$ifndef cpujvm}
+function SwapEndian(const AValue: DWord): DWord;
+  begin
+    Result := (AValue shl 24)
+           or ((AValue and $0000FF00) shl 8)
+           or ((AValue and $00FF0000) shr 8)
+           or (AValue shr 24);
+  end;
+{$endif}
+
+function SwapEndian(const AValue: Int64): Int64;
+  begin
+    Result := (AValue shl 56)
+           or ((AValue and $000000000000FF00) shl 40)
+           or ((AValue and $0000000000FF0000) shl 24)
+           or ((AValue and $00000000FF000000) shl 8)
+           or ((AValue and $000000FF00000000) shr 8)
+           or ((AValue and $0000FF0000000000) shr 24)
+           or ((AValue and $00FF000000000000) shr 40)
+           or (AValue shr 56);
+  end;
+
+{$ifndef cpujvm}
+function SwapEndian(const AValue: QWord): QWord;
+  begin
+    Result := (AValue shl 56)
+           or ((AValue and $000000000000FF00) shl 40)
+           or ((AValue and $0000000000FF0000) shl 24)
+           or ((AValue and $00000000FF000000) shl 8)
+           or ((AValue and $000000FF00000000) shr 8)
+           or ((AValue and $0000FF0000000000) shr 24)
+           or ((AValue and $00FF000000000000) shr 40)
+           or (AValue shr 56);
+  end;
+{$endif}
+{$endif FPC_SYSTEM_HAS_SWAPENDIAN}
+
+function BEtoN(const AValue: SmallInt): SmallInt;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    {$IFDEF ENDIAN_BIG}
+      Result := AValue;
+    {$ELSE}
+      Result := SwapEndian(AValue);
+    {$ENDIF}
+  end;
+
+
+{$ifndef cpujvm}
+function BEtoN(const AValue: Word): Word;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    {$IFDEF ENDIAN_BIG}
+      Result := AValue;
+    {$ELSE}
+      Result := SwapEndian(AValue);
+    {$ENDIF}
+  end;
+{$endif not cpujvm}
+
+
+function BEtoN(const AValue: LongInt): LongInt;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    {$IFDEF ENDIAN_BIG}
+      Result := AValue;
+    {$ELSE}
+      Result := SwapEndian(AValue);
+    {$ENDIF}
+  end;
+
+
+{$ifndef cpujvm}
+function BEtoN(const AValue: DWord): DWord;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    {$IFDEF ENDIAN_BIG}
+      Result := AValue;
+    {$ELSE}
+      Result := SwapEndian(AValue);
+    {$ENDIF}
+  end;
+{$endif not cpujvm}
+
+
+function BEtoN(const AValue: Int64): Int64;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    {$IFDEF ENDIAN_BIG}
+      Result := AValue;
+    {$ELSE}
+      Result := SwapEndian(AValue);
+    {$ENDIF}
+  end;
+
+
+{$ifndef cpujvm}
+function BEtoN(const AValue: QWord): QWord;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    {$IFDEF ENDIAN_BIG}
+      Result := AValue;
+    {$ELSE}
+      Result := SwapEndian(AValue);
+    {$ENDIF}
+  end;
+{$endif not cpujvm}
+
+
+
+function LEtoN(const AValue: SmallInt): SmallInt;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    {$IFDEF ENDIAN_LITTLE}
+      Result := AValue;
+    {$ELSE}
+      Result := SwapEndian(AValue);
+    {$ENDIF}
+  end;
+
+
+{$ifndef cpujvm}
+function LEtoN(const AValue: Word): Word;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    {$IFDEF ENDIAN_LITTLE}
+      Result := AValue;
+    {$ELSE}
+      Result := SwapEndian(AValue);
+    {$ENDIF}
+  end;
+{$endif not cpujvm}
+
+
+function LEtoN(const AValue: LongInt): LongInt;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    {$IFDEF ENDIAN_LITTLE}
+      Result := AValue;
+    {$ELSE}
+      Result := SwapEndian(AValue);
+    {$ENDIF}
+  end;
+
+
+{$ifndef cpujvm}
+function LEtoN(const AValue: DWord): DWord;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    {$IFDEF ENDIAN_LITTLE}
+      Result := AValue;
+    {$ELSE}
+      Result := SwapEndian(AValue);
+    {$ENDIF}
+  end;
+{$endif not cpujvm}
+
+
+function LEtoN(const AValue: Int64): Int64;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    {$IFDEF ENDIAN_LITTLE}
+      Result := AValue;
+    {$ELSE}
+      Result := SwapEndian(AValue);
+    {$ENDIF}
+  end;
+
+
+{$ifndef cpujvm}
+function LEtoN(const AValue: QWord): QWord;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    {$IFDEF ENDIAN_LITTLE}
+      Result := AValue;
+    {$ELSE}
+      Result := SwapEndian(AValue);
+    {$ENDIF}
+  end;
+{$endif not cpujvm}
+
+
+
+function NtoBE(const AValue: SmallInt): SmallInt;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    {$IFDEF ENDIAN_BIG}
+      Result := AValue;
+    {$ELSE}
+      Result := SwapEndian(AValue);
+    {$ENDIF}
+  end;
+
+
+{$ifndef cpujvm}
+function NtoBE(const AValue: Word): Word;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    {$IFDEF ENDIAN_BIG}
+      Result := AValue;
+    {$ELSE}
+      Result := SwapEndian(AValue);
+    {$ENDIF}
+  end;
+{$endif not cpujvm}
+
+
+function NtoBE(const AValue: LongInt): LongInt;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    {$IFDEF ENDIAN_BIG}
+      Result := AValue;
+    {$ELSE}
+      Result := SwapEndian(AValue);
+    {$ENDIF}
+  end;
+
+
+{$ifndef cpujvm}
+function NtoBE(const AValue: DWord): DWord;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    {$IFDEF ENDIAN_BIG}
+      Result := AValue;
+    {$ELSE}
+      Result := SwapEndian(AValue);
+    {$ENDIF}
+  end;
+{$endif not cpujvm}
+
+
+function NtoBE(const AValue: Int64): Int64;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    {$IFDEF ENDIAN_BIG}
+      Result := AValue;
+    {$ELSE}
+      Result := SwapEndian(AValue);
+    {$ENDIF}
+  end;
+
+
+{$ifndef cpujvm}
+function NtoBE(const AValue: QWord): QWord;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    {$IFDEF ENDIAN_BIG}
+      Result := AValue;
+    {$ELSE}
+      Result := SwapEndian(AValue);
+    {$ENDIF}
+  end;
+{$endif not cpujvm}
+
+
+function NtoLE(const AValue: SmallInt): SmallInt;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    {$IFDEF ENDIAN_LITTLE}
+      Result := AValue;
+    {$ELSE}
+      Result := SwapEndian(AValue);
+    {$ENDIF}
+  end;
+
+
+{$ifndef cpujvm}
+function NtoLE(const AValue: Word): Word;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    {$IFDEF ENDIAN_LITTLE}
+      Result := AValue;
+    {$ELSE}
+      Result := SwapEndian(AValue);
+    {$ENDIF}
+  end;
+{$endif not cpujvm}
+
+
+function NtoLE(const AValue: LongInt): LongInt;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    {$IFDEF ENDIAN_LITTLE}
+      Result := AValue;
+    {$ELSE}
+      Result := SwapEndian(AValue);
+    {$ENDIF}
+  end;
+
+
+{$ifndef cpujvm}
+function NtoLE(const AValue: DWord): DWord;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    {$IFDEF ENDIAN_LITTLE}
+      Result := AValue;
+    {$ELSE}
+      Result := SwapEndian(AValue);
+    {$ENDIF}
+  end;
+{$endif not cpujvm}
+
+
+function NtoLE(const AValue: Int64): Int64;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    {$IFDEF ENDIAN_LITTLE}
+      Result := AValue;
+    {$ELSE}
+      Result := SwapEndian(AValue);
+    {$ENDIF}
+  end;
+
+
+{$ifndef cpujvm}
+function NtoLE(const AValue: QWord): QWord;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    {$IFDEF ENDIAN_LITTLE}
+      Result := AValue;
+    {$ELSE}
+      Result := SwapEndian(AValue);
+    {$ENDIF}
+  end;
+{$endif not cpujvm}
+
+{$ifndef FPC_SYSTEM_HAS_MEM_BARRIER}
+
+procedure ReadBarrier;{$ifdef SYSTEMINLINE}inline;{$endif}
+begin
+end;
+
+procedure ReadDependencyBarrier;{$ifdef SYSTEMINLINE}inline;{$endif}
+begin
+end;
+
+procedure ReadWriteBarrier;{$ifdef SYSTEMINLINE}inline;{$endif}
+begin
+end;
+
+procedure WriteBarrier;{$ifdef SYSTEMINLINE}inline;{$endif}
+begin
+end;
+
+{$endif FPC_SYSTEM_HAS_MEM_BARRIER}
+
+{$ifndef FPC_HAS_INTERNAL_ROX_BYTE}
+{$ifndef FPC_SYSTEM_HAS_ROX_BYTE}
+
+function RorByte(Const AValue : Byte): Byte;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    Result:=(AValue shr 1) or (AValue shl 7);
+  end;
+
+
+function RorByte(Const AValue : Byte;const Dist : Byte): Byte;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    Result:=(AValue shr (Dist and 7)) or (AValue shl (8-(Dist and 7)));
+  end;
+
+
+function RolByte(Const AValue : Byte): Byte;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    Result:=(AValue shl 1) or (AValue shr 7);
+  end;
+
+
+function RolByte(Const AValue : Byte;const Dist : Byte): Byte;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    Result:=(AValue shl (Dist and 7)) or (AValue shr (8-(Dist and 7)));
+  end;
+
+{$endif FPC_SYSTEM_HAS_ROX_BYTE}
+{$endif FPC_HAS_INTERNAL_ROX_BYTE}
+
+{$ifndef FPC_HAS_INTERNAL_ROX_WORD}
+{$ifndef FPC_SYSTEM_HAS_ROX_WORD}
+
+function RorWord(Const AValue : Word): Word;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    Result:=(AValue shr 1) or (AValue shl 15);
+  end;
+
+
+function RorWord(Const AValue : Word;const Dist : Byte): Word;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    Result:=(AValue shr (Dist and 15)) or (AValue shl (16-(Dist and 15)));
+  end;
+
+
+function RolWord(Const AValue : Word): Word;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    Result:=(AValue shl 1) or (AValue shr 15);
+  end;
+
+
+function RolWord(Const AValue : Word;const Dist : Byte): Word;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    Result:=(AValue shl (Dist and 15)) or (AValue shr (16-(Dist and 15)));
+  end;
+
+{$endif FPC_SYSTEM_HAS_ROX_WORD}
+{$endif FPC_HAS_INTERNAL_ROX_WORD}
+
+{$ifndef FPC_HAS_INTERNAL_ROX_DWORD}
+{$ifndef FPC_SYSTEM_HAS_ROX_DWORD}
+
+function RorDWord(Const AValue : DWord): DWord;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    Result:=(AValue shr 1) or (AValue shl 31);
+  end;
+
+
+function RorDWord(Const AValue : DWord;const Dist : Byte): DWord;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    Result:=(AValue shr (Dist and 31)) or (AValue shl (32-(Dist and 31)));
+  end;
+
+
+function RolDWord(Const AValue : DWord): DWord;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    Result:=(AValue shl 1) or (AValue shr 31);
+  end;
+
+
+function RolDWord(Const AValue : DWord;const Dist : Byte): DWord;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    Result:=(AValue shl (Dist and 31)) or (AValue shr (32-(Dist and 31)));
+  end;
+
+{$endif FPC_SYSTEM_HAS_ROX_DWORD}
+{$endif FPC_HAS_INTERNAL_ROX_DWORD}
+
+{$ifndef FPC_HAS_INTERNAL_ROX_QWORD}
+{$ifndef FPC_SYSTEM_HAS_ROX_QWORD}
+
+function RorQWord(Const AValue : QWord): QWord;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    Result:=(AValue shr 1) or (AValue shl 63);
+  end;
+
+
+function RorQWord(Const AValue : QWord;const Dist : Byte): QWord;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    Result:=(AValue shr (Dist and 63)) or (AValue shl (64-(Dist and 63)));
+  end;
+
+
+function RolQWord(Const AValue : QWord): QWord;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    Result:=(AValue shl 1) or (AValue shr 63);
+  end;
+
+
+function RolQWord(Const AValue : QWord;const Dist : Byte): QWord;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    Result:=(AValue shl (Dist and 63)) or (AValue shr (64-(Dist and 63)));
+  end;
+
+{$endif FPC_SYSTEM_HAS_ROX_QWORD}
+{$endif FPC_HAS_INTERNAL_ROX_QWORD}
+
+{$ifndef FPC_HAS_INTERNAL_SAR_BYTE}
+{$ifndef FPC_SYSTEM_HAS_SAR_BYTE}
+function SarShortint(Const AValue : Shortint;const Shift : Byte): Shortint;
+  begin
+    Result:=shortint(byte(byte(byte(AValue) shr (Shift and 7)) or (byte(shortint(byte(0-byte(byte(AValue) shr 7)) and byte(shortint(0-(ord((Shift and 7)<>0){ and 1}))))) shl (8-(Shift and 7)))));
+  end;
+{$endif FPC_HAS_INTERNAL_SAR_BYTE}
+{$endif FPC_SYSTEM_HAS_SAR_BYTE}
+
+{$ifndef FPC_HAS_INTERNAL_SAR_WORD}
+{$ifndef FPC_SYSTEM_HAS_SAR_WORD}
+function SarSmallint(Const AValue : Smallint;const Shift : Byte): Smallint;
+  begin
+    Result:=smallint(word(word(word(AValue) shr (Shift and 15)) or (word(smallint(word(0-word(word(AValue) shr 15)) and word(smallint(0-(ord((Shift and 15)<>0){ and 1}))))) shl (16-(Shift and 15)))));
+  end;
+{$endif FPC_HAS_INTERNAL_SAR_WORD}
+{$endif FPC_SYSTEM_HAS_SAR_WORD}
+
+{$ifndef FPC_HAS_INTERNAL_SAR_DWORD}
+{$ifndef FPC_SYSTEM_HAS_SAR_DWORD}
+function SarLongint(Const AValue : Longint;const Shift : Byte): Longint;
+  begin
+    Result:=longint(dword(dword(dword(AValue) shr (Shift and 31)) or (dword(longint(dword(0-dword(dword(AValue) shr 31)) and dword(longint(0-(ord((Shift and 31)<>0){ and 1}))))) shl (32-(Shift and 31)))));
+  end;
+{$endif FPC_HAS_INTERNAL_SAR_DWORD}
+{$endif FPC_SYSTEM_HAS_SAR_DWORD}
+
+{$ifndef FPC_HAS_INTERNAL_SAR_QWORD}
+{$ifndef FPC_SYSTEM_HAS_SAR_QWORD}
+function fpc_SarInt64(Const AValue : Int64;const Shift : Byte): Int64; [Public,Alias:'FPC_SARINT64']; compilerproc;
+  begin
+    Result:=int64(qword(qword(qword(AValue) shr (Shift and 63)) or (qword(int64(qword(0-qword(qword(AValue) shr 63)) and qword(int64(0-(ord((Shift and 63)<>0){ and 1}))))) shl (64-(Shift and 63)))));
+  end;
+{$endif FPC_HAS_INTERNAL_SAR_QWORD}
+{$endif FPC_SYSTEM_HAS_SAR_QWORD}
+
+{$ifndef FPC_HAS_INTERNAL_BSX_BYTE}
+{$ifndef FPC_SYSTEM_HAS_BSX_BYTE}
+function BsfByte(Const AValue: Byte): Byte;
+  const bsf8bit: array [Byte] of Byte = (
+	  $ff,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+	  5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+	  6,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+	  5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+	  7,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+	  5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+	  6,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,
+	  5,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0,4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0
+  );
+  begin
+    result:=bsf8bit[AValue];
+  end;
+
+function BsrByte(Const AValue: Byte): Byte;
+  const bsr8bit: array [Byte] of Byte = (
+    $ff,0,1,1,2,2,2,2,3,3,3,3,3,3,3,3,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
+	  5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,
+	  6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,
+	  6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,
+	  7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,
+	  7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,
+	  7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,
+	  7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7
+  );
+  begin
+    result:=bsr8bit[AValue];
+  end;
+{$endif}
+{$endif}
+
+{$ifndef FPC_SYSTEM_HAS_BSX_WORD}
+{$ifndef FPC_HAS_INTERNAL_BSX_WORD}
+function BsfWord(Const AValue: Word): cardinal;
+  begin
+    if lo(AValue)<>0 then
+      result:=BsfByte(lo(AValue))
+    else
+      result:=BsfByte(hi(AValue))+8
+  end;
+
+function BsrWord(Const AValue: Word): cardinal;
+  begin
+    if hi(AValue)<>0 then
+      result:=BsrByte(hi(AValue))+8
+    else
+      result:=BsrByte(lo(AValue))
+  end;
+{$endif}
+{$endif}
+
+{$ifndef FPC_HAS_INTERNAL_BSX_DWORD}
+{$ifndef FPC_SYSTEM_HAS_BSX_DWORD}
+function BsfDWord(Const AValue : DWord): cardinal;
+begin
+  if lo(AValue)<>0 then
+    result:=BsfWord(lo(AValue))
+  else
+    result:=BsfWord(hi(AValue))+16
+end;
+
+function BsrDWord(Const AValue : DWord): cardinal;
+begin
+  if hi(AValue)<>0 then
+    result:=BsrWord(hi(AValue))+16
+  else
+    result:=BsrWord(lo(AValue))
+end;
+{$endif}
+{$endif}
+
+{$ifndef FPC_HAS_INTERNAL_BSX_QWORD}
+{$ifndef FPC_SYSTEM_HAS_BSX_QWORD}
+function BsfQWord(Const AValue : QWord): cardinal;
+  begin
+    if lo(AValue) <> 0 then
+      result:=BsfDWord(lo(AValue))
+    else
+      result:=BsfDWord(hi(AValue)) + 32
+  end;
+
+function BsrQWord(Const AValue : QWord): cardinal;
+  begin
+    if hi(AValue) <> 0 then
+      result:=BsrDWord(hi(AValue)) + 32
+    else
+      result:=BsrDWord(lo(AValue))
+  end;
+{$endif}
+{$endif}

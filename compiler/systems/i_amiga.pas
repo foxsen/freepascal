@@ -1,5 +1,4 @@
 {
-    $Id: i_amiga.pas,v 1.9 2005/03/20 22:36:45 olle Exp $
     Copyright (c) 1998-2002 by Peter Vreman
 
     This unit implements support information structures for AmigaOS
@@ -22,6 +21,8 @@
 { This unit implements support information structures for the AmigaOS. }
 unit i_amiga;
 
+{$i fpcdefs.inc}
+
   interface
 
     uses
@@ -33,7 +34,7 @@ unit i_amiga;
             system       : system_m68k_Amiga;
             name         : 'Commodore Amiga';
             shortname    : 'amiga';
-            flags        : [];
+            flags        : [tf_files_case_aware];
             cpu          : cpu_m68k;
             unit_env     : '';
             extradefines : '';
@@ -55,17 +56,18 @@ unit i_amiga;
             staticClibext : '.a';
             staticClibprefix : 'lib';
             sharedClibprefix : '';
-            p_ext_support : false;
+            importlibprefix : 'libimp';
+            importlibext : '.a';
             Cprefix      : '';
             newline      : #10;
             dirsep       : '/';
-            files_case_relevent : true;
             assem        : as_gas;
             assemextern  : as_gas;
             link         : nil;
             linkextern   : nil;
             ar           : ar_gnu_ar;
             res          : res_none;
+            dbg          : dbg_stabs;
             script       : script_amiga;
             endian       : endian_big;
             alignment    :
@@ -85,21 +87,18 @@ unit i_amiga;
               );
             first_parm_offset : 8;
             stacksize    : 262144;
-            DllScanSupported:false;
-            use_function_relative_addresses : true
+            abi : abi_default;
           );
 
        system_powerpc_amiga_info : tsysteminfo =
           (
             system       : system_powerpc_Amiga;
             name         : 'AmigaOS for PowerPC';
-            shortname    : 'amigappc';
-            flags        : [];
+            shortname    : 'amiga';
+            flags        : [tf_files_case_aware];
             cpu          : cpu_powerpc;
             unit_env     : '';
-            extradefines : '';
-            sourceext    : '.pp';
-            pasext       : '.pas';
+            extradefines : 'PPC603';
             exeext       : '';
             defext       : '.def';
             scriptext    : '.sh';
@@ -118,16 +117,18 @@ unit i_amiga;
             staticClibext : '.a';
             staticClibprefix : 'lib';
             sharedClibprefix : '';
+            importlibprefix : 'libimp';
+            importlibext : '.a';
             Cprefix      : '';
             newline      : #10;
             dirsep       : '/';
-            files_case_relevent : true;
             assem        : as_gas;
             assemextern  : as_gas;
             link         : nil;
             linkextern   : nil;
             ar           : ar_gnu_ar;
             res          : res_none;
+            dbg          : dbg_stabs;
             script       : script_amiga;
             endian       : endian_big;
             alignment    :
@@ -147,8 +148,7 @@ unit i_amiga;
               );
             first_parm_offset : 8;
             stacksize    : 262144;
-            DllScanSupported:false;
-            use_function_relative_addresses : true
+            abi : abi_powerpc_sysv;
           );
 
   implementation
@@ -161,20 +161,7 @@ initialization
 {$endif CPU68}
 {$ifdef CPUPOWERPC}
   {$ifdef AMIGA}
-//    set_source_info(system_powerpc_Amiga_info);
+    set_source_info(system_powerpc_Amiga_info);
   {$endif AMIGA}
 {$endif CPUPOWERPC}
 end.
-{
-  $Log: i_amiga.pas,v $
-  Revision 1.9  2005/03/20 22:36:45  olle
-    * Cleaned up handling of source file extension.
-    + Added support for .p extension for macos and darwin
-
-  Revision 1.8  2005/02/14 17:13:10  peter
-    * truncate log
-
-  Revision 1.7  2005/02/03 03:54:06  karoly
-  t_morph.pas
-
-}

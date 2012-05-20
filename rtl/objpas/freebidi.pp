@@ -37,9 +37,9 @@ function VPos(const Src:TString; lp:Integer; pDir, cDir:TDirection):Cardinal;
 function VPos(UTF8Char:PChar; Len:integer; BytePos:integer):Cardinal;
 {Returns character at a given visual position according to paragraph direction}
 function VCharOf(Src:TString; vp:Integer; dir:TDirection):TCharacter;
-{Inserts a string into an other paying attention of RTL/LTR direction}
+{Inserts a string into another paying attention of RTL/LTR direction}
 procedure VInsert(const Src:TString; var Dest:TString; vp:Integer; pDir:TDirection);
-{Deletes a string into an other paying attention of RTL/LTR direction}
+{Deletes a string into another paying attention of RTL/LTR direction}
 procedure VDelete(var str:TString; vp, len:Integer; pDir:TDirection);
 {Resturns a sub string of source string}
 //function VCopy(const Src:TString; vStart, vWidth:Integer):TString;
@@ -142,8 +142,8 @@ begin
   Count := Length(Src);
   while (Count > 0) do
   begin
-    Result += CharWidth(Src[Count], FontInfoPtr);
-    Count -= 1;
+    Result := Result + CharWidth(Src[Count], FontInfoPtr);
+    Count := Count - 1;
   end;
 end;
 
@@ -270,7 +270,7 @@ begin
       vp := Result[0];
     end;
     Insert(lp, Result, vp);
-    lp += 1;
+    lp := lp + 1;
   end;
 end;
 
@@ -334,4 +334,3 @@ initialization
   CharWidth := @DefaultCharWidth;
 
 end.
-

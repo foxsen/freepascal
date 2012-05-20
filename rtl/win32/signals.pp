@@ -1,3 +1,17 @@
+{
+    This file is part of the Free Pascal run time library.
+    This unit implements unix like signal handling for win32
+    Copyright (c) 1999-2006 by the Free Pascal development team.
+
+    See the file COPYING.FPC, included in this distribution,
+    for details about the copyright.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+ **********************************************************************}
+
 unit signals;
 
 interface
@@ -161,7 +175,6 @@ var
   _SS : cardinal;
 
 const
-  fpucw : word = $1332;
   Exception_handler_installed : boolean = false;
   MAX_Level = 16;
   except_level : byte = 0;
@@ -178,7 +191,11 @@ var
         movl (%ebp),%eax
         movl %eax,_ebp
       end;
-      Writeln('In start of JumpToHandleSignal');
+{$ifdef SIGNALS_DEBUG}
+      if IsConsole then
+        Writeln(stderr,'In start of JumpToHandleSignal');
+{$endif SIGNALS_DEBUG}
+
       if except_level>0 then
         dec(except_level)
       else
@@ -187,10 +204,7 @@ var
 
       sigtype:=except_signal[except_level];
       if reset_fpu[except_level] then
-        asm
-          fninit
-          fldcw   fpucw
-        end;
+        SysResetFPU;
       if assigned(System_exception_frame) then
         { get the handler in front again }
         asm
@@ -207,7 +221,10 @@ var
 
       if res=0 then
         Begin
-          Writeln('In JumpToHandleSignal');
+{$ifdef SIGNALS_DEBUG}
+          if IsConsole then
+            Writeln(stderr,'In JumpToHandleSignal');
+{$endif SIGNALS_DEBUG}
           RunError(sigtype);
         end
       else
@@ -232,7 +249,13 @@ var
     var frame,res  : longint;
         function CallSignal(sigtype,frame : longint;must_reset_fpu : boolean) : longint;
           begin
-            writeln(stderr,'CallSignal called');
+{$ifdef SIGNALS_DEBUG}
+             if IsConsole then
+               begin
+                 writeln(stderr,'CallSignal called for signal ',sigtype);
+                 dump_stack(stderr,pointer(frame));
+               end;
+{$endif SIGNALS_DEBUG}
             {if frame=0 then
               begin
                 CallSignal:=1;
@@ -251,7 +274,10 @@ var
                  excep_ContextRecord^.Eip:=longint(@JumpToHandleSignal);
                  excep_ExceptionRecord^.ExceptionCode:=0;
                  CallSignal:=0;
-                 writeln(stderr,'Exception_Continue_Execution  set');
+{$ifdef SIGNALS_DEBUG}
+                 if IsConsole then
+                   writeln(stderr,'Exception_Continue_Execution set');
+{$endif SIGNALS_DEBUG}
               end;
           end;
 
@@ -262,11 +288,11 @@ var
          frame:=0;
        { default : unhandled !}
        res:=1;
-{$ifdef SYSTEMEXCEPTIONDEBUG}
+{$ifdef SIGNALS_DEBUG}
        if IsConsole then
          writeln(stderr,'Signals exception  ',
            hexstr(excep_ExceptionRecord^.ExceptionCode,8));
-{$endif SYSTEMEXCEPTIONDEBUG}
+{$endif SIGNALS_DEBUG}
        case excep_ExceptionRecord^.ExceptionCode of
          EXCEPTION_ACCESS_VIOLATION :
            res:=CallSignal(SIGSEGV,frame,false);
@@ -324,13 +350,13 @@ var
 
 
     function API_signals_exception_handler(exceptptrs : PEXCEPTION_POINTERS) : longint; stdcall;
-    begin
-      API_signals_exception_handler:=Signals_exception_handler(
-        @exceptptrs^.ExceptionRecord,
-        nil,
-        @exceptptrs^.ContextRecord,
-        nil);
-    end;
+      begin
+        API_signals_exception_handler:=Signals_exception_handler(
+          @exceptptrs^.ExceptionRecord,
+          nil,
+          @exceptptrs^.ContextRecord,
+          nil);
+      end;
 
 
 const
@@ -339,10 +365,10 @@ const
   Prev_fpc_handler : pointer = nil;
 
   procedure install_exception_handler;
-{$ifdef SYSTEMEXCEPTIONDEBUG}
+{$ifdef SIGNALS_DEBUG}
     var
       oldexceptaddr,newexceptaddr : longint;
-{$endif SYSTEMEXCEPTIONDEBUG}
+{$endif SIGNALS_DEBUG}
     begin
       if Exception_handler_installed then
         exit;
@@ -360,15 +386,15 @@ const
           Exception_handler_installed:=true;
           exit;
         end;
-{$ifdef SYSTEMEXCEPTIONDEBUG}
+{$ifdef SIGNALS_DEBUG}
       asm
         movl $0,%eax
         movl %fs:(%eax),%eax
         movl %eax,oldexceptaddr
       end;
-{$endif SYSTEMEXCEPTIONDEBUG}
+{$endif SIGNALS_DEBUG}
       PreviousHandler:=SetUnhandledExceptionFilter(@API_signals_exception_handler);
-{$ifdef SYSTEMEXCEPTIONDEBUG}
+{$ifdef SIGNALS_DEBUG}
       asm
         movl $0,%eax
         movl %fs:(%eax),%eax
@@ -380,7 +406,7 @@ const
             ' new exception  ',hexstr(newexceptaddr,8));
           writeln('SetUnhandledExceptionFilter returned ',hexstr(longint(PreviousHandler),8));
         end;
-{$endif SYSTEMEXCEPTIONDEBUG}
+{$endif SIGNALS_DEBUG}
       Exception_handler_installed := true;
     end;
 
@@ -461,6 +487,5 @@ initialization
   as other units also might install their handlers PM }
 
 finalization
-
   remove_exception_handler;
 end.

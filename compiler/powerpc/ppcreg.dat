@@ -1,6 +1,4 @@
 ;
-; $Id: ppcreg.dat,v 1.6 2004/06/17 16:55:46 peter Exp $
-;
 ; PowerPC registers
 ;
 ; layout
@@ -114,31 +112,9 @@ CR2,$05,$03,CR2,cr2,cr2,CR2,70,70
 CR3,$05,$04,CR3,cr3,cr3,CR3,71,71
 CR4,$05,$05,CR4,cr4,cr4,CR4,72,72
 CR5,$05,$06,CR5,cr5,cr5,CR5,73,73
-CR6,$05,$07,CR6,cr6,cr5,CR6,74,74
-CR7,$05,$08,CR7,cr7,cr6,CR7,75,75
+CR6,$05,$07,CR6,cr6,cr6,CR6,74,74
+CR7,$05,$08,CR7,cr7,cr7,CR7,75,75
 XER,$05,$09,XER,xer,xer,XER,76,76
 LR,$05,$0a,LR,lr,lr,LR,65,65
 CTR,$05,$0b,CTR,ctr,ctr,CTR,66,66
 FPSCR,$05,$0c,FPSCR,fpscr,fpscr,FPSCR,-1,-1
-
-;
-; $Log: ppcreg.dat,v $
-; Revision 1.6  2004/06/17 16:55:46  peter
-;   * powerpc compiles again
-;
-; Revision 1.5  2003/12/10 22:19:27  florian
-;   + short gas register names for smartlinking added
-;
-; Revision 1.4  2003/09/04 21:07:03  florian
-;   * ARM compiler compiles again
-;
-; Revision 1.3  2003/09/03 19:35:24  peter
-;   * powerpc compiles again
-;
-; Revision 1.2  2003/09/03 15:55:01  peter
-;   * NEWRA branch merged
-;
-; Revision 1.1.2.1  2003/09/02 20:48:22  peter
-;   * powerpc registers
-;
-;

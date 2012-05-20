@@ -1,5 +1,4 @@
 {
-    $Id: cpunode.pas,v 1.21 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 2000-2002 by Florian Klaempfl
 
     Includes the PowerPC code generator
@@ -31,6 +30,7 @@ unit cpunode;
     uses
        { generic nodes }
        ncgbas,ncgld,ncgflw,ncgcnv,ncgmem,ncgcon,ncgcal,ncgset,ncginl,ncgopt,
+       ncgobjc,
        { to be able to only parts of the generic code,
          the processor specific nodes must be included
          after the generic one (FK)
@@ -40,22 +40,12 @@ unit cpunode;
 //       nppccon,
 //       nppcflw,
 //       nppcmem,
-       nppcset,
-       nppcinl,
+       ngppcset,
+       ngppcinl,
 //       nppcopt,
        nppcmat,
-       nppccnv,
-       nppcld
+       nppccnv
+//       nppcld
        ;
 
 end.
-{
-  $Log: cpunode.pas,v $
-  Revision 1.21  2005/02/14 17:13:10  peter
-    * truncate log
-
-  Revision 1.20  2005/01/24 22:08:32  peter
-    * interface wrapper generation moved to cgobj
-    * generate interface wrappers after the module is parsed
-
-}

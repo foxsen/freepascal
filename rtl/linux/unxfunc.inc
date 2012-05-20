@@ -1,5 +1,4 @@
 {
-   $Id: unxfunc.inc,v 1.3 2005/03/06 17:12:11 florian Exp $
    This file is part of the Free Pascal run time library.
    Copyright (c) 1999-2000 by Michael Van Canneyt,
      member of the Free Pascal development team.
@@ -34,13 +33,16 @@ end;
 
 Function PClose(Var F:text) :cint;
 var
-  pl  : ^cint;
+  pl  : pcint;
   res : cint;
+  pid : cint;
 begin
   fpclose(Textrec(F).Handle);
 { closed our side, Now wait for the other - this appears to be needed ?? }
-  pl:=@(textrec(f).userdata[2]);
-  fpwaitpid(pl^,@res,0);
+  pl:=pcint(@(textrec(f).userdata[2]));
+  { avoid alignment error on sparc }
+  move(pl^,pid,sizeof(pid));
+  fpwaitpid(pid,@res,0);
   pclose:=res shr 8;
 end;
 
@@ -48,27 +50,15 @@ Function PClose(Var F:file) : cint;
 var
   pl : ^cint;
   res : cint;
+  pid : cint;
 begin
   fpclose(filerec(F).Handle);
 { closed our side, Now wait for the other - this appears to be needed ?? }
-  pl:=@(filerec(f).userdata[2]);
-  fpwaitpid(pl^,@res,0);
+  pl:=pcint(@(filerec(f).userdata[2]));
+  { avoid alignment error on sparc }
+  move(pl^,pid,sizeof(pid));
+  fpwaitpid(pid,@res,0);
   pclose:=res shr 8;
 end;
 
 
-{
-  $Log: unxfunc.inc,v $
-  Revision 1.3  2005/03/06 17:12:11  florian
-    * AssignPipe fixed
-
-  Revision 1.2  2005/02/14 17:13:30  peter
-    * truncate log
-
-  Revision 1.1  2005/02/13 21:47:56  peter
-    * include file cleanup part 2
-
-  Revision 1.1  2005/02/13 20:01:38  peter
-    * include file cleanup
-
-}

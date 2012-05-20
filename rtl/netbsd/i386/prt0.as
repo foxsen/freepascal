@@ -17,6 +17,7 @@
 # NetBSD standard (static) ELF/i386 startup code for Free Pascal
 #
 
+http://cvsweb.netbsd.org/bsdweb.cgi/src/lib/csu/i386/crt0.c?rev=1.33&content-type=text/x-cvsweb-markup
 
 	.file	"prt0.s"
 	.version	"01.01"
@@ -39,7 +40,11 @@ __progname:
 __ps_strings:
 	.long 0
 	.align 4
+.ifdef CPREFIX
 ___fpucw:
+.else
+__fpucw:
+.endif
         .long   0x1332
 
         .globl  ___fpc_brk_addr         /* heap management */
@@ -49,7 +54,7 @@ ___fpc_brk_addr:
         .long   0
 
 #APP
-	
+
 	.text
 	.align	4
 	.globl	__start
@@ -77,23 +82,36 @@ ___start:
 	movl %esp,%ebp
 	movl 16(%ebp),%eax
 	movl %eax,environ
-	movl %eax,U_SYSTEM_ENVP
+	movl %eax,operatingsystem_parameter_envp
 	movl 8(%ebp),%eax
-	movl %eax,U_SYSTEM_ARGC
+	movl %eax,operatingsystem_parameter_argc
 	movl 12(%ebp),%eax
-	movl %eax,U_SYSTEM_ARGV
+	movl %eax,operatingsystem_parameter_argv
 	movl (%eax),%edx
 	movl %edx,__progname
 	testl %edx,%edx
 	je .L2
-	pushl $47
-	movl __progname,%eax
-	pushl %eax
-	call _strrchr
-	addl $8,%esp
-	movl %eax,%eax
-	movl %eax,__progname
-	cmpl $0,__progname
+        movl __progname,%edx
+        // Increase until 0 found
+        movl $0,%ebx
+.LL1:
+        movb (%edx,%ebx),%al
+        orb  %al,%al
+        je .LL2
+        incl %ebx
+.LL2:
+        decl %ebx
+        movb (%edx,%ebx),%al
+        cmpb $47,%al
+        je   .LL3
+        cmpl $0,%ebx
+        je   .LL4
+.LL3:    // slash found
+        incl %ebx
+        leal (%edx,%ebx),%eax
+        movl %eax,__progname
+.LL4:
+        cmpl $0,__progname
 	jne .L3
 	movl 12(%ebp),%eax
 	movl (%eax),%edx
@@ -117,21 +135,28 @@ ___start:
 
         finit                           /* initialize fpu */
         fwait
+ .ifdef CPREFIX
         fldcw   ___fpucw
-
+ .else
+        fldcw   __fpucw
+ .endif
         xorl    %ebp,%ebp
 
+.ifdef CPREFIX
 	call _main
-	pushl %eax
+.else
+	call main
+.endif
+pushl %eax
 	jmp  _haltproc
-        
+
 .p2align 2,0x90
 .globl _haltproc
 .type _haltproc,@function
 
 _haltproc:
-           mov $1,%eax  
-           movzwl U_SYSTEM_EXITCODE,%ebx
+           mov $1,%eax
+           movzwl operatingsystem_result,%ebx
            pushl %ebx
            call _actualsyscall
            addl  $4,%esp
@@ -146,49 +171,7 @@ _actualsyscall:
          mov %eax,%ebx
          mov $-1,%eax
          ret
-        .p2align 2,0x90 	
-
-.Lfe1:
-	.size	 ___start,.Lfe1-___start
-	.align 4
-	.type	 _strrchr,@function
-_strrchr:
-	pushl %ebp
-	movl %esp,%ebp
-	subl $8,%esp
-	movl 12(%ebp),%eax
-	movb %al,-1(%ebp)
-	movl $0,-8(%ebp)
-	.align 4
-.L7:
-	movl 8(%ebp),%eax
-	movb (%eax),%dl
-	cmpb -1(%ebp),%dl
-	jne .L10
-	movl 8(%ebp),%eax
-	movl %eax,-8(%ebp)
-.L10:
-	movl 8(%ebp),%eax
-	cmpb $0,(%eax)
-	jne .L9
-	movl -8(%ebp),%edx
-	movl %edx,%eax
-	jmp .L6
-	.align 4
-.L11:
-.L9:
-	incl 8(%ebp)
-	jmp .L7
-	.align 4
-.L8:
-.L6:
-	leave
-	ret
-
-
-.Lfe2:
-	.size	 _strrchr,.Lfe2-_strrchr
-	.comm	environ,4,4
+        .p2align 2,0x90
 
 # This section is needed for NetBSD to recognize a NetBSD binary as such.
 # otherwise it will be startup in Linux emulation mode.
@@ -202,3 +185,9 @@ _strrchr:
 .long 1
 .ascii "NetBSD\0\0"
 .long 199905
+
+        .comm environ,4,4
+        .comm operatingsystem_parameter_envp,4,4
+        .comm operatingsystem_parameter_argc,4,4
+        .comm operatingsystem_parameter_argv,4,4
+

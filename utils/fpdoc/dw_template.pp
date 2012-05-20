@@ -1,5 +1,4 @@
 {
-    $Id: dw_template.pp,v 1.2 2005/02/14 17:13:39 peter Exp $
 
     FPDoc  -  Free Pascal Documentation Tool
     Copyright (C) 2005 by Michael Van Canneyt
@@ -162,7 +161,7 @@ Type
     // Provide feedback about usage of this backend.
     Class procedure Usage(List: TStrings); override;
     // For info only. See linear writer for an example.
-    Class Function FileNameExtension : String;virtual;
+    Class Function FileNameExtension : String; override;
   end;
 
 implementation
@@ -593,7 +592,8 @@ begin
       while Assigned(Example) do
         begin
         s:=Engine.GetExampleFileName(Example);
-        WriteExampleFile(S);
+        if (s<>'') then
+          WriteExampleFile(S);
         DescrEndParaGraph;
         Repeat
           Example := TDomElement(Example.NextSibling);
@@ -1001,4 +1001,3 @@ initialization
 finalization
   UnRegisterWriter(TemplateName);
 end.
-

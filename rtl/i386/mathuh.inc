@@ -1,5 +1,4 @@
 {
-    $Id: mathuh.inc,v 1.3 2005/02/14 17:13:22 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2003 by Florian Klaempfl
     member of the Free Pascal development team
@@ -27,15 +26,4 @@ function GetPrecisionMode: TFPUPrecisionMode;
 function SetPrecisionMode(const Precision: TFPUPrecisionMode): TFPUPrecisionMode;
 function GetExceptionMask: TFPUExceptionMask;
 function SetExceptionMask(const Mask: TFPUExceptionMask): TFPUExceptionMask;
-procedure ClearExceptions(RaisePending: Boolean {$ifndef VER1_0}=true{$endif});
-
-procedure SetSSECSR(w : dword);
-function GetSSECSR : dword;
-
-
-{
-  $Log: mathuh.inc,v $
-  Revision 1.3  2005/02/14 17:13:22  peter
-    * truncate log
-
-}
+procedure ClearExceptions(RaisePending: Boolean =true);

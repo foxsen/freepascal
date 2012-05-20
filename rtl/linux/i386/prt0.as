@@ -1,5 +1,4 @@
 #
-#   $Id: prt0.as,v 1.5 2004/07/03 23:04:34 daniel Exp $
 #   This file is part of the Free Pascal run time library.
 #   Copyright (c) 1999-2004 by Michael Van Canneyt, Peter Vreman,
 #   & Daniel Mantione, members of the Free Pascal development team.
@@ -21,7 +20,7 @@
 #
 #
 # Stack layout at program start:
-# 
+#
 #         nil
 #         envn
 #         ....
@@ -45,20 +44,27 @@ _start:
         /* First locate the start of the environment variables */
         popl    %ecx                    /* Get argc in ecx */
         movl    %esp,%ebx               /* Esp now points to the arguments */
-	leal    4(%esp,%ecx,4),%eax     /* The start of the environment is: esp+4*eax+4 */
+        leal    4(%esp,%ecx,4),%eax     /* The start of the environment is: esp+4*eax+4 */
         andl    $0xfffffff8,%esp        /* Align stack */
 
-	leal    operatingsystem_parameters,%edi
-	stosl	/* Move the environment pointer */
-	xchg    %ecx,%eax
-	stosl   /* Move the argument counter    */
-	xchg	%ebx,%eax
-	stosl   /* Move the argument pointer    */
+        leal    operatingsystem_parameters,%edi
+        stosl   /* Move the environment pointer */
+        xchg    %ecx,%eax
+        stosl   /* Move the argument counter    */
+        xchg    %ebx,%eax
+        stosl   /* Move the argument pointer    */
 
 
         fninit                           /* initialize fpu */
         fwait
         fldcw   ___fpucw
+
+#        /* Initialize gs for thread local storage */
+#        movw    %ds,%ax
+#        movw    %ax,%gs
+
+        /* Save initial stackpointer */
+        movl    %esp,__stkptr
 
         xorl    %ebp,%ebp
         call    PASCALMAIN
@@ -66,40 +72,41 @@ _start:
         .globl  _haltproc
         .type   _haltproc,@function
 _haltproc:
-_haltproc2:		# GAS <= 2.15 bug: generates larger jump if a label is exported
-	xorl    %eax,%eax
-	incl    %eax			/* eax=1, exit call */
+_haltproc2:             # GAS <= 2.15 bug: generates larger jump if a label is exported
+        movl    $252,%eax                /* exit_group */
+        movzwl  operatingsystem_result,%ebx
+        int     $0x80
+        movl    $1,%eax                /* exit */
         movzwl  operatingsystem_result,%ebx
         int     $0x80
         jmp     _haltproc2
 
 .data
+        .type   __fpucw,@object
+        .size   __fpucw,4
+        .global __fpucw
 ___fpucw:
         .long   0x1332
 
-
 .bss
-        .type   ___fpc_brk_addr,@object
-	.comm   ___fpc_brk_addr,4        /* heap management */
+        .type   __stkptr,@object
+        .size   __stkptr,4
+        .global __stkptr
+__stkptr:
+        .skip   4
 
+        .type operatingsystem_parameters,@object
+        .size operatingsystem_parameters,12
 operatingsystem_parameters:
-	.skip 3*4
+        .skip 3*4
 
-	.global operatingsystem_parameter_envp
-	.global operatingsystem_parameter_argc
-	.global operatingsystem_parameter_argv
-	.set operatingsystem_parameter_envp,operatingsystem_parameters+0
-	.set operatingsystem_parameter_argc,operatingsystem_parameters+4
-	.set operatingsystem_parameter_argv,operatingsystem_parameters+8
-#
-# $Log: prt0.as,v $
-# Revision 1.5  2004/07/03 23:04:34  daniel
-#   * Updated comments
-#
-# Revision 1.4  2004/07/03 21:50:31  daniel
-#   * Modified bootstrap code so separate prt0.as/prt0_10.as files are no
-#     longer necessary
-#
-# Revision 1.3  2002/09/07 16:01:20  peter
-#   * old logs removed and tabs fixed
-#
+        .global operatingsystem_parameter_envp
+        .global operatingsystem_parameter_argc
+        .global operatingsystem_parameter_argv
+        .set operatingsystem_parameter_envp,operatingsystem_parameters+0
+        .set operatingsystem_parameter_argc,operatingsystem_parameters+4
+        .set operatingsystem_parameter_argv,operatingsystem_parameters+8
+
+//.section .threadvar,"aw",@nobits
+        .comm   ___fpc_threadvar_offset,4
+.section .note.GNU-stack,"",%progbits

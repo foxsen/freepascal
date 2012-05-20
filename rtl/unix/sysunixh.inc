@@ -1,5 +1,4 @@
 {
-    $Id: sysunixh.inc,v 1.27 2005/05/12 20:29:16 michael Exp $
     This file is part of the Free Pascal Run time library.
     Copyright (c) 2001 by the Free Pascal development team
 
@@ -29,12 +28,20 @@ const
  LineEnding = #10;
  LFNSupport = true;
  DirectorySeparator = '/';
- DriveSeparator = ':';
+ DriveSeparator = '';
+ ExtensionSeparator = '.';
  PathSeparator = ':';
-{ FileNameCaseSensitive is defined below! }
+ AllowDirectorySeparators : set of char = ['\','/'];
+ AllowDriveSeparators : set of char = [];
+{ FileNameCaseSensitive and FileNameCasePreserving are defined below! }
  maxExitCode = 255;
- MaxPathLen = 256; 
- 
+ {$ifdef LINUX}
+ MaxPathLen = 4096; // linux has always got to be BIGGER
+ {$else}
+ MaxPathLen = 1024; // BSDs since 1993, Solaris 10, Darwin
+ {$endif}
+ AllFilesMask = '*';
+
 const
   UnusedHandle    = -1;
   StdInputHandle  = 0;
@@ -42,35 +49,22 @@ const
   StdErrorHandle  = 2;
 
   FileNameCaseSensitive : boolean = true;
+  FileNameCasePreserving: boolean = true;
   CtrlZMarksEOF: boolean = false; (* #26 not considered as end of file *)
 
   sLineBreak = LineEnding;
   DefaultTextLineBreakStyle : TTextLineBreakStyle = tlbsLF;
 
-{$ifndef Solaris}
-{$ifndef Darwin}
+{$if not defined(solaris) and not defined(darwin) and not defined(aix)}
 var argc:longint;external name 'operatingsystem_parameter_argc';
     argv:PPchar;external name 'operatingsystem_parameter_argv';
     envp:PPchar;external name 'operatingsystem_parameter_envp';
 {$endif}
-{$endif}
 
-{
-  $Log: sysunixh.inc,v $
-  Revision 1.27  2005/05/12 20:29:16  michael
-  + Added maxpathlen constant (maximum length of filename path)
-
-  Revision 1.26  2005/04/03 21:10:59  hajny
-    * EOF_CTRLZ conditional define replaced with CtrlZMarksEOF, #26 handling made more consistent (fix for bug 2453)
-
-  Revision 1.25  2005/02/14 17:13:31  peter
-    * truncate log
-
-  Revision 1.24  2005/02/14 16:32:41  peter
-    * solaris updates
-
-  Revision 1.23  2005/02/06 11:20:52  peter
-    * threading in system unit
-    * removed systhrds unit
-
-}
+{$ifdef unix}
+const
+  { hook for lineinfo, to get the module name from an address,
+    unit dl sets it if it is used
+  }
+  UnixGetModuleByAddrHook : procedure (addr: pointer; var baseaddr: pointer; var filename: string) = nil;
+{$endif unix}

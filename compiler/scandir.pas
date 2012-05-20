@@ -1,5 +1,4 @@
 {
-    $Id: scandir.pas,v 1.56 2005/02/14 17:13:07 peter Exp $
     Copyright (c) 1998-2002 by Peter Vreman
 
     This unit implements directive parsing for the scanner
@@ -24,28 +23,41 @@ unit scandir;
 
 {$i fpcdefs.inc}
 
-interface
+  interface
 
+    uses
+      globtype;
+
+    const
+      switchesstatestackmax = 20;
+
+    type
+      tsavedswitchesstate = record
+        localsw: tlocalswitches;
+        verbosity: longint;
+        pmessage : pmessagestaterecord;
+      end;
+
+    type
+      tswitchesstatestack = array[0..switchesstatestackmax] of tsavedswitchesstate;
+
+    var
+      switchesstatestack:tswitchesstatestack;
+      switchesstatestackpos: Integer;
 
     procedure InitScannerDirectives;
 
-implementation
+  implementation
 
     uses
-      cutils,
-      globtype,globals,systems,widestr,
-      verbose,comphook,
+      SysUtils,
+      cutils,cfileutl,
+      globals,systems,widestr,cpuinfo,
+      verbose,comphook,ppu,
       scanner,switches,
       fmodule,
-      symtable,
+      symconst,symtable,
       rabase;
-
-    const
-      localswitchesstackmax = 20;
-
-    var
-      localswitchesstack: array[0..localswitchesstackmax] of tlocalswitches;
-      localswitchesstackpos: Integer;
 
 {*****************************************************************************
                                     Helpers
@@ -68,7 +80,7 @@ implementation
       begin
       { support ON/OFF }
         state:=current_scanner.ReadState;
-        SetVerbosity(flag+state);
+        recordpendingverbosityswitch(flag,state);
       end;
 
 
@@ -80,9 +92,9 @@ implementation
         if (sw<>cs_modulenone) and (state in ['-','+']) then
          begin
            if state='-' then
-            exclude(aktmoduleswitches,sw)
+            exclude(current_settings.moduleswitches,sw)
            else
-            include(aktmoduleswitches,sw);
+            include(current_settings.moduleswitches,sw);
          end;
       end;
 
@@ -93,15 +105,7 @@ implementation
       begin
         state:=current_scanner.readstate;
         if (sw<>cs_localnone) and (state in ['-','+']) then
-         begin
-           if not localswitcheschanged then
-             nextaktlocalswitches:=aktlocalswitches;
-           if state='-' then
-            exclude(nextaktlocalswitches,sw)
-           else
-            include(nextaktlocalswitches,sw);
-           localswitcheschanged:=true;
-         end;
+          recordpendinglocalswitch(sw,state);
       end;
 
     procedure do_localswitchdefault(sw:tlocalswitch);
@@ -110,23 +114,7 @@ implementation
       begin
         state:=current_scanner.readstatedefault;
         if (sw<>cs_localnone) and (state in ['-','+','*']) then
-         begin
-           if not localswitcheschanged then
-             nextaktlocalswitches:=aktlocalswitches;
-           if state='-' then
-            exclude(nextaktlocalswitches,sw)
-           else
-            if state='+' then
-             include(nextaktlocalswitches,sw)
-            else
-             begin
-              if sw in initlocalswitches then
-               include(nextaktlocalswitches,sw)
-              else
-               exclude(nextaktlocalswitches,sw);
-             end;
-           localswitcheschanged:=true;
-         end;
+          recordpendinglocalswitch(sw,state);
       end;
 
 
@@ -150,35 +138,59 @@ implementation
            { Support also the ON and OFF as switch }
            hs:=current_scanner.readid;
            if (hs='ON') then
-            aktpackrecords:=4
+            current_settings.packrecords:=4
            else if (hs='OFF') then
-             aktpackrecords:=1
-           else if m_mac in aktmodeswitches then
+             current_settings.packrecords:=1
+           else if m_mac in current_settings.modeswitches then
              begin
                { Support switches used in Apples Universal Interfaces}
                if (hs='MAC68K') then
-                 aktpackrecords:=2
-               else if (hs='POWER') then
-                 aktpackrecords:=4
+                 current_settings.packrecords:=mac68k_alignment
+               { "power" alignment is the default C packrecords setting on
+                 Mac OS X }
+               else if (hs='POWER') or (hs='POWERPC') then
+                 current_settings.packrecords:=C_alignment
                else if (hs='RESET') then
-                 aktpackrecords:=0
+                 current_settings.packrecords:=0
+               else
+                 Message1(scan_e_illegal_pack_records,hs);
              end
            else
-             Message(scan_w_only_pack_records);
+             Message1(scan_e_illegal_pack_records,hs);
          end
         else
          begin
            case current_scanner.readval of
-             1 : aktpackrecords:=1;
-             2 : aktpackrecords:=2;
-             4 : aktpackrecords:=4;
-             8 : aktpackrecords:=8;
-            16 : aktpackrecords:=16;
-            32 : aktpackrecords:=32;
+             1 : current_settings.packrecords:=1;
+             2 : current_settings.packrecords:=2;
+             4 : current_settings.packrecords:=4;
+             8 : current_settings.packrecords:=8;
+            16 : current_settings.packrecords:=16;
+            32 : current_settings.packrecords:=32;
            else
-            Message(scan_w_only_pack_records);
+            Message1(scan_e_illegal_pack_records,hs);
            end;
          end;
+      end;
+
+    procedure dir_a1;
+      begin
+        current_settings.packrecords:=1;
+      end;
+
+    procedure dir_a2;
+      begin
+        current_settings.packrecords:=2;
+      end;
+
+    procedure dir_a4;
+      begin
+        current_settings.packrecords:=4;
+      end;
+
+    procedure dir_a8;
+      begin
+        current_settings.packrecords:=8;
       end;
 
     procedure dir_asmmode;
@@ -190,13 +202,13 @@ implementation
         If Inside_asm_statement then
           Message1(scan_w_no_asm_reader_switch_inside_asm,s);
         if s='DEFAULT' then
-         aktasmmode:=initasmmode
+         current_settings.asmmode:=init_settings.asmmode
         else
-         if not SetAsmReadMode(s,aktasmmode) then
+         if not SetAsmReadMode(s,current_settings.asmmode) then
            Message1(scan_e_illegal_asmmode_specifier,s);
       end;
 
-{$ifdef m68k}
+{$if defined(m68k) or defined(arm)}
     procedure dir_appid;
       begin
         if target_info.system<>system_m68k_palmos then
@@ -216,32 +228,47 @@ implementation
         current_scanner.skipspace;
         palmos_applicationname:=current_scanner.readcomment;
       end;
-{$endif m68k}
+{$endif defined(m68k) or defined(arm)}
 
     procedure dir_apptype;
       var
          hs : string;
       begin
-        if not (target_info.system in [system_i386_win32,system_i386_os2,
-                                       system_i386_emx, system_powerpc_macos]) then
-          Message(scan_w_app_type_not_support);
-        if not current_module.in_global then
-          Message(scan_w_switch_is_global)
+        if not (target_info.system in systems_all_windows + [system_i386_os2,
+                                       system_i386_emx, system_powerpc_macos,
+                                       system_arm_nds] + systems_nativent) then
+          begin
+            if m_delphi in current_settings.modeswitches then
+              Message(scan_n_app_type_not_support)
+            else
+              Message(scan_w_app_type_not_support);
+          end
         else
           begin
-             current_scanner.skipspace;
-             hs:=current_scanner.readid;
-             if hs='GUI' then
-               apptype:=app_gui
-             else if hs='CONSOLE' then
-               apptype:=app_cui
-             else if (hs='FS') and (target_info.system in [system_i386_os2,
-                                                         system_i386_emx]) then
-               apptype:=app_fs
-             else if (hs='TOOL') and (target_info.system in [system_powerpc_macos]) then
-               apptype:=app_tool
-             else
-               Message1(scan_w_unsupported_app_type,hs);
+            if not current_module.in_global then
+              Message(scan_w_switch_is_global)
+            else
+              begin
+                 current_scanner.skipspace;
+                 hs:=current_scanner.readid;
+                 if hs='GUI' then
+                   apptype:=app_gui
+                 else if hs='CONSOLE' then
+                   apptype:=app_cui
+                 else if (hs='NATIVE') and (target_info.system in systems_windows + systems_nativent) then
+                   apptype:=app_native
+                 else if (hs='FS') and (target_info.system in [system_i386_os2,
+                                                             system_i386_emx]) then
+                   apptype:=app_fs
+                 else if (hs='TOOL') and (target_info.system in [system_powerpc_macos]) then
+                   apptype:=app_tool
+                 else if (hs='ARM9') and (target_info.system in [system_arm_nds]) then
+                   apptype:=app_arm9
+                 else if (hs='ARM7') and (target_info.system in [system_arm_nds]) then
+                   apptype:=app_arm7
+                 else
+                   Message1(scan_w_unsupported_app_type,hs);
+              end;
           end;
       end;
 
@@ -252,8 +279,16 @@ implementation
       begin
         current_scanner.skipspace;
         hs:=current_scanner.readid;
-        if not SetAktProcCall(hs,false) then
-          Message1(parser_w_unknown_proc_directive_ignored,hs);
+        if (hs='') then
+          Message(parser_e_proc_directive_expected)
+        else
+          recordpendingcallingswitch(hs);
+      end;
+
+
+    procedure dir_checklowaddrloads;
+      begin
+        do_localswitchdefault(cs_check_low_addr_load);
       end;
 
 
@@ -269,10 +304,17 @@ implementation
       end;
 
 
+    procedure dir_ieeeerrors;
+      begin
+        do_localswitch(cs_ieee_errors);
+      end;
+
+
     procedure dir_assertions;
       begin
         do_delphiswitch('C');
       end;
+
 
     procedure dir_booleval;
       begin
@@ -286,8 +328,8 @@ implementation
 
     procedure dir_description;
       begin
-        if not (target_info.system in [system_i386_os2,system_i386_emx,
-                 system_i386_win32,system_i386_netware,system_i386_wdosx,system_i386_netwlibc]) then
+        if not (target_info.system in systems_all_windows+[system_i386_os2,system_i386_emx,
+                 system_i386_netware,system_i386_wdosx,system_i386_netwlibc]) then
           Message(scan_w_description_not_support);
         { change description global var in all cases }
         { it not used but in win32, os2 and netware }
@@ -341,11 +383,28 @@ implementation
     procedure dir_fputype;
       begin
         current_scanner.skipspace;
-        { current_scanner.undef_macro('FPU'+fputypestr[aktfputype]); }
-        if not(SetFPUType(upper(current_scanner.readcomment),false)) then
+        undef_system_macro('FPU'+fputypestr[current_settings.fputype]);
+        if not(SetFPUType(upper(current_scanner.readcomment),current_settings.fputype)) then
           comment(V_Error,'Illegal FPU type');
-        { current_scanner.def_macro('FPU'+fputypestr[aktfputype]); }
+        def_system_macro('FPU'+fputypestr[current_settings.fputype]);
      end;
+
+    procedure dir_frameworkpath;
+      begin
+        if not current_module.in_global then
+         Message(scan_w_switch_is_global)
+        else if not(target_info.system in systems_darwin) then
+          begin
+            Message(scan_w_frameworks_darwin_only);
+            current_scanner.skipspace;
+            current_scanner.readcomment
+          end
+        else
+          begin
+            current_scanner.skipspace;
+            current_module.localframeworksearchpath.AddPath(current_scanner.readcomment,false);
+          end;
+      end;
 
     procedure dir_goto;
       begin
@@ -360,6 +419,15 @@ implementation
     procedure dir_hints;
       begin
         do_setverbose('H');
+      end;
+
+    procedure dir_imagebase;
+      begin
+        if not (target_info.system in (systems_windows+systems_wince)) then
+          Message(scan_w_imagebase_not_support);
+        current_scanner.skipspace;
+        imagebase:=current_scanner.readval;
+        ImageBaseSetExplicity:=true
       end;
 
     procedure dir_implicitexceptions;
@@ -385,7 +453,7 @@ implementation
 
     procedure dir_inline;
       begin
-        do_moduleswitch(cs_support_inline);
+        do_localswitch(cs_do_inline);
       end;
 
     procedure dir_interfaces;
@@ -395,12 +463,15 @@ implementation
         {corba/com/default}
         current_scanner.skipspace;
         hs:=current_scanner.readid;
+{$ifndef jvm}
         if (hs='CORBA') then
-          aktinterfacetype:=it_interfacecorba
+          current_settings.interfacetype:=it_interfacecorba
         else if (hs='COM') then
-          aktinterfacetype:=it_interfacecom
-        else if (hs='DEFAULT') then
-          aktinterfacetype:=initinterfacetype
+          current_settings.interfacetype:=it_interfacecom
+        else
+{$endif jvm}
+             if (hs='DEFAULT') then
+          current_settings.interfacetype:=init_settings.interfacetype
         else
           Message(scan_e_invalid_interface_type);
       end;
@@ -438,8 +509,29 @@ implementation
           end
         else
           s:= trimspace(current_scanner.readcomment);
-        s:=AddExtension(FixFileName(s),target_info.objext);
-        current_module.linkotherofiles.add(s,link_allways);
+        s:=FixFileName(s);
+        if ExtractFileExt(s)='' then
+          s:=ChangeFileExt(s,target_info.objext);
+        current_module.linkotherofiles.add(s,link_always);
+      end;
+
+    procedure dir_linkframework;
+      var
+        s : string;
+      begin
+        current_scanner.skipspace;
+        if scanner.c = '''' then
+          begin
+            s:= current_scanner.readquotedstring;
+            current_scanner.readcomment
+          end
+        else
+          s:= trimspace(current_scanner.readcomment);
+        s:=FixFileName(s);
+        if (target_info.system in systems_darwin) then
+          current_module.linkotherframeworks.add(s,link_always)
+        else
+          Message(scan_w_frameworks_darwin_only);
       end;
 
     procedure dir_linklib;
@@ -494,7 +586,7 @@ implementation
         linkmode:=lm_shared;
         if linkModeStr='' then
          begin
-           libext:=SplitExtension(libname);
+           libext:=ExtractFileExt(libname);
            if libext=target_info.staticClibext then
              linkMode:=lm_static;
          end
@@ -507,9 +599,9 @@ implementation
 
         { add to the list of other libraries }
         if linkMode=lm_static then
-         current_module.linkOtherStaticLibs.add(libname,link_allways)
+         current_module.linkOtherStaticLibs.add(libname,link_always)
         else
-         current_module.linkOtherSharedLibs.add(libname,link_allways);
+         current_module.linkOtherSharedLibs.add(libname,link_always);
       end;
 
     procedure dir_localsymbols;
@@ -527,6 +619,26 @@ implementation
         do_moduleswitch(cs_support_macro);
       end;
 
+    procedure dir_pascalmainname;
+      var
+        s: string;
+      begin
+        current_scanner.skipspace;
+        s:=trimspace(current_scanner.readcomment);
+        if assigned(current_module.mainname) and
+           (s<>current_module.mainname^) then
+          begin
+            Message1(scan_w_multiple_main_name_overrides,current_module.mainname^);
+            stringdispose(current_module.mainname)
+          end
+        else if (mainaliasname<>defaultmainaliasname) and
+                (mainaliasname<>s) then
+          Message1(scan_w_multiple_main_name_overrides,mainaliasname);
+        mainaliasname:=s;
+        if (mainaliasname<>defaultmainaliasname) then
+          current_module.mainname:=stringdup(mainaliasname);
+      end;
+
     procedure dir_maxfpuregisters;
       var
          l  : integer;
@@ -537,7 +649,7 @@ implementation
            begin
               hs:=current_scanner.readid;
               if (hs='NORMAL') or (hs='DEFAULT') then
-                aktmaxfpuregisters:=-1
+                current_settings.maxfpuregisters:=-1
               else
                 Message(scan_e_invalid_maxfpureg_value);
            end
@@ -546,11 +658,20 @@ implementation
               l:=current_scanner.readval;
               case l of
                  0..8:
-                   aktmaxfpuregisters:=l;
+                   current_settings.maxfpuregisters:=l;
                  else
                    Message(scan_e_invalid_maxfpureg_value);
               end;
            end;
+      end;
+
+    procedure dir_maxstacksize;
+      begin
+        if not (target_info.system in (systems_windows+systems_wince)) then
+          Message(scan_w_maxstacksize_not_support);
+        current_scanner.skipspace;
+        maxstacksize:=current_scanner.readval;
+        MaxStackSizeSetExplicity:=true;
       end;
 
     procedure dir_memory;
@@ -617,6 +738,16 @@ implementation
       end;
 
 
+    procedure dir_minstacksize;
+      begin
+        if not (target_info.system in (systems_windows+systems_wince)) then
+          Message(scan_w_minstacksize_not_support);
+        current_scanner.skipspace;
+        minstacksize:=current_scanner.readval;
+        MinStackSizeSetExplicity:=true;
+      end;
+
+
     procedure dir_mode;
 
     begin
@@ -627,15 +758,58 @@ implementation
           current_scanner.skipspace;
           current_scanner.readstring;
           if not current_module.mode_switch_allowed and
-              not ((m_mac in aktmodeswitches) and (pattern='MACPAS')) then
+              not ((m_mac in current_settings.modeswitches) and (pattern='MACPAS')) then
             Message1(scan_e_mode_switch_not_allowed,pattern)
-          else if SetCompileMode(pattern,false) then
-            ConsolidateMode
-          else
+          else if not SetCompileMode(pattern,false) then
             Message1(scan_w_illegal_switch,pattern)
         end;
       current_module.mode_switch_allowed:= false;
     end;
+
+
+    procedure dir_modeswitch;
+      var
+        s : string;
+      begin
+        if not current_module.in_global then
+          Message(scan_w_switch_is_global)
+        else
+          begin
+            current_scanner.skipspace;
+            current_scanner.readstring;
+            s:=pattern;
+            if c in ['+','-'] then
+              s:=s+current_scanner.readstate;
+            if not SetCompileModeSwitch(s,false) then
+              Message1(scan_w_illegal_switch,s)
+          end;
+      end;
+
+
+    procedure dir_namespace;
+      var
+        s : string;
+      begin
+        { used to define Java package names for all types declared in the
+          current unit }
+        if not current_module.in_global then
+          Message(scan_w_switch_is_global)
+        else
+          begin
+            current_scanner.skipspace;
+            current_scanner.readstring;
+            s:=orgpattern;
+            while c='.' do
+              begin
+                current_scanner.readchar;
+                current_scanner.readstring;
+                s:=s+'.'+orgpattern;
+              end;
+            disposestr(current_module.namespace);
+            current_module.namespace:=stringdup(s);
+          end;
+      end;
+
 
     procedure dir_mmx;
       begin
@@ -668,17 +842,23 @@ implementation
         do_delphiswitch('P');
       end;
 
-    procedure dir_output_format;
+    procedure dir_optimization;
+      var
+        hs : string;
       begin
-        if not current_module.in_global then
-         Message(scan_w_switch_is_global)
+        current_scanner.skipspace;
+        { Support also the ON and OFF as switch }
+        hs:=current_scanner.readid;
+        if (hs='ON') then
+          current_settings.optimizerswitches:=level2optimizerswitches
+        else if (hs='OFF') then
+          current_settings.optimizerswitches:=[]
+        else if (hs='DEFAULT') then
+          current_settings.optimizerswitches:=init_settings.optimizerswitches
         else
           begin
-            current_scanner.skipspace;
-            if set_target_asm_by_string(current_scanner.readid) then
-             aktoutputformat:=target_asm.id
-            else
-             Message1(scan_w_illegal_switch,pattern);
+            if not UpdateOptimizerStr(hs,current_settings.optimizerswitches) then
+              Message1(scan_e_illegal_optimization_specifier,hs);
           end;
       end;
 
@@ -696,101 +876,129 @@ implementation
          begin
            hs:=current_scanner.readid;
            if (hs='NORMAL') or (hs='DEFAULT') then
-            aktpackenum:=4
+            current_settings.packenum:=4
            else
-            Message(scan_w_only_pack_enum);
+            Message1(scan_e_illegal_pack_enum, hs);
          end
         else
          begin
            case current_scanner.readval of
-            1 : aktpackenum:=1;
-            2 : aktpackenum:=2;
-            4 : aktpackenum:=4;
+            1 : current_settings.packenum:=1;
+            2 : current_settings.packenum:=2;
+            4 : current_settings.packenum:=4;
            else
-            Message(scan_w_only_pack_enum);
+            Message1(scan_e_illegal_pack_enum, pattern);
            end;
          end;
       end;
+
+
+    procedure dir_minfpconstprec;
+      begin
+        current_scanner.skipspace;
+        if not SetMinFPConstPrec(current_scanner.readid,current_settings.minfpconstprec) then
+          Message1(scan_e_illegal_minfpconstprec, pattern);
+      end;
+
 
     procedure dir_packrecords;
       var
         hs : string;
       begin
+        { can't change packrecords setting on managed vm targets }
+        if target_info.system in systems_managed_vm then
+          Message1(scanner_w_directive_ignored_on_target, 'PACKRECORDS');
         current_scanner.skipspace;
         if not(c in ['0'..'9']) then
          begin
            hs:=current_scanner.readid;
-           { C has the special recordalignmax of -1 }
+           { C has the special recordalignmax of C_alignment }
            if (hs='C') then
-            aktpackrecords:=-1
+            current_settings.packrecords:=C_alignment
            else
             if (hs='NORMAL') or (hs='DEFAULT') then
-             aktpackrecords:=0
+             current_settings.packrecords:=0
            else
-            Message(scan_w_only_pack_records);
+            Message1(scan_e_illegal_pack_records,hs);
          end
         else
          begin
            case current_scanner.readval of
-             1 : aktpackrecords:=1;
-             2 : aktpackrecords:=2;
-             4 : aktpackrecords:=4;
-             8 : aktpackrecords:=8;
-            16 : aktpackrecords:=16;
-            32 : aktpackrecords:=32;
+             1 : current_settings.packrecords:=1;
+             2 : current_settings.packrecords:=2;
+             4 : current_settings.packrecords:=4;
+             8 : current_settings.packrecords:=8;
+            16 : current_settings.packrecords:=16;
+            32 : current_settings.packrecords:=32;
            else
-            Message(scan_w_only_pack_records);
+            Message1(scan_e_illegal_pack_records,pattern);
            end;
          end;
       end;
 
-{$ifdef testvarsets}
+
     procedure dir_packset;
       var
         hs : string;
       begin
         current_scanner.skipspace;
-        if not(c in ['1','2','4']) then
+        if not(c in ['1','2','4','8']) then
          begin
            hs:=current_scanner.readid;
            if (hs='FIXED') or ((hs='DEFAULT') OR (hs='NORMAL')) then
-            aktsetalloc:=0               {Fixed mode, sets are 4 or 32 bytes}
+            current_settings.setalloc:=0               {Fixed mode, sets are 4 or 32 bytes}
            else
-            Message(scan_w_only_packset);
+            Message(scan_e_only_packset);
          end
         else
          begin
            case current_scanner.readval of
-            1 : aktsetalloc:=1;
-            2 : aktsetalloc:=2;
-            4 : aktsetalloc:=4;
+            1 : current_settings.setalloc:=1;
+            2 : current_settings.setalloc:=2;
+            4 : current_settings.setalloc:=4;
+            8 : current_settings.setalloc:=8;
            else
-            Message(scan_w_only_packset);
+            Message(scan_e_only_packset);
            end;
          end;
       end;
-{$ENDIF}
+
+
+    procedure dir_pic;
+      begin
+        { windows doesn't need/support pic }
+        if tf_no_pic_supported in target_info.flags then
+          message(scan_w_pic_ignored)
+        else
+          do_moduleswitch(cs_create_pic);
+      end;
 
     procedure dir_pop;
 
     begin
-      if localswitchesstackpos < 1 then
+      if switchesstatestackpos < 1 then
         Message(scan_e_too_many_pop);
 
-      if not localswitcheschanged then
-        nextaktlocalswitches:=aktlocalswitches;
-
-      Dec(localswitchesstackpos);
-      nextaktlocalswitches:= localswitchesstack[localswitchesstackpos];
-
-      localswitcheschanged:=true;
+      Dec(switchesstatestackpos);
+      recordpendinglocalfullswitch(switchesstatestack[switchesstatestackpos].localsw);
+      recordpendingverbosityfullswitch(switchesstatestack[switchesstatestackpos].verbosity);
+      pendingstate.nextmessagerecord:=switchesstatestack[switchesstatestackpos].pmessage;
+      { Reset verbosity and forget previous pmeesage }
+      RestoreLocalVerbosity(nil);
+      current_settings.pmessage:=nil;
+      flushpendingswitchesstate;
     end;
+
+    procedure dir_pointermath;
+      begin
+        do_localswitch(cs_pointermath);
+      end;
 
     procedure dir_profile;
       begin
         do_moduleswitch(cs_profile);
         { defined/undefine FPC_PROFILE }
-        if cs_profile in aktmoduleswitches then
+        if cs_profile in current_settings.moduleswitches then
           def_system_macro('FPC_PROFILE')
         else
           undef_system_macro('FPC_PROFILE');
@@ -799,17 +1007,15 @@ implementation
     procedure dir_push;
 
     begin
-      if localswitchesstackpos > localswitchesstackmax then
+      if switchesstatestackpos > switchesstatestackmax then
         Message(scan_e_too_many_push);
 
-      if localswitcheschanged then
-        begin
-          aktlocalswitches:=nextaktlocalswitches;
-          localswitcheschanged:=false;
-        end;
+      flushpendingswitchesstate;
 
-      localswitchesstack[localswitchesstackpos]:= aktlocalswitches;
-      Inc(localswitchesstackpos);
+      switchesstatestack[switchesstatestackpos].localsw:= current_settings.localswitches;
+      switchesstatestack[switchesstatestackpos].pmessage:= current_settings.pmessage;
+      switchesstatestack[switchesstatestackpos].verbosity:=status.verbosity;
+      Inc(switchesstatestackpos);
     end;
 
     procedure dir_rangechecks;
@@ -835,21 +1041,26 @@ implementation
         else
           s:= trimspace(current_scanner.readcomment);
 
-        { replace * with current module name.
+        { replace * with the name of the main source.
           This should always be defined. }
         if s[1]='*' then
           if Assigned(Current_Module) then
             begin
               delete(S,1,1);
-              insert(lower(current_module.modulename^),S,1);
+              insert(ChangeFileExt(ExtractFileName(current_module.mainsource),''),S,1 );
             end;
-        s:=AddExtension(FixFileName(s),target_info.resext);
+        s:=FixFileName(s);
+        if ExtractFileExt(s)='' then
+          s:=ChangeFileExt(s,target_info.resext);
         if target_info.res<>res_none then
-          if (target_info.res = res_emxbind) and
+          begin
+          current_module.flags:=current_module.flags or uf_has_resourcefiles;
+          if (res_single_file in target_res.resflags) and
                                  not (Current_module.ResourceFiles.Empty) then
             Message(scan_w_only_one_resourcefile_supported)
           else
-            current_module.resourcefiles.insert(FixFileName(s))
+            current_module.resourcefiles.insert(FixFileName(s));
+          end
         else
           Message(scan_e_resourcefiles_not_supported);
       end;
@@ -859,9 +1070,37 @@ implementation
         do_localswitch(cs_mmx_saturation);
       end;
 
+    procedure dir_safefpuexceptions;
+      begin
+        do_localswitch(cs_fpu_fwait);
+      end;
+
+    procedure dir_scopedenums;
+      begin
+        do_localswitch(cs_scopedenums);
+      end;
+
+    procedure dir_setpeflags;
+      begin
+        if not (target_info.system in (systems_all_windows)) then
+          Message(scan_w_setpeflags_not_support);
+        current_scanner.skipspace;
+        peflags:=current_scanner.readval;
+        SetPEFlagsSetExplicity:=true;
+      end;
+
     procedure dir_smartlink;
       begin
         do_moduleswitch(cs_create_smart);
+        if (paratargetdbg in [dbg_dwarf2,dbg_dwarf3]) and
+            not(target_info.system in systems_darwin) and
+            { smart linking does not yet work with DWARF debug info on most targets }
+            (cs_create_smart in current_settings.moduleswitches) and
+            not (af_outputbinary in target_asm.flags) then
+        begin
+          Message(option_dwarf_smart_linking);
+          Exclude(current_settings.moduleswitches,cs_create_smart);
+        end;
       end;
 
     procedure dir_stackframes;
@@ -869,14 +1108,15 @@ implementation
         do_delphiswitch('W');
       end;
 
-    procedure dir_static;
-      begin
-        do_moduleswitch(cs_static_keyword);
-      end;
-
     procedure dir_stop;
       begin
         do_message(scan_f_user_defined);
+      end;
+
+    procedure dir_stringchecks;
+      begin
+        // Delphi adds checks that ansistring and unicodestring are correct in
+        // different places. Skip it for now.
       end;
 
 {$ifdef powerpc}
@@ -884,6 +1124,10 @@ implementation
       var
         sctype : string;
       begin
+        { not needed on amiga/m68k for now, because there's only one }
+        { syscall convention (legacy) (KB) }
+        { not needed on amiga/powerpc because there's only one }
+        { syscall convention (sysv) (KB) }
         if not (target_info.system in [system_powerpc_morphos]) then
           comment (V_Warning,'Syscall directive is useless on this target.');
         current_scanner.skipspace;
@@ -915,8 +1159,23 @@ implementation
           with current_scanner,current_module,localunitsearchpath do
             begin
               skipspace;
-              AddPath(path^,readcomment,false);
+              AddPath(path,readcomment,false);
             end;
+      end;
+
+    procedure dir_varparacopyoutcheck;
+      begin
+        if not(target_info.system in systems_jvm) then
+          begin
+            Message1(scan_w_illegal_switch,pattern);
+            exit;
+          end;
+        do_localswitch(cs_check_var_copyout);
+      end;
+
+    procedure dir_varpropsetter;
+      begin
+        do_localswitch(cs_varpropsetter);
       end;
 
     procedure dir_varstringchecks;
@@ -929,8 +1188,8 @@ implementation
         major, minor, revision : longint;
         error : integer;
       begin
-        if not (target_info.system in [system_i386_os2,system_i386_emx,
-                 system_i386_win32,system_i386_netware,system_i386_wdosx,
+        if not (target_info.system in systems_all_windows+[system_i386_os2,system_i386_emx,
+                 system_i386_netware,system_i386_wdosx,
                  system_i386_netwlibc]) then
           begin
             Message(scan_n_version_not_support);
@@ -1005,6 +1264,112 @@ implementation
           status.verbosity:=status.verbosity and (not V_Info);
       end;
 
+    { delphi compatible warn directive:
+      $warn <identifier> on
+      $warn <identifier> off
+      $warn <identifier> error
+    }
+    procedure dir_warn;
+      var
+        ident : string;
+        state : string;
+        msgstate : tmsgstate;
+        i : integer;
+      begin
+        current_scanner.skipspace;
+        ident:=current_scanner.readid;
+        current_scanner.skipspace;
+        state:=current_scanner.readid;
+
+        { support both delphi and fpc switches }
+        { use local ms_on/off/error tmsgstate values }
+        if (state='ON') or (state='+') then
+          msgstate:=ms_on
+        else
+        if (state='OFF') or (state='-') then
+          msgstate:=ms_off
+        else
+        if (state='ERROR') then
+          msgstate:=ms_error
+        else
+        begin
+          Message1(scanner_e_illegal_warn_state,state);
+          exit;
+        end;
+
+        if ident='CONSTRUCTING_ABSTRACT' then
+          recordpendingmessagestate(type_w_instance_with_abstract, msgstate)
+        else
+        if ident='IMPLICIT_VARIANTS' then
+          recordpendingmessagestate(parser_w_implicit_uses_of_variants_unit, msgstate)
+        else
+        if ident='NO_RETVAL' then
+          recordpendingmessagestate(sym_w_function_result_not_set, msgstate)
+        else
+        if ident='SYMBOL_DEPRECATED' then
+          begin
+            recordpendingmessagestate(sym_w_deprecated_symbol, msgstate);
+            recordpendingmessagestate(sym_w_deprecated_symbol_with_msg, msgstate);
+          end
+        else
+        if ident='SYMBOL_EXPERIMENTAL' then
+          recordpendingmessagestate(sym_w_experimental_symbol, msgstate)
+        else
+        if ident='SYMBOL_LIBRARY' then
+          recordpendingmessagestate(sym_w_library_symbol, msgstate)
+        else
+        if ident='SYMBOL_PLATFORM' then
+          recordpendingmessagestate(sym_w_non_portable_symbol, msgstate)
+        else
+        if ident='SYMBOL_UNIMPLEMENTED' then
+          recordpendingmessagestate(sym_w_non_implemented_symbol, msgstate)
+        else
+        if ident='UNIT_DEPRECATED' then
+          begin
+            recordpendingmessagestate(sym_w_deprecated_unit, msgstate);
+            recordpendingmessagestate(sym_w_deprecated_unit_with_msg, msgstate);
+          end
+        else
+        if ident='UNIT_EXPERIMENTAL' then
+          recordpendingmessagestate(sym_w_experimental_unit, msgstate)
+        else
+        if ident='UNIT_LIBRARY' then
+          recordpendingmessagestate(sym_w_library_unit, msgstate)
+        else
+        if ident='UNIT_PLATFORM' then
+          recordpendingmessagestate(sym_w_non_portable_unit, msgstate)
+        else
+        if ident='UNIT_UNIMPLEMENTED' then
+          recordpendingmessagestate(sym_w_non_implemented_unit, msgstate)
+        else
+        if ident='ZERO_NIL_COMPAT' then
+          recordpendingmessagestate(type_w_zero_to_nil, msgstate)
+        else
+        if ident='IMPLICIT_STRING_CAST' then
+          recordpendingmessagestate(type_w_implicit_string_cast, msgstate)
+        else
+        if ident='IMPLICIT_STRING_CAST_LOSS' then
+          recordpendingmessagestate(type_w_implicit_string_cast_loss, msgstate)
+        else
+        if ident='EXPLICIT_STRING_CAST' then
+          recordpendingmessagestate(type_w_explicit_string_cast, msgstate)
+        else
+        if ident='EXPLICIT_STRING_CAST_LOSS' then
+          recordpendingmessagestate(type_w_explicit_string_cast_loss, msgstate)
+        else
+        if ident='CVT_NARROWING_STRING_LOST' then
+          recordpendingmessagestate(type_w_unicode_data_loss, msgstate)
+        else
+        if ident='INTF_RAISE_VISIBILITY' then
+          recordpendingmessagestate(type_w_interface_lower_visibility, msgstate)
+        else
+          begin
+            i:=0;
+            if not ChangeMessageVerbosity(ident,i,msgstate) then
+              Message1(scanner_w_illegal_warn_identifier,ident);
+          end;
+      end;
+
     procedure dir_warning;
       begin
         do_message(scan_w_user_defined);
@@ -1022,17 +1387,17 @@ implementation
 
     procedure dir_z1;
       begin
-        aktpackenum:=1;
+        current_settings.packenum:=1;
       end;
 
     procedure dir_z2;
       begin
-        aktpackenum:=2;
+        current_settings.packenum:=2;
       end;
 
     procedure dir_z4;
       begin
-        aktpackenum:=4;
+        current_settings.packenum:=4;
       end;
 
     procedure dir_externalsym;
@@ -1051,6 +1416,16 @@ implementation
       begin
       end;
 
+    procedure dir_codealign;
+      var
+        s : string;
+      begin
+        current_scanner.skipspace;
+        s:=current_scanner.readcomment;
+        if not(UpdateAlignmentStr(s,current_settings.alignment)) then
+          message(scanner_e_illegal_alignment_directive);
+      end;
+
     procedure dir_codepage;
       var
          s : string;
@@ -1059,12 +1434,15 @@ implementation
           Message(scan_w_switch_is_global)
         else
           begin
-             current_scanner.skipspace;
-             s:=current_scanner.readcomment;
-             if not(cpavailable(s)) then
-               Message1(option_code_page_not_available,s)
-             else
-               aktsourcecodepage:=s;
+            current_scanner.skipspace;
+            s:=current_scanner.readcomment;
+            if (upper(s)='UTF8') or (upper(s)='UTF-8') then
+              current_settings.sourcecodepage:=CP_UTF8
+            else if not(cpavailable(s)) then
+              Message1(option_code_page_not_available,s)
+            else
+              current_settings.sourcecodepage:=codepagebyname(s);
+            include(current_settings.moduleswitches,cs_explicit_codepage);
           end;
       end;
 
@@ -1074,12 +1452,30 @@ implementation
       end;
 
 
+    procedure dir_bitpacking;
+      begin
+        do_localswitch(cs_bitpacking);
+      end;
+
+    procedure dir_region;
+      begin
+      end;
+
+    procedure dir_endregion;
+      begin
+      end;
+
+
 {****************************************************************************
                          Initialize Directives
 ****************************************************************************}
 
     procedure InitScannerDirectives;
       begin
+        AddDirective('A1',directive_all, @dir_a1);
+        AddDirective('A2',directive_all, @dir_a2);
+        AddDirective('A4',directive_all, @dir_a4);
+        AddDirective('A8',directive_all, @dir_a8);
         AddDirective('ALIGN',directive_all, @dir_align);
 {$ifdef m68k}
         AddDirective('APPID',directive_all, @dir_appid);
@@ -1089,25 +1485,32 @@ implementation
         AddDirective('ASMMODE',directive_all, @dir_asmmode);
         AddDirective('ASSERTIONS',directive_all, @dir_assertions);
         AddDirective('BOOLEVAL',directive_all, @dir_booleval);
+        AddDirective('BITPACKING',directive_all, @dir_bitpacking);
         AddDirective('CALLING',directive_all, @dir_calling);
+        AddDirective('CHECKLOWADDRLOADS',directive_all, @dir_checklowaddrloads);
         AddDirective('CHECKPOINTER',directive_all, @dir_checkpointer);
+        AddDirective('CODEALIGN',directive_all, @dir_codealign);
         AddDirective('CODEPAGE',directive_all, @dir_codepage);
         AddDirective('COPERATORS',directive_all, @dir_coperators);
         AddDirective('COPYRIGHT',directive_all, @dir_copyright);
         AddDirective('D',directive_all, @dir_description);
         AddDirective('DEBUGINFO',directive_all, @dir_debuginfo);
         AddDirective('DESCRIPTION',directive_all, @dir_description);
+        AddDirective('ENDREGION',directive_all, @dir_endregion);
         AddDirective('ERROR',directive_all, @dir_error);
         AddDirective('ERRORC',directive_mac, @dir_error);
         AddDirective('EXTENDEDSYNTAX',directive_all, @dir_extendedsyntax);
         AddDirective('EXTERNALSYM',directive_all, @dir_externalsym);
         AddDirective('FATAL',directive_all, @dir_fatal);
         AddDirective('FPUTYPE',directive_all, @dir_fputype);
+        AddDirective('FRAMEWORKPATH',directive_all, @dir_frameworkpath);
         AddDirective('GOTO',directive_all, @dir_goto);
         AddDirective('HINT',directive_all, @dir_hint);
         AddDirective('HINTS',directive_all, @dir_hints);
         AddDirective('HPPEMIT',directive_all, @dir_hppemit);
+        AddDirective('IEEEERRORS',directive_all,@dir_ieeeerrors);
         AddDirective('IOCHECKS',directive_all, @dir_iochecks);
+        AddDirective('IMAGEBASE',directive_all, @dir_imagebase);
         AddDirective('IMPLICITEXCEPTIONS',directive_all, @dir_implicitexceptions);
         AddDirective('INCLUDEPATH',directive_all, @dir_includepath);
         AddDirective('INFO',directive_all, @dir_info);
@@ -1117,43 +1520,55 @@ implementation
         AddDirective('LIBEXPORT',directive_mac, @dir_libexport);
         AddDirective('LIBRARYPATH',directive_all, @dir_librarypath);
         AddDirective('LINK',directive_all, @dir_link);
+        AddDirective('LINKFRAMEWORK',directive_all, @dir_linkframework);
         AddDirective('LINKLIB',directive_all, @dir_linklib);
         AddDirective('LOCALSYMBOLS',directive_all, @dir_localsymbols);
         AddDirective('LONGSTRINGS',directive_all, @dir_longstrings);
         AddDirective('M',directive_all, @dir_memory);
         AddDirective('MACRO',directive_all, @dir_macro);
         AddDirective('MAXFPUREGISTERS',directive_all, @dir_maxfpuregisters);
+        AddDirective('MAXSTACKSIZE',directive_all, @dir_maxstacksize);
         AddDirective('MEMORY',directive_all, @dir_memory);
         AddDirective('MESSAGE',directive_all, @dir_message);
         AddDirective('MINENUMSIZE',directive_all, @dir_packenum);
+        AddDirective('MINFPCONSTPREC',directive_all, @dir_minfpconstprec);
+        AddDirective('MINSTACKSIZE',directive_all, @dir_minstacksize);
         AddDirective('MMX',directive_all, @dir_mmx);
         AddDirective('MODE',directive_all, @dir_mode);
+        AddDirective('MODESWITCH',directive_all, @dir_modeswitch);
+        AddDirective('NAMESPACE',directive_all, @dir_namespace);
         AddDirective('NODEFINE',directive_all, @dir_nodefine);
         AddDirective('NOTE',directive_all, @dir_note);
         AddDirective('NOTES',directive_all, @dir_notes);
         AddDirective('OBJECTCHECKS',directive_all, @dir_objectchecks);
         AddDirective('OBJECTPATH',directive_all, @dir_objectpath);
         AddDirective('OPENSTRINGS',directive_all, @dir_openstrings);
-        AddDirective('OUTPUT_FORMAT',directive_all, @dir_output_format);
+        AddDirective('OPTIMIZATION',directive_all, @dir_optimization);
+        AddDirective('OV',directive_mac, @dir_overflowchecks);
         AddDirective('OVERFLOWCHECKS',directive_all, @dir_overflowchecks);
         AddDirective('PACKENUM',directive_all, @dir_packenum);
         AddDirective('PACKRECORDS',directive_all, @dir_packrecords);
-{$IFDEF TestVarsets}
         AddDirective('PACKSET',directive_all, @dir_packset);
-{$ENDIF}
-        AddDirective('POP',directive_mac, @dir_pop);
+        AddDirective('PASCALMAINNAME',directive_all, @dir_pascalmainname);
+        AddDirective('PIC',directive_all, @dir_pic);
+        AddDirective('POINTERMATH',directive_all, @dir_pointermath);
+        AddDirective('POP',directive_all, @dir_pop);
         AddDirective('PROFILE',directive_all, @dir_profile);
-        AddDirective('PUSH',directive_mac, @dir_push);
+        AddDirective('PUSH',directive_all, @dir_push);
         AddDirective('R',directive_all, @dir_resource);
         AddDirective('RANGECHECKS',directive_all, @dir_rangechecks);
         AddDirective('REFERENCEINFO',directive_all, @dir_referenceinfo);
+        AddDirective('REGION',directive_all, @dir_region);
         AddDirective('RESOURCE',directive_all, @dir_resource);
         AddDirective('SATURATION',directive_all, @dir_saturation);
+        AddDirective('SAFEFPUEXCEPTIONS',directive_all, @dir_safefpuexceptions);
+        AddDirective('SCOPEDENUMS',directive_all, @dir_scopedenums);
+        AddDirective('SETPEFLAGS', directive_all, @dir_setpeflags);
         AddDirective('SCREENNAME',directive_all, @dir_screenname);
         AddDirective('SMARTLINK',directive_all, @dir_smartlink);
         AddDirective('STACKFRAMES',directive_all, @dir_stackframes);
-        AddDirective('STATIC',directive_all, @dir_static);
         AddDirective('STOP',directive_all, @dir_stop);
+        AddDirective('STRINGCHECKS', directive_all, @dir_stringchecks);
 {$ifdef powerpc}
         AddDirective('SYSCALL',directive_all, @dir_syscall);
 {$endif powerpc}
@@ -1161,9 +1576,12 @@ implementation
         AddDirective('TYPEDADDRESS',directive_all, @dir_typedaddress);
         AddDirective('TYPEINFO',directive_all, @dir_typeinfo);
         AddDirective('UNITPATH',directive_all, @dir_unitpath);
+        AddDirective('VARPARACOPYOUTCHECK',directive_all, @dir_varparacopyoutcheck);
+        AddDirective('VARPROPSETTER',directive_all, @dir_varpropsetter);
         AddDirective('VARSTRINGCHECKS',directive_all, @dir_varstringchecks);
         AddDirective('VERSION',directive_all, @dir_version);
         AddDirective('WAIT',directive_all, @dir_wait);
+        AddDirective('WARN',directive_all, @dir_warn);
         AddDirective('WARNING',directive_all, @dir_warning);
         AddDirective('WARNINGS',directive_all, @dir_warnings);
         AddDirective('WEAKPACKAGEUNIT',directive_all, @dir_weakpackageunit);
@@ -1173,37 +1591,4 @@ implementation
         AddDirective('Z4',directive_all, @dir_z4);
       end;
 
-begin
-  localswitchesstackpos:= 0;
 end.
-{
-  $Log: scandir.pas,v $
-  Revision 1.56  2005/02/14 17:13:07  peter
-    * truncate log
-
-  Revision 1.55  2005/02/06 11:15:32  peter
-    * removed $threading
-
-  Revision 1.54  2005/01/20 17:32:33  peter
-    * $COPERATORS added
-
-  Revision 1.53  2005/01/20 17:05:53  peter
-    * use val() for decoding integers
-
-  Revision 1.52  2005/01/18 15:44:43  peter
-    * ignore more delphi directives
-
-  Revision 1.51  2005/01/09 20:24:43  olle
-    * rework of macro subsystem
-    + exportable macros for mode macpas
-
-  Revision 1.50  2005/01/06 02:13:03  karoly
-    * more SysV call support stuff for MorphOS
-
-  Revision 1.49  2005/01/04 17:40:33  karoly
-    + sysv style syscalls added for MorphOS
-
-  Revision 1.48  2005/01/04 16:18:57  florian
-    * prepared for fpu mode depended define
-
-}

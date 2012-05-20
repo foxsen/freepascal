@@ -80,7 +80,7 @@ end;
 
 procedure SerFlush(Handle: TSerialHandle);
 begin
-  fsync(Handle);
+  fpfsync(Handle);
 end;
 
 function SerRead(Handle: TSerialHandle; var Buffer; Count: LongInt): LongInt;
@@ -212,10 +212,3 @@ end;
 
 
 end.
-
-{
-  $Log: serial.pp,v $
-  Revision 1.11  2005/02/14 17:13:31  peter
-    * truncate log
-
-}

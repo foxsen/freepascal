@@ -1,5 +1,4 @@
 {
-    $Id: mathh.inc,v 1.22 2005/02/14 17:13:22 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Florian Klaempfl,
     member of the Free Pascal development team
@@ -15,23 +14,45 @@
 
    { i386 FPU Controlword }
 
-{$ifdef cpui386}
+{$if defined(cpui386) or defined(cpux86_64)}
     const
       Default8087CW : word = $1332;
 
     procedure Set8087CW(cw:word);
     function Get8087CW:word;
-{$endif cpui386}
+    procedure SetSSECSR(w : dword);
+    function GetSSECSR : dword;
+{$endif}
 
-{$ifdef cpux86_64}
-    const
-      Default8087CW : word = $1332;
+const
+{*
+-------------------------------------------------------------------------------
+Software IEC/IEEE floating-point exception flags.
+-------------------------------------------------------------------------------
+*}
+    float_flag_invalid   =  1;
+    float_flag_denormal  =  2;
+    float_flag_divbyzero =  4;
+    float_flag_overflow  =  8;
+    float_flag_underflow = 16;
+    float_flag_inexact   = 32;
 
-    procedure Set8087CW(cw:word);
-    function Get8087CW:word;
-{$endif cpux86_64}
+{*
+-------------------------------------------------------------------------------
+Software IEC/IEEE floating-point rounding mode.
+-------------------------------------------------------------------------------
+*}
+    float_round_nearest_even = 0;
+    float_round_down         = 1;
+    float_round_up           = 2;
+    float_round_to_zero      = 3;
 
-   { declarations of the math routines }
+threadvar
+  softfloat_exception_mask : Byte;
+  softfloat_exception_flags : Byte;
+  softfloat_rounding_mode : Byte;
+
+procedure float_raise(i: shortint);
 
 {$ifdef cpui386}
   {$define INTERNMATH}
@@ -45,7 +66,6 @@
   {$endif}
 {$endif}
 
-{$ifdef internconstintf}
     function pi : ValReal;[internproc:fpc_in_pi_real];
     function abs(d : ValReal) : ValReal;[internproc:fpc_in_abs_real];
     function sqr(d : ValReal) : ValReal;[internproc:fpc_in_sqr_real];
@@ -59,29 +79,10 @@
     function frac(d : ValReal) : ValReal;[internproc:fpc_in_frac_real];
     function int(d : ValReal) : ValReal;[internproc:fpc_in_int_real];
     function trunc(d : ValReal) : int64;[internproc:fpc_in_trunc_real];
-{$else}
-    function abs(d : ValReal) : ValReal;
-    function arctan(d : ValReal) : ValReal;{$ifdef MATHINLINE}inline;{$endif}
-    function cos(d : ValReal) : ValReal;{$ifdef MATHINLINE}inline;{$endif}
-    function exp(d : ValReal) : ValReal;{$ifdef MATHINLINE}inline;{$endif}
-    function frac(d : ValReal) : ValReal;
-    function int(d : ValReal) : ValReal;{$ifdef MATHINLINE}inline;{$endif}
-    function ln(d : ValReal) : ValReal;{$ifdef MATHINLINE}inline;{$endif}
-    function pi : ValReal;
-    function sin(d : ValReal) : ValReal;{$ifdef MATHINLINE}inline;{$endif}
-    function sqr(d : ValReal) : ValReal;
-    function sqrt(d : ValReal) : ValReal;{$ifdef MATHINLINE}inline;{$endif}
-    function round(d : ValReal) : int64;
-    function trunc(d : ValReal) : int64;
-{$endif internconstintf}
 
-{$ifdef FPC_CURRENCY_IS_INT64}
-    function trunc(c : currency) : int64;
-    function trunc(c : comp) : int64;
-    function round(c : currency) : int64;
-    function round(c : comp) : int64;
-{$endif FPC_CURRENCY_IS_INT64}
-
+{$ifdef SUPPORT_EXTENDED}
+    function FPower10(val: Extended; Power: Longint): Extended;
+{$endif SUPPORT_EXTENDED}
 
     type
        real48 = array[0..5] of byte;
@@ -94,13 +95,3 @@
     operator := (b:real48) e:extended;
 {$endif SUPPORT_EXTENDED}
 
-{
-  $Log: mathh.inc,v $
-  Revision 1.22  2005/02/14 17:13:22  peter
-    * truncate log
-
-  Revision 1.21  2005/02/08 20:25:28  florian
-    - killed power from system unit
-    * move operator ** to math unit
-
-}

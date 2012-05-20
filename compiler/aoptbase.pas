@@ -1,5 +1,4 @@
 {
-    $Id: aoptbase.pas,v 1.11 2005/02/14 17:13:06 peter Exp $
     Copyright (c) 1998-2002 by Jonas Maebe, member of the Free Pascal
     Development Team
 
@@ -28,7 +27,7 @@ unit aoptbase;
   interface
 
     uses
-      aasmbase,aasmcpu,aasmtai,
+      aasmbase,aasmcpu,aasmtai,aasmdata,
       cpubase,
       cgbase,
       cgutils;
@@ -45,14 +44,16 @@ unit aoptbase;
       TAoptBase = class
         { processor independent methods }
 
-        constructor create;
+        constructor create; virtual;
         destructor destroy;override;
         { returns true if register Reg is used by instruction p1 }
-        Function RegInInstruction(Reg: TRegister; p1: tai): Boolean;
+        Function RegInInstruction(Reg: TRegister; p1: tai): Boolean;virtual;
         { returns true if register Reg occurs in operand op }
         Function RegInOp(Reg: TRegister; const op: toper): Boolean;
         { returns true if register Reg is used in the reference Ref }
         Function RegInRef(Reg: TRegister; Const Ref: TReference): Boolean;
+
+        function RegModifiedByInstruction(Reg: TRegister; p1: tai): boolean;virtual;
 
         { returns true if the references are completely equal }
         {Function RefsEqual(Const R1, R2: TReference): Boolean;}
@@ -77,24 +78,25 @@ unit aoptbase;
         Function RegsSameSize(Reg1, Reg2: TRegister): Boolean; Virtual;
         { returns whether P is a load instruction (load contents from a }
         { memory location or (register) variable into a register)       }
-        Function IsLoadMemReg(p: tai): Boolean; Virtual;
+        Function IsLoadMemReg(p: tai): Boolean; Virtual; Abstract;
         { returns whether P is a load constant instruction (load a constant }
         { into a register)                                                  }
-        Function IsLoadConstReg(p: tai): Boolean; Virtual;
-        { returns whether P is a store instruction (store contents from a }
-        { register to a memory location or to a (register) variable)      }
-        Function IsStoreRegMem(p: tai): Boolean; Virtual;
+        Function IsLoadConstReg(p: tai): Boolean; Virtual; Abstract;
+        { returns whether P is a store instruction (store contents from a
+          register to a memory location or to a (register) variable)      }
+        Function IsStoreRegMem(p: tai): Boolean; Virtual; Abstract;
 
         { create a paicpu Object that loads the contents of reg1 into reg2 }
-        Function a_load_reg_reg(reg1, reg2: TRegister): taicpu; Virtual;
+        Function a_load_reg_reg(reg1, reg2: TRegister): taicpu; Virtual; Abstract;
 
     end;
 
+    function labelCanBeSkipped(p: tai_label): boolean;
 
   implementation
 
     uses
-      globtype,globals, aoptcpub;
+      globtype,globals,aoptcpub;
 
   constructor taoptbase.create;
     begin
@@ -114,11 +116,11 @@ unit aoptbase;
     Begin
       TmpResult := False;
       Count := 0;
-      If (p1.typ = ait_instruction) Then
+      If (p1.typ = ait_instruction) and assigned(TInstr(p1).oper[0]) Then
         Repeat
-          TmpResult := RegInOp(Reg, PInstr(p1)^.oper[Count]^);
+          TmpResult := RegInOp(Reg, TInstr(p1).oper[Count]^);
           Inc(Count)
-        Until (Count = MaxOps) or TmpResult;
+        Until (TInstr(p1).oper[Count]=nil) or (Count = MaxOps) or TmpResult;
       RegInInstruction := TmpResult
     End;
 
@@ -137,10 +139,22 @@ unit aoptbase;
   Begin
     Reg := RegMaxSize(Reg);
     RegInRef := (Ref.Base = Reg)
-  {$ifdef RefsHaveIndexReg}
+  {$ifdef cpurefshaveindexreg}
     Or (Ref.Index = Reg)
-  {$endif RefsHaveIndexReg}
+  {$endif cpurefshaveindexreg}
   End;
+
+  Function TAOptBase.RegModifiedByInstruction(Reg: TRegister; p1: tai): Boolean;
+  Begin
+    Result:=true;
+  End;
+
+
+  function labelCanBeSkipped(p: tai_label): boolean;
+  begin
+    labelCanBeSkipped := not(p.labsym.is_used) or (p.labsym.labeltype<>alt_jump);
+  end;
+
 
   Function TAOptBase.GetNextInstruction(Current: tai; Var Next: tai): Boolean;
   Begin
@@ -154,25 +168,25 @@ unit aoptbase;
              ) or
 {$endif SPARC}
              ((Current.typ = ait_label) And
-              Not(Tai_Label(Current).l.is_used))) Do
+              labelCanBeSkipped(Tai_Label(Current)))) Do
         Current := tai(Current.Next);
       If Assigned(Current) And
          (Current.typ = ait_Marker) And
-         (Tai_Marker(Current).Kind = NoPropInfoStart) Then
+         (Tai_Marker(Current).Kind = mark_NoPropInfoStart) Then
         Begin
           While Assigned(Current) And
                 ((Current.typ <> ait_Marker) Or
-                 (Tai_Marker(Current).Kind <> NoPropInfoEnd)) Do
+                 (Tai_Marker(Current).Kind <> mark_NoPropInfoEnd)) Do
             Current := Tai(Current.Next);
         End;
     Until Not(Assigned(Current)) Or
           (Current.typ <> ait_Marker) Or
-          (Tai_Marker(Current).Kind <> NoPropInfoEnd);
+          (Tai_Marker(Current).Kind <> mark_NoPropInfoEnd);
     Next := Current;
     If Assigned(Current) And
        Not((Current.typ In SkipInstr) or
            ((Current.typ = ait_label) And
-            Not(Tai_Label(Current).l.is_used)))
+            labelCanBeSkipped(Tai_Label(Current))))
       Then GetNextInstruction := True
       Else
         Begin
@@ -187,29 +201,29 @@ unit aoptbase;
       Current := Tai(Current.previous);
       While Assigned(Current) And
             (((Current.typ = ait_Marker) And
-              Not(Tai_Marker(Current).Kind in [AsmBlockEnd,NoPropInfoEnd])) or
+              Not(Tai_Marker(Current).Kind in [mark_AsmBlockEnd{,mark_NoPropInfoEnd}])) or
              (Current.typ In SkipInstr) or
              ((Current.typ = ait_label) And
-               Not(Tai_Label(Current).l.is_used))) Do
+              labelCanBeSkipped(Tai_Label(Current)))) Do
         Current := Tai(Current.previous);
-      If Assigned(Current) And
+{      If Assigned(Current) And
          (Current.typ = ait_Marker) And
-         (Tai_Marker(Current).Kind = NoPropInfoEnd) Then
+         (Tai_Marker(Current).Kind = mark_NoPropInfoEnd) Then
         Begin
           While Assigned(Current) And
                 ((Current.typ <> ait_Marker) Or
-                 (Tai_Marker(Current).Kind <> NoPropInfoStart)) Do
+                 (Tai_Marker(Current).Kind <> mark_NoPropInfoStart)) Do
             Current := Tai(Current.previous);
-        End;
+        End; }
     Until Not(Assigned(Current)) Or
           (Current.typ <> ait_Marker) Or
-          (Tai_Marker(Current).Kind <> NoPropInfoStart);
+          not(tai_Marker(current).Kind in [mark_NoPropInfoStart,mark_NoPropInfoEnd]);
     If Not(Assigned(Current)) or
        (Current.typ In SkipInstr) or
        ((Current.typ = ait_label) And
-        Not(Tai_Label(Current).l.is_used)) or
+        labelCanBeSkipped(Tai_Label(Current))) or
        ((Current.typ = ait_Marker) And
-        (Tai_Marker(Current).Kind = AsmBlockEnd))
+        (Tai_Marker(Current).Kind = mark_AsmBlockEnd))
       Then
         Begin
           Last := Nil;
@@ -235,31 +249,4 @@ unit aoptbase;
     RegsSameSize := True
   End;
 
-  Function TAOptBase.IsLoadMemReg(p: tai): Boolean;
-  Begin
-    Abstract
-  End;
-
-  Function TAOptBase.IsLoadConstReg(p: tai): Boolean;
-  Begin
-    Abstract
-  End;
-
-  Function TAOptBase.IsStoreRegMem(p: tai): Boolean;
-  Begin
-    Abstract
-  End;
-
-  Function TAoptBase.a_load_reg_reg(reg1, reg2: TRegister): taicpu;
-  Begin
-    Abstract
-  End;
-
 end.
-
-{
-  $Log: aoptbase.pas,v $
-  Revision 1.11  2005/02/14 17:13:06  peter
-    * truncate log
-
-}

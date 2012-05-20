@@ -1,5 +1,4 @@
  {
-    $Id: aoptcpub.pas,v 1.2 2005/02/20 19:36:03 florian Exp $
     Copyright (c) 1998-2002 by Jonas Maebe, member of the Free Pascal
     Development Team
 
@@ -29,10 +28,7 @@ Unit aoptcpub; { Assembler OPTimizer CPU specific Base }
 { enable the following define if memory references can have both a base and }
 { index register in 1 operand                                               }
 
-{$define RefsHaveIndexReg}
-
 { enable the following define if memory references can have a scaled index }
-
 { define RefsHaveScale}
 
 { enable the following define if memory references can have a segment }
@@ -43,6 +39,7 @@ Unit aoptcpub; { Assembler OPTimizer CPU specific Base }
 Interface
 
 Uses
+  cgbase,aasmtai,
   cpubase,aasmcpu,AOptBase;
 
 Type
@@ -65,6 +62,7 @@ Type
 { ************************************************************************* }
 
   TAoptBaseCpu = class(TAoptBase)
+    function RegModifiedByInstruction(Reg: TRegister; p1: tai): boolean; override;
   End;
 
 
@@ -104,31 +102,33 @@ Const
 
   aopt_uncondjmp = A_B;
   aopt_condjmp = A_B;
-    
+
 Implementation
 
 { ************************************************************************* }
 { **************************** TCondRegs ********************************** }
 { ************************************************************************* }
-Constructor TCondRegs.init;
-Begin
-End;
+  Constructor TCondRegs.init;
+    Begin
+    End;
 
-Destructor TCondRegs.Done; {$ifdef inl} inline; {$endif inl}
-Begin
-End;
+
+  Destructor TCondRegs.Done; {$ifdef inl} inline; {$endif inl}
+    Begin
+    End;
+
+
+  function TAoptBaseCpu.RegModifiedByInstruction(Reg: TRegister; p1: tai): boolean;
+    var
+      i : Longint;
+    begin
+      result:=false;
+      for i:=0 to taicpu(p1).ops-1 do
+        if (taicpu(p1).oper[i]^.typ=top_reg) and (taicpu(p1).oper[i]^.reg=Reg) and (taicpu(p1).spilling_get_operation_type(i) in [operand_write,operand_readwrite]) then
+          begin
+            result:=true;
+            exit;
+          end;
+    end;
 
 End.
-
-{
- $Log: aoptcpub.pas,v $
- Revision 1.2  2005/02/20 19:36:03  florian
-   * optimizer files fixed
-
- Revision 1.1  2005/02/20 19:11:04  florian
-   * initial commit
-
- Revision 1.7  2005/02/14 17:13:10  peter
-   * truncate log
-
-}

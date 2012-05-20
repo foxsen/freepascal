@@ -1,5 +1,4 @@
 {
-    $Id: syscall.inc,v 1.19 2005/03/03 20:58:38 florian Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Michael Van Canneyt,
     member of the Free Pascal development team.
@@ -184,17 +183,16 @@ asm
         subcc   %o3,%g0,%g0
         bne     .LThread
         nop
-        sethi   %hi(Errno+4),%o2
+        sethi   %hi(Errno+4),%o0
         ba      .LNoThread
-        or      %o2,%lo(Errno+4),%o2
+        or      %o0,%lo(Errno+4),%o0
 .LThread:
         sethi   %hi(Errno),%o0
-        ld      [%o3],%o1
         or      %o0,%lo(Errno),%o0
-        call    %o1
-        nop
+        call    %o3
+        ld      [%o0],%o0
 .LNoThread:
-        st      %o0,[%o2]
+        st      %l0,[%o0]
         mov     -1,%o0
 .LSyscOK:
         mov     %o0,%i0
@@ -315,15 +313,3 @@ asm
 end;
 
 
-{
-  $Log: syscall.inc,v $
-  Revision 1.19  2005/03/03 20:58:38  florian
-    + routines in baseunix can be overriden by processor specifics in bsyscall.inc
-
-  Revision 1.18  2005/03/03 20:13:44  florian
-    + sparc specific pipe implementation
-
-  Revision 1.17  2005/02/14 17:13:30  peter
-    * truncate log
-
-}

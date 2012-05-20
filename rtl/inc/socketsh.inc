@@ -1,5 +1,4 @@
 {
-    $Id: socketsh.inc,v 1.27 2005/03/28 11:10:51 marco Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team
 
@@ -12,96 +11,57 @@
 
  **********************************************************************}
 
-{$IFNDEF ver1_0}
-  {$IFNDEF ver1_9_4}
-    {$INLINE ON}
-    {$define HASINLINE}
-  {$endif}
-{$ENDIF}
+{$INLINE ON}
 
-Type
+type
 {$ifdef SOCK_HAS_SINLEN}
-    sa_family_t=cuchar;
+  sa_family_t = cuchar;
 {$else}
-    sa_family_t=cushort;
+  sa_family_t = cushort;
 {$endif}
 
-Const
+const
   { Socket types }
+{$ifdef sunos}
+  SOCK_STREAM     = 2;               { stream socket }
+  SOCK_DGRAM      = 1;               { datagram socket }
+  SOCK_RAW        = 4;               { raw-protocol interface }
+  SOCK_RDM        = 5;               { reliably-delivered message }
+  SOCK_SEQPACKET  = 6;               { sequenced packet stream }
+{$else}
   SOCK_STREAM     = 1;               { stream (connection) socket   }
   SOCK_DGRAM      = 2;               { datagram (conn.less) socket  }
   SOCK_RAW        = 3;               { raw socket                   }
   SOCK_RDM        = 4;               { reliably-delivered message   }
   SOCK_SEQPACKET  = 5;               { sequential packet socket     }
+{$endif}
 
-  { Protocol families }
-  PF_UNSPEC    = 0;                  { Unspecified }
-  PF_LOCAL     = 1;                  { Local to host (pipes and file-domain) }
-  PF_UNIX      = PF_LOCAL;           { Old BSD name for PF_LOCAL }
-  PF_FILE      = PF_LOCAL;           { Another non-standard name for PF_LOCAL }
-  PF_INET      = 2;                  { IP protocol family }
-
-  { Address families }
-  AF_UNSPEC    = PF_UNSPEC;
-  AF_LOCAL     = PF_LOCAL;
-  AF_UNIX      = PF_UNIX;
-  AF_FILE      = PF_FILE;
-  AF_INET      = PF_INET;
-
-  { Flags for send, recv etc. }
-  MSG_OOB      = $0001;              { Process out-of-band data}
-  MSG_PEEK     = $0002;              { Peek at incoming messages }
-  MSG_DONTROUTE= $0004;              { Don't use local routing }
-  MSG_TRYHARD  = MSG_DONTROUTE;
-  MSG_CTRUNC   = $0008;              { Control data lost before delivery }
-  MSG_PROXY    = $0010;              { Supply or ask second address }
-  MSG_TRUNC    = $0020;
-  MSG_DONTWAIT = $0040;              { Non-blocking I/O }
-  MSG_EOR      = $0080;              { End of record }
-  MSG_WAITALL  = $0100;              { Wait for a full request }
-  MSG_FIN      = $0200;
-  MSG_SYN      = $0400;
-  MSG_CONFIRM  = $0800;              { Confirm path validity }
-  MSG_RST      = $1000;
-  MSG_ERRQUERE = $2000;              { Fetch message from error queue }
-  MSG_NOSIGNAL = $4000;              { Do not generate SIGPIPE }
-  MSG_MORE     = $8000;              { Sender will send more }
+  INADDR_ANY   = CARDINAL(0);
+  INADDR_NONE  = CARDINAL($FFFFFFFF);
 
 const
   { Two constants to determine whether part of soket is for in or output }
   S_IN = 0;
   S_OUT = 1;
 
-Type
+type
+  pin_addr = ^in_addr;
   in_addr = packed record
-             case boolean of   		
-             true: (s_addr  : cuint32);         // inaddr_t=cuint32
-	     false: (s_bytes : packed array[1..4] of byte);
-            end;
+    case boolean of
+       true: (s_addr  : cuint32);         // inaddr_t=cuint32
+       false: (s_bytes : packed array[1..4] of byte);
+  end;
 
   TIn_addr = in_addr;
-  pin_addr = ^in_addr;
-  TInAddr       =  in_addr;
 
-  in_addrbytes = packed array [1..4] of byte;
+  TInAddr = in_addr;
+  PInAddr = pin_addr;
 
-  TSockAddr = packed Record // if sa_len is defined, sa_family_t is smaller
-  {$ifdef SOCK_HAS_SINLEN}
-     sa_len     : cuchar;
-  {$endif}
-    case integer of
-      0: (sa_family: sa_family_t;
-          sa_data: packed array[0..13] of Byte);
-      1: (sin_family: sa_family_t;
-          sin_port: cushort;
-          sin_addr: in_addr;
-          sin_zero: packed array[0..7] of Byte);
-      end; 
+  {pin_addrbytes = ^in_addrbytes;
+  in_addrbytes = packed array [1..4] of byte;}
 
-  PSockAddr = ^TSockAddr;
-  Sockaddr  = TSockAddr;                // Kylix compat
-
-  TInetSockAddr = packed Record
+  psockaddr_in = ^sockaddr_in;
+  sockaddr_in = packed record
     case boolean of
      false : (
   {$ifdef SOCK_HAS_SINLEN}
@@ -114,17 +74,44 @@ Type
       );
    true: (
   {$ifdef SOCK_HAS_SINLEN}
-     len     : cuchar;
+     len     : cuchar deprecated;
   {$endif}
-     family  : sa_family_t;
-     port    : cushort;
-     addr    : cardinal;
-     pad         : array [0..7] of char; { to get to the size of sockaddr... }
+     family  : sa_family_t deprecated;
+     port    : cushort deprecated;
+     addr    : cardinal deprecated;
+     pad         : array [0..7] of char deprecated; { to get to the size of sockaddr... }
       );
-    end;
-  pInetSockAddr = ^TInetSockAddr;
+  end;
 
-  Tin6_addr = packed record
+  TInetSockAddr = sockaddr_in;
+  PInetSockAddr = psockaddr_in;
+
+  psockaddr = ^sockaddr;
+  sockaddr = packed record // if sa_len is defined, sa_family_t is smaller
+  {$ifdef SOCK_HAS_SINLEN}
+     sa_len     : cuchar;
+  {$endif}
+    case integer of
+      0: (sa_family: sa_family_t;
+          sa_data: packed array[0..13] of cuint8);
+      1: (sin_family: sa_family_t;
+          sin_port: cushort;
+          sin_addr: in_addr;
+          sin_zero: packed array[0..7] of cuint8);
+  end;
+
+  TSockAddr = sockaddr;
+
+  plinger = ^linger;
+  linger = packed record
+    l_onoff  : cint;	(* Linger active		*)
+    l_linger : cint;	(* How long to linger for	*)
+  end;
+
+  TLinger = linger;
+
+  pin6_addr = ^in6_addr;
+  in6_addr = packed record
   case byte of
     0: (u6_addr8  : array[0..15] of byte);
     1: (u6_addr16 : array[0..7] of Word);
@@ -134,29 +121,42 @@ Type
     5: (s6_addr16 : array[0..7] of smallint);
     6: (s6_addr32 : array[0..3] of LongInt);
   end;
-  pIn6_Addr=^TIn6_addr;
 
-  TInetSockAddr6 = packed Record
-    {$ifdef SOCKET_HAS_SINLEN}  // as per RFC 2553
-      sin6_len    : byte;
+  Tin6_addr = in6_addr;
+
+  TIn6Addr = in6_addr;
+  PIn6Addr = pin6_addr;
+
+  psockaddr_in6 = ^sockaddr_in6;
+  sockaddr_in6 = packed Record
+    {$ifdef SOCK_HAS_SINLEN}  // as per RFC 2553
+      sin6_len    : cuint8;
     {$endif}
     sin6_family   : sa_family_t;
     sin6_port     : cuint16;
     sin6_flowinfo : cuint32;
-    sin6_addr     : Tin6_addr;
+    sin6_addr     : in6_addr;
     sin6_scope_id : cuint32;
   end;
 
-  sockaddr_in6 = TInetSockAddr6;
-  
-  psockaddr_in6 = ^sockaddr_in6;
+  TInetSockAddr6 = sockaddr_in6;
+  PInetSockAddr6 = psockaddr_in6;
 
   TSockPairArray = Array[0..1] of Longint;
   TSockArray     = Array[1..2] of Longint;              //legacy
 
+  psockaddr_un = ^sockaddr_un;
+  sockaddr_un = packed record
+    {$ifdef SOCK_HAS_SINLEN}
+      sun_len     : cuint8;
+    {$endif}
+    sun_family    : sa_family_t;
+    sun_path      : array[0..107] of char;
+  end;
 
-Var
-  SocketError:cint;
+  Tsocket=longint;   {To easy porting code from Kylix libc unit to sockets unit.}
+
+function socketerror : cint; 
 
 function  fpsocket      (domain:cint; xtype:cint; protocol: cint):cint;
 function  fprecv        (s:cint; buf: pointer; len: size_t; flags: cint):ssize_t;
@@ -174,42 +174,41 @@ function  fpgetsockopt  (s:cint; level:cint; optname:cint; optval:pointer; optle
 function  fpsetsockopt  (s:cint; level:cint; optname:cint; optval:pointer; optlen : tsocklen):cint;
 function  fpsocketpair  (d:cint; xtype:cint; protocol:cint; sv:pcint):cint;
 
+Function CloseSocket(Sock:Longint):Longint; // vote is still out on this one
+
 {Basic Socket Functions}
-Function Socket(Domain,SocketType,Protocol:Longint):Longint;
-Function CloseSocket(Sock:Longint):Longint;
-Function Send(Sock:Longint;Const Buf;BufLen,Flags:Longint):Longint;
-Function SendTo(Sock:Longint;Const Buf;BufLen,Flags:Longint;Var Addr; AddrLen : Longint):Longint;
-Function Recv(Sock:Longint;Var Buf;BufLen,Flags:Longint):Longint;
-Function RecvFrom(Sock : Longint; Var Buf; Buflen,Flags : Longint; Var Addr; var AddrLen : longInt) : longint;
-Function Bind(Sock:Longint;Const Addr;AddrLen:Longint):Boolean;
-Function Listen (Sock,MaxConnect:Longint):Boolean;
-Function Accept(Sock:Longint;Var Addr;Var Addrlen:Longint):Longint;
-Function Connect(Sock:Longint;Const Addr;Addrlen:Longint):boolean;
-Function Shutdown(Sock:Longint;How:Longint):Longint;
-Function GetSocketName(Sock:Longint;Var Addr;Var Addrlen:Longint):Longint;
-Function GetPeerName(Sock:Longint;Var Addr;Var Addrlen:Longint):Longint;
-Function SetSocketOptions(Sock,Level,OptName:Longint;const OptVal;optlen:longint):Longint;
-Function GetSocketOptions(Sock,Level,OptName:Longint;Var OptVal;Var optlen:longint):Longint;
-Function SocketPair(Domain,SocketType,Protocol:Longint;var Pair:TSockArray):Longint;
+{$ifdef legacysocket}
+Function Socket(Domain,SocketType,Protocol:Longint):Longint; deprecated;
+Function Send(Sock:Longint;Const Buf;BufLen,Flags:Longint):Longint; deprecated;
+Function SendTo(Sock:Longint;Const Buf;BufLen,Flags:Longint;Var Addr; AddrLen : Longint):Longint; deprecated;
+Function Recv(Sock:Longint;Var Buf;BufLen,Flags:Longint):Longint; deprecated;
+Function RecvFrom(Sock : Longint; Var Buf; Buflen,Flags : Longint; Var Addr; var AddrLen : longInt) : longint;deprecated; 
+Function Bind(Sock:Longint;Const Addr;AddrLen:Longint):Boolean;deprecated;
+Function Listen (Sock,MaxConnect:Longint):Boolean;deprecated;
+Function Accept(Sock:Longint;Var Addr;Var Addrlen:Longint):Longint;deprecated;
+Function Connect(Sock:Longint;Const Addr;Addrlen:Longint):boolean;deprecated;
+Function Shutdown(Sock:Longint;How:Longint):Longint;deprecated;
+Function GetSocketName(Sock:Longint;Var Addr;Var Addrlen:Longint):Longint;deprecated;
+Function GetPeerName(Sock:Longint;Var Addr;Var Addrlen:Longint):Longint;deprecated;
+Function SetSocketOptions(Sock,Level,OptName:Longint;const OptVal;optlen:longint):Longint;deprecated;
+Function GetSocketOptions(Sock,Level,OptName:Longint;Var OptVal;Var optlen:longint):Longint;deprecated;
+Function SocketPair(Domain,SocketType,Protocol:Longint;var Pair:TSockArray):Longint;deprecated;
+{$endif}
 
-{Text Support}
-Procedure Sock2Text(Sock:Longint;Var SockIn,SockOut:Text);
+{ untyped/text filetype support }
 
-{Untyped File Support}
-Procedure Sock2File(Sock:Longint;Var SockIn,SockOut:File);
-
-{Better Pascal Calling, Overloaded Functions!}
-Function Accept(Sock:longint;var addr:TInetSockAddr;var SockIn,SockOut:File):Boolean;
-Function Accept(Sock:longint;var addr:TInetSockAddr;var SockIn,SockOut:text):Boolean;
-Function Connect(Sock:longint;const addr:TInetSockAddr;var SockIn,SockOut:text):Boolean;
-Function Connect(Sock:longint;const addr:TInetSockAddr;var SockIn,SockOut:file):Boolean;
-
+Procedure Sock2Text(Sock:Longint;Var SockIn,SockOut:Text);deprecated;
+Function Accept(Sock:longint;var addr:TInetSockAddr;var SockIn,SockOut:File):Boolean; deprecated;
+Function Accept(Sock:longint;var addr:TInetSockAddr;var SockIn,SockOut:text):Boolean;deprecated;
+Function Connect(Sock:longint;const addr:TInetSockAddr;var SockIn,SockOut:text):Boolean; deprecated;
+Function Connect(Sock:longint;const addr:TInetSockAddr;var SockIn,SockOut:file):Boolean;deprecated;
+Procedure Sock2File(Sock:Longint;Var SockIn,SockOut:File);deprecated;
 
 { Utility routines}
-function htonl( host : longint):longint;  {$ifdef HASINLINE} inline; {$endif}
-Function NToHl( Net : Longint) : Longint; {$ifdef HASINLINE} inline; {$endif}
-function htons( host : word):word;        {$ifdef HASINLINE} inline; {$endif}
-Function NToHs( Net : word):word;         {$ifdef HASINLINE} inline; {$endif}
+function htonl( host : longint):longint; inline;
+Function NToHl( Net : Longint) : Longint; inline;
+function htons( host : word):word; inline;
+Function NToHs( Net : word):word; inline;
 
 function NetAddrToStr (Entry : in_addr) : AnsiString;
 function HostAddrToStr(Entry : in_addr) : AnsiString;
@@ -230,31 +229,9 @@ function StrToHostAddr6(IP   : String) : Tin6_addr;     // not implemented?!?
 function NetAddrToStr6 (Entry: Tin6_addr) : AnsiString;
 function StrToNetAddr6 (IP   : AnsiString) : TIn6_Addr;
 
-CONST 
+CONST
 	NoAddress : in_addr  = (s_addr:0);
 	NoNet     : in_addr  = (s_addr:0);
- 	NoAddress6: Tin6_addr = (u6_addr16:(0,0,0,0,0,0,0,0));
-  	NoNet6    : Tin6_addr = (u6_addr16:(0,0,0,0,0,0,0,0));
+ 	NoAddress6: in6_addr = (u6_addr16:(0,0,0,0,0,0,0,0));
+  	NoNet6    : in6_addr = (u6_addr16:(0,0,0,0,0,0,0,0));
 
-{
-  $Log: socketsh.inc,v $
-  Revision 1.27  2005/03/28 11:10:51  marco
-   * more netdb and Kylix related minor fixes. At the last minute, commented
-      out TSockAddrIn since I found that relied on TScokAddrIn=TSockAddr
-
-  Revision 1.26  2005/02/18 13:10:10  marco
-   * noadress and friend, ipv4 changed to an enum.
-
-  Revision 1.25  2005/02/14 17:13:26  peter
-    * truncate log
-
-  Revision 1.24  2005/02/13 21:10:31  marco
-   * in_addr_bytes to easily put an array over the byte type
-
-  Revision 1.23  2005/02/13 19:59:57  marco
-   * More htons like functionality. IPV6 string support still missing
-
-  Revision 1.22  2005/02/12 17:34:56  marco
-   * some kylix stuf
-
-}

@@ -1,6 +1,5 @@
 {****************************************************************************
 
-    $Id: crt.pas,v 1.13 2005/05/14 14:40:45 hajny Exp $
 
                             Standard CRT unit.
                     Free Pascal runtime library for OS/2.
@@ -15,10 +14,7 @@ unit crt;
 
 interface
 
-{$IFNDEF VER1_0}
- {$INLINE ON}
-{$ENDIF VER1_0}
-
+{$INLINE ON}
 
 {$i crth.inc}
 
@@ -135,57 +131,7 @@ external 'DOSCALLS' index 286;
 
 
 
-{$ifdef HASTHREADVAR}
-threadvar
-{$else HASTHREADVAR}
-var
-{$endif HASTHREADVAR}
- ExtKeyCode: char;
-
-
-
-function KeyPressed: boolean;
-{Checks if a key is pressed.}
-var
- AKeyRec: TKbdKeyinfo;
-begin
- if ExtKeyCode <> #0 then
-  KeyPressed := true
- else
-  KeyPressed := (KbdPeek (AKeyRec, 0) = 0)
-                                         and ((AKeyRec.fbStatus and $40) <> 0);
-end;
-
-
-function ReadKey: char;
-{Reads the next character from the keyboard.}
-var
- AKeyRec: TKbdKeyInfo;
- C, S: char;
-begin
- if ExtKeyCode <> #0 then
-  begin
-   ReadKey := ExtKeyCode;
-   ExtKeyCode := #0
-  end
- else
-  begin
-   KbdCharIn (AKeyRec, 0, 0);
-   C := AKeyRec.CharCode;
-   S := AKeyRec.ScanCode;
-   if (C = #224) and (S <> #0) then
-    C := #0;
-   if C = #0 then
-    ExtKeyCode := S;
-   ReadKey := C;
-  end;
-end;
-
-
-procedure GetScreenCursor (var X, Y: dword);
-{$IFNDEF VER1_0}
-                                             inline;
-{$ENDIF VER1_0}
+procedure GetScreenCursor (var X, Y: dword);inline;
 (* Return current cursor postion - 0-based. *)
 var
  X0, Y0: word;
@@ -200,20 +146,14 @@ begin
 end;
 
 
-procedure SetScreenCursor (X, Y: dword);
-{$IFNDEF VER1_0}
-                                         inline;
-{$ENDIF VER1_0}
+procedure SetScreenCursor (X, Y: dword); inline;
 (* Set current cursor postion - 0-based. *)
 begin
  VioSetCurPos (Y, X, VioHandle);
 end;
 
 
-procedure RemoveLines (Row: dword; Cnt: dword);
-{$IFNDEF VER1_0}
-                                                inline;
-{$ENDIF VER1_0}
+procedure RemoveLines (Row: dword; Cnt: dword); inline;
 (* Remove Cnt lines from screen starting with (0-based) Row. *)
 var
  ScrEl: word;
@@ -224,10 +164,7 @@ begin
 end;
 
 
-procedure ClearCells (X, Y, Cnt: dword);
-{$IFNDEF VER1_0}
-                                         inline;
-{$ENDIF VER1_0}
+procedure ClearCells (X, Y, Cnt: dword); inline;
 (* Clear Cnt cells in line Y (0-based) starting with position X (0-based). *)
 var
  ScrEl: word;
@@ -285,20 +222,14 @@ begin
 end;
 
 
-procedure WriteNormal (C: char; X, Y: dword);
-{$IFNDEF VER1_0}
-                                              inline;
-{$ENDIF VER1_0}
+procedure WriteNormal (C: char; X, Y: dword); inline;
 (* Write C to console at X, Y (0-based). *)
 begin
  VioWrtCharStrAtt (@C, 1, Y, X, TextAttr, VioHandle);
 end;
 
 
-procedure WriteBell;
-{$IFNDEF VER1_0}
-                     inline;
-{$ENDIF VER1_0}
+procedure WriteBell; inline;
 (* Write character #7 - beep. *)
 begin
  DosBeep (800, 250);
@@ -355,6 +286,64 @@ end;
 {$I crt.inc}
 
 
+function KeyPressed: boolean;
+{Checks if a key is pressed.}
+var
+ AKeyRec: TKbdKeyinfo;
+begin
+ if SpecialKey or (ScanCode <> 0) then
+  KeyPressed := true
+ else
+  KeyPressed := (KbdPeek (AKeyRec, 0) = 0)
+                                         and ((AKeyRec.fbStatus and $40) <> 0);
+end;
+
+
+function ReadKey: char;
+{Reads the next character from the keyboard.}
+var
+ AKeyRec: TKbdKeyInfo;
+ C, S: char;
+begin
+ if SpecialKey then
+  begin
+   SpecialKey := false;
+   ReadKey := char (ScanCode);
+   ScanCode := 0;
+  end
+ else
+  if ScanCode <> 0 then
+   begin
+    ReadKey := char (ScanCode);
+    ScanCode := 0;
+   end
+  else
+   begin
+    while ((KbdCharIn (AKeyRec, 1, 0) <> 0)
+                    or (AKeyRec.fbStatus and $41 <> $40)) and (ScanCode = 0) do
+     DosSleep (5);
+    if ScanCode = 0 then
+     begin
+      C := AKeyRec.CharCode;
+      S := AKeyRec.ScanCode;
+      if (C = #224) and (S <> #0) then
+       C := #0;
+      if C = #0 then
+       begin
+        SpecialKey := true;
+        ScanCode := byte (S);
+       end;
+      ReadKey := C;
+     end
+    else
+     begin
+      ReadKey := char (ScanCode);
+      ScanCode := 0;
+     end;
+   end;
+end;
+
+
 {Initialization.}
 
 var
@@ -381,25 +370,3 @@ begin
  end;
  CrtInit;
 end.
-
-{
-  $Log: crt.pas,v $
-  Revision 1.13  2005/05/14 14:40:45  hajny
-    * fix for bug 3713 and other - basis for future common implementation prepared
-
-  Revision 1.12  2005/03/30 23:11:35  hajny
-    * OS/2 fixes merged to EMX
-
-  Revision 1.11  2005/03/30 22:42:49  hajny
-    * fix for InsLine
-
-  Revision 1.10  2005/03/30 22:40:25  hajny
-    * fix for 3792
-
-  Revision 1.9  2005/03/30 22:11:55  hajny
-    * patch from Sterling Bates for bug 3762 (with additional enhancements for better compatibility)
-
-  Revision 1.8  2005/02/14 17:13:31  peter
-    * truncate log
-
-}

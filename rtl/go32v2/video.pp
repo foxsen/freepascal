@@ -1,5 +1,4 @@
 {
-    $Id: video.pp,v 1.8 2005/02/14 17:13:22 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Florian Klaempfl
     member of the Free Pascal development team
@@ -195,7 +194,12 @@ begin
 end;
 
 procedure SysUpdateScreen(Force: Boolean);
+var
+  Is_Mouse_Vis: boolean;
 begin
+  Is_Mouse_Vis := MouseIsVisible;     {MouseIsVisible is from Mouse unit}
+  if Is_Mouse_Vis then
+   HideMouse;
   if not force then
    begin
      asm
@@ -217,6 +221,8 @@ begin
      dosmemput(videoseg,0,videobuf^,VideoBufSize);
      move(videobuf^,oldvideobuf^,VideoBufSize);
    end;
+  if Is_Mouse_Vis then
+   ShowMouse;
 end;
 
 Procedure DoSetVideoMode(Params: Longint);
@@ -320,10 +326,3 @@ Const
 initialization
   SetVideoDriver(SysVideoDriver);
 end.
-{
-  $Log: video.pp,v $
-  Revision 1.8  2005/02/14 17:13:22  peter
-    * truncate log
-
-}
-

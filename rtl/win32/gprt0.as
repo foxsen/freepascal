@@ -1,29 +1,65 @@
-// Startup code for WIN32 port of Free Pascal
-// with profiling enabled.
+//Startup code for WIN32 port of Free Pascal
+//Written by P.Ozerski 1998
+// modified by Pierre Muller
      .text
      .globl _mainCRTStartup
 _mainCRTStartup:
-     movb   $1,U_SYSTEM_ISCONSOLE
-     call   _FPC_EXE_Entry
+     movb   $1,operatingsystem_isconsole
+     jmp    _start
+
      .globl _WinMainCRTStartup
 _WinMainCRTStartup:
-     movb   $0,U_SYSTEM_ISCONSOLE
+     movb   $0,operatingsystem_isconsole
+_start:
+     subl   $0x8,%esp
+     andl   $0xfffffff0,%esp
+     push   $_cmain
+     call   _cygwin_crt0
+
+     .globl _cmain
+_cmain:
+     subl   $0x8,%esp
+     andl   $0xfffffff0,%esp
+
+     call    __gmon_start__
+     call   ___main
+
+     movl   %esp,__stkptr
      call   _FPC_EXE_Entry
-     
+     ret
+
+        .globl  __gmon_start__
+__gmon_start__:
+        pushl   %ebp
+        movl    __monstarted,%eax
+        leal    0x1(%eax),%edx
+        movl    %esp,%ebp
+        movl    %edx,__monstarted
+        testl   %eax,%eax
+        jnz     .Lnomonstart
+        pushl   $etext                  /* Initialize gmon */
+        pushl   $_cmain
+        call    _monstartup
+        addl    $8,%esp
+.Lnomonstart:
+        movl   %ebp,%esp
+        popl   %ebp
+        ret
+
      .globl asm_exit
-asm_exit:     
-    pushl  %eax
-    call   __mcleanup
-    popl   %eax
-    pushl  %eax
-	call   exitprocess
-	
+asm_exit:
+    pushl   %eax
+    call    __mcleanup
+    popl    %eax
+    pushl   %eax
+    call    exitprocess
+
 .text
 .globl	exitprocess
 exitprocess:
 	jmp	*.L10
 	.balign 4,144
-	
+
 .text
 	.balign 4,144
 
@@ -40,7 +76,7 @@ exitprocess:
 
 .section .idata$5
 .L8:
-	
+
 
 .section .idata$5
 .L10:
@@ -56,12 +92,7 @@ exitprocess:
 .section .idata$7
 .L6:
 	.ascii	"kernel32.dll\000"
-     
 
-//
-// $Log: gprt0.as,v $
-// Revision 1.1  2002/11/30 18:17:35  carl
-//   + profiling support
-//
-//
-//
+.bss
+    .lcomm __monstarted,4
+    .comm   __stkptr,4

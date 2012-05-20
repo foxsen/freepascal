@@ -1,5 +1,4 @@
 {
-    $Id: signal.inc,v 1.5 2005/02/14 17:13:31 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2001 by Free Pascal development team
 
@@ -64,9 +63,9 @@ const
   SIGCANCEL  = 36;      { thread cancellation signal used by libthread }
   SIGLOST    = 37;      { resource lost (eg, record-lock lost) }
 
-  SIG_BLOCK   = 0;
-  SIG_UNBLOCK = 1;
-  SIG_SETMASK = 2;
+  SIG_BLOCK   = 1;
+  SIG_UNBLOCK = 2;
+  SIG_SETMASK = 3;
 
   SIG_DFL = 0 ;
   SIG_IGN = 1 ;
@@ -94,36 +93,38 @@ type
   psigset_t=psigset;
   TSigSet = SigSet;
 
+  t_pdata = record
+    case longint of
+      1 : ( _kill : record
+              _uid   : uid_t;
+              _value : cint; { signal sent? }
+            end );
+      2 : ( _cld : record
+              _utime  : clock_t;
+              _status : cint;
+              _stime  : clock_t;
+            end );
+  end;
+
+  t_proc = record
+    _pid: pid_t;
+    _pdata: t_pdata;
+  end;
+
   psiginfo = ^tsiginfo;
   tsiginfo = record
        si_signo : cint;
-       si_errno : cint;
        si_code  : cint;
+       si_errno : cint;
 {$ifdef cpu64}
        si_pad   : cint;
 {$endif cpu64}
        _sifields : record
            case longint of
-              0 : ( _pad : array[0..(SI_PAD_SIZE)-1] of longint );
-              1 : ( _kill : record
-                   _pid : pid_t;
-                   _uid : uid_t;
-                end );
-              2 : ( _timer : record
-                   _timer1 : dword;
-                   _timer2 : dword;
-                end );
-              3 : ( _rt : record
-                   _pid : pid_t;
-                   _uid : uid_t;
-                   _sigval : pointer;
-                end );
-              4 : ( _sigchld : record
-                   _pid : pid_t;
-                   _uid : uid_t;
-                   _status : longint;
-                   _utime : clock_t;
-                   _stime : clock_t;
+              0 : ( _pad : array[0..(SI_PAD_SIZE)-1] of cint );
+              1 : ( _proc : t_proc);
+              3 : ( _rctl : record
+                   _entity : longint; { int32_t }
                 end );
               5 : ( _sigfault : record
                    _addr : pointer;
@@ -131,8 +132,8 @@ type
                    _pc    : pointer;
                 end );
               6 : ( _sigpoll : record
-                   _band : longint;
                    _fd : longint;
+                   _band : longint;
                 end );
            end;
     end;
@@ -147,27 +148,20 @@ type
   PSignalRestorer = ^SignalRestorer;
   SigActionHandler = procedure(sig : longint; SigInfo: PSigInfo; SigContext: PSigContext);cdecl;
 
+{$ifdef x86_64}
+  SigActionRec = record  // this needs correct 8-byte alignment for hander
+    Sa_Flags    : cuint;
+    sa_handler  : SigActionHandler;
+    Sa_Mask     : SigSet;
+  end;
+{$else not x86_64}
   SigActionRec = packed record  // this is temporary for the migration
     Sa_Flags    : cuint;
     sa_handler  : SigActionHandler;
     Sa_Mask     : SigSet;
     sa_resv : array[1..2] of cint;  { for non-_LP64 platforms only                       }
   end;
+{$endif not x86_64}
   TSigActionRec = SigActionRec;
   PSigActionRec = ^SigActionRec;
 
-{
-  $Log: signal.inc,v $
-  Revision 1.5  2005/02/14 17:13:31  peter
-    * truncate log
-
-  Revision 1.4  2005/02/14 16:32:41  peter
-    * solaris updates
-
-  Revision 1.3  2005/02/13 22:13:20  peter
-    * get solaris back in shape
-
-  Revision 1.2  2005/02/10 17:30:54  peter
-    * renamed to solaris
-
-}

@@ -1,8 +1,7 @@
 {
-    $Id: system.inc,v 1.78 2005/03/25 22:53:39 jonas Exp $
 
     This file is part of the Free Pascal Run time library.
-    Copyright (c) 1999-2000 by the Free Pascal development team
+    Copyright (c) 1999-2008 by the Free Pascal development team
 
     See the file COPYING.FPC, included in this distribution,
     For details about the copyright.
@@ -12,6 +11,44 @@
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
  **********************************************************************}
+
+
+{ The RTTI is implemented through a series of constants : }
+
+Const
+   // please update tkManagedTypes below if you add new
+   // values
+   tkUnknown       = 0;
+   tkInteger       = 1;
+   tkChar          = 2;
+   tkEnumeration   = 3;
+   tkFloat         = 4;
+   tkSet           = 5;
+   tkMethod        = 6;
+   tkSString       = 7;
+   tkString        = tkSString;
+   tkLString       = 8;
+   tkAString       = 9;
+   tkWString       = 10;
+   tkVariant       = 11;
+   tkArray         = 12;
+   tkRecord        = 13;
+   tkInterface     = 14;
+   tkClass         = 15;
+   tkObject        = 16;
+   tkWChar         = 17;
+   tkBool          = 18;
+   tkInt64         = 19;
+   tkQWord         = 20;
+   tkDynArray      = 21;
+   tkInterfaceCorba = 22;
+   tkProcVar       = 23;
+   tkUString       = 24;
+   tkHelper        = 26;
+
+  // all potentially managed types
+  tkManagedTypes   = [tkAstring,tkWstring,tkUstring,tkArray,
+                     tkObject,tkRecord,tkDynArray,tkInterface,tkVariant];
 
 {****************************************************************************
                                 Local types
@@ -23,15 +60,29 @@
   This way we keep TP compatibility, and the TextRec definition is available
   for everyone who needs it.
 }
+{$ifdef FPC_HAS_FEATURE_FILEIO}
 {$i filerec.inc}
+{$endif FPC_HAS_FEATURE_FILEIO}
+
 {$i textrec.inc}
+
+{$ifdef FPC_HAS_FEATURE_EXITCODE}
+  {$ifdef FPC_OBJFPC_EXTENDED_IF}
+    {$if High(errorcode)<>maxExitCode}
+      {$define FPC_LIMITED_EXITCODE}
+    {$endif}
+  {$else}
+    {$define FPC_LIMITED_EXITCODE}
+  {$endif FPC_OBJFPC_EXTENDED_IF}
+{$endif FPC_HAS_FEATURE_EXITCODE}
 
 Procedure HandleError (Errno : Longint); forward;
 Procedure HandleErrorFrame (Errno : longint;frame : Pointer); forward;
 
+{$ifdef FPC_HAS_FEATURE_TEXTIO}
 type
   FileFunc = Procedure(var t : TextRec);
-
+{$endif FPC_HAS_FEATURE_TEXTIO}
 
 const
   STACK_MARGIN = 16384;    { Stack size margin for stack checking }
@@ -39,42 +90,45 @@ const
   OldRandSeed : Cardinal = 0;
 
 { For Error Handling.}
-  ErrorBase : Pointer = nil;
+  ErrorBase : Pointer = nil;public name 'FPC_ERRORBASE';
 
-{ Used by the ansistrings and maybe also other things in the future }
+{ Used by the ansi/widestrings and maybe also other things in the future }
 var
-  emptychar : char;public name 'FPC_EMPTYCHAR';
-  initialstklen : longint;external name '__stklen';
+  { widechar, because also used by widestring -> pwidechar conversions }
+  emptychar : widechar;public name 'FPC_EMPTYCHAR';
+{$ifndef FPC_NO_GENERIC_STACK_CHECK}
+  { if the OS does the stack checking, we don't need any stklen from the
+    main program }
+  initialstklen : SizeUint;external name '__stklen';
+{$endif FPC_NO_GENERIC_STACK_CHECK}
+
+{ checks whether the given suggested size for the stack of the current
+ thread is acceptable. If this is the case, returns it unaltered.
+ Otherwise it should return an acceptable value.
+
+ Operating systems that automatically expand their stack on demand, should
+ simply return a very large value.
+ Operating systems which do not have a possibility to retrieve stack size
+ information, should simply return the given stklen value (This is the default
+ implementation).
+}
+{$ifdef FPC_HAS_FEATURE_STACKCHECK}
+function CheckInitialStkLen(stklen : SizeUInt) : SizeUInt; forward;
+{$endif FPC_HAS_FEATURE_STACKCHECK}
+
+{*****************************************************************************
+                       OS dependent Helpers/Syscalls
+*****************************************************************************}
+
+{ for some OSes do_isdevice is defined in sysos.inc, but for others (win32)
+  it isn't, and is used before the actual definition is encountered         }
+
+{$ifdef FPC_HAS_FEATURE_FILEIO}
+function do_isdevice(handle:thandle):boolean;forward;
+{$endif FPC_HAS_FEATURE_FILEIO}
 
 
-{****************************************************************************
-                     Routines which have compiler magic
-****************************************************************************}
-
-{$ifndef INTERNCONSTINTF}
-Function  lo(i : Integer) : byte;  [INTERNPROC: fpc_in_lo_Word];
-Function  lo(w : Word) : byte;     [INTERNPROC: fpc_in_lo_Word];
-Function  lo(l : Longint) : Word;  [INTERNPROC: fpc_in_lo_long];
-Function  lo(l : DWord) : Word;    [INTERNPROC: fpc_in_lo_long];
-Function  hi(i : Integer) : byte;  [INTERNPROC: fpc_in_hi_Word];
-Function  hi(w : Word) : byte;     [INTERNPROC: fpc_in_hi_Word];
-Function  hi(l : Longint) : Word;  [INTERNPROC: fpc_in_hi_long];
-Function  hi(l : DWord) : Word;    [INTERNPROC: fpc_in_hi_long];
-
-Function  lo(q : QWord) : DWord;  [INTERNPROC: fpc_in_lo_qword];
-Function  lo(i : Int64) : DWord;  [INTERNPROC: fpc_in_lo_qword];
-Function  hi(q : QWord) : DWord;  [INTERNPROC: fpc_in_hi_qword];
-Function  hi(i : Int64) : DWord;  [INTERNPROC: fpc_in_hi_qword];
-
-Function chr(b : byte) : Char;      [INTERNPROC: fpc_in_chr_byte];
-{$ifndef INTERNLENGTH}
-Function Length(s : string) : byte; [INTERNPROC: fpc_in_Length_string];
-Function Length(c : char) : byte;   [INTERNPROC: fpc_in_Length_string];
-{$endif INTERNLENGTH}
-
-Procedure Reset(var f : TypedFile);   [INTERNPROC: fpc_in_Reset_TypedFile];
-Procedure Rewrite(var f : TypedFile); [INTERNPROC: fpc_in_Rewrite_TypedFile];
-{$endif INTERNCONSTINTF}
+{$i sysos.inc}
 
 
 {****************************************************************************
@@ -82,10 +136,15 @@ Procedure Rewrite(var f : TypedFile); [INTERNPROC: fpc_in_Rewrite_TypedFile];
 ****************************************************************************}
 
 {$ifdef FPC_USE_LIBC}
+{ Under Haiku, bcopy cause a problem when searching for include file
+  in the compiler. So, we use the internal implementation for now
+  under BeOS and Haiku.  }
+{$ifndef BEOS}
 { prefer libc implementations over our own, as they're most likely faster }
 {$i cgeneric.inc}
 { is now declared as external reference to another routine in the interface }
 {$i cgenstr.inc}
+{$endif}
 {$endif FPC_USE_LIBC}
 
 {$ifdef cpui386}
@@ -93,6 +152,7 @@ Procedure Rewrite(var f : TypedFile); [INTERNPROC: fpc_in_Rewrite_TypedFile];
     {$Error Can't determine processor type !}
   {$endif}
   {$i i386.inc}  { Case dependent, don't change }
+  {$define SYSPROCDEFINED}
 {$endif cpui386}
 
 {$ifdef cpum68k}
@@ -111,13 +171,21 @@ Procedure Rewrite(var f : TypedFile); [INTERNPROC: fpc_in_Rewrite_TypedFile];
   {$define SYSPROCDEFINED}
 {$endif cpux86_64}
 
-{$ifdef cpupowerpc}
+{$ifdef cpupowerpc32}
   {$ifdef SYSPROCDEFINED}
     {$Error Can't determine processor type !}
   {$endif}
   {$i powerpc.inc}  { Case dependent, don't change }
   {$define SYSPROCDEFINED}
-{$endif cpupowerpc}
+{$endif cpupowerpc32}
+
+{$ifdef cpupowerpc64}
+  {$ifdef SYSPROCDEFINED}
+    {$Error Can't determine processor type !}
+  {$endif}
+  {$i powerpc64.inc}  { Case dependent, don't change }
+  {$define SYSPROCDEFINED}
+{$endif cpupowerpc64}
 
 {$ifdef cpualpha}
   {$ifdef SYSPROCDEFINED}
@@ -147,18 +215,81 @@ Procedure Rewrite(var f : TypedFile); [INTERNPROC: fpc_in_Rewrite_TypedFile];
   {$ifdef SYSPROCDEFINED}
     {$Error Can't determine processor type !}
   {$endif}
-  {$i arm.inc}  { Case dependent, don't change }
+  {$if defined(CPUCORTEXM3) or defined(CPUARMV7M)}
+    {$i thumb2.inc}  { Case dependent, don't change }
+  {$else}
+    {$i arm.inc}  { Case dependent, don't change }
+  {$endif}
   {$define SYSPROCDEFINED}
 {$endif cpuarm}
 
-procedure fillchar(var x;count : SizeInt;value : boolean);{$ifdef SYSTEMINLINE}inline;{$endif}
+{$ifdef cpuavr}
+  {$ifdef SYSPROCDEFINED}
+    {$Error Can't determine processor type !}
+  {$endif}
+  {$i avr.inc}  { Case dependent, don't change }
+  {$define SYSPROCDEFINED}
+{$endif cpuavr}
+
+{$ifdef cpumips}
+  {$ifdef SYSPROCDEFINED}
+    {$Error Can't determine processor type !}
+  {$endif}
+  {$i mips.inc}  { Case dependent, don't change }
+  {$define SYSPROCDEFINED}
+{$endif cpumips}
+
+{$ifdef cpumipsel}
+  {$ifdef SYSPROCDEFINED}
+    {$Error Can't determine processor type !}
+  {$endif}
+  {$i mipsel.inc}  { Case dependent, don't change }
+  {$define SYSPROCDEFINED}
+{$endif cpumipsel}
+
+{$ifndef SYSPROCDEFINED}
+  {$Error Can't determine processor type !}
+{$endif}
+
+procedure fillchar(var x;count : SizeInt;value : boolean);
 begin
   fillchar(x,count,byte(value));
 end;
 
-procedure fillchar(var x;count : SizeInt;value : char);{$ifdef SYSTEMINLINE}inline;{$endif}
+
+procedure fillchar(var x;count : SizeInt;value : char);
 begin
   fillchar(x,count,byte(value));
+end;
+
+
+procedure FillByte (var x;count : SizeInt;value : byte );
+begin
+  FillChar (X,Count,VALUE);
+end;
+
+
+function IndexChar(Const buf;len:SizeInt;b:char):SizeInt;
+begin
+  IndexChar:=IndexByte(Buf,Len,byte(B));
+end;
+
+
+function CompareChar(Const buf1,buf2;len:SizeInt):SizeInt;
+begin
+  CompareChar:=CompareByte(buf1,buf2,len);
+end;
+
+
+procedure fpc_zeromem(p:pointer;len:ptruint);
+begin
+  FillChar(p^,len,0);
+end;
+
+
+procedure fpc_fillmem(var data;len:ptruint;b : byte);
+begin
+  FillByte(data,len,b);
 end;
 
 { Include generic pascal only routines which are not defined in the processor
@@ -191,50 +322,51 @@ begin
    Lo := b and $0f
 end;
 
-Function swap (X : Word) : Word;{$ifdef SYSTEMINLINE}inline;{$endif}{$ifndef INTERNCONSTINTF}[internconst:fpc_in_const_swap_word];{$endif}
+Function Swap (X : Word) : Word;{$ifdef SYSTEMINLINE}inline;{$endif}
 Begin
-  swap:=(X and $ff) shl 8 + (X shr 8)
+  Swap := SwapEndian(X);
 End;
 
-Function Swap (X : Integer) : Integer;{$ifdef SYSTEMINLINE}inline;{$endif}{$ifndef INTERNCONSTINTF}[internconst:fpc_in_const_swap_word];{$endif}
+Function Swap (X : Integer) : Integer;{$ifdef SYSTEMINLINE}inline;{$endif}
 Begin
-  swap:=(X and $ff) shl 8 + (X shr 8)
+  Swap := SwapEndian(X);
 End;
 
-Function swap (X : Longint) : Longint;{$ifdef SYSTEMINLINE}inline;{$endif}{$ifndef INTERNCONSTINTF}[internconst:fpc_in_const_swap_long];{$endif}
-Begin
-  Swap:=(X and $ffff) shl 16 + (X shr 16)
-End;
-
-Function Swap (X : Cardinal) : Cardinal;{$ifdef SYSTEMINLINE}inline;{$endif}{$ifndef INTERNCONSTINTF}[internconst:fpc_in_const_swap_long];{$endif}
+Function Swap (X : Longint) : Longint;{$ifdef SYSTEMINLINE}inline;{$endif}
 Begin
   Swap:=(X and $ffff) shl 16 + (X shr 16)
 End;
 
-Function Swap (X : QWord) : QWord;{$ifdef SYSTEMINLINE}inline;{$endif}{$ifndef INTERNCONSTINTF}[internconst:fpc_in_const_swap_qword];{$endif}
+Function Swap (X : Cardinal) : Cardinal;{$ifdef SYSTEMINLINE}inline;{$endif}
+Begin
+  Swap:=(X and $ffff) shl 16 + (X shr 16)
+End;
+
+Function Swap (X : QWord) : QWord;{$ifdef SYSTEMINLINE}inline;{$endif}
 Begin
   Swap:=(X and $ffffffff) shl 32 + (X shr 32);
 End;
 
-Function swap (X : Int64) : Int64;{$ifdef SYSTEMINLINE}inline;{$endif}{$ifndef INTERNCONSTINTF}[internconst:fpc_in_const_swap_qword];{$endif}
+Function swap (X : Int64) : Int64;{$ifdef SYSTEMINLINE}inline;{$endif}
 Begin
   Swap:=(X and $ffffffff) shl 32 + (X shr 32);
 End;
 
 {$ifdef SUPPORT_DOUBLE}
-operator := (b:real48) d:double;
+operator := (b:real48) d:double;{$ifdef SYSTEMINLINE}inline;{$endif}
 begin
  D:=real2double(b);
 end;
 {$endif SUPPORT_DOUBLE}
 
 {$ifdef SUPPORT_EXTENDED}
-operator := (b:real48) e:extended;
+operator := (b:real48) e:extended;{$ifdef SYSTEMINLINE}inline;{$endif}
 begin
  e:=real2double(b);
 end;
 {$endif SUPPORT_EXTENDED}
 
+{$ifndef FPUNONE}
 {$ifdef FPC_USE_LIBC}
 { Include libc versions }
 {$i cgenmath.inc}
@@ -243,6 +375,19 @@ end;
 {$I math.inc}
 { Include generic version }
 {$I genmath.inc}
+{$endif}
+
+{$i gencurr.inc}
+
+
+function aligntoptr(p : pointer) : pointer;inline;
+  begin
+{$ifdef FPC_REQUIRES_PROPER_ALIGNMENT}
+    result:=align(p,sizeof(p));
+{$else FPC_REQUIRES_PROPER_ALIGNMENT}
+    result:=p;
+{$endif FPC_REQUIRES_PROPER_ALIGNMENT}
+  end;
 
 
 {****************************************************************************
@@ -258,11 +403,16 @@ end;
 {$I int64.inc}
 
 {Requires int64.inc, since that contains the VAL functions for int64 and qword}
+{$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
 {$i astrings.inc}
+{$endif FPC_HAS_FEATURE_ANSISTRINGS}
 
-{$ifdef HASWIDESTRING}
-{$i wstrings.inc}
-{$endif HASWIDESTRING}
+{$ifdef FPC_HAS_FEATURE_WIDESTRINGS}
+  {$ifndef FPC_WIDESTRING_EQUAL_UNICODESTRING}
+    {$i wstrings.inc}
+  {$endif FPC_WIDESTRING_EQUAL_UNICODESTRING}
+  {$i ustrings.inc}
+{$endif FPC_HAS_FEATURE_WIDESTRINGS}
 
 {$i aliases.inc}
 
@@ -270,28 +420,35 @@ end;
                         Dynamic Array support
 *****************************************************************************}
 
+{$ifdef FPC_HAS_FEATURE_DYNARRAYS}
 {$i dynarr.inc}
+{$endif FPC_HAS_FEATURE_DYNARRAYS}
 
 {*****************************************************************************
                         Object Pascal support
 *****************************************************************************}
 
+{$ifdef FPC_HAS_FEATURE_CLASSES}
 {$i objpas.inc}
+{$endif FPC_HAS_FEATURE_CLASSES}
 
 {*****************************************************************************
                             Variant support
 *****************************************************************************}
 
-{$ifdef HASVARIANT}
+{$ifdef FPC_HAS_FEATURE_VARIANTS}
 {$i variant.inc}
-{$endif HASVARIANT}
+{$endif FPC_HAS_FEATURE_VARIANTS}
+
 {****************************************************************************
                          Run-Time Type Information (RTTI)
 ****************************************************************************}
 
+{$ifdef FPC_HAS_FEATURE_RTTI}
 {$i rtti.inc}
+{$endif FPC_HAS_FEATURE_RTTI}
 
-
+{$if defined(FPC_HAS_FEATURE_RANDOM)}
 
 {----------------------------------------------------------------------
    Mersenne Twister: A 623-Dimensionally Equidistributed Uniform
@@ -372,12 +529,12 @@ Type
 const
   MT19937M=397;
   MT19937MATRIX_A  =$9908b0df;  // constant vector a
-  MT19937UPPER_MASK=$80000000;  // most significant w-r bits
-  MT19937LOWER_MASK=$7fffffff;  // least significant r bits
+  MT19937UPPER_MASK=longint($80000000);  // most significant w-r bits
+  MT19937LOWER_MASK=longint($7fffffff);  // least significant r bits
 
 { Tempering parameters }
-  TEMPERING_MASK_B=$9d2c5680;
-  TEMPERING_MASK_C=$efc60000;
+  TEMPERING_MASK_B=longint($9d2c5680);
+  TEMPERING_MASK_C=longint($efc60000);
 
 
 VAR
@@ -411,8 +568,9 @@ var
   y: longint;
   kk: longint;
 begin
-  if (mti >= MT19937N) or
-     (randseed <> oldrandseed) { generate MT19937N longints at one time }
+  if RandSeed<>OldRandSeed then
+    mti:=MT19937N+1;
+  if (mti >= MT19937N) { generate MT19937N longints at one time }
   then begin
      if mti = (MT19937N+1) then  // if sgenrand_MT19937() has not been called,
        begin
@@ -448,26 +606,36 @@ end;
 
 function random(l:longint): longint;
 begin
+  { otherwise we can return values = l (JM) }
+  if (l < 0) then
+    inc(l);
   random := longint((int64(cardinal(genrand_MT19937))*l) shr 32);
 end;
 
 function random(l:int64): int64;
 begin
-{$ifndef VER1_0}
-  random := int64((qword(cardinal(genrand_MT19937)) or ((qword(cardinal(genrand_MT19937)) shl 32))) and $7fffffffffffffff) mod l;
-{$endif VER1_0}
+  { always call random, so the random generator cycles (TP-compatible) (JM) }
+  random := int64((qword(cardinal(genrand_MT19937)) or ((qword(cardinal(genrand_MT19937)) shl 32))) and $7fffffffffffffff);
+  if (l<>0) then
+    random := random mod l
+  else
+    random := 0;
 end;
 
+{$ifndef FPUNONE}
 function random: extended;
 begin
-  random := cardinal(genrand_MT19937) * (1.0/(int64(1) shl 32));
+  random := cardinal(genrand_MT19937) * (extended(1.0)/(int64(1) shl 32));
 end;
+{$endif}
+{$endif FPC_HAS_FEATURE_RANDOM}
+
 
 {****************************************************************************
                             Memory Management
 ****************************************************************************}
 
-Function Ptr(sel,off : Longint) : farpointer;{$ifdef SYSTEMINLINE}inline;{$endif}{$ifndef INTERNCONSTINTF}[internconst:fpc_in_const_ptr];{$endif}
+Function Ptr(sel,off : Longint) : farpointer;{$ifdef SYSTEMINLINE}inline;{$endif}
 Begin
   ptr:=farpointer((sel shl 4)+off);
 End;
@@ -488,109 +656,122 @@ Begin
 End;
 
 
-{*****************************************************************************
-                             Directory support.
-*****************************************************************************}
 
-Procedure getdir(drivenr:byte;Var dir:ansistring);
-{ this is needed to also allow ansistrings, the shortstring version is
-  OS dependent }
-var
-  s : shortstring;
-begin
-  getdir(drivenr,s);
-  dir:=s;
-end;
-
-{$ifopt R+}
-{$define RangeCheckWasOn}
+{$push}
 {$R-}
-{$endif opt R+}
-
-{$ifopt I+}
-{$define IOCheckWasOn}
 {$I-}
-{$endif opt I+}
-
-{$ifopt Q+}
-{$define OverflowCheckWasOn}
 {$Q-}
-{$endif opt Q+}
 
 {*****************************************************************************
                              Miscellaneous
 *****************************************************************************}
 
-procedure fpc_rangeerror;[public,alias:'FPC_RANGEERROR']; {$ifdef hascompilerproc} compilerproc; {$endif}
+procedure fpc_rangeerror;[public,alias:'FPC_RANGEERROR']; compilerproc;
 begin
   HandleErrorFrame(201,get_frame);
 end;
 
-procedure fpc_divbyzero;[public,alias:'FPC_DIVBYZERO']; {$ifdef hascompilerproc} compilerproc; {$endif}
+
+procedure fpc_divbyzero;[public,alias:'FPC_DIVBYZERO']; compilerproc;
 begin
   HandleErrorFrame(200,get_frame);
 end;
 
-procedure fpc_overflow;[public,alias:'FPC_OVERFLOW']; {$ifdef hascompilerproc} compilerproc; {$endif}
+
+procedure fpc_overflow;[public,alias:'FPC_OVERFLOW']; compilerproc;
 begin
   HandleErrorFrame(215,get_frame);
 end;
 
 
-procedure fpc_iocheck;{$ifndef NOSAVEREGISTERS}saveregisters;{$endif}[public,alias:'FPC_IOCHECK']; {$ifdef hascompilerproc} compilerproc; {$endif}
+procedure fpc_threaderror; [public,alias:'FPC_THREADERROR'];
+begin
+  HandleErrorFrame(6,get_frame);
+end;
+
+
+procedure fpc_invalidpointer; [public,alias:'FPC_INVALIDPOINTER'];
+begin
+  HandleErrorFrame(216,get_frame);
+end;
+
+
+procedure fpc_iocheck;[public,alias:'FPC_IOCHECK']; compilerproc;
 var
   l : longint;
+  HInoutRes : PWord;
 begin
-  if InOutRes<>0 then
+  HInOutRes:=@InoutRes;
+  if HInOutRes^<>0 then
    begin
-     l:=InOutRes;
-     InOutRes:=0;
+     l:=HInOutRes^;
+     HInOutRes^:=0;
      HandleErrorFrame(l,get_frame);
    end;
 end;
 
 
-Function IOResult:Word;{$ifdef SYSTEMINLINE}inline;{$endif}
+Function IOResult:Word;
+var
+  HInoutRes : PWord;
 Begin
-  IOResult:=InOutRes;
-  InOutRes:=0;
+  HInoutRes:=@InoutRes;
+  IOResult:=HInOutRes^;
+  HInOutRes^:=0;
 End;
 
-Function GetThreadID:SizeUInt;{$ifdef SYSTEMINLINE}inline;{$endif}
+
+Function GetThreadID:TThreadID;{$ifdef SYSTEMINLINE}inline;{$endif}
 begin
 (* ThreadID is stored in a threadvar and made available in interface *)
 (* to allow setup of this value during thread initialization.        *)
   GetThreadID := ThreadID;
 end;
 
+
+function fpc_safecallcheck(res : hresult) : hresult;[public,alias:'FPC_SAFECALLCHECK']; compilerproc; {$ifdef CPU86} register; {$endif}
+begin
+  if res<0 then
+    begin
+      if assigned(SafeCallErrorProc) then
+        SafeCallErrorProc(res,get_frame);
+      HandleErrorFrame(229,get_frame);
+    end;
+  result:=res;
+end;
+
+
 {*****************************************************************************
                          Stack check code
 *****************************************************************************}
 
+{ be compatible with old code }
+{$ifdef FPC_NO_GENERIC_STACK_CHECK}
+{$define NO_GENERIC_STACK_CHECK}
+{$endif FPC_NO_GENERIC_STACK_CHECK}
+
 {$IFNDEF NO_GENERIC_STACK_CHECK}
 
-{$IFOPT S+}
-{$DEFINE STACKCHECK}
-{$ENDIF}
+{$PUSH}
 {$S-}
-procedure fpc_stackcheck(stack_size:Cardinal);{$ifndef NOSAVEREGISTERS}saveregisters;{$endif}[public,alias:'FPC_STACKCHECK'];
+procedure fpc_stackcheck(stack_size:SizeUInt);[public,alias:'FPC_STACKCHECK'];
 var
   c : Pointer;
 begin
   { Avoid recursive calls when called from the exit routines }
   if StackError then
    exit;
-  c := Sptr - (stack_size + STACK_MARGIN);
+  { don't use sack_size, since the stack pointer has already been
+    decreased when this routine is called
+  }
+  c := Sptr - STACK_MARGIN;
   if (c <= StackBottom) then
    begin
      StackError:=true;
      HandleError(202);
    end;
 end;
-{$IFDEF STACKCHECK}
-{$S+}
-{$ENDIF}
-{$UNDEF STACKCHECK}
+{$POP}
 
 {$ENDIF NO_GENERIC_STACK_CHECK}
 
@@ -605,22 +786,31 @@ type
     InitProc,
     FinalProc : TProcedure;
   end;
-  TInitFinalTable=record
+  TInitFinalTable = record
     TableCount,
     InitCount  : longint;
     Procs      : array[1..maxunits] of TInitFinalRec;
   end;
+  PInitFinalTable = ^TInitFinalTable;
 
+
+{$ifndef FPC_HAS_INDIRECT_MAIN_INFORMATION}
 var
   InitFinalTable : TInitFinalTable;external name 'INITFINAL';
+{$endif FPC_HAS_INDIRECT_MAIN_INFORMATION}
 
-procedure fpc_InitializeUnits;[public,alias:'FPC_INITIALIZEUNITS']; {$ifdef hascompilerproc} compilerproc; {$endif}
+
+procedure fpc_InitializeUnits;[public,alias:'FPC_INITIALIZEUNITS']; compilerproc;
 var
   i : longint;
 begin
   { call cpu/fpu initialisation routine }
   fpc_cpuinit;
+{$ifdef FPC_HAS_INDIRECT_MAIN_INFORMATION}
+  with PInitFinalTable(EntryInformation.InitFinalTable)^ do
+{$else FPC_HAS_INDIRECT_MAIN_INFORMATION}
   with InitFinalTable do
+{$endif FPC_HAS_INDIRECT_MAIN_INFORMATION}
    begin
      for i:=1 to TableCount do
       begin
@@ -634,9 +824,26 @@ begin
 end;
 
 
+procedure internal_initializeunits; external name 'FPC_INITIALIZEUNITS';
+
+procedure fpc_LibInitializeUnits;[public,alias:'FPC_LIBINITIALIZEUNITS'];
+begin
+{$ifdef FPC_HAS_FEATURE_DYNLIBS}
+  IsLibrary:=true;
+  { must also be set to true for packages when implemented }
+  ModuleIsLib:=true;
+  internal_initializeunits;
+{$endif FPC_HAS_FEATURE_DYNLIBS}
+end;
+
+
 procedure FinalizeUnits;[public,alias:'FPC_FINALIZEUNITS'];
 begin
+{$ifdef FPC_HAS_INDIRECT_MAIN_INFORMATION}
+  with PInitFinalTable(EntryInformation.InitFinalTable)^ do
+{$else FPC_HAS_INDIRECT_MAIN_INFORMATION}
   with InitFinalTable do
+{$endif FPC_HAS_INDIRECT_MAIN_INFORMATION}
    begin
      while (InitCount>0) do
       begin
@@ -654,11 +861,41 @@ end;
 *****************************************************************************}
 
 Procedure system_exit;forward;
+{$ifdef FPC_HAS_FEATURE_HEAP}
+{$ifndef HAS_MEMORYMANAGER}
+//not needed if independant memory manager
+Procedure FinalizeHeap;forward;
+{$endif HAS_MEMORYMANAGER}
+{$endif FPC_HAS_FEATURE_HEAP}
+
+{$ifdef FPC_HAS_FEATURE_CONSOLEIO}
+procedure SysFlushStdIO;
+begin
+  { Make sure that all output is written to the redirected file }
+  if Textrec(Output).Mode=fmOutput then
+    Flush(Output);
+  if Textrec(ErrOutput).Mode=fmOutput then
+    Flush(ErrOutput);
+  if Textrec(stdout).Mode=fmOutput then
+    Flush(stdout);
+  if Textrec(StdErr).Mode=fmOutput then
+    Flush(StdErr);
+end;
+{$endif FPC_HAS_FEATURE_CONSOLEIO}
 
 Procedure InternalExit;
 var
   current_exit : Procedure;
+{$ifdef FPC_HAS_FEATURE_CONSOLEIO}
+  pstdout : ^Text;
+{$endif}
+{$if defined(MSWINDOWS) or defined(OS2)}
+  i : longint;
+{$endif}
 Begin
+{$ifdef SYSTEMDEBUG}
+  writeln('InternalExit');
+{$endif SYSTEMDEBUG}
   while exitProc<>nil Do
    Begin
      InOutRes:=0;
@@ -668,15 +905,56 @@ Begin
    End;
   { Finalize units }
   FinalizeUnits;
+
+{$ifdef FPC_HAS_FEATURE_CONSOLEIO}
+  { the embedded system unit itself contains no routines for console i/o
+    console i/o is done by the Consoleio unit which can do things like
+    redirection to seriell i/o }
+{$ifndef EMBEDDED}
   { Show runtime error and exit }
+  pstdout:=@stdout;
   If erroraddr<>nil Then
    Begin
-     Writeln(stdout,'Runtime error ',Errorcode,' at $',hexstr(PtrInt(Erroraddr),sizeof(PtrInt)*2));
+     Writeln(pstdout^,'Runtime error ',Errorcode,' at $',hexstr(erroraddr));
      { to get a nice symify }
-     Writeln(stdout,BackTraceStrFunc(Erroraddr));
-     dump_stack(stdout,ErrorBase);
-     Writeln(stdout,'');
+     Writeln(pstdout^,BackTraceStrFunc(Erroraddr));
+     dump_stack(pstdout^,ErrorBase);
+     Writeln(pstdout^,'');
    End;
+  SysFlushStdIO;
+{$endif EMBEDDED}
+{$endif FPC_HAS_FEATURE_CONSOLEIO}
+
+{$if defined(MSWINDOWS) or defined(OS2)}
+  { finally release the heap if possible, especially
+    important for DLLs.
+    Reset the array to nil, and finally also argv itself to
+    avoid double freeing problem in case this function gets called twice. }
+  if assigned(argv) then
+    begin
+      for i:=0 to argc-1 do
+        if assigned(argv[i]) then
+          begin
+            sysfreemem(argv[i]);
+            argv[i]:=nil;
+          end;
+      sysfreemem(argv);
+      argv:=nil;
+    end;
+{$endif}
+{$ifdef LINUX}
+  {sysfreemem already checks for nil}
+  sysfreemem(calculated_cmdline);
+{$endif}
+{$ifdef BSD}
+  sysfreemem(cmdline);
+{$endif}
+
+{$ifdef FPC_HAS_FEATURE_HEAP}
+{$ifndef HAS_MEMORYMANAGER}
+  FinalizeHeap;
+{$endif HAS_MEMORYMANAGER}
+{$endif FPC_HAS_FEATURE_HEAP}
 End;
 
 
@@ -687,36 +965,44 @@ begin
 end;
 
 
-Procedure lib_exit;{$ifndef NOSAVEREGISTERS}saveregisters;{$endif}[Public,Alias:'FPC_LIB_EXIT'];
+Procedure lib_exit;[Public,Alias:'FPC_LIB_EXIT'];
 begin
   InternalExit;
 end;
 
 
-Procedure Halt(ErrNum: Byte);
+Procedure Halt(ErrNum: Longint);
 Begin
-  ExitCode:=Errnum;
+{$ifdef FPC_HAS_FEATURE_EXITCODE}
+{$ifdef FPC_LIMITED_EXITCODE}
+  if ErrNum > maxExitCode then
+    ExitCode:=255
+  else
+{$endif FPC_LIMITED_EXITCODE}
+    ExitCode:=ErrNum;
+{$endif FPC_HAS_FEATURE_EXITCODE}
   Do_Exit;
 end;
 
 
 function SysBackTraceStr (Addr: Pointer): ShortString;
 begin
-  SysBackTraceStr:='  $'+HexStr(Ptrint(addr),sizeof(PtrInt)*2);
+  SysBackTraceStr:='  $'+hexstr(addr);
 end;
 
 
-Procedure HandleErrorAddrFrame (Errno : longint;addr,frame : Pointer);[public,alias:'FPC_BREAK_ERROR'];
+Procedure HandleErrorAddrFrame (Errno : longint;addr,frame : Pointer);[public,alias:'FPC_BREAK_ERROR']; {$ifdef CPU86} register; {$endif}
 begin
   If pointer(ErrorProc)<>Nil then
     ErrorProc(Errno,addr,frame);
   errorcode:=word(Errno);
   erroraddr:=addr;
   errorbase:=frame;
-  if errorcode <= maxExitCode then
-    halt(errorcode)
-  else
-    halt(255)
+{$ifdef FPC_HAS_FEATURE_EXCEPTIONS}
+  if ExceptAddrStack <> nil then
+    raise TObject(nil) at addr,frame;
+{$endif FPC_HAS_FEATURE_EXCEPTIONS}
+  Halt(errorcode);
 end;
 
 Procedure HandleErrorFrame (Errno : longint;frame : Pointer);
@@ -745,10 +1031,7 @@ begin
   errorcode:=w;
   erroraddr:=get_caller_addr(get_frame);
   errorbase:=get_caller_frame(get_frame);
-  if errorcode <= maxExitCode then
-    halt(errorcode)
-  else
-    halt(255)
+  Halt(errorcode);
 end;
 
 
@@ -764,7 +1047,11 @@ Begin
 End;
 
 
-function do_isdevice(handle:thandle):boolean;forward;
+Procedure Error(RunTimeError : TRunTimeError);
+begin
+  RunError(RuntimeErrorExitCodes[RunTimeError]);
+end;
+
 
 Procedure dump_stack(var f : text;bp : Pointer);
 var
@@ -774,26 +1061,54 @@ var
   caller_frame,
   caller_addr : Pointer;
 Begin
-  prevbp:=bp-1;
-  i:=0;
-  is_dev:=do_isdevice(textrec(f).Handle);
-  while bp > prevbp Do
-   Begin
-     caller_addr := get_caller_addr(bp);
-     caller_frame := get_caller_frame(bp);
-     if (caller_addr=nil) or
-        (caller_frame=nil) then
-       break;
-     Writeln(f,BackTraceStrFunc(caller_addr));
-     Inc(i);
-     If ((i>max_frame_dump) and is_dev) or (i>256) Then
-       break;
-     prevbp:=bp;
-     bp:=caller_frame;
-   End;
+{$ifdef FPC_HAS_FEATURE_EXCEPTIONS}
+  try
+{$endif FPC_HAS_FEATURE_EXCEPTIONS}
+    prevbp:=bp-1;
+    i:=0;
+    is_dev:=do_isdevice(textrec(f).Handle);
+    while bp > prevbp Do
+     Begin
+       caller_addr := get_caller_addr(bp);
+       caller_frame := get_caller_frame(bp);
+       if (caller_addr=nil) then
+         break;
+       Writeln(f,BackTraceStrFunc(caller_addr));
+       if (caller_frame=nil) then
+         break;
+       Inc(i);
+       If ((i>max_frame_dump) and is_dev) or (i>256) Then
+         break;
+       prevbp:=bp;
+       bp:=caller_frame;
+     End;
+{$ifdef FPC_HAS_FEATURE_EXCEPTIONS}
+   except
+     { prevent endless dump if an exception occured }
+   end;
+{$endif FPC_HAS_FEATURE_EXCEPTIONS}
 End;
 
 
+{$ifdef FPC_HAS_FEATURE_EXCEPTIONS}
+procedure DumpExceptionBackTrace(var f:text);
+var
+  FrameNumber,
+  FrameCount   : longint;
+  Frames       : PPointer;
+begin
+  if RaiseList=nil then
+    exit;
+  WriteLn(f,BackTraceStrFunc(RaiseList^.Addr));
+  FrameCount:=RaiseList^.Framecount;
+  Frames:=RaiseList^.Frames;
+  for FrameNumber := 0 to FrameCount-1 do
+    WriteLn(f,BackTraceStrFunc(Frames[FrameNumber]));
+end;
+{$endif FPC_HAS_FEATURE_EXCEPTIONS}
+
+
+{$ifdef FPC_HAS_FEATURE_HEAP}
 Type
   PExitProcInfo = ^TExitProcInfo;
   TExitProcInfo = Record
@@ -829,7 +1144,10 @@ Begin
   ExitProcList:=P;
   ExitProc:=@DoExitProc;
 End;
+{$endif FPC_HAS_FEATURE_HEAP}
 
+
+{$ifdef FPC_HAS_FEATURE_HEAP}
 function ArrayStringToPPchar(const S:Array of AnsiString;reserveentries:Longint):ppchar; // const ?
 // Extra allocate reserveentries pchar's at the beginning (default param=0 after 1.0.x ?)
 // Note: for internal use by skilled programmers only
@@ -854,15 +1172,17 @@ begin
   ArrayStringToPPchar:=p;
 end;
 
+
 Function StringToPPChar(Var S:AnsiString;ReserveEntries:integer):ppchar;
 {
   Create a PPChar to structure of pchars which are the arguments specified
-  in the string S. Especially usefull for creating an ArgV for Exec-calls
+  in the string S. Especially useful for creating an ArgV for Exec-calls
 }
 
 begin
   StringToPPChar:=StringToPPChar(PChar(S),ReserveEntries);
 end;
+
 
 Function StringToPPChar(S: PChar;ReserveEntries:integer):ppchar;
 
@@ -935,15 +1255,14 @@ begin
        end;
    end;
 end;
-
-
+{$endif FPC_HAS_FEATURE_HEAP}
 
 
 {*****************************************************************************
                           Abstract/Assert support.
 *****************************************************************************}
 
-procedure fpc_AbstractErrorIntern;{$ifdef hascompilerproc}compilerproc;{$endif}[public,alias : 'FPC_ABSTRACTERROR'];
+procedure fpc_AbstractErrorIntern;compilerproc;[public,alias : 'FPC_ABSTRACTERROR'];
 begin
   If pointer(AbstractErrorProc)<>nil then
     AbstractErrorProc();
@@ -951,7 +1270,7 @@ begin
 end;
 
 
-Procedure fpc_assert(Const Msg,FName:Shortstring;LineNo:Longint;ErrorAddr:Pointer);{$ifndef NOSAVEREGISTERS}saveregisters;{$endif} [Public,Alias : 'FPC_ASSERT']; {$ifdef hascompilerproc} compilerproc; {$endif}
+Procedure fpc_assert(Const Msg,FName:Shortstring;LineNo:Longint;ErrorAddr:Pointer); [Public,Alias : 'FPC_ASSERT']; compilerproc;
 begin
   if pointer(AssertErrorProc)<>nil then
     AssertErrorProc(Msg,FName,LineNo,ErrorAddr)
@@ -962,6 +1281,7 @@ end;
 
 Procedure SysAssert(Const Msg,FName:Shortstring;LineNo:Longint;ErrorAddr:Pointer);
 begin
+{$ifdef FPC_HAS_FEATURE_CONSOLEIO}
   If msg='' then
     write(stderr,'Assertion failed')
   else
@@ -969,6 +1289,7 @@ begin
   Writeln(stderr,' (',FName,', line ',LineNo,').');
   Writeln(stderr,'');
   Halt(227);
+{$endif FPC_HAS_FEATURE_CONSOLEIO}
 end;
 
 
@@ -979,24 +1300,7 @@ end;
 {$i setjump.inc}
 
 
-{$ifdef IOCheckWasOn}
-{$I+}
-{$endif}
-
-{$ifdef RangeCheckWasOn}
-{$R+}
-{$endif}
-
-{$ifdef OverflowCheckWasOn}
-{$Q+}
-{$endif}
-
-
-{*****************************************************************************
-                       OS dependent Helpers/Syscalls
-*****************************************************************************}
-
-{$i sysos.inc}
+{$pop} //{$I-,R-,Q-} before 'procedure fpc_rangeerror'
 
 
 {*****************************************************************************
@@ -1011,66 +1315,137 @@ end;
                           Thread support
 *****************************************************************************}
 
+{$ifdef FPC_HAS_FEATURE_THREADING}
 { Generic threadmanager }
 {$i thread.inc}
 
 { Generic threadvar support }
 {$i threadvr.inc}
 
+{$ifdef DISABLE_NO_THREAD_MANAGER}
 { OS Dependent implementation }
 {$i systhrd.inc}
+{$endif DISABLE_NO_THREAD_MANAGER}
+{$endif FPC_HAS_FEATURE_THREADING}
 
 
 {*****************************************************************************
                             File Handling
 *****************************************************************************}
 
+
+{$ifdef FPC_HAS_FEATURE_FILEIO}
+{ Allow slash and backslash as separators }
+procedure DoDirSeparators(p:Pchar);
+var
+  i : longint;
+begin
+  for i:=0 to strlen(p) do
+    if p[i] in AllowDirectorySeparators then
+      p[i]:=DirectorySeparator;
+end;
+
+procedure DoDirSeparators(var p:shortstring);
+var
+  i : longint;
+begin
+  for i:=1 to length(p) do
+    if p[i] in AllowDirectorySeparators then
+      p[i]:=DirectorySeparator;
+end;
+{$endif FPC_HAS_FEATURE_FILEIO}
+
 { OS dependent low level file functions }
+{$ifdef FPC_HAS_FEATURE_FILEIO}
 {$i sysfile.inc}
+{$endif FPC_HAS_FEATURE_FILEIO}
 
 { Text file }
 {$i text.inc}
 
+{$ifdef FPC_HAS_FEATURE_FILEIO}
 { Untyped file }
 {$i file.inc}
 
 { Typed file }
 {$i typefile.inc}
+{$endif FPC_HAS_FEATURE_FILEIO}
 
 
 {*****************************************************************************
                             Directory Handling
 *****************************************************************************}
 
+{$ifdef FPC_HAS_FEATURE_FILEIO}
 { OS dependent dir functions }
 {$i sysdir.inc}
+{$endif FPC_HAS_FEATURE_FILEIO}
 
+{$if defined(FPC_HAS_FEATURE_FILEIO) and defined(FPC_HAS_FEATURE_ANSISTRINGS)}
+Procedure getdir(drivenr:byte;Var dir:ansistring);
+{ this is needed to also allow ansistrings, the shortstring version is
+  OS dependent }
+var
+  s : shortstring;
+begin
+  getdir(drivenr,s);
+  dir:=s;
+end;
+{$endif}
 
-{
-  $Log: system.inc,v $
-  Revision 1.78  2005/03/25 22:53:39  jonas
-    * fixed several warnings and notes about unused variables (mainly) or
-      uninitialised use of variables/function results (a few)
+{$if defined(FPC_HAS_FEATURE_FILEIO)}
 
-  Revision 1.77  2005/02/14 17:13:29  peter
-    * truncate log
+Procedure MkDir(Const s: String);
+Var
+  Buffer: Array[0..255] of Char;
+Begin
+  If (s='') or (InOutRes <> 0) then
+   exit;
+  Move(s[1], Buffer, Length(s));
+  Buffer[Length(s)] := #0;
+  MkDir(@buffer[0],length(s));
+End;
 
-  Revision 1.76  2005/02/08 20:25:28  florian
-    - killed power from system unit
-    * move operator ** to math unit
+Procedure RmDir(Const s: String);
+Var
+  Buffer: Array[0..255] of Char;
+Begin
+  If (s='') or (InOutRes <> 0) then
+   exit;
+  Move(s[1], Buffer, Length(s));
+  Buffer[Length(s)] := #0;
+  RmDir(@buffer[0],length(s));
+End;
 
-  Revision 1.75  2005/02/06 20:35:54  florian
-    + InitProc
+Procedure ChDir(Const s: String);
+Var
+  Buffer: Array[0..255] of Char;
+Begin
+  If (s='') or (InOutRes <> 0) then
+   exit;
+  Move(s[1], Buffer, Length(s));
+  Buffer[Length(s)] := #0;
+  ChDir(@buffer[0],length(s));
+End;
+{$endif}
 
-  Revision 1.74  2005/02/06 16:57:18  peter
-    * threads for go32v2,os,emx,netware
+{*****************************************************************************
+                            Resources support
+*****************************************************************************}
 
-  Revision 1.73  2005/02/06 13:06:20  peter
-    * moved file and dir functions to sysfile/sysdir
-    * win32 thread in systemunit
+{$i sysres.inc}
 
-  Revision 1.72  2005/02/06 11:20:52  peter
-    * threading in system unit
-    * removed systhrds unit
+const
+  CtrlBreakHandler: TCtrlBreakHandler = nil;
 
-}
+{$IFNDEF FPC_HAS_SETCTRLBREAKHANDLER}
+(* It is possible to provide platform specific implementation performing   *)
+(* special initialization; default implementation just sets the procedural *)
+(* variable to make it available for use from the exception handler.       *)
+function SysSetCtrlBreakHandler (Handler: TCtrlBreakHandler): TCtrlBreakHandler;
+begin
+  (* Return either nil or previous handler *)
+  SysSetCtrlBreakHandler := CtrlBreakHandler;
+  CtrlBreakHandler := Handler;
+end;
+{$ENDIF FPC_HAS_SETCTRLBREAKHANDLER}

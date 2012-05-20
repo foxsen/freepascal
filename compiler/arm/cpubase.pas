@@ -1,5 +1,4 @@
 {
-    $Id: cpubase.pas,v 1.39 2005/02/26 01:26:59 jonas Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl and Peter Vreman
 
     Contains the base types for the ARM
@@ -44,24 +43,7 @@ unit cpubase;
 *****************************************************************************}
 
     type
-      TAsmOp=(A_None,A_ADC,A_ADD,A_AND,A_N,A_BIC,A_BKPT,A_B,A_BL,A_BLX,A_BX,
-              A_CDP,A_CDP2,A_CLZ,A_CMN,A_CMP,A_EOR,A_LDC,_A_LDC2,
-              A_LDM,A_LDR,A_LDRB,A_LDRD,A_LDRBT,A_LDRH,A_LDRSB,
-              A_LDRSH,A_LDRT,A_MCR,A_MCR2,A_MCRR,A_MLA,A_MOV,
-              A_MRC,A_MRC2,A_MRRC,A_RS,A_MSR,A_MUL,A_MVN,
-              A_ORR,A_PLD,A_QADD,A_QDADD,A_QDSUB,A_QSUB,A_RSB,A_RSC,
-              A_SBC,A_SMLAL,A_SMULL,A_SMUL,
-              A_SMULW,A_STC,A_STC2,A_STM,A_STR,A_STRB,A_STRBT,A_STRD,
-              A_STRH,A_STRT,A_SUB,A_SWI,A_SWP,A_SWPB,A_TEQ,A_TST,
-              A_UMLAL,A_UMULL,
-              { FPA coprocessor instructions }
-              A_LDF,A_STF,A_LFM,A_SFM,A_FLT,A_FIX,A_WFS,A_RFS,A_RFC,
-              A_ADF,A_DVF,A_FDV,A_FML,A_FRD,A_MUF,A_POL,A_PW,A_RDF,
-              A_RMF,A_RPW,A_RSF,A_SUF,A_ABS,A_ACS,A_ASN,A_ATN,A_COS,
-              A_EXP,A_LOG,A_LGN,A_MVF,A_MNF,A_NRM,A_RND,A_SIN,A_SQT,A_TAN,A_URD,
-              A_CMF,A_CMFE,A_CNF
-              { VPA coprocessor codes }
-              );
+      TAsmOp= {$i armop.inc}
 
       { This should define the array of instructions as string }
       op2strtable=array[tasmop] of string[11];
@@ -105,9 +87,9 @@ unit cpubase;
 
       { MM Super register first and last }
       first_mm_supreg    = RS_S0;
-      first_mm_imreg     = $20;
+      first_mm_imreg     = $30;
 
-{$warning TODO Calculate bsstart}
+{ TODO: Calculate bsstart}
       regnumber_count_bsstart = 64;
 
       regnumber_table : array[tregisterindex] of tregister = (
@@ -122,8 +104,11 @@ unit cpubase;
         {$i rarmdwa.inc}
       );
       { registers which may be destroyed by calls }
-      VOLATILE_INTREGISTERS = [RS_R0..RS_R3,RS_R12..RS_R15];
+      VOLATILE_INTREGISTERS = [RS_R0..RS_R3,RS_R12..RS_R14];
       VOLATILE_FPUREGISTERS = [RS_F0..RS_F3];
+      VOLATILE_MMREGISTERS =  [RS_D0..RS_D7,RS_D16..RS_D31,RS_S1..RS_S15];
+
+      VOLATILE_INTREGISTERS_DARWIN = [RS_R0..RS_R3,RS_R9,RS_R12..RS_R14];
 
     type
       totherregisterset = set of tregisterindex;
@@ -145,22 +130,31 @@ unit cpubase;
         { load/store }
         PF_B,PF_SB,PF_BT,PF_H,PF_SH,PF_T,
         { multiple load/store address modes }
-        PF_IA,PF_IB,PF_DA,PF_DB,PF_FD,PF_FA,PF_ED,PF_EA
+        PF_IA,PF_IB,PF_DA,PF_DB,PF_FD,PF_FA,PF_ED,PF_EA,
+        { multiple load/store vfp address modes }
+        PF_IAD,PF_DBD,PF_FDD,PF_EAD,
+        PF_IAS,PF_DBS,PF_FDS,PF_EAS,
+        PF_IAX,PF_DBX,PF_FDX,PF_EAX
       );
+
+      TOpPostfixes = set of TOpPostfix;
 
       TRoundingMode = (RM_None,RM_P,RM_M,RM_Z);
 
     const
       cgsize2fpuoppostfix : array[OS_NO..OS_F128] of toppostfix = (
-        PF_E,
+        PF_None,
         PF_None,PF_None,PF_None,PF_None,PF_None,PF_None,PF_None,PF_None,PF_None,PF_None,
         PF_S,PF_D,PF_E,PF_None,PF_None);
 
-      oppostfix2str : array[TOpPostfix] of string[2] = ('',
+      oppostfix2str : array[TOpPostfix] of string[3] = ('',
         's',
         'd','e','p','ep',
         'b','sb','bt','h','sh','t',
-        'ia','ib','da','db','fd','fa','ed','ea');
+        'ia','ib','da','db','fd','fa','ed','ea',
+        'iad','dbd','fdd','ead',
+        'ias','dbs','fds','eas',
+        'iax','dbx','fdx','eax');
 
       roundingmode2str : array[TRoundingMode] of string[1] = ('',
         'p','m','z');
@@ -174,6 +168,8 @@ unit cpubase;
         C_EQ,C_NE,C_CS,C_CC,C_MI,C_PL,C_VS,C_VC,C_HI,C_LS,
         C_GE,C_LT,C_GT,C_LE,C_AL,C_NV
       );
+
+      TAsmConds = set of TAsmCond;
 
     const
       cond2str : array[TAsmCond] of string[2]=('',
@@ -211,6 +207,9 @@ unit cpubase;
         shiftimm : byte;
       end;
 
+      tcpumodeflag = (mfA, mfI, mfF);
+      tcpumodeflags = set of tcpumodeflag;
+
 {*****************************************************************************
                                  Constants
 *****************************************************************************}
@@ -218,42 +217,9 @@ unit cpubase;
     const
       max_operands = 4;
 
-      {# Constant defining possibly all registers which might require saving }
-      ALL_OTHERREGISTERS = [];
-
-      general_superregisters = [RS_R0..RS_PC];
-
-      {# Table of registers which can be allocated by the code generator
-         internally, when generating the code.
-      }
-      { legend:                                                                }
-      { xxxregs = set of all possibly used registers of that type in the code  }
-      {           generator                                                    }
-      { usableregsxxx = set of all 32bit components of registers that can be   }
-      {           possible allocated to a regvar or using getregisterxxx (this }
-      {           excludes registers which can be only used for parameter      }
-      {           passing on ABI's that define this)                           }
-      { c_countusableregsxxx = amount of registers in the usableregsxxx set    }
-
       maxintregs = 15;
-      { to determine how many registers to use for regvars }
-      maxintscratchregs = 3;
-      usableregsint = [RS_R4..RS_R10];
-      c_countusableregsint = 7;
-
       maxfpuregs = 8;
-      fpuregs = [RS_F0..RS_F7];
-      usableregsfpu = [RS_F4..RS_F7];
-      c_countusableregsfpu = 4;
-
-      mmregs = [RS_D0..RS_D15];
-      usableregsmm = [RS_D8..RS_D15];
-      c_countusableregsmm  = 8;
-
       maxaddrregs = 0;
-      addrregs    = [];
-      usableregsaddr = [];
-      c_countusableregsaddr = 0;
 
 {*****************************************************************************
                                 Operand Sizes
@@ -271,13 +237,6 @@ unit cpubase;
 *****************************************************************************}
 
     const
-      firstsaveintreg = RS_R4;
-      lastsaveintreg  = RS_R10;
-      firstsavefpureg = RS_F4;
-      lastsavefpureg  = RS_F7;
-      firstsavemmreg  = RS_D8;
-      lastsavemmreg   = RS_D15;
-
       maxvarregs = 7;
       varregs : Array [1..maxvarregs] of tsuperregister =
                 (RS_R4,RS_R5,RS_R6,RS_R7,RS_R8,RS_R9,RS_R10);
@@ -292,8 +251,10 @@ unit cpubase;
 
       { Defines the default address size for a processor, }
       OS_ADDR = OS_32;
-      { the natural int size for a processor,             }
+      { the natural int size for a processor,
+        has to match osuinttype/ossinttype as initialized in psystem }
       OS_INT = OS_32;
+      OS_SINT = OS_S32;
       { the maximum float size for a processor,           }
       OS_FLOAT = OS_F64;
       { the size of a vector register for a processor     }
@@ -306,9 +267,9 @@ unit cpubase;
       { Stack pointer register }
       NR_STACK_POINTER_REG = NR_R13;
       RS_STACK_POINTER_REG = RS_R13;
-      { Frame pointer register }
-      RS_FRAME_POINTER_REG = RS_R11;
-      NR_FRAME_POINTER_REG = NR_R11;
+      { Frame pointer register (initialized in tarmprocinfo.init_framepointer) }
+      RS_FRAME_POINTER_REG: tsuperregister = RS_NO;
+      NR_FRAME_POINTER_REG: tregister = NR_NO;
       { Register for addressing absolute data in a position independant way,
         such as in PIC code. The exact meaning is ABI specific. For
         further information look at GCC source : PIC_OFFSET_TABLE_REGNUM
@@ -317,30 +278,25 @@ unit cpubase;
       { Results are returned in this register (32-bit values) }
       NR_FUNCTION_RETURN_REG = NR_R0;
       RS_FUNCTION_RETURN_REG = RS_R0;
-      { Low part of 64bit return value }
-      NR_FUNCTION_RETURN64_LOW_REG = NR_R0;
-      RS_FUNCTION_RETURN64_LOW_REG = RS_R0;
-      { High part of 64bit return value }
-      NR_FUNCTION_RETURN64_HIGH_REG = NR_R1;
-      RS_FUNCTION_RETURN64_HIGH_REG = RS_R1;
       { The value returned from a function is available in this register }
       NR_FUNCTION_RESULT_REG = NR_FUNCTION_RETURN_REG;
       RS_FUNCTION_RESULT_REG = RS_FUNCTION_RETURN_REG;
-      { The lowh part of 64bit value returned from a function }
-      NR_FUNCTION_RESULT64_LOW_REG = NR_FUNCTION_RETURN64_LOW_REG;
-      RS_FUNCTION_RESULT64_LOW_REG = RS_FUNCTION_RETURN64_LOW_REG;
-      { The high part of 64bit value returned from a function }
-      NR_FUNCTION_RESULT64_HIGH_REG = NR_FUNCTION_RETURN64_HIGH_REG;
-      RS_FUNCTION_RESULT64_HIGH_REG = RS_FUNCTION_RETURN64_HIGH_REG;
 
       NR_FPU_RESULT_REG = NR_F0;
 
-      NR_MM_RESULT_REG  = NR_NO;
+      NR_MM_RESULT_REG  = NR_D0;
 
       NR_RETURN_ADDRESS_REG = NR_FUNCTION_RETURN_REG;
 
       { Offset where the parent framepointer is pushed }
       PARENT_FRAMEPOINTER_OFFSET = 0;
+
+      { Low part of 64bit return value }
+      function NR_FUNCTION_RESULT64_LOW_REG: tregister;{$ifdef USEINLINE}inline;{$endif USEINLINE}
+      function RS_FUNCTION_RESULT64_LOW_REG: shortint;{$ifdef USEINLINE}inline;{$endif USEINLINE}
+      { High part of 64bit return value }
+      function NR_FUNCTION_RESULT64_HIGH_REG: tregister;{$ifdef USEINLINE}inline;{$endif USEINLINE}
+      function RS_FUNCTION_RESULT64_HIGH_REG: shortint;{$ifdef USEINLINE}inline;{$endif USEINLINE}
 
 {*****************************************************************************
                        GCC /ABI linking information
@@ -356,6 +312,10 @@ unit cpubase;
       }
       saved_standard_registers : array[0..6] of tsuperregister =
         (RS_R4,RS_R5,RS_R6,RS_R7,RS_R8,RS_R9,RS_R10);
+
+      { this is only for the generic code which is not used for this architecture }
+      saved_mm_registers : array[0..0] of tsuperregister = (RS_NO);
+
       { Required parameter alignment when calling a routine declared as
         stdcall and cdecl. The alignment value should be the one defined
         by GCC or the target ABI.
@@ -372,8 +332,8 @@ unit cpubase;
 
     { Returns the tcgsize corresponding with the size of reg.}
     function reg_cgsize(const reg: tregister) : tcgsize;
-    function cgsize2subreg(s:Tcgsize):Tsubregister;
-    function is_calljmp(o:tasmop):boolean;
+    function cgsize2subreg(regtype: tregistertype; s:Tcgsize):Tsubregister;
+    function is_calljmp(o:tasmop):boolean;{$ifdef USEINLINE}inline;{$endif USEINLINE}
     procedure inverse_flags(var f: TResFlags);
     function flags_to_cond(const f: TResFlags) : TAsmCond;
     function findreg_by_number(r:Tregister):tregisterindex;
@@ -383,13 +343,16 @@ unit cpubase;
     function inverse_cond(const c: TAsmCond): TAsmCond; {$ifdef USEINLINE}inline;{$endif USEINLINE}
     function conditions_equal(const c1, c2: TAsmCond): boolean; {$ifdef USEINLINE}inline;{$endif USEINLINE}
 
-    procedure shifterop_reset(var so : tshifterop);
-    function is_pc(const r : tregister) : boolean;
+    procedure shifterop_reset(var so : tshifterop); {$ifdef USEINLINE}inline;{$endif USEINLINE}
+    function is_pc(const r : tregister) : boolean; {$ifdef USEINLINE}inline;{$endif USEINLINE}
+
+    function is_shifter_const(d : aint;var imm_shift : byte) : boolean;
+    function dwarf_reg(r:tregister):shortint;
 
   implementation
 
     uses
-      rgBase,verbose;
+      systems,rgBase,verbose;
 
 
     const
@@ -406,28 +369,52 @@ unit cpubase;
       );
 
 
-    function cgsize2subreg(s:Tcgsize):Tsubregister;
+    function cgsize2subreg(regtype: tregistertype; s:Tcgsize):Tsubregister;
       begin
-        cgsize2subreg:=R_SUBWHOLE;
+        case regtype of
+          R_MMREGISTER:
+            begin
+              case s of
+                OS_F32:
+                  cgsize2subreg:=R_SUBFS;
+                OS_F64:
+                  cgsize2subreg:=R_SUBFD;
+                else
+                  internalerror(2009112701);
+              end;
+            end;
+          else
+            cgsize2subreg:=R_SUBWHOLE;
+        end;
       end;
 
 
     function reg_cgsize(const reg: tregister): tcgsize;
-      const subreg2cgsize:array[Tsubregister] of Tcgsize =
-            (OS_NO,OS_8,OS_8,OS_16,OS_32,OS_64,OS_NO,OS_NO,OS_NO);
       begin
         case getregtype(reg) of
           R_INTREGISTER :
             reg_cgsize:=OS_32;
           R_FPUREGISTER :
             reg_cgsize:=OS_F80;
+          R_MMREGISTER :
+            begin
+              case getsubreg(reg) of
+                R_SUBFD,
+                R_SUBWHOLE:
+                  result:=OS_F64;
+                R_SUBFS:
+                  result:=OS_F32;
+                else
+                  internalerror(2009112903);
+              end;
+            end;
           else
             internalerror(200303181);
           end;
         end;
 
 
-    function is_calljmp(o:tasmop):boolean;
+    function is_calljmp(o:tasmop):boolean;{$ifdef USEINLINE}inline;{$endif USEINLINE}
       begin
         { This isn't 100% perfect because the arm allows jumps also by writing to PC=R15.
           To overcome this problem we simply forbid that FPC generates jumps by loading R15 }
@@ -481,13 +468,13 @@ unit cpubase;
       end;
 
 
-    procedure shifterop_reset(var so : tshifterop);
+    procedure shifterop_reset(var so : tshifterop);{$ifdef USEINLINE}inline;{$endif USEINLINE}
       begin
         FillChar(so,sizeof(so),0);
       end;
 
 
-    function is_pc(const r : tregister) : boolean;
+    function is_pc(const r : tregister) : boolean; {$ifdef USEINLINE}inline;{$endif USEINLINE}
       begin
         is_pc:=(r=NR_R15);
       end;
@@ -502,7 +489,7 @@ unit cpubase;
       begin
         result := inverse[c];
       end;
-    
+
 
     function conditions_equal(const c1, c2: TAsmCond): boolean; {$ifdef USEINLINE}inline;{$endif USEINLINE}
       begin
@@ -510,18 +497,83 @@ unit cpubase;
       end;
 
 
+    function rotl(d : dword;b : byte) : dword; {$ifdef USEINLINE}inline;{$endif USEINLINE}
+      begin
+         result:=(d shr (32-b)) or (d shl b);
+      end;
+
+
+    function is_shifter_const(d : aint;var imm_shift : byte) : boolean;
+      var
+         i : longint;
+      begin
+        if current_settings.cputype in cpu_thumb2 then
+          begin
+            for i:=0 to 24 do
+              begin
+                 if (dword(d) and not($ff shl i))=0 then
+                   begin
+                     imm_shift:=i;
+                     result:=true;
+                     exit;
+                   end;
+              end;
+          end
+        else
+          begin
+            for i:=0 to 15 do
+              begin
+                 if (dword(d) and not(rotl($ff,i*2)))=0 then
+                   begin
+                      imm_shift:=i*2;
+                      result:=true;
+                      exit;
+                   end;
+              end;
+          end;
+        result:=false;
+      end;
+
+
+    function dwarf_reg(r:tregister):shortint;
+      begin
+        result:=regdwarf_table[findreg_by_number(r)];
+        if result=-1 then
+          internalerror(200603251);
+      end;
+
+      { Low part of 64bit return value }
+    function NR_FUNCTION_RESULT64_LOW_REG: tregister; {$ifdef USEINLINE}inline;{$endif USEINLINE}
+    begin
+      if target_info.endian=endian_little then
+        result:=NR_R0
+      else
+        result:=NR_R1;
+    end;
+
+    function RS_FUNCTION_RESULT64_LOW_REG: shortint; {$ifdef USEINLINE}inline;{$endif USEINLINE}
+    begin
+      if target_info.endian=endian_little then
+        result:=RS_R0
+      else
+        result:=RS_R1;
+    end;
+
+      { High part of 64bit return value }
+    function NR_FUNCTION_RESULT64_HIGH_REG: tregister; {$ifdef USEINLINE}inline;{$endif USEINLINE}
+    begin
+      if target_info.endian=endian_little then
+        result:=NR_R1
+      else
+        result:=NR_R0;
+    end;
+
+    function RS_FUNCTION_RESULT64_HIGH_REG: shortint; {$ifdef USEINLINE}inline;{$endif USEINLINE}
+    begin
+      if target_info.endian=endian_little then
+        result:=RS_R1
+      else
+        result:=RS_R0;
+    end;
+
 end.
-{
-  $Log: cpubase.pas,v $
-  Revision 1.39  2005/02/26 01:26:59  jonas
-    * fixed generic jumps optimizer and enabled it for ppc (the label table
-      was not being initialised -> getfinaldestination always failed, which
-      caused wrong optimizations in some cases)
-    * changed the inverse_cond into a function, because tasmcond is a record
-      on ppc
-    + added a compare_conditions() function for the same reason
-
-  Revision 1.38  2005/02/14 17:13:09  peter
-    * truncate log
-
-}

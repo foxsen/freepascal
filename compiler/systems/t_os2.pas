@@ -1,5 +1,4 @@
 {
-    $Id: t_os2.pas,v 1.21 2005/04/24 21:02:10 peter Exp $
     Copyright (c) 1998-2002 by Daniel Mantione
     Portions Copyright (c) 1998-2002 Eberhard Mattes
 
@@ -25,8 +24,8 @@
    A lot of code in this unit has been ported from C to Pascal from the
    emximp utility, part of the EMX development system. Emximp is copyrighted
    by Eberhard Mattes. Note: Eberhard doesn't know much about the Pascal
-   port, please send questions to Daniel Mantione
-   <d.s.p.mantione@twi.tudelft.nl>.
+   port, please send questions to Tomas Hajny <hajny@freepascal.org> or
+   Daniel Mantione <daniel@freepascal.org>.
 }
 unit t_os2;
 
@@ -38,17 +37,14 @@ interface
 implementation
 
   uses
-     strings,
-     dos,
-     cutils,cclasses,
+     SysUtils,
+     cutils,cfileutl,cclasses,
      globtype,systems,symconst,symdef,
      globals,verbose,fmodule,script,
-     import,link,i_os2;
+     import,link,i_os2,ogbase;
 
   type
     timportlibos2=class(timportlib)
-      procedure preparelib(const s:string);override;
-      procedure importprocedure(aprocdef:tprocdef;const module:string;index:longint;const name:string);override;
       procedure generatelib;override;
     end;
 
@@ -116,7 +112,7 @@ type    reloc=packed record     {This is the layout of a relocation table
         end;
 
 var aout_str_size:longint;
-    aout_str_tab:array[0..2047] of byte;
+    aout_str_tab:array[0..2047] of char;
     aout_sym_count:longint;
     aout_sym_tab:array[0..5] of nlist;
 
@@ -133,11 +129,31 @@ var aout_str_size:longint;
 
     out_file:file;
 
+procedure PackTime (var T: TSystemTime; var P: longint);
+
+var zs:longint;
+
+begin
+    p:=-1980;
+    p:=p+t.year and 127;
+    p:=p shl 4;
+    p:=p+t.month;
+    p:=p shl 5;
+    p:=p+t.day;
+    p:=p shl 16;
+    zs:=t.hour;
+    zs:=zs shl 6;
+    zs:=zs+t.minute;
+    zs:=zs shl 5;
+    zs:=zs+t.second div 2;
+    p:=p+(zs and $ffff);
+end;
+
+
 procedure write_ar(const name:string;size:longint);
 
 var ar:ar_hdr;
-    time:datetime;
-    dummy:word;
+    time:TSystemTime;
     numtime:longint;
     tmp:string[19];
 
@@ -146,8 +162,7 @@ begin
     ar_member_size:=size;
     fillchar(ar.ar_name,sizeof(ar.ar_name),' ');
     move(name[1],ar.ar_name,length(name));
-    getdate(time.year,time.month,time.day,dummy);
-    gettime(time.hour,time.min,time.sec,dummy);
+    GetLocalTime(time);
     packtime(time,numtime);
     str(numtime,tmp);
     fillchar(ar.ar_date,sizeof(ar.ar_date),' ');
@@ -259,50 +274,39 @@ begin
     blockwrite(out_file,aout_text,aout_text_size);
     blockwrite(out_file,aout_treloc_tab,sizeof(reloc)*aout_treloc_count);
     blockwrite(out_file,aout_sym_tab,sizeof(aout_sym_tab[0])*aout_sym_count);
-    longint((@aout_str_tab)^):=aout_str_size;
+    plongint(@aout_str_tab)^:=aout_str_size;
     blockwrite(out_file,aout_str_tab,aout_str_size);
 end;
 
-procedure timportlibos2.preparelib(const s:string);
 
-{This code triggers a lot of bugs in the compiler.
-const   armag='!<arch>'#10;
-        ar_magic:array[1..length(armag)] of char=armag;}
-const   ar_magic:array[1..8] of char='!<arch>'#10;
-var
-  libname : string;
-begin
-    libname:=FixFileName(S + Target_Info.StaticCLibExt);
-    seq_no:=1;
-    current_module.linkotherstaticlibs.add(libname,link_allways);
-    assign(out_file,current_module.outputpath^+libname);
-    rewrite(out_file,1);
-    blockwrite(out_file,ar_magic,sizeof(ar_magic));
-end;
-
-procedure timportlibos2.importprocedure(aprocdef:tprocdef;const module:string;index:longint;const name:string);
-{func       = Name of function to import.
+procedure AddImport(const module:string;index:longint;const name,mangledname:string);
+{mangledname= Assembler label of the function to import.
  module     = Name of DLL to import from.
  index      = Index of function in DLL. Use 0 to import by name.
  name       = Name of function in DLL. Ignored when index=0;}
+(*
+var tmp1,tmp2,tmp3:string;
+*)
 var tmp1,tmp2,tmp3:string;
     sym_mcount,sym_import:longint;
     fixup_mcount,fixup_import:longint;
-    func : string;
 begin
-    { force the current mangledname }
-    include(aprocdef.procoptions,po_has_mangledname);
-    func:=aprocdef.mangledname;
-
     aout_init;
+    tmp2:=mangledname;
+(*
     tmp2:=func;
     if profile_flag and not (copy(func,1,4)='_16_') then
+*)
+    if profile_flag and not (copy(tmp2,1,4)='_16_') then
         begin
             {sym_entry:=aout_sym(func,n_text+n_ext,0,0,aout_text_size);}
             sym_mcount:=aout_sym('__mcount',n_ext,0,0,0);
             {Use, say, "_$U_DosRead" for "DosRead" to import the
              non-profiled function.}
+(*
             tmp2:='__$U_'+func;
+            sym_import:=aout_sym(tmp2,n_ext,0,0,0);
+*)
             sym_import:=aout_sym(tmp2,n_ext,0,0,0);
             aout_text_byte($55);    {push ebp}
             aout_text_byte($89);    {mov ebp, esp}
@@ -320,13 +324,23 @@ begin
         end;
     str(seq_no,tmp1);
     tmp1:='IMPORT#'+tmp1;
+(*
     if name='' then
+*)
+    if index<>0 then
         begin
             str(index,tmp3);
+(*
             tmp3:=func+'='+module+'.'+tmp3;
+*)
+            tmp3:=Name+'='+module+'.'+tmp3;
         end
     else
+        tmp3:=Name+'='+module+'.'+name;
+(*
         tmp3:=func+'='+module+'.'+name;
+    aout_sym(tmp2,n_imp1+n_ext,0,0,0);
+*)
     aout_sym(tmp2,n_imp1+n_ext,0,0,0);
     aout_sym(tmp3,n_imp2+n_ext,0,0,0);
     aout_finish;
@@ -336,11 +350,32 @@ begin
     inc(seq_no);
 end;
 
-procedure timportlibos2.generatelib;
+    procedure timportlibos2.generatelib;
+      const
+        ar_magic:array[1..8] of char='!<arch>'#10;
+      var
+          i,j  : longint;
+          ImportLibrary : TImportLibrary;
+          ImportSymbol  : TImportSymbol;
+      begin
+        seq_no:=1;
+        current_module.linkotherstaticlibs.add(Current_Module.ImportLibFilename,link_always);
+        assign(out_file,Current_Module.ImportLibFilename);
+        rewrite(out_file,1);
+        blockwrite(out_file,ar_magic,sizeof(ar_magic));
 
-begin
-    close(out_file);
-end;
+        for i:=0 to current_module.ImportLibraryList.Count-1 do
+          begin
+            ImportLibrary:=TImportLibrary(current_module.ImportLibraryList[i]);
+            for j:=0 to ImportLibrary.ImportSymbolList.Count-1 do
+              begin
+                ImportSymbol:=TImportSymbol(ImportLibrary.ImportSymbolList[j]);
+                AddImport(ChangeFileExt(ExtractFileName(ImportLibrary.Name),''),
+                  ImportSymbol.OrdNr,ImportSymbol.Name,ImportSymbol.MangledName);
+              end;
+         end;
+         close(out_file);
+      end;
 
 
 {****************************************************************************
@@ -361,7 +396,7 @@ begin
   with Info do
    begin
      ExeCmd[1]:='ld $OPT -o $OUT @$RES';
-     ExeCmd[2]:='emxbind -b $STRIP $APPTYPE $RSRC -k$STACKKB -h$HEAPMB -o $EXE $OUT -aim -s$DOSHEAPKB';
+     ExeCmd[2]:='emxbind -b $STRIP $MAP $APPTYPE $RSRC -k$STACKKB -h1 -o $EXE $OUT -ai -s8';
      if Source_Info.Script = script_dos then
       ExeCmd[3]:='del $OUT';
    end;
@@ -372,26 +407,26 @@ Function TLinkeros2.WriteResponseFile(isdll:boolean) : Boolean;
 Var
   linkres  : TLinkRes;
   i        : longint;
-  HPath    : TStringListItem;
+  HPath    : TCmdStrListItem;
   s        : string;
 begin
   WriteResponseFile:=False;
 
   { Open link.res file }
-  LinkRes:=TLinkRes.Create(outputexedir+Info.ResName);
+  LinkRes:=TLinkRes.Create(outputexedir+Info.ResName,true);
 
   { Write path to search libraries }
-  HPath:=TStringListItem(current_module.locallibrarysearchpath.First);
+  HPath:=TCmdStrListItem(current_module.locallibrarysearchpath.First);
   while assigned(HPath) do
    begin
      LinkRes.Add('-L'+HPath.Str);
-     HPath:=TStringListItem(HPath.Next);
+     HPath:=TCmdStrListItem(HPath.Next);
    end;
-  HPath:=TStringListItem(LibrarySearchPath.First);
+  HPath:=TCmdStrListItem(LibrarySearchPath.First);
   while assigned(HPath) do
    begin
      LinkRes.Add('-L'+HPath.Str);
-     HPath:=TStringListItem(HPath.Next);
+     HPath:=TCmdStrListItem(HPath.Next);
    end;
 
   { add objectfiles, start with prt0 always }
@@ -432,28 +467,31 @@ end;
 
 function TLinkeros2.MakeExecutable:boolean;
 var
-  binstr : String;
+  binstr,
   cmdstr  : TCmdStr;
   success : boolean;
   i       : longint;
   AppTypeStr,
-  StripStr: string[40];
+  StripStr: string[3];
+  MapStr: shortstring;
+  BaseFilename: TPathStr;
   RsrcStr : string;
-  DS: DirStr;
-  NS: NameStr;
-  ES: ExtStr;
-  OutName: PathStr;
+  OutName: TPathStr;
 begin
-  if not(cs_link_extern in aktglobalswitches) then
-   Message1(exec_i_linking,current_module.exefilename^);
+  if not(cs_link_nolink in current_settings.globalswitches) then
+   Message1(exec_i_linking,current_module.exefilename);
 
 { Create some replacements }
-  FSplit (current_module.exefilename^, DS, NS, ES);
-  OutName := DS + NS + '.out';
-  if (cs_link_strip in aktglobalswitches) then
-   StripStr := '-s'
+  BaseFilename := ChangeFileExt(current_module.exefilename,'');
+  OutName := BaseFilename + '.out';
+  if (cs_link_strip in current_settings.globalswitches) then
+   StripStr := '-s '
   else
    StripStr := '';
+  if (cs_link_map in current_settings.globalswitches) then
+   MapStr := '-m' + BaseFileName + ' '
+  else
+   MapStr := '';
   if (usewindowapi) or (AppType = app_gui) then
    AppTypeStr := '-p'
   else if AppType = app_fs then
@@ -483,13 +521,22 @@ begin
         {When an EMX program runs in DOS, the heap and stack share the
          same memory pool. The heap grows upwards, the stack grows downwards.}
         Replace(cmdstr,'$DOSHEAPKB',tostr((stacksize+1023) shr 10));
-        Replace(cmdstr,'$STRIP',StripStr);
+        Replace(cmdstr,'$STRIP ', StripStr);
+        Replace(cmdstr,'$MAP ', MapStr);
         Replace(cmdstr,'$APPTYPE',AppTypeStr);
+(*
+   Arrgh!!! The ancient EMX LD.EXE simply dies without saying anything
+   if the full pathname to link.res is quoted!!!!! @#$@@^%@#$^@#$^@^#$
+   This means that name of the output directory cannot contain spaces,
+   but at least it works otherwise...
+
         Replace(cmdstr,'$RES',maybequoted(outputexedir+Info.ResName));
-        Replace(cmdstr,'$OPT',Info.ExtraOptions);
-        Replace(cmdstr,'$RSRC',RsrcStr);
+*)
+        Replace(cmdstr,'$RES',outputexedir+Info.ResName);
+        Replace(cmdstr,'$OPT ',Info.ExtraOptions);
+        Replace(cmdstr,'$RSRC ',RsrcStr);
         Replace(cmdstr,'$OUT',maybequoted(OutName));
-        Replace(cmdstr,'$EXE',maybequoted(current_module.exefilename^));
+        Replace(cmdstr,'$EXE',maybequoted(current_module.exefilename));
         if i<>3 then
          success:=DoExec(FindUtil(utilsprefix+binstr),cmdstr,(i=1),false)
         else
@@ -498,8 +545,8 @@ begin
    end;
 
 { Remove ReponseFile }
-  if (success) and not(cs_link_extern in aktglobalswitches) then
-   RemoveFile(outputexedir+Info.ResName);
+  if (success) and not(cs_link_nolink in current_settings.globalswitches) then
+   DeleteFile(outputexedir+Info.ResName);
 
   MakeExecutable:=success;   { otherwise a recursive call to link method }
 end;
@@ -512,16 +559,6 @@ end;
 initialization
   RegisterExternalLinker(system_i386_os2_info,TLinkerOS2);
   RegisterImport(system_i386_os2,TImportLibOS2);
-{  RegisterRes(res_emxbind_info);}
+{  RegisterRes(res_wrc_os2_info,TResourceFile);}
   RegisterTarget(system_i386_os2_info);
 end.
-{
-  $Log: t_os2.pas,v $
-  Revision 1.21  2005/04/24 21:02:10  peter
-    * always use exceptions to stop the compiler
-    - remove stop, do_stop
-
-  Revision 1.20  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

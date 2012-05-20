@@ -1,5 +1,4 @@
 {
-    $Id: osutil.inc,v 1.4 2005/02/14 17:13:31 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team
 
@@ -79,6 +78,15 @@ end;
     Application name
   ---------------------------------------------------------------------}
 
+Function VendorName : String;
+
+begin
+  If Assigned(OnGetVendorName) then
+    Result:=OnGetVendorName()
+  else
+    Result:='';
+end;
+
 Function ApplicationName : String;
 
 begin
@@ -101,9 +109,9 @@ end;
 Function DGetAppConfigFile(Global : Boolean; SubDir : Boolean) : String;
 
 begin
-  Result:=ExtractFilePath(ParamStr(0));
-  If SubDir then
-    Result:=IncludeTrailingPathDelimiter(Result+ApplicationName);
+  Result:=IncludeTrailingPathDelimiter(GetAppConfigDir(Global));
+  if SubDir then
+    Result:=IncludeTrailingPathDelimiter(Result+'Config');
   Result:=Result+ApplicationName+ConfigExtension;
 end;
 
@@ -111,6 +119,12 @@ Function GetAppConfigFile(Global : Boolean) : String;
 
 begin
   Result:=GetAppConfigFile(Global,False);
+end;
+
+Function DGetUserDir : String;
+
+begin
+  Result:=ExtractFilePath(Paramstr(0));
 end;
 
 
@@ -135,6 +149,26 @@ Function GetAppConfigFile(Global : Boolean; SubDir : Boolean) : String;
 
 begin
   Result:=DGetAppConfigFile(Global,Subdir);
+end;
+{$endif}
+
+{ ---------------------------------------------------------------------
+    Fallback implementations for GetUserDir implementation.
+  ---------------------------------------------------------------------}
+{
+ If a particular OS does it different:
+ - set the HAVE_OSUSERDIR define before including sysutils.inc.
+ - implement the function.
+ Default makes it the application directory. Rationale is that the result
+ will be used for config files, and it should exist. The application directory
+ has this for sure.
+}
+
+{$ifndef HAS_OSUSERDIR}
+Function GetUserDir : String;
+
+begin
+  Result:=DGetUserDir;
 end;
 {$endif}
 
@@ -205,9 +239,24 @@ begin
   Result:=GetTempFileName('','');
 end;
 
-{
-  $Log: osutil.inc,v $
-  Revision 1.4  2005/02/14 17:13:31  peter
-    * truncate log
+{$if not(defined(win32)) and not(defined(win64))}
+Function GetTempFileName(Dir,Prefix: PChar; uUnique: DWORD; TempFileName: PChar):DWORD;
 
-}
+Var
+  P,Buf : String;
+  L : Integer;
+
+begin
+  P:=StrPas(Prefix);
+  if (uUnique<>0) then
+    P:=P+format('%.4x',[uUnique]);
+  Buf:=GetTempFileName(StrPas(Dir),P);
+  L:=Length(Buf);
+  If (L>0) then
+    Move(Buf[1],TempFileName^,L+1);
+  if (uUnique<>0) then
+    result:=uUnique
+  else
+    result:=1;
+end;
+{$endif}

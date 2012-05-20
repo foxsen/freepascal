@@ -1,5 +1,4 @@
 {
-    $Id: ptypes.inc,v 1.2 2005/02/14 17:13:31 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2001 by Free Pascal development team
 
@@ -34,11 +33,7 @@ introduction)
 
 Type
 
-{$ifndef VER_1_0}               // maybe wrong (kernel vs libc)
-    dev_t    = cuint64;         { used for device numbers      }
-{$else}
-    dev_t    = int64;
-{$endif}
+    dev_t    = culong;          { used for device numbers      }
     TDev     = dev_t;
     pDev     = ^dev_t;
 
@@ -49,6 +44,7 @@ Type
     gid_t    = cuint32;         { used for group IDs           }
     TGid     = gid_t;
     pGid     = ^gid_t;
+    TIOCtlRequest = cInt;
 
     ino_t    = clong;           { used for file serial numbers }
     TIno     = ino_t;
@@ -89,15 +85,57 @@ Type
     clock_t  = culong;
     time_t   = clong;           { used for returning the time  }
 {$endif}
+    wint_t    = cint32;
     TSize     = size_t;
     pSize     = ^size_t;
+    psize_t   = pSize;
     TSSize    = ssize_t;
     pSSize    = ^ssize_t;
     TClock    = clock_t;
     pClock    = ^clock_t;
-    TTime     = time_t;
+    // TTime    = time_t;    // Not allowed in system unit, -> unixtype
+
     pTime     = ^time_t;
     ptime_t   = ^time_t;
+    clockid_t = cint;
+    caddr_t   = ^char;
+
+    uint32_t = cuint32;
+    int32_t = cint32;
+    caddr32_t = uint32_t;
+    daddr32_t = int32_t;
+    off32_t = int32_t;
+    ino32_t = uint32_t;
+    blkcnt32_t = int32_t;
+    fsblkcnt32_t = uint32_t;
+    fsfilcnt32_t = uint32_t;
+    id32_t = int32_t;
+    major32_t = uint32_t;
+    minor32_t = uint32_t;
+    key32_t = int32_t;
+    mode32_t = uint32_t;
+    uid32_t = int32_t;
+    gid32_t = int32_t;
+    nlink32_t = uint32_t;
+    dev32_t = uint32_t;
+    pid32_t = int32_t;
+    size32_t = uint32_t;
+    ssize32_t = int32_t;
+    time32_t = int32_t;
+
+
+    uint16_t = cuint16;
+    upad64_t  = qword;
+    uintptr_t = ^cuint;
+    uint_t    = cuint;
+
+
+{$ifdef cpu64}
+    wchar_t   = cint;
+{$else cpu64}
+    wchar_t   = clong;
+{$endif cpu64}
+    pwchar_t  = ^wchar_t;
 
     uid_t    = cuint32;         { used for user ID type        }
     TUid     = uid_t;
@@ -107,117 +145,81 @@ Type
     TSockLen = socklen_t;
     pSockLen = ^socklen_t;
 
-  timeval     = packed record
+  timeval     = record
                  tv_sec,
                  tv_usec:clong;
                 end;
   ptimeval    = ^timeval;
   TTimeVal    = timeval;
 
-  timespec    = packed record
+  timespec    = record
                  tv_sec   : time_t;
                  tv_nsec  : clong;
                 end;
   ptimespec   = ^timespec;
   TTimeSpec   = timespec;
 
+{$ifdef cpu64}
+  fsblkcnt_t = culonglong;
+{$else}
+  fsblkcnt_t = culong;
+{$endif}
+
+  { actually stavfs, statfs is deprecated on Solaris }
   TStatfs = packed record
-    fstype,            { File system type }
-    bsize   : cint;    { Optimal block trensfer size }
+    bsize,             { fundamental file system block size  }
+    frsize  : culong;  { fragment size }
     blocks,            { Data blocks in system }
     bfree,             { free blocks in system }
     bavail,            { Available free blocks to non-root users }
     files,             { File nodes in system }
-    ffree   : clong;             { Free file nodes in system }
-    fsid    : array[0..1] of cint;          { File system ID }
-    namelen : clong; { Maximum name length in system }
-    spare   : array [0..5] of clong; { For later use }
+    ffree,             { Free file nodes in system }
+    favail  : fsblkcnt_t;   { free nodes avail to non-superuser}
+    fsid    : clong;   { File system ID }
+    basetype: array [0..15] of char; { null-terminated fs type name }
+    flag    : culong;  { bit-mask of flags }
+    namelen : culong; { Maximum name length in system }
+    fstr    : array[0..31] of char; { fs-specific string }
+{$ifndef cpu64}
+    spare   : array[0..15] of clong; { reserved for future use }
+{$endif}
   end;
   PStatFS=^TStatFS;
 
-  pthread_t = culong;
-
-  sched_param = record
-    __sched_priority: cint;
+  mbstate_t = record
+{$ifdef cpu64}
+        __filler: array[0..3] of clong;
+{$else cpu64}
+        __filler: array[0..5] of cint;
+{$endif cpu64}
   end;
+  pmbstate_t = ^mbstate_t;
+  
 
-  pthread_attr_t = record
-    __detachstate: cint;
-    __schedpolicy: cint;
-    __schedparam: sched_param;
-    __inheritsched: cint;
-    __scope: cint;
-    __guardsize: size_t;
-    __stackaddr_set: cint;
-    __stackaddr: pointer;
-    __stacksize: size_t;
-  end;
-
-  _pthread_fastlock = record
-    __status: clong;
-    __spinlock: cint;
-  end;
-
-  pthread_mutex_t = record
-    __m_reserved: cint;
-    __m_count: cint;
-    __m_owner: pointer;
-    __m_kind:  cint;
-    __m_lock: _pthread_fastlock;
-  end;
-
-  pthread_mutexattr_t = record
-    __mutexkind: cint;
-  end;
-
-  pthread_cond_t = record
-    __c_lock: _pthread_fastlock;
-    __c_waiting: pointer;
-    __padding: array[0..48-1-sizeof(_pthread_fastlock)-sizeof(pointer)-sizeof(clonglong)] of byte;
-    __align: clonglong;
-  end;
-
-  pthread_condattr_t = record
-    __dummy: cint;
-  end;
-
-  pthread_key_t = cuint;
-
-  pthread_rwlock_t = record
-    __rw_readers: cint;
-    __rw_writer: pointer;
-    __rw_read_waiting: pointer;
-    __rw_write_waiting: pointer;
-    __rw_kind: cint;
-    __rw_pshared: cint;
-  end;
-
-  pthread_rwlockattr_t = record
-    __lockkind: cint;
-    __pshared: cint;
-  end;
-
-  sem_t = record
-     __sem_lock: _pthread_fastlock;
-     __sem_value: cint;
-     __sem_waiting: pointer;
-  end;
+  clock32_t = int32_t;
+  timeval32 = record
+{ seconds  }
+       tv_sec : time32_t;
+{ and microseconds  }
+       tv_usec : int32_t;
+    end;
 
 
+  timespec32 = record
+{ seconds  }
+       tv_sec : time32_t;
+{ and nanoseconds  }
+       tv_nsec : int32_t;
+    end;
+  timespec32_t = timespec32;
 
-CONST
-    _PTHREAD_MUTEX_TIMED_NP      = 0;
-    _PTHREAD_MUTEX_RECURSIVE_NP  = 1;
-    _PTHREAD_MUTEX_ERRORCHECK_NP = 2;
-    _PTHREAD_MUTEX_ADAPTIVE_NP   = 3;
+  itimerspec32 = record
+       it_interval : timespec32;
+       it_value : timespec32;
+    end;
+  itimerspec32_t = itimerspec32;
 
-    _PTHREAD_MUTEX_NORMAL     = _PTHREAD_MUTEX_TIMED_NP;
-    _PTHREAD_MUTEX_RECURSIVE  = _PTHREAD_MUTEX_RECURSIVE_NP;
-    _PTHREAD_MUTEX_ERRORCHECK = _PTHREAD_MUTEX_ERRORCHECK_NP;
-    _PTHREAD_MUTEX_DEFAULT    = _PTHREAD_MUTEX_NORMAL;
-    _PTHREAD_MUTEX_FAST_NP    = _PTHREAD_MUTEX_ADAPTIVE_NP;
-
-
+const
    { System limits, POSIX value in parentheses, used for buffer and stack allocation }
    { took idefix' values}
 
@@ -225,24 +227,75 @@ CONST
     NAME_MAX       = 255;      {14}    { Maximum number of bytes in filename }
     PATH_MAX       = 4095;     {255}   { Maximum number of bytes in pathname }
     SYS_NMLN       = 65;
-{$ifdef FPC_USE_LIBC}
-   SIG_MAXSIG      = 1024;      // highest signal version
-{$else}
-   SIG_MAXSIG      = 128;       // highest signal version
-{$endif}
+    SIG_MAXSIG      = 128;      // highest signal version
 
  { For getting/setting priority }
   Prio_Process = 0;
   Prio_PGrp    = 1;
   Prio_User    = 2;
 
-{
-   $Log: ptypes.inc,v $
-   Revision 1.2  2005/02/14 17:13:31  peter
-     * truncate log
 
-   Revision 1.1  2005/02/13 22:14:36  peter
-     * new files
+ type
+    pthread_t = cuint;
 
-}
+    pthread_attr_t = record
+      __pthread_attrp : pointer;
+    end;
 
+    pthread_mutexattr_t = record
+      __pthread_mutexattrp : pointer;
+    end;
+
+    pthread_cond_t = record
+      __pthread_cond_flags : record
+        __pthread_cond_flag : array[0..3] of byte;
+        __pthread_cond_type : uint16_t;
+        __pthread_cond_magic : uint16_t;
+      end;
+      __pthread_cond_data : upad64_t;
+    end;
+
+    pthread_condattr_t = record
+      __pthread_condattrp : pointer;
+    end;
+
+    pthread_key_t = cuint;
+
+    pthread_mutex_t = record
+      __pthread_mutex_flags : record
+           __pthread_mutex_flag1 : word;
+           __pthread_mutex_flag2 : byte;
+           __pthread_mutex_ceiling : byte;
+           __pthread_mutex_type : word;
+           __pthread_mutex_magic : word;
+        end;
+      __pthread_mutex_lock : record
+          case longint of
+             0 : ( __pthread_mutex_lock64 : record
+                  __pthread_mutex_pad : array[0..7] of byte;
+               end );
+             1 : ( __pthread_mutex_lock32 : record
+                  __pthread_ownerpid : dword;
+                  __pthread_lockword : dword;
+               end );
+             2 : ( __pthread_mutex_owner64 : qword );
+          end;
+      __pthread_mutex_data : qword;
+    end;
+
+    pthread_rwlock_t = record
+      __pthread_rwlock_readers : int32_t;
+      __pthread_rwlock_type : uint16_t;
+      __pthread_rwlock_magic : uint16_t;
+      __pthread_rwlock_mutex : pthread_mutex_t;
+      __pthread_rwlock_readercv : pthread_cond_t;
+      __pthread_rwlock_writercv : pthread_cond_t;
+    end;
+
+    sem_t = record
+      sem_count : uint32_t;
+      sem_type : uint16_t;
+      sem_magic : uint16_t;
+      sem_pad1 : array[0..2] of upad64_t;
+      sem_pad2 : array[0..1] of upad64_t;
+    end;

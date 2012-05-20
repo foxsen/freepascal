@@ -1,5 +1,4 @@
 {
-    $Id: owbase.pas,v 1.16 2005/04/23 19:42:54 jonas Exp $
     Copyright (c) 1998-2002 by Peter Vreman
 
     Contains the base stuff for writing for object files to disk
@@ -32,43 +31,53 @@ uses
 type
   tobjectwriter=class
   private
-    f      : TCFileStream;
+    f      : TCCustomFileStream;
     opened : boolean;
     buf    : pchar;
-    bufidx : longint;
-    size   : longint;
+    bufidx : longword;
     procedure writebuf;
+  protected
+    fsize,
+    fobjsize  : longword;
   public
     constructor create;
     destructor  destroy;override;
     function  createfile(const fn:string):boolean;virtual;
     procedure closefile;virtual;
     procedure writesym(const sym:string);virtual;
-    procedure write(const b;len:longint);virtual;
-    procedure WriteZeros(l:longint);
+    procedure write(const b;len:longword);virtual;
+    procedure WriteZeros(l:longword);
+    procedure writearray(a:TDynamicArray);
+    property Size:longword read FSize;
+    property ObjSize:longword read FObjSize;
   end;
 
   tobjectreader=class
   private
-    f      : TCFileStream;
+    f      : TCCustomFileStream;
     opened : boolean;
     buf    : pchar;
+    ffilename : string;
     bufidx,
     bufmax : longint;
     function readbuf:boolean;
+  protected
+    function getfilename : string;virtual;
   public
     constructor create;
     destructor  destroy;override;
     function  openfile(const fn:string):boolean;virtual;
     procedure closefile;virtual;
-    procedure seek(len:longint);
-    function  read(var b;len:longint):boolean;virtual;
+    procedure seek(len:longint);virtual;
+    function  read(out b;len:longint):boolean;virtual;
     function  readarray(a:TDynamicArray;len:longint):boolean;
+    property filename : string read getfilename;
   end;
 
 implementation
 
 uses
+   SysUtils,
    verbose, globals;
 
 const
@@ -84,7 +93,7 @@ begin
   getmem(buf,bufsize);
   bufidx:=0;
   opened:=false;
-  size:=0;
+  fsize:=0;
 end;
 
 
@@ -99,14 +108,15 @@ end;
 function tobjectwriter.createfile(const fn:string):boolean;
 begin
   createfile:=false;
-  f:=TCFileStream.Create(fn,fmCreate);
+  f:=CFileStreamClass.Create(fn,fmCreate);
   if CStreamError<>0 then
     begin
-       Message1(exec_e_cant_create_objectfile,fn);
+       Message2(exec_e_cant_create_objectfile,fn,IntToStr(CStreamError));
        exit;
     end;
   bufidx:=0;
-  size:=0;
+  fsize:=0;
+  fobjsize:=0;
   opened:=true;
   createfile:=true;
 end;
@@ -122,9 +132,10 @@ begin
   f.free;
 { Remove if size is 0 }
   if size=0 then
-   RemoveFile(fn);
+   DeleteFile(fn);
   opened:=false;
-  size:=0;
+  fsize:=0;
+  fobjsize:=0;
 end;
 
 
@@ -140,24 +151,25 @@ begin
 end;
 
 
-procedure tobjectwriter.write(const b;len:longint);
+procedure tobjectwriter.write(const b;len:longword);
 var
   p   : pchar;
-  left,
-  idx : longint;
+  bufleft,
+  idx : longword;
 begin
-  inc(size,len);
+  inc(fsize,len);
+  inc(fobjsize,len);
   p:=pchar(@b);
   idx:=0;
   while len>0 do
    begin
-     left:=bufsize-bufidx;
-     if len>left then
+     bufleft:=bufsize-bufidx;
+     if len>bufleft then
       begin
-        move(p[idx],buf[bufidx],left);
-        dec(len,left);
-        inc(idx,left);
-        inc(bufidx,left);
+        move(p[idx],buf[bufidx],bufleft);
+        dec(len,bufleft);
+        inc(idx,bufleft);
+        inc(bufidx,bufleft);
         writebuf;
       end
      else
@@ -170,9 +182,9 @@ begin
 end;
 
 
-procedure tobjectwriter.WriteZeros(l:longint);
+procedure tobjectwriter.WriteZeros(l:longword);
 var
-  empty : array[0..255] of byte;
+  empty : array[0..1023] of byte;
 begin
   if l>sizeof(empty) then
     internalerror(200404081);
@@ -184,15 +196,29 @@ begin
 end;
 
 
+procedure tobjectwriter.writearray(a:TDynamicArray);
+var
+  hp : pdynamicblock;
+begin
+  hp:=a.firstblock;
+  while assigned(hp) do
+    begin
+      write(hp^.data,hp^.used);
+      hp:=hp^.next;
+    end;
+end;
+
+
 {****************************************************************************
                               TObjectReader
 ****************************************************************************}
 
 constructor tobjectreader.create;
 begin
-  getmem(buf,bufsize);
+  buf:=nil;
   bufidx:=0;
   bufmax:=0;
+  ffilename:='';
   opened:=false;
 end;
 
@@ -200,22 +226,25 @@ end;
 destructor tobjectreader.destroy;
 begin
   if opened then
-   closefile;
-  freemem(buf,bufsize);
+    closefile;
 end;
 
 
 function tobjectreader.openfile(const fn:string):boolean;
 begin
   openfile:=false;
-  f:=TCFileStream.Create(fn,fmOpenRead);
+  f:=CFileStreamClass.Create(fn,fmOpenRead);
   if CStreamError<>0 then
     begin
-       Message1(exec_e_cant_create_objectfile,fn);
+       Comment(V_Error,'Can''t open object file: '+fn);
        exit;
     end;
+  ffilename:=fn;
+  getmem(buf,f.Size);
+  f.read(buf^,f.Size);
+  bufmax:=f.Size;
+  f.free;
   bufidx:=0;
-  bufmax:=0;
   opened:=true;
   openfile:=true;
 end;
@@ -223,111 +252,53 @@ end;
 
 procedure tobjectreader.closefile;
 begin
-  f.free;
   opened:=false;
   bufidx:=0;
   bufmax:=0;
+  freemem(buf);
 end;
 
 
 function tobjectreader.readbuf:boolean;
 begin
-  bufmax:=f.read(buf^,bufsize);
-  bufidx:=0;
-  readbuf:=(bufmax>0);
+  result:=bufidx<bufmax;
 end;
 
 
 procedure tobjectreader.seek(len:longint);
 begin
-  f.seek(len,soFromBeginning);
-  bufidx:=0;
-  bufmax:=0;
+  bufidx:=len;
 end;
 
 
-function tobjectreader.read(var b;len:longint):boolean;
-var
-  p   : pchar;
-  left,
-  idx : longint;
+function tobjectreader.read(out b;len:longint):boolean;
 begin
-  read:=false;
-  if bufmax=0 then
-   if not readbuf then
-    exit;
-  p:=pchar(@b);
-  idx:=0;
-  while len>0 do
-   begin
-     left:=bufmax-bufidx;
-     if len>left then
-      begin
-        move(buf[bufidx],p[idx],left);
-        dec(len,left);
-        inc(idx,left);
-        inc(bufidx,left);
-        if not readbuf then
-         exit;
-      end
-     else
-      begin
-        move(buf[bufidx],p[idx],len);
-        inc(bufidx,len);
-        inc(idx,len);
-        break;
-      end;
-   end;
-  read:=(idx=len);
+  result:=true;
+  if bufidx+len>bufmax then
+    begin
+      result:=false;
+      len:=bufmax-bufidx;
+    end;
+  move(buf[bufidx],b,len);
+  inc(bufidx,len);
 end;
 
 
 function tobjectreader.readarray(a:TDynamicArray;len:longint):boolean;
-var
-  orglen,
-  left,
-  idx : longint;
 begin
-  readarray:=false;
-  if bufmax=0 then
-   if not readbuf then
-    exit;
-  orglen:=len;
-  idx:=0;
-  while len>0 do
-   begin
-     left:=bufmax-bufidx;
-     if len>left then
-      begin
-        a.Write(buf[bufidx],left);
-        dec(len,left);
-        inc(idx,left);
-        inc(bufidx,left);
-        if not readbuf then
-         exit;
-      end
-     else
-      begin
-        a.Write(buf[bufidx],len);
-        inc(bufidx,len);
-        inc(idx,len);
-        break;
-      end;
-   end;
-  readarray:=(idx=orglen);
+  result:=true;
+  if bufidx+len>bufmax then
+    begin
+      result:=false;
+      len:=bufmax-bufidx;
+    end;
+  a.write(buf[bufidx],len);
+  inc(bufidx,len);
 end;
 
+function tobjectreader.getfilename : string;
+  begin
+    result:=ffilename;
+  end;
 
 end.
-{
-  $Log: owbase.pas,v $
-  Revision 1.16  2005/04/23 19:42:54  jonas
-    * fixed deletefile -> removefile
-
-  Revision 1.15  2005/04/23 14:15:58  hajny
-    * DeleteFile replaced with RemoveFile to avoid duplicate
-
-  Revision 1.14  2005/02/14 17:13:07  peter
-    * truncate log
-
-}

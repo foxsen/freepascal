@@ -1,5 +1,4 @@
 {
-    $Id: wvphelp.pas,v 1.5 2005/02/14 17:13:19 peter Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 2000 by Berczi Gabor
 
@@ -169,7 +168,7 @@ begin
   inherited Done;
 end;
 
-function CreateProc(const FileName,Param: string;Index : longint): PHelpFile; {$ifndef FPC}far;{$endif}
+function CreateProc(const FileName,Param: string;Index : longint): PHelpFile;
 begin
   CreateProc:=New(PVPHHelpFile, Init(FileName,Index));
 end;
@@ -180,9 +179,3 @@ begin
 end;
 
 END.
-{
-  $Log: wvphelp.pas,v $
-  Revision 1.5  2005/02/14 17:13:19  peter
-    * truncate log
-
-}

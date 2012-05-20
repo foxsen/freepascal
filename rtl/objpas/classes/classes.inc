@@ -1,5 +1,4 @@
 {
-    $Id: classes.inc,v 1.27 2005/04/28 09:15:44 florian Exp $
     This file is part of the Free Component Library (FCL)
     Copyright (c) 1999-2000 by Michael Van Canneyt and Florian Klaempfl
 
@@ -58,11 +57,7 @@ var
 { TStrings and TStringList implementations }
 {$i stringl.inc}
 
-{$ifndef VER1_0}
 { TThread implementation }
-
-{ system dependend code }
-{$i tthread.inc}
 
 { system independend threading code }
 var
@@ -79,19 +74,82 @@ var
   { caught exception in gui thread, to be raised in calling thread }
   SynchronizeException: Exception;
 
-procedure TThread.Synchronize(Method: TThreadMethod);
+
+function ThreadProc(ThreadObjPtr: Pointer): PtrInt;
+  var
+    FreeThread: Boolean;
+    Thread: TThread absolute ThreadObjPtr;
+  begin
+    { if Suspend checks FSuspended before doing anything, make sure it }
+    { knows we're currently not suspended (this flag may have been set }
+    { to true if CreateSuspended was true)                             }
+//    Thread.FSuspended:=false;
+    // wait until AfterConstruction has been called, so we cannot
+    // free ourselves before TThread.Create has finished
+    // (since that one may check our VTM in case of $R+, and
+    //  will call the AfterConstruction method in all cases)
+//    Thread.Suspend;
+    try
+      { The thread may be already terminated at this point, e.g. if it was intially
+        suspended, or if it wasn't ever scheduled for execution for whatever reason.
+        So bypass user code if terminated. }
+      if not Thread.Terminated then
+        Thread.Execute;
+    except
+      Thread.FFatalException := TObject(AcquireExceptionObject);
+    end;
+    FreeThread := Thread.FFreeOnTerminate;
+    Result := Thread.FReturnValue;
+    Thread.FFinished := True;
+    Thread.DoTerminate;
+    if FreeThread then
+      Thread.Free;
+    EndThread(Result);
+  end;
+
+{ system-dependent code }
+{$i tthread.inc}
+
+procedure TThread.Start;
+begin
+  { suspend/resume are now deprecated in Delphi (they also don't work
+    on most platforms in FPC), so a different method was required
+    to start a thread if it's create with fSuspended=true -> that's
+    what this method is for. }
+  Resume;
+end;
+
+function TThread.GetSuspended: Boolean;
+begin
+  GetSuspended:=FSuspended;
+end;
+
+
+procedure TThread.AfterConstruction;
+begin
+  inherited AfterConstruction;
+// enable for all platforms once http://bugs.freepascal.org/view.php?id=16884
+// is fixed for all platforms (in case the fix for non-unix platforms also
+// requires this field at least)
+{$if defined(unix) or defined(windows)}
+  if not FInitialSuspended then
+    Resume;
+{$endif}
+end;
+
+
+class procedure TThread.Synchronize(AThread: TThread; AMethod: TThreadMethod);
   var
     LocalSyncException: Exception;
   begin
     { do we really need a synchronized call? }
     if GetCurrentThreadID=MainThreadID then
-      Method()
+      AMethod()
     else
       begin
-        EnterCriticalSection(SynchronizeCritSect);
-        RtlEventStartWait(ExecuteEvent);
+        System.EnterCriticalSection(SynchronizeCritSect);
         SynchronizeException:=nil;
-        SynchronizeMethod:=Method;
+        SynchronizeMethod:=AMethod;
 
         { be careful, after this assignment Method could be already executed }
         DoSynchronizeMethod:=true;
@@ -99,29 +157,38 @@ procedure TThread.Synchronize(Method: TThreadMethod);
         RtlEventSetEvent(SynchronizeTimeoutEvent);
 
         if assigned(WakeMainThread) then
-          WakeMainThread(self);
+          WakeMainThread(AThread);
 
         { wait infinitely }
         RtlEventWaitFor(ExecuteEvent);
         LocalSyncException:=SynchronizeException;
-        LeaveCriticalSection(SynchronizeCritSect);
+        System.LeaveCriticalSection(SynchronizeCritSect);
         if assigned(LocalSyncException) then
           raise LocalSyncException;
       end;
   end;
 
 
-procedure CheckSynchronize(timeout : longint=0);
+procedure TThread.Synchronize(AMethod: TThreadMethod);
+  begin
+    TThread.Synchronize(self,AMethod);
+  end;
+
+
+function CheckSynchronize(timeout : longint=0) : boolean;
   { assumes being called from GUI thread }
   begin
-    { sanity check }
-    if GetCurrentThreadID<>MainThreadID then
+    result:=false;
+    { first sanity check }
+    if Not IsMultiThread then
+      Exit
+    { second sanity check }
+    else if GetCurrentThreadID<>MainThreadID then
       raise EThread.CreateFmt(SCheckSynchronizeError,[GetCurrentThreadID])
     else
       begin
         if timeout>0 then
           begin
-            RtlEventStartWait(SynchronizeTimeoutEvent);
             RtlEventWaitFor(SynchronizeTimeoutEvent,timeout);
           end
          else
@@ -129,21 +196,23 @@ procedure CheckSynchronize(timeout : longint=0);
 
         if DoSynchronizeMethod then
           begin
+            DoSynchronizeMethod:=false;
             try
               SynchronizeMethod;
+              result:=true;
             except
               SynchronizeException:=Exception(AcquireExceptionObject);
             end;
-            DoSynchronizeMethod:=false;
             RtlEventSetEvent(ExecuteEvent);
           end;
       end;
   end;
 
-{$endif}
-
 { TPersistent implementation }
 {$i persist.inc }
+
+{$i sllist.inc}
+{$i resref.inc}
 
 { TComponent implementation }
 {$i compon.inc}
@@ -160,13 +229,75 @@ procedure CheckSynchronize(timeout : longint=0);
 
 
 { Interface related stuff }
-{$ifdef HASINTF}
 {$I intf.inc}
-{$endif HASINTF}
 
 {**********************************************************************
  *       Miscellaneous procedures and functions                       *
  **********************************************************************}
+
+function ExtractStrings(Separators, WhiteSpace: TSysCharSet; Content: PChar; Strings: TStrings): Integer;
+var
+  b, c : pchar;
+
+  procedure SkipWhitespace;
+    begin
+      while (c^ in Whitespace) do
+        inc (c);
+    end;
+
+  procedure AddString;
+    var
+      l : integer;
+      s : string;
+    begin
+      l := c-b;
+      if l > 0 then
+        begin
+          if assigned(Strings) then
+            begin
+              setlength(s, l);
+              move (b^, s[1],l);
+              Strings.Add (s);
+            end;
+          inc (result);
+        end;
+    end;
+
+var
+  quoted : char;
+begin
+  result := 0;
+  c := Content;
+  Quoted := #0;
+  Separators := Separators + [#13, #10] - ['''','"'];
+  SkipWhitespace;
+  b := c;
+  while (c^ <> #0) do
+    begin
+      if (c^ = Quoted) then
+        begin
+          if ((c+1)^ = Quoted) then
+            inc (c)
+          else
+            Quoted := #0
+        end
+      else if (Quoted = #0) and (c^ in ['''','"']) then
+        Quoted := c^;
+      if (Quoted = #0) and (c^ in Separators) then
+        begin
+          AddString;
+          inc (c);
+          SkipWhitespace;
+          b := c;
+        end
+      else
+        inc (c);
+    end;
+  if (c <> b) then
+    AddString;
+end;
+
+
 
 { Point and rectangle constructors }
 
@@ -218,14 +349,41 @@ begin
 end;
 
 
+function PointsEqual(const P1, P2: TPoint): Boolean; {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
+  begin
+    { lazy, but should work }
+    result:=QWord(P1)=QWord(P2);
+  end;
 
+
+function PointsEqual(const P1, P2: TSmallPoint): Boolean; {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
+  begin
+    { lazy, but should work }
+    result:=DWord(P1)=DWord(P2);
+  end;
+
+function InvalidPoint(X, Y: Integer): Boolean;
+  begin
+    result:=(X=-1) and (Y=-1);
+  end;
+
+
+function InvalidPoint(const At: TPoint): Boolean;
+  begin
+    result:=(At.x=-1) and (At.y=-1);
+  end;
+
+
+function InvalidPoint(const At: TSmallPoint): Boolean;
+  begin
+    result:=(At.x=-1) and (At.y=-1);
+  end;
 
 
 { Object filing routines }
 
 var
   IntConstList: TThreadList;
-
 
 type
   TIntConst = class
@@ -325,44 +483,8 @@ begin
 end;
 
 { TPropFixup }
-
-type
-  TPropFixup = class
-    FInstance: TPersistent;
-    FInstanceRoot: TComponent;
-    FPropInfo: PPropInfo;
-    FRootName: string;
-    FName: string;
-    constructor Create(AInstance: TPersistent; AInstanceRoot: TComponent;
-      APropInfo: PPropInfo; const ARootName, AName: String);
-    function MakeGlobalReference: Boolean;
-  end;
-
-var
-  GlobalFixupList: TThreadList;
-
-constructor TPropFixup.Create(AInstance: TPersistent; AInstanceRoot: TComponent;
-  APropInfo: PPropInfo; const ARootName, AName: String);
-begin
-  FInstance := AInstance;
-  FInstanceRoot := AInstanceRoot;
-  FPropInfo := APropInfo;
-  FRootName := ARootName;
-  FName := AName;
-end;
-
-function TPropFixup.MakeGlobalReference: Boolean;
-var
-  i: Integer;
-begin
-  i := Pos('.', FName);
-  if i = 0 then
-    exit(False);
-  FRootName := Copy(FName, 1, i - 1);
-  FName := Copy(FName, i + 1, Length(FName));
-  Result := True;
-end;
-
+// Tainted. TPropFixup is being removed.
+ 
 Type
   TInitHandler = Class(TObject)
     AHandler : TInitComponentHandler;
@@ -375,17 +497,17 @@ Var
 
 procedure RegisterFindGlobalComponentProc(AFindGlobalComponent: TFindGlobalComponent);
   begin
-  	if not(assigned(FindGlobalComponentList)) then
-  	  FindGlobalComponentList:=TList.Create;
-  	if FindGlobalComponentList.IndexOf(Pointer(AFindGlobalComponent))<0 then
-  	  FindGlobalComponentList.Add(Pointer(AFindGlobalComponent));
+    if not(assigned(FindGlobalComponentList)) then
+      FindGlobalComponentList:=TList.Create;
+    if FindGlobalComponentList.IndexOf(Pointer(AFindGlobalComponent))<0 then
+      FindGlobalComponentList.Add(Pointer(AFindGlobalComponent));
   end;
 
 
 procedure UnregisterFindGlobalComponentProc(AFindGlobalComponent: TFindGlobalComponent);
   begin
-  	if assigned(FindGlobalComponentList) then
-  	  FindGlobalComponentList.Remove(Pointer(AFindGlobalComponent));
+    if assigned(FindGlobalComponentList) then
+      FindGlobalComponentList.Remove(Pointer(AFindGlobalComponent));
   end;
 
 
@@ -393,8 +515,8 @@ function FindGlobalComponent(const Name: string): TComponent;
   var
   	i : sizeint;
   begin
-  	FindGlobalComponent:=nil;
-  	if assigned(FindGlobalComponentList) then
+    FindGlobalComponent:=nil;
+    if assigned(FindGlobalComponentList) then
       begin
       	for i:=FindGlobalComponentList.Count-1 downto 0 do
       	  begin
@@ -407,31 +529,85 @@ function FindGlobalComponent(const Name: string): TComponent;
 
 
 procedure RegisterInitComponentHandler(ComponentClass: TComponentClass;   Handler: TInitComponentHandler);
-
 Var
   I : Integer;
   H: TInitHandler;
-
 begin
   If (InitHandlerList=Nil) then
     InitHandlerList:=TList.Create;
   H:=TInitHandler.Create;
   H.Aclass:=ComponentClass;
   H.AHandler:=Handler;
-  With InitHandlerList do
-    begin
-    I:=0;
-    While (I<Count) and not H.AClass.InheritsFrom(TInitHandler(Items[i]).AClass) do
-      Inc(I);
-    InitHandlerList.Insert(I,H);
-    end;
+  try
+    With InitHandlerList do
+      begin
+        I:=0;
+        While (I<Count) and not H.AClass.InheritsFrom(TInitHandler(Items[I]).AClass) do
+          Inc(I);
+        { override? }
+        if (I<Count) and (TInitHandler(Items[I]).AClass=H.AClass) then
+          begin
+            TInitHandler(Items[I]).AHandler:=Handler;
+            H.Free;
+          end
+        else
+          InitHandlerList.Insert(I,H);
+      end;
+   except
+     H.Free;
+     raise;
+  end;
 end;
 
-function InitInheritedComponent(Instance: TComponent; RootAncestor: TClass): Boolean;
 
+{ all targets should at least include the sysres.inc dummy in the system unit to compile this }
+function CreateComponentfromRes(const res : string;Inst : THandle;var Component : TComponent) : Boolean;
+  var
+    ResStream : TResourceStream;
+  begin
+    result:=true;
+
+    if Inst=0 then
+      Inst:=HInstance;
+
+    try
+      ResStream:=TResourceStream.Create(Inst,res,RT_RCDATA);
+      try
+        Component:=ResStream.ReadComponent(Component);
+      finally
+        ResStream.Free;
+      end;
+    except
+      on EResNotFound do
+        result:=false;
+    end;
+  end;
+
+
+function DefaultInitHandler(Instance: TComponent; RootAncestor: TClass): Boolean;
+
+  function doinit(_class : TClass) : boolean;
+    begin
+      result:=false;
+      if (_class.ClassType=TComponent) or (_class.ClassType=RootAncestor) then
+        exit;
+      result:=doinit(_class.ClassParent);
+      result:=CreateComponentfromRes(_class.ClassName,0,Instance) or result;
+    end;
+
+  begin
+    GlobalNameSpace.BeginWrite;
+    try
+      result:=doinit(Instance.ClassType);
+    finally
+      GlobalNameSpace.EndWrite;
+    end;
+  end;
+
+
+function InitInheritedComponent(Instance: TComponent; RootAncestor: TClass): Boolean;
 Var
   I : Integer;
-
 begin
   I:=0;
   if not Assigned(InitHandlerList) then begin
@@ -503,248 +679,61 @@ begin
 end;
 
 
-procedure GlobalFixupReferences;
-var
-  GlobalList, DoneList, ToDoList: TList;
-  I, Index: Integer;
-  Root: TComponent;
-  Instance: TPersistent;
-  Reference: Pointer;
-begin
-  {!!!: GlobalNameSpace.BeginWrite;
-  try}
-    GlobalList := GlobalFixupList.LockList;
-    try
-      if GlobalList.Count > 0 then
-      begin
-        ToDoList := nil;
-        DoneList := TList.Create;
-        ToDoList := TList.Create;
-        try
-          i := 0;
-          while i < GlobalList.Count do
-            with TPropFixup(GlobalList[i]) do
-            begin
-              Root := FindGlobalComponent(FRootName);
-              if Assigned(Root) or (GetOrdProp(FInstance, FPropInfo) <> 0) then
-              begin
-                if Assigned(Root) then
-                begin
-                  Reference := FindNestedComponent(Root, FName);
-                  SetOrdProp(FInstance, FPropInfo, Longint(Reference));
-                end;
-                // Move component to list of done components, if necessary
-                if (DoneList.IndexOf(FInstance) < 0) and
-                  (ToDoList.IndexOf(FInstance) >= 0) then
-                  DoneList.Add(FInstance);
-                GlobalList.Delete(i);
-                Free;   // ...the fixup
-              end else
-              begin
-                // Move component to list of components to process, if necessary
-                Index := DoneList.IndexOf(FInstance);
-                if Index <> -1 then
-                  DoneList.Delete(Index);
-                if ToDoList.IndexOf(FInstance) < 0 then
-                  ToDoList.Add(FInstance);
-                Inc(i);
-              end;
-            end;
-            for i := 0 to DoneList.Count - 1 do
-            begin
-              Instance := TPersistent(DoneList[I]);
-              if Instance.InheritsFrom(TComponent) then
-                Exclude(TComponent(Instance).FComponentState, csFixups);
-            end;
-          finally
-            ToDoList.Free;
-            DoneList.Free;
-          end;
-        end;
-    finally
-      GlobalFixupList.UnlockList;
-    end;
-  {finally
-    GlobalNameSpace.EndWrite;
-  end;}
-end;
+Function FindNestedComponent(Root : TComponent; APath : String; CStyle : Boolean = True) : TComponent;
 
-
-function IsStringInList(const AString: String; AList: TStrings): Boolean;
-var
-  i: Integer;
-begin
-  for i := 0 to AList.Count - 1 do
-    if CompareText(AList[i], AString) = 0 then
-      exit(True);
-  Result := False;
-end;
-
-
-procedure GetFixupReferenceNames(Root: TComponent; Names: TStrings);
-var
-  i: Integer;
-  CurFixup: TPropFixup;
-begin
-  with GlobalFixupList.LockList do
-    try
-      for i := 0 to Count - 1 do
-      begin
-        CurFixup := TPropFixup(Items[i]);
-        if ((not Assigned(Root)) or (CurFixup.FInstanceRoot = Root)) and
-          not IsStringInList(CurFixup.FRootName, Names) then
-          Names.Add(CurFixup.FRootName);
-      end;
-    finally
-      GlobalFixupList.UnlockList;
-    end;
-end;
-
-
-procedure GetFixupInstanceNames(Root: TComponent;
-  const ReferenceRootName: string; Names: TStrings);
-var
-  i: Integer;
-  CurFixup: TPropFixup;
-begin
-  with GlobalFixupList.LockList do
-    try
-      for i := 0 to Count - 1 do
-      begin
-        CurFixup := TPropFixup(Items[i]);
-        if (CurFixup.FInstanceRoot = Root) and
-          (UpperCase(ReferenceRootName) = UpperCase(CurFixup.FRootName)) and
-          not IsStringInList(CurFixup.FName, Names) then
-          Names.Add(CurFixup.FName);
-      end;
-    finally
-      GlobalFixupList.UnlockList;
-    end;
-end;
-
-
-procedure RedirectFixupReferences(Root: TComponent; const OldRootName,
-  NewRootName: string);
-var
-  i: Integer;
-  CurFixup: TPropFixup;
-begin
-  with GlobalFixupList.LockList do
-    try
-      for i := 0 to Count - 1 do
-      begin
-        CurFixup := TPropFixup(Items[i]);
-        if ((not Assigned(Root)) or (CurFixup.FInstanceRoot = Root)) and
-          (UpperCase(OldRootName) = UpperCase(CurFixup.FRootName)) then
-          CurFixup.FRootName := NewRootName;
-      end;
-      GlobalFixupReferences;
-    finally
-      GlobalFixupList.Unlocklist;
-    end;
-end;
-
-
-procedure RemoveFixupReferences(Root: TComponent; const RootName: string);
-var
-  i: Integer;
-  CurFixup: TPropFixup;
-begin
-  if not Assigned(GlobalFixupList) then
-    exit;
-
-  with GlobalFixupList.LockList do
-    try
-      for i := Count - 1 downto 0 do
-      begin
-        CurFixup := TPropFixup(Items[i]);
-        if ((not Assigned(Root)) or (CurFixup.FInstanceRoot = Root)) and
-          ((Length(RootName) = 0) or
-          (UpperCase(RootName) = UpperCase(CurFixup.FRootName))) then
-        begin
-          Delete(i);
-          CurFixup.Free;
-        end;
-      end;
-    finally
-      GlobalFixupList.UnlockList;
-    end;
-end;
-
-
-procedure RemoveFixups(Instance: TPersistent);
-var
-  i: Integer;
-  CurFixup: TPropFixup;
-begin
-  if not Assigned(GlobalFixupList) then
-    exit;
-
-  with GlobalFixupList.LockList do
-    try
-      for i := Count - 1 downto 0 do
-      begin
-        CurFixup := TPropFixup(Items[i]);
-        if (CurFixup.FInstance = Instance) then
-        begin
-          Delete(i);
-          CurFixup.Free;
-        end;
-      end;
-    finally
-      GlobalFixupList.UnlockList;
-    end;
-end;
-
-
-function FindNestedComponent(Root: TComponent; const NamePath: string): TComponent;
-var
-  Current, Found: TComponent;
-  s, p: PChar;
-  Name: String;
-begin
-  Result := nil;
-  if Length(NamePath) > 0 then
+  Function GetNextName : String; {$ifdef CLASSESINLINE} inline; {$endif CLASSESINLINE}
+  
+  Var
+    P : Integer;
+    CM : Boolean;
+    
   begin
-    Current := Root;
-    p := PChar(NamePath);
-    while p[0] <> #0 do
-    begin
-      s := p;
-      while not (p^ in ['.', '-', #0]) do
-        Inc(p);
-      SetString(Name, s, p - s);
-      Found := Current.FindComponent(Name);
-      if (not Assigned(Found)) and (UpperCase(Name) = 'OWNER') then
-        Found := Current;
-      if not Assigned(Found) then exit;
-
-      // Remove the dereference operator from the name
-      if p[0] = '.' then
-        Inc(P);
-      if p[0] = '-' then
-        Inc(P);
-      if p[0] = '>' then
-        Inc(P);
-
-      Current := Found;
-    end;
+    P:=Pos('.',APath);
+    CM:=False;
+    If (P=0) then
+      begin
+      If CStyle then
+        begin
+        P:=Pos('->',APath);
+        CM:=P<>0;
+        end;
+      If (P=0) Then
+        P:=Length(APath)+1;
+      end;
+    Result:=Copy(APath,1,P-1);
+    Delete(APath,1,P+Ord(CM));
   end;
-  Result := Current;
+
+Var
+  C : TComponent;
+  S : String;
+begin
+  If (APath='') then
+    Result:=Nil
+  else
+    begin
+    Result:=Root;
+    While (APath<>'') And (Result<>Nil) do
+      begin
+      C:=Result;
+      S:=Uppercase(GetNextName);
+      Result:=C.FindComponent(S);
+      If (Result=Nil) And (S='OWNER') then
+        Result:=C;
+      end;
+    end;
 end;
 
-{!!!: Should be threadvar  -  doesn't work for all platforms yet!}
-var
-  GlobalLoaded, GlobalLists: TList;
-
+threadvar
+  GlobalLoaded, GlobalLists: TFpList;
 
 procedure BeginGlobalLoading;
 
 begin
   if not Assigned(GlobalLists) then
-    GlobalLists := TList.Create;
+    GlobalLists := TFpList.Create;
   GlobalLists.Add(GlobalLoaded);
-  GlobalLoaded := TList.Create;
+  GlobalLoaded := TFpList.Create;
 end;
 
 
@@ -762,7 +751,7 @@ procedure EndGlobalLoading;
 begin
   { Free the memory occupied by BeginGlobalLoading }
   GlobalLoaded.Free;
-  GlobalLoaded := TList(GlobalLists.Last);
+  GlobalLoaded := TFpList(GlobalLists.Last);
   GlobalLists.Delete(GlobalLists.Count - 1);
   if GlobalLists.Count = 0 then
   begin
@@ -778,6 +767,48 @@ begin
   CollectionsEqual:=false;
 end;
 
+function CollectionsEqual(C1, C2: TCollection; Owner1, Owner2: TComponent): Boolean;
+
+  procedure stream_collection(s : tstream;c : tcollection;o : tcomponent);
+    var
+      w : twriter;
+    begin
+      w:=twriter.create(s,4096);
+      try
+        w.root:=o;
+        w.flookuproot:=o;
+        w.writecollection(c);
+      finally
+        w.free;
+      end;
+    end;
+
+  var
+    s1,s2 : tmemorystream;
+  begin
+    result:=false;
+    if (c1.classtype<>c2.classtype) or
+      (c1.count<>c2.count) then
+      exit;
+    if c1.count = 0 then
+      begin
+      result:= true;
+      exit;
+      end;
+    s1:=tmemorystream.create;
+    try
+      s2:=tmemorystream.create;
+      try
+        stream_collection(s1,c1,owner1);
+        stream_collection(s2,c2,owner2);
+        result:=(s1.size=s2.size) and (CompareChar(s1.memory^,s2.memory^,s1.size)=0);
+      finally
+        s2.free;
+      end;
+    finally
+      s1.free;
+    end;
+  end;
 
 
 { Object conversion routines }
@@ -791,13 +822,11 @@ begin
   inc(pchar(P));
 end;
 
-{$ifdef HASWIDESTRING}
 function WideCharToOrd(var P: Pointer): Cardinal;
 begin
   result:= ord(pwidechar(P)^);
   inc(pwidechar(P));
 end;
-{$endif HASWIDESTRING}
 
 function Utf8ToOrd(var P:Pointer): Cardinal;
 begin
@@ -823,7 +852,7 @@ begin
     end;
 end;
 
-procedure ObjectBinaryToText(Input, Output: TStream);
+procedure ObjectBinaryToText(Input, Output: TStream; Encoding: TObjectTextEncoding);
 
   procedure OutStr(s: String);
   begin
@@ -833,75 +862,176 @@ procedure ObjectBinaryToText(Input, Output: TStream);
 
   procedure OutLn(s: String);
   begin
-    OutStr(s + #10);
+    OutStr(s + LineEnding);
   end;
 
-  procedure Outchars(P, LastP : Pointer; CharToOrdFunc: CharToOrdFuncty);
+  procedure Outchars(P, LastP : Pointer; CharToOrdFunc: CharToOrdFuncty;
+    UseBytes: boolean = false);
 
   var
     res, NewStr: String;
     w: Cardinal;
     InString, NewInString: Boolean;
   begin
+   if p = nil then begin
+    res:= '''''';
+   end
+   else 
+    begin
     res := '';
     InString := False;
-    while P < LastP do begin
+    while P < LastP do 
+      begin
       NewInString := InString;
       w := CharToOrdfunc(P);
-      if w = ord('''') then  //quote char
-        if InString then NewStr := ''''''
-        else NewStr := ''''''''
-      else if (Ord(w) >= 32) and (Ord(w) < 127) then begin //printable ascii
+      if w = ord('''') then 
+        begin //quote char
+        if not InString then
+          NewInString := True;
+        NewStr := '''''';
+        end 
+      else if (Ord(w) >= 32) and ((Ord(w) < 127) or (UseBytes and (Ord(w)<256))) then
+        begin //printable ascii or bytes
         if not InString then
           NewInString := True;
         NewStr := char(w);
-      end else begin //ascii control chars, non ascii
+        end 
+      else 
+        begin //ascii control chars, non ascii
         if InString then
           NewInString := False;
         NewStr := '#' + IntToStr(w);
-      end;
-      if NewInString <> InString then begin
+        end;
+      if NewInString <> InString then 
+        begin
         NewStr := '''' + NewStr;
         InString := NewInString;
-      end;
+        end;
       res := res + NewStr;
+      end;
+    if InString then 
+      res := res + '''';
     end;
-    if InString then res := res + '''';
-    OutStr(res);
+   OutStr(res);
   end;
 
   procedure OutString(s: String);
-
   begin
-    OutChars(Pointer(S),PChar(S)+Length(S),@CharToOrd);
+    OutChars(Pointer(S),PChar(S)+Length(S),@CharToOrd,Encoding=oteLFM);
   end;
 
   procedure OutWString(W: WideString);
-
   begin
-{$ifdef HASWIDESTRING}
     OutChars(Pointer(W),pwidechar(W)+Length(W),@WideCharToOrd);
-{$endif HASWIDESTRING}
+  end;
+
+  procedure OutUString(W: UnicodeString);
+  begin
+    OutChars(Pointer(W),pwidechar(W)+Length(W),@WideCharToOrd);
   end;
 
   procedure OutUtf8Str(s: String);
   begin
-    OutChars(Pointer(S),PChar(S)+Length(S),@Utf8ToOrd);
+    if Encoding=oteLFM then
+      OutChars(Pointer(S),PChar(S)+Length(S),@CharToOrd)
+    else
+      OutChars(Pointer(S),PChar(S)+Length(S),@Utf8ToOrd);
   end;
 
-  function ReadInt(ValueType: TValueType): LongInt;
+  function ReadWord : word; {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
+  begin
+    Result:=Input.ReadWord;
+    Result:=LEtoN(Result);
+  end;
+
+  function ReadDWord : longword; {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
+  begin
+    Result:=Input.ReadDWord;
+    Result:=LEtoN(Result);
+  end;
+
+  function ReadQWord : qword; {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
+  begin
+    Input.ReadBuffer(Result,sizeof(Result));
+    Result:=LEtoN(Result);
+  end;
+
+{$ifndef FPUNONE}
+  {$IFNDEF FPC_HAS_TYPE_EXTENDED}
+  function ExtendedToDouble(e : pointer) : double;
+  var mant : qword;
+      exp : smallint;
+      sign : boolean;
+      d : qword;
+  begin
+    move(pbyte(e)[0],mant,8); //mantissa         : bytes 0..7
+    move(pbyte(e)[8],exp,2);  //exponent and sign: bytes 8..9
+    mant:=LEtoN(mant);
+    exp:=LetoN(word(exp));
+    sign:=(exp and $8000)<>0;
+    if sign then exp:=exp and $7FFF;
+    case exp of
+          0 : mant:=0;  //if denormalized, value is too small for double,
+                        //so it's always zero
+      $7FFF : exp:=2047 //either infinity or NaN
+      else
+      begin
+        dec(exp,16383-1023);
+        if (exp>=-51) and (exp<=0) then //can be denormalized
+        begin
+          mant:=mant shr (-exp);
+          exp:=0;
+        end
+        else
+        if (exp<-51) or (exp>2046) then //exponent too large.
+        begin
+          Result:=0;
+          exit;
+        end
+        else //normalized value
+          mant:=mant shl 1; //hide most significant bit
+      end;
+    end;
+    d:=word(exp);
+    d:=d shl 52;
+
+    mant:=mant shr 12;
+    d:=d or mant;
+    if sign then d:=d or $8000000000000000;
+    Result:=pdouble(@d)^;
+  end;
+  {$ENDIF}
+{$endif}
+
+  function ReadInt(ValueType: TValueType): Int64;
   begin
     case ValueType of
       vaInt8: Result := ShortInt(Input.ReadByte);
-      vaInt16: Result := SmallInt(Input.ReadWord);
-      vaInt32: Result := LongInt(Input.ReadDWord);
+      vaInt16: Result := SmallInt(ReadWord);
+      vaInt32: Result := LongInt(ReadDWord);
+      vaInt64: Result := Int64(ReadQWord);
     end;
   end;
 
-  function ReadInt: LongInt;
+  function ReadInt: Int64;
   begin
     Result := ReadInt(TValueType(Input.ReadByte));
   end;
+
+{$ifndef FPUNONE}
+  function ReadExtended : extended;
+  {$IFNDEF FPC_HAS_TYPE_EXTENDED}
+  var ext : array[0..9] of byte;
+  {$ENDIF}
+  begin
+    {$IFNDEF FPC_HAS_TYPE_EXTENDED}
+    Input.ReadBuffer(ext[0],10);
+    Result:=ExtendedToDouble(@(ext[0]));
+    {$ELSE}
+    Input.ReadBuffer(Result,sizeof(Result));
+    {$ENDIF}
+  end;
+{$endif}
 
   function ReadSStr: String;
   var
@@ -909,38 +1039,61 @@ procedure ObjectBinaryToText(Input, Output: TStream);
   begin
     len := Input.ReadByte;
     SetLength(Result, len);
-    Input.Read(Result[1], len);
+    if (len > 0) then
+      Input.ReadBuffer(Result[1], len);
   end;
 
   function ReadLStr: String;
   var
     len: DWord;
   begin
-    len := Input.ReadDWord;
+    len := ReadDWord;
     SetLength(Result, len);
-    Input.Read(Result[1], len);
+    if (len > 0) then
+      Input.ReadBuffer(Result[1], len);
   end;
 
   function ReadWStr: WideString;
   var
     len: DWord;
+  {$IFDEF ENDIAN_BIG}
+    i : integer;
+  {$ENDIF}
   begin
-{$ifdef HASWIDESTRING}
-    len := Input.ReadDWord;
+    len := ReadDWord;
     SetLength(Result, len);
-    Input.Read(Pointer(@Result[1])^, len*2);
-{$endif HASWIDESTRING}
+    if (len > 0) then
+    begin
+      Input.ReadBuffer(Pointer(@Result[1])^, len*2);
+      {$IFDEF ENDIAN_BIG}
+      for i:=1 to len do
+        Result[i]:=widechar(SwapEndian(word(Result[i])));
+      {$ENDIF}
+    end;
+  end;
+
+  function ReadUStr: UnicodeString;
+  var
+    len: DWord;
+  {$IFDEF ENDIAN_BIG}
+    i : integer;
+  {$ENDIF}
+  begin
+    len := ReadDWord;
+    SetLength(Result, len);
+    if (len > 0) then
+    begin
+      Input.ReadBuffer(Pointer(@Result[1])^, len*2);
+      {$IFDEF ENDIAN_BIG}
+      for i:=1 to len do
+        Result[i]:=widechar(SwapEndian(word(Result[i])));
+      {$ENDIF}
+    end;
   end;
 
   procedure ReadPropList(indent: String);
 
     procedure ProcessValue(ValueType: TValueType; Indent: String);
-
-      procedure Stop(s: String);
-      begin
-        WriteLn(s);
-        Halt;
-      end;
 
       procedure ProcessBinary;
       var
@@ -948,14 +1101,14 @@ procedure ObjectBinaryToText(Input, Output: TStream);
         lbuf: array[0..31] of Byte;
         s: String;
       begin
-        ToDo := Input.ReadDWord;
+        ToDo := ReadDWord;
         OutLn('{');
         while ToDo > 0 do begin
           DoNow := ToDo;
           if DoNow > 32 then DoNow := 32;
           Dec(ToDo, DoNow);
           s := Indent + '  ';
-          Input.Read(lbuf, DoNow);
+          Input.ReadBuffer(lbuf, DoNow);
           for i := 0 to DoNow - 1 do
             s := s + IntToHex(lbuf[i], 2);
           OutLn(s);
@@ -967,7 +1120,9 @@ procedure ObjectBinaryToText(Input, Output: TStream);
       s: String;
 {      len: LongInt; }
       IsFirst: Boolean;
+{$ifndef FPUNONE}
       ext: Extended;
+{$endif}
 
     begin
       case ValueType of
@@ -987,12 +1142,16 @@ procedure ObjectBinaryToText(Input, Output: TStream);
             OutLn(Indent + ')');
           end;
         vaInt8: OutLn(IntToStr(ShortInt(Input.ReadByte)));
-        vaInt16: OutLn( IntToStr(SmallInt(Input.ReadWord)));
-        vaInt32: OutLn(IntToStr(LongInt(Input.ReadDWord)));
+        vaInt16: OutLn( IntToStr(SmallInt(ReadWord)));
+        vaInt32: OutLn(IntToStr(LongInt(ReadDWord)));
+        vaInt64: OutLn(IntToStr(Int64(ReadQWord)));
+{$ifndef FPUNONE}
         vaExtended: begin
-            Input.Read(ext, SizeOf(ext));
-            OutLn(FloatToStr(ext));
+            ext:=ReadExtended;
+            Str(ext,S);// Do not use localized strings.
+            OutLn(S);
           end;
+{$endif}
         vaString: begin
             OutString(ReadSStr);
             OutLn('');
@@ -1023,6 +1182,11 @@ procedure ObjectBinaryToText(Input, Output: TStream);
           OutWString(ReadWStr);
           OutLn('');
           end;
+        vaUString:
+          begin
+          OutWString(ReadWStr);
+          OutLn('');
+          end;
         vaNil:
           OutLn('nil');
         vaCollection: begin
@@ -1048,7 +1212,7 @@ procedure ObjectBinaryToText(Input, Output: TStream);
             OutLn('');
           end;
         else
-          Stop(IntToStr(Ord(ValueType)));
+          Raise EReadError.CreateFmt(SErrInvalidPropertyType,[Ord(ValueType)]);
       end;
     end;
 
@@ -1103,68 +1267,172 @@ type
   PLongWord = ^LongWord;
 const
   signature: PChar = 'TPF0';
+  
 begin
   if Input.ReadDWord <> PLongWord(Pointer(signature))^ then
     raise EReadError.Create('Illegal stream image' {###SInvalidImage});
   ReadObject('');
 end;
 
+procedure ObjectBinaryToText(Input, Output: TStream);
+begin
+  ObjectBinaryToText(Input,Output,oteDFM);
+end;
 
 procedure ObjectTextToBinary(Input, Output: TStream);
 var
   parser: TParser;
 
-  procedure WriteString(s: String);
+  procedure WriteWord(w : word); {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
   begin
-    Output.WriteByte(Length(s));
+    w:=NtoLE(w);
+    Output.WriteWord(w);
+  end;
+
+  procedure WriteDWord(lw : longword); {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
+  begin
+    lw:=NtoLE(lw);
+    Output.WriteDWord(lw);
+  end;
+
+  procedure WriteQWord(qw : qword); {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
+  begin
+    qw:=NtoLE(qw);
+    Output.WriteBuffer(qw,sizeof(qword));
+  end;
+
+{$ifndef FPUNONE}
+  {$IFNDEF FPC_HAS_TYPE_EXTENDED}
+  procedure DoubleToExtended(d : double; e : pointer);
+  var mant : qword;
+      exp : smallint;
+      sign : boolean;
+  begin
+    mant:=(qword(d) and $000FFFFFFFFFFFFF) shl 12;
+    exp :=(qword(d) shr 52) and $7FF;
+    sign:=(qword(d) and $8000000000000000)<>0;
+    case exp of
+         0 : begin
+               if mant<>0 then  //denormalized value: hidden bit is 0. normalize it
+               begin
+                 exp:=16383-1022;
+                 while (mant and $8000000000000000)=0 do
+                 begin
+                   dec(exp);
+                   mant:=mant shl 1;
+                 end;
+                 dec(exp); //don't shift, most significant bit is not hidden in extended
+               end;
+             end;
+      2047 : exp:=$7FFF //either infinity or NaN
+      else
+      begin
+        inc(exp,16383-1023);
+        mant:=(mant shr 1) or $8000000000000000; //unhide hidden bit
+      end;
+    end;
+    if sign then exp:=exp or $8000;
+    mant:=NtoLE(mant);
+    exp:=NtoLE(word(exp));
+    move(mant,pbyte(e)[0],8); //mantissa         : bytes 0..7
+    move(exp,pbyte(e)[8],2);  //exponent and sign: bytes 8..9
+  end;
+  {$ENDIF}
+
+  procedure WriteExtended(e : extended);
+  {$IFNDEF FPC_HAS_TYPE_EXTENDED}
+  var ext : array[0..9] of byte;
+  {$ENDIF}
+  begin
+    {$IFNDEF FPC_HAS_TYPE_EXTENDED}
+    DoubleToExtended(e,@(ext[0]));
+    Output.WriteBuffer(ext[0],10);
+    {$ELSE}
+    Output.WriteBuffer(e,sizeof(e));
+    {$ENDIF}
+  end;
+{$endif}
+
+  procedure WriteString(s: String);
+  var size : byte;
+  begin
+    if length(s)>255 then size:=255
+    else size:=length(s);
+    Output.WriteByte(size);
     if Length(s) > 0 then
-      Output.Write(s[1], Length(s));
+      Output.WriteBuffer(s[1], size);
   end;
 
   procedure WriteLString(Const s: String);
   begin
-    Output.WriteDWord(Length(s));
+    WriteDWord(Length(s));
     if Length(s) > 0 then
-      Output.Write(s[1], Length(s));
+      Output.WriteBuffer(s[1], Length(s));
   end;
 
-{$ifdef HASWIDESTRING}
   procedure WriteWString(Const s: WideString);
+  var len : longword;
+  {$IFDEF ENDIAN_BIG}
+      i : integer;
+      ws : widestring;
+  {$ENDIF}
   begin
-    Output.WriteDWord(Length(s));
-    if Length(s) > 0 then
-      Output.Write(s[1], Length(s)*sizeof(widechar));
-  end;
-{$endif HASWIDESTRING}
-
-  procedure WriteInteger(value: LongInt);
-  begin
-    if (value >= -128) and (value <= 127) then begin
-      Output.WriteByte(Ord(vaInt8));
-      Output.WriteByte(Byte(value));
-    end else if (value >= -32768) and (value <= 32767) then begin
-      Output.WriteByte(Ord(vaInt16));
-      Output.WriteWord(Word(value));
-    end else begin
-      Output.WriteByte(ord(vaInt32));
-      Output.WriteDWord(LongWord(value));
+    len:=Length(s);
+    WriteDWord(len);
+    if len > 0 then
+    begin
+      {$IFDEF ENDIAN_BIG}
+      setlength(ws,len);
+      for i:=1 to len do
+        ws[i]:=widechar(SwapEndian(word(s[i])));
+      Output.WriteBuffer(ws[1], len*sizeof(widechar));
+      {$ELSE}
+      Output.WriteBuffer(s[1], len*sizeof(widechar));
+      {$ENDIF}
     end;
   end;
 
+  procedure WriteInteger(value: Int64);
+  begin
+    if (value >= -128) and (value <= 127) then begin
+      Output.WriteByte(Ord(vaInt8));
+      Output.WriteByte(byte(value));
+    end else if (value >= -32768) and (value <= 32767) then begin
+      Output.WriteByte(Ord(vaInt16));
+      WriteWord(word(value));
+    end else if (value >= -2147483648) and (value <= 2147483647) then begin
+      Output.WriteByte(Ord(vaInt32));
+      WriteDWord(longword(value));
+    end else begin
+      Output.WriteByte(ord(vaInt64));
+      WriteQWord(qword(value));
+    end;
+  end;
+
+  procedure ProcessWideString(const left : widestring);
+  var ws : widestring;
+  begin
+    ws:=left+parser.TokenWideString;
+    while parser.NextToken = '+' do
+    begin
+      parser.NextToken;   // Get next string fragment
+      if not (parser.Token in [toString,toWString]) then
+        parser.CheckToken(toWString);
+      ws:=ws+parser.TokenWideString;
+    end;
+    Output.WriteByte(Ord(vaWstring));
+    WriteWString(ws);
+  end;
+  
   procedure ProcessProperty; forward;
 
   procedure ProcessValue;
   var
+{$ifndef FPUNONE}
     flt: Extended;
+{$endif}
     s: String;
-{$ifdef HASWIDESTRING}
-    ws: WideString;
-{$else}
-    ws : Ansistring;
-{$endif HASWIDESTRING}
     stream: TMemoryStream;
-    i: Integer;
-    b: Boolean;
   begin
     case parser.Token of
       toInteger:
@@ -1172,59 +1440,43 @@ var
           WriteInteger(parser.TokenInt);
           parser.NextToken;
         end;
+{$ifndef FPUNONE}
       toFloat:
         begin
           Output.WriteByte(Ord(vaExtended));
           flt := Parser.TokenFloat;
-          Output.Write(flt, SizeOf(flt));
+          WriteExtended(flt);
           parser.NextToken;
         end;
+{$endif}
       toString:
         begin
-{$ifdef HASWIDESTRING}
-          ws := parser.TokenWideString;
+          s := parser.TokenString;
           while parser.NextToken = '+' do
           begin
             parser.NextToken;   // Get next string fragment
-            parser.CheckToken(toString);
-            ws := ws + parser.TokenWideString;
-          end;
-          b:= false;
-          for i:= 1 to length(ws) do begin
-            if ord(ws[i]) and $ff00 <> 0 then begin
-              b:= true;
-              break;
+            case parser.Token of
+              toString  : s:=s+parser.TokenString;
+              toWString : begin
+                            ProcessWideString(s);
+                            exit;
+                          end
+              else parser.CheckToken(toString);
             end;
           end;
-          if b then begin
-            Output.WriteByte(Ord(vaWstring));
-            WriteWString(ws);
-            end
-          else
-{$else HASWIDESTRING}
-          ws := parser.TokenString;
-          while parser.NextToken = '+' do
+          if (length(S)>255) then
           begin
-            parser.NextToken;   // Get next string fragment
-            parser.CheckToken(toString);
-            ws := ws + parser.TokenString;
-          end;
-{$endif HASWIDESTRING}
-	    begin
-            setlength(s,length(ws));
-            for i:= 1 to length(s) do begin
-              s[i]:= ws[i]; //cut msb
-            end;
-            if (length(S)>255) then begin
             Output.WriteByte(Ord(vaLString));
             WriteLString(S);
-            end
-            else begin
+          end
+          else
+          begin
             Output.WriteByte(Ord(vaString));
             WriteString(s);
-            end;
           end;
         end;
+      toWString:
+        ProcessWideString('');
       toSymbol:
         begin
           if CompareText(parser.TokenString, 'True') = 0 then
@@ -1295,8 +1547,8 @@ var
           stream := TMemoryStream.Create;
           try
             parser.HexToBinary(stream);
-            Output.WriteDWord(stream.Size);
-            Output.Write(Stream.Memory^, stream.Size);
+            WriteDWord(stream.Size);
+            Output.WriteBuffer(Stream.Memory^, stream.Size);
           finally
             stream.Free;
           end;
@@ -1390,7 +1642,7 @@ const
 begin
   parser := TParser.Create(Input);
   try
-    Output.Write(signature[0], 4);
+    Output.WriteBuffer(signature[0], 4);
     ProcessObject;
   finally
     parser.Free;
@@ -1407,7 +1659,7 @@ end;
 
 procedure ObjectTextToResource(Input, Output: TStream);
 var
-  StartPos, SizeStartPos, BinSize: LongInt;
+  StartPos, FixupInfo: LongInt;
   parser: TParser;
   name: String;
 begin
@@ -1428,19 +1680,10 @@ begin
     Input.Position := StartPos;
   end;
 
-  // Write resource header
   name := UpperCase(name);
-  Output.WriteByte($ff);
-  Output.WriteByte(10);
-  Output.WriteByte(0);
-  Output.Write(name[1], Length(name) + 1);      // Write null-terminated form type name
-  Output.WriteWord($1030);
-  SizeStartPos := Output.Position;
-  Output.WriteDWord(0);                 // Placeholder for data size
-  ObjectTextToBinary(Input, Output);    // Convert the stuff!
-  BinSize := Output.Position - SizeStartPos - 4;
-  Output.Position := SizeStartPos;
-  Output.WriteDWord(BinSize);           // Insert real resource data size
+  Output.WriteResourceHeader(name,FixupInfo); // Write resource header
+  ObjectTextToBinary(Input, Output);          // Convert the stuff!
+  Output.FixupResourceHeader(FixupInfo);      // Insert real resource data size
 end;
 
 
@@ -1459,26 +1702,27 @@ end;
 
 procedure CommonInit;
 begin
-{$ifndef ver1_0}
   InitCriticalSection(SynchronizeCritSect);
   ExecuteEvent:=RtlEventCreate;
   SynchronizeTimeoutEvent:=RtlEventCreate;
   DoSynchronizeMethod:=false;
   MainThreadID:=GetCurrentThreadID;
-{$endif ver1_0}
+  InitCriticalsection(ResolveSection);
   InitHandlerList:=Nil;
   FindGlobalComponentList:=nil;
   IntConstList := TThreadList.Create;
-  GlobalFixupList := TThreadList.Create;
   ClassList := TThreadList.Create;
   ClassAliasList := TStringList.Create;
+  { on unix this maps to a simple rw synchornizer }
+  GlobalNameSpace := TMultiReadExclusiveWriteSynchronizer.Create;
+  RegisterInitComponentHandler(TComponent,@DefaultInitHandler);
 end;
 
 procedure CommonCleanup;
 var
   i: Integer;
 begin
-  // !!!: GlobalNameSpace.BeginWrite;
+  GlobalNameSpace.BeginWrite;
   with IntConstList.LockList do
     try
       for i := 0 to Count - 1 do
@@ -1490,12 +1734,13 @@ begin
   ClassList.Free;
   ClassAliasList.Free;
   RemoveFixupReferences(nil, '');
-  GlobalFixupList.Free;
-  GlobalFixupList := nil;
+  DoneCriticalsection(ResolveSection);
   GlobalLists.Free;
   ComponentPages.Free;
-  {!!!: GlobalNameSpace.Free;
-  GlobalNameSpace := nil;}
+  FreeAndNil(NeedResolving);
+  { GlobalNameSpace is an interface so this is enough }
+  GlobalNameSpace:=nil;
+
   if (InitHandlerList<>Nil) then
     for i := 0 to InitHandlerList.Count - 1 do
       TInitHandler(InitHandlerList.Items[I]).Free;
@@ -1503,11 +1748,9 @@ begin
   InitHandlerList:=Nil;
   FindGlobalComponentList.Free;
   FindGlobalComponentList:=nil;
-{$ifndef ver1_0}
   DoneCriticalSection(SynchronizeCritSect);
   RtlEventDestroy(ExecuteEvent);
   RtlEventDestroy(SynchronizeTimeoutEvent);
-{$endif}
 end;
 
 { TFiler implementation }
@@ -1521,67 +1764,3 @@ end;
 {$i twriter.inc}
 
 
-{
-  $Log: classes.inc,v $
-  Revision 1.27  2005/04/28 09:15:44  florian
-    + variants: string -> float/int casts
-
-  Revision 1.26  2005/04/13 16:16:43  peter
-  use createfmt instead of createresfmt
-
-  Revision 1.25  2005/04/09 17:26:08  florian
-    + classes.mainthreadid is set now
-    + rtleventresetevent
-    + rtleventwairfor with timeout
-    + checksynchronize with timeout
-    * race condition in synchronize fixed
-
-  Revision 1.24  2005/03/25 22:53:39  jonas
-    * fixed several warnings and notes about unused variables (mainly) or
-      uninitialised use of variables/function results (a few)
-
-  Revision 1.23  2005/03/13 10:07:01  florian
-    * another utf-8 patch by C. Western
-
-  Revision 1.22  2005/03/09 20:50:11  florian
-    * C. Western: utf-8 reading from resource files
-
-  Revision 1.21  2005/03/07 19:55:13  florian
-    * C Western: component searching in FindGlobalComponent is now done backwards
-
-  Revision 1.20  2005/03/07 17:57:25  peter
-    * renamed rtlconst to rtlconsts
-
-  Revision 1.19  2005/03/07 16:35:19  peter
-    * Object text format of widestrings patch from Martin Schreiber
-
-  Revision 1.18  2005/02/25 23:02:05  florian
-    + implemented D7 compliant FindGlobalComponents
-
-  Revision 1.17  2005/02/25 22:10:27  florian
-    * final fix for linux (hopefully)
-
-  Revision 1.16  2005/02/25 22:02:48  florian
-    * another "transfer to linux"-commit
-
-  Revision 1.15  2005/02/25 21:52:07  florian
-    * "transfer to linux"-commit
-
-  Revision 1.14  2005/02/25 21:41:09  florian
-    * generic tthread.synchronize
-    * delphi compatible wakemainthread
-
-  Revision 1.13  2005/02/14 17:13:31  peter
-    * truncate log
-
-  Revision 1.12  2005/02/14 16:47:37  peter
-    * support inline
-
-  Revision 1.11  2005/02/06 11:20:52  peter
-    * threading in system unit
-    * removed systhrds unit
-
-  Revision 1.10  2005/01/22 20:53:02  michael
-   + Patch from Colin Western to fix reading inherited forms
-
-}

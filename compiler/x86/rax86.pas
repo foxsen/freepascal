@@ -1,5 +1,4 @@
 {
-    $Id: rax86.pas,v 1.22 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 1998-2002 by Carl Eric Codere and Peter Vreman
 
     Handles the common x86 assembler reader routines
@@ -30,7 +29,7 @@ unit rax86;
 interface
 
 uses
-  aasmbase,aasmtai,aasmcpu,
+  aasmbase,aasmtai,aasmdata,aasmcpu,
   cpubase,rautils,cclasses;
 
 { Parser helpers }
@@ -45,6 +44,7 @@ type
     opsize  : topsize;
     Procedure SetSize(_size:longint;force:boolean);override;
     Procedure SetCorrectSize(opcode:tasmop);override;
+    Function CheckOperand: boolean; override;
   end;
 
   Tx86Instruction=class(TInstruction)
@@ -57,8 +57,10 @@ type
     procedure CheckOperandSizes;
     procedure CheckNonCommutativeOpcodes;
     procedure SwapOperands;
+    { Additional actions required by specific reader }
+    procedure FixupOpcode;virtual;
     { opcode adding }
-    function ConcatInstruction(p : taasmoutput) : tai;override;
+    function ConcatInstruction(p : TAsmList) : tai;override;
   end;
 
 const
@@ -84,26 +86,9 @@ implementation
 
 uses
   globtype,globals,systems,verbose,
+  procinfo,
   cpuinfo,cgbase,cgutils,
   itcpugas,cgx86;
-
-{$define ATTOP}
-{$define INTELOP}
-
-{$ifdef NORA386INT}
-  {$ifdef NOAG386NSM}
-    {$ifdef NOAG386INT}
-      {$undef INTELOP}
-    {$endif}
-  {$endif}
-{$endif}
-
-{$ifdef NORA386ATT}
-  {$ifdef NOAG386ATT}
-    {$undef ATTOP}
-  {$endif}
-{$endif}
-
 
 
 {*****************************************************************************
@@ -188,7 +173,7 @@ end;
 
 Procedure FWaitWarning;
 begin
-  if (target_info.system=system_i386_GO32V2) and (cs_fp_emulation in aktmoduleswitches) then
+  if (target_info.system=system_i386_GO32V2) and (cs_fp_emulation in current_settings.moduleswitches) then
    Message(asmr_w_fwait_emu_prob);
 end;
 
@@ -221,6 +206,47 @@ begin
         OS_32 : opsize:=S_IL;
         OS_64 : opsize:=S_IQ;
       end;
+    end
+  else
+    begin
+      if size=OS_64 then
+        opsize:=S_Q;
+    end;
+end;
+
+Function Tx86Operand.CheckOperand: boolean;
+
+begin
+  result:=true;
+  if (opr.typ=OPR_Reference) then
+    begin
+      if not hasvar then
+        begin
+          if (getsupreg(opr.ref.base)=RS_EBP) and (opr.ref.offset>0) then
+            begin
+              if current_procinfo.procdef.proccalloption=pocall_register then
+                message(asmr_w_no_direct_ebp_for_parameter)
+              else
+                message(asmr_w_direct_ebp_for_parameter_regcall);
+            end
+          else if (getsupreg(opr.ref.base)=RS_EBP) and (opr.ref.offset<0) then
+            message(asmr_w_direct_ebp_neg_offset)
+          else if (getsupreg(opr.ref.base)=RS_ESP) and (opr.ref.offset<0) then
+            message(asmr_w_direct_esp_neg_offset);
+        end;
+      if (cs_create_pic in current_settings.moduleswitches) and
+         assigned(opr.ref.symbol) and
+         not assigned(opr.ref.relsymbol) and
+         not(opr.ref.refaddr in [addr_pic,addr_pic_no_got]) then
+        begin
+          if (opr.ref.symbol.name <> '_GLOBAL_OFFSET_TABLE_') then
+            begin
+              message(asmr_e_need_pic_ref);
+              result:=false;
+            end
+          else
+            opr.ref.refaddr:=addr_pic;
+        end;
     end;
 end;
 
@@ -261,65 +287,74 @@ begin
       operands[i].SetCorrectSize(opcode);
       if tx86operand(operands[i]).opsize=S_NO then
         begin
-          case operands[i].Opr.Typ of
-            OPR_LOCAL,
-            OPR_REFERENCE :
-              begin
-                if i=2 then
-                 operand2:=1
-                else
-                 operand2:=2;
-                if operand2<ops then
-                 begin
-                   { Only allow register as operand to take the size from }
-                   if operands[operand2].opr.typ=OPR_REGISTER then
-                     begin
-                       if ((opcode<>A_MOVD) and
-                           (opcode<>A_CVTSI2SS)) then
-                         tx86operand(operands[i]).opsize:=tx86operand(operands[operand2]).opsize;
-                     end
-                   else
-                    begin
-                      { if no register then take the opsize (which is available with ATT),
-                        if not availble then give an error }
-                      if opsize<>S_NO then
-                        tx86operand(operands[i]).opsize:=opsize
-                      else
-                       begin
-                         if (m_delphi in aktmodeswitches) then
-                           Message(asmr_w_unable_to_determine_reference_size_using_dword)
-                         else
-                           Message(asmr_e_unable_to_determine_reference_size);
-                         { recovery }
-                         tx86operand(operands[i]).opsize:=S_L;
-                       end;
-                    end;
-                 end
-                else
-                 begin
-                   if opsize<>S_NO then
-                     tx86operand(operands[i]).opsize:=opsize
-                 end;
-              end;
-            OPR_SYMBOL :
-              begin
-                { Fix lea which need a reference }
-                if opcode=A_LEA then
-                 begin
-                   s:=operands[i].opr.symbol;
-                   so:=operands[i].opr.symofs;
-                   operands[i].opr.typ:=OPR_REFERENCE;
-                   Fillchar(operands[i].opr.ref,sizeof(treference),0);
-                   operands[i].opr.ref.symbol:=s;
-                   operands[i].opr.ref.offset:=so;
-                 end;
 {$ifdef x86_64}
-                tx86operand(operands[i]).opsize:=S_Q;
-{$else x86_64}
-                tx86operand(operands[i]).opsize:=S_L;
+          if (opcode=A_MOVQ) and
+             (ops=2) and
+             (operands[1].opr.typ=OPR_CONSTANT) then
+             opsize:=S_Q
+          else
 {$endif x86_64}
-              end;
-          end;
+            case operands[i].Opr.Typ of
+              OPR_LOCAL,
+              OPR_REFERENCE :
+                begin
+                  { for 3-operand opcodes, operand #1 (in ATT order) is always an immediate,
+                    don't consider it. }
+                  if i=ops then
+                    operand2:=i-1
+                  else
+                    operand2:=i+1;
+                  if operand2>0 then
+                   begin
+                     { Only allow register as operand to take the size from }
+                     if operands[operand2].opr.typ=OPR_REGISTER then
+                       begin
+                         if ((opcode<>A_MOVD) and
+                             (opcode<>A_CVTSI2SS)) then
+                           tx86operand(operands[i]).opsize:=tx86operand(operands[operand2]).opsize;
+                       end
+                     else
+                      begin
+                        { if no register then take the opsize (which is available with ATT),
+                          if not availble then give an error }
+                        if opsize<>S_NO then
+                          tx86operand(operands[i]).opsize:=opsize
+                        else
+                         begin
+                           if (m_delphi in current_settings.modeswitches) then
+                             Message(asmr_w_unable_to_determine_reference_size_using_dword)
+                           else
+                             Message(asmr_e_unable_to_determine_reference_size);
+                           { recovery }
+                           tx86operand(operands[i]).opsize:=S_L;
+                         end;
+                      end;
+                   end
+                  else
+                   begin
+                     if opsize<>S_NO then
+                       tx86operand(operands[i]).opsize:=opsize
+                   end;
+                end;
+              OPR_SYMBOL :
+                begin
+                  { Fix lea which need a reference }
+                  if opcode=A_LEA then
+                   begin
+                     s:=operands[i].opr.symbol;
+                     so:=operands[i].opr.symofs;
+                     operands[i].opr.typ:=OPR_REFERENCE;
+                     Fillchar(operands[i].opr.ref,sizeof(treference),0);
+                     operands[i].opr.ref.symbol:=s;
+                     operands[i].opr.ref.offset:=so;
+                   end;
+  {$ifdef x86_64}
+                  tx86operand(operands[i]).opsize:=S_Q;
+  {$else x86_64}
+                  tx86operand(operands[i]).opsize:=S_L;
+  {$endif x86_64}
+                end;
+            end;
         end;
     end;
 end;
@@ -349,6 +384,14 @@ begin
         case opcode of
           A_MOVZX,A_MOVSX :
             begin
+              if tx86operand(operands[1]).opsize=S_NO then
+                begin
+                  tx86operand(operands[1]).opsize:=S_B;
+                  if (m_delphi in current_settings.modeswitches) then
+                    Message(asmr_w_unable_to_determine_reference_size_using_byte)
+                  else
+                    Message(asmr_e_unable_to_determine_reference_size);
+                end;
               case tx86operand(operands[1]).opsize of
                 S_W :
                   case tx86operand(operands[2]).opsize of
@@ -356,17 +399,21 @@ begin
                       opsize:=S_WL;
                   end;
                 S_B :
-                  case tx86operand(operands[2]).opsize of
-                    S_W :
-                      opsize:=S_BW;
-                    S_L :
-                      opsize:=S_BL;
+                  begin
+                    case tx86operand(operands[2]).opsize of
+                      S_W :
+                        opsize:=S_BW;
+                      S_L :
+                        opsize:=S_BL;
+                    end;
                   end;
               end;
             end;
           A_MOVD : { movd is a move from a mmx register to a
                      32 bit register or memory, so no opsize is correct here PM }
             exit;
+          A_MOVQ :
+            opsize:=S_IQ;
           A_OUT :
             opsize:=tx86operand(operands[1]).opsize;
           else
@@ -431,8 +478,8 @@ begin
   if sizeerr then
    begin
      { if range checks are on then generate an error }
-     if (cs_compilesystem in aktmoduleswitches) or
-        not (cs_check_range in aktlocalswitches) then
+     if (cs_compilesystem in current_settings.moduleswitches) or
+        not (cs_check_range in current_settings.localswitches) then
        Message(asmr_w_size_suffix_and_dest_dont_match)
      else
        Message(asmr_e_size_suffix_and_dest_dont_match);
@@ -490,11 +537,16 @@ begin
         opcode:=A_FDIVRP;
 end;
 
+procedure Tx86Instruction.FixupOpcode;
+begin
+  { does nothing by default }
+end;
+
 {*****************************************************************************
                               opcode Adding
 *****************************************************************************}
 
-function Tx86Instruction.ConcatInstruction(p : taasmoutput) : tai;
+function Tx86Instruction.ConcatInstruction(p : TAsmList) : tai;
 var
   siz  : topsize;
   i,asize : longint;
@@ -502,6 +554,11 @@ var
 begin
   if (OpOrder=op_intel) then
     SwapOperands;
+
+  ai:=nil;
+  for i:=1 to Ops do
+    if not operands[i].CheckOperand then
+      exit;
 
 { Get Opsize }
   if (opsize<>S_NO) or (Ops=0) then
@@ -549,16 +606,29 @@ begin
          opcode:=A_FDIVP
        else if opcode=A_FDIVR then
          opcode:=A_FDIVRP;
-{$ifdef ATTOP}
-       message1(asmr_w_fadd_to_faddp,gas_op2str[opcode]);
-{$else}
-  {$ifdef INTELOP}
        message1(asmr_w_fadd_to_faddp,std_op2str[opcode]);
-  {$else}
-       message1(asmr_w_fadd_to_faddp,'fXX');
-  {$endif INTELOP}
-{$endif ATTOP}
      end;
+
+  {It is valid to specify some instructions without operand size.}
+  if siz=S_NO then
+    begin
+      if (ops=1) and (opcode=A_INT) then
+        siz:=S_B;
+      if (ops=1) and (opcode=A_RET) or (opcode=A_RETN) or (opcode=A_RETF) then
+        siz:=S_W;
+      if (ops=1) and (opcode=A_PUSH) then
+        begin
+          {We are a 32 compiler, assume 32-bit by default. This is Delphi
+           compatible but bad coding practise.}
+          siz:=S_L;
+          message(asmr_w_unable_to_determine_reference_size_using_dword);
+        end;
+      if (opcode=A_JMP) or (opcode=A_JCC) or (opcode=A_CALL) then
+        if ops=1 then
+          siz:=S_NEAR
+        else
+          siz:=S_FAR;
+    end;
 
    { GNU AS interprets FDIV without operand differently
      for version 2.9.1 and 2.10
@@ -575,15 +645,7 @@ begin
       (opcode=A_FDIV) or
       (opcode=A_FDIVR)) then
      begin
-{$ifdef ATTOP}
-       message1(asmr_w_adding_explicit_args_fXX,gas_op2str[opcode]);
-{$else}
-  {$ifdef INTELOP}
        message1(asmr_w_adding_explicit_args_fXX,std_op2str[opcode]);
-  {$else}
-       message1(asmr_w_adding_explicit_args_fXX,'fXX');
-  {$endif INTELOP}
-{$endif ATTOP}
        ops:=2;
        operands[1].opr.typ:=OPR_REGISTER;
        operands[2].opr.typ:=OPR_REGISTER;
@@ -606,15 +668,7 @@ begin
       (opcode=A_FMULP)
      ) then
      begin
-{$ifdef ATTOP}
-       message1(asmr_w_adding_explicit_first_arg_fXX,gas_op2str[opcode]);
-{$else}
-  {$ifdef INTELOP}
        message1(asmr_w_adding_explicit_first_arg_fXX,std_op2str[opcode]);
-  {$else}
-       message1(asmr_w_adding_explicit_first_arg_fXX,'fXX');
-  {$endif INTELOP}
-{$endif ATTOP}
        ops:=2;
        operands[2].opr.typ:=OPR_REGISTER;
        operands[2].opr.reg:=operands[1].opr.reg;
@@ -637,15 +691,7 @@ begin
       (opcode=A_FMUL)
      ) then
      begin
-{$ifdef ATTOP}
-       message1(asmr_w_adding_explicit_second_arg_fXX,gas_op2str[opcode]);
-{$else}
-  {$ifdef INTELOP}
        message1(asmr_w_adding_explicit_second_arg_fXX,std_op2str[opcode]);
-  {$else}
-       message1(asmr_w_adding_explicit_second_arg_fXX,'fXX');
-  {$endif INTELOP}
-{$endif ATTOP}
        ops:=2;
        operands[2].opr.typ:=OPR_REGISTER;
        operands[2].opr.reg:=NR_ST0;
@@ -668,8 +714,7 @@ begin
   ai.Ops:=Ops;
   ai.Allocate_oper(Ops);
   for i:=1 to Ops do
-   begin
-     case operands[i].opr.typ of
+    case operands[i].opr.typ of
        OPR_CONSTANT :
          ai.loadconst(i-1,operands[i].opr.val);
        OPR_REGISTER:
@@ -696,11 +741,16 @@ begin
                    OS_64,OS_S64:
                      begin
                        { Only FPU operations know about 64bit values, for all
-                         integer operations it is seen as 32bit }
+                         integer operations it is seen as 32bit
+
+                         this applies only to i386, see tw16622}
                        if gas_needsuffix[opcode] in [attsufFPU,attsufFPUint] then
                          asize:=OT_BITS64
+{$ifdef i386}
                        else
-                         asize:=OT_BITS32;
+                         asize:=OT_BITS32
+{$endif i386}
+                         ;
                      end;
                    OS_F64,OS_C64 :
                      asize:=OT_BITS64;
@@ -711,42 +761,22 @@ begin
                  ai.oper[i-1]^.ot:=(ai.oper[i-1]^.ot and not OT_SIZE_MASK) or asize;
              end;
          end;
-     end;
-   end;
+    end;
 
-  if (opcode=A_CALL) and (opsize=S_FAR) then
-    opcode:=A_LCALL;
-  if (opcode=A_JMP) and (opsize=S_FAR) then
-    opcode:=A_LJMP;
-  if (opcode=A_LCALL) or (opcode=A_LJMP) then
-    opsize:=S_FAR;
  { Condition ? }
   if condition<>C_None then
    ai.SetCondition(condition);
 
+  { Set is_jmp, it enables asmwriter to emit short jumps if appropriate }
+  if (opcode=A_JMP) or (opcode=A_JCC) then
+    ai.is_jmp := True;
+
  { Concat the opcode or give an error }
   if assigned(ai) then
-   begin
-     { Check the instruction if it's valid }
-{$ifndef NOAG386BIN}
-{$ifndef x86_64}
-     ai.CheckIfValid;
-{$endif x86_64}
-{$endif NOAG386BIN}
-     p.concat(ai);
-   end
+    p.concat(ai)
   else
    Message(asmr_e_invalid_opcode_and_operand);
   result:=ai;
 end;
 
 end.
-{
-  $Log: rax86.pas,v $
-  Revision 1.22  2005/02/14 17:13:10  peter
-    * truncate log
-
-  Revision 1.21  2005/01/31 17:07:50  peter
-    * fix [regpara] in intel assembler
-
-}

@@ -1,5 +1,4 @@
 {
-    $Id: sysint.inc,v 1.3 2005/03/13 14:30:24 marco Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2005 by the Free Pascal development team
 
@@ -20,31 +19,28 @@ procedure InitInternationalGeneric;
     fillchar(SysLocale,sizeof(SysLocale),0);
     
     { keep these routines out of the executable? }
-{$ifndef VER1_0}
 {$ifndef FPC_NOGENERICANSIROUTINES}
-    widestringmanager.UpperAnsiStringProc:=@GenericAnsiUpperCase;
-    widestringmanager.LowerAnsiStringProc:=@GenericAnsiLowerCase;    
-    widestringmanager.CompareStrAnsiStringProc:=@GenericAnsiCompareStr;
-    widestringmanager.CompareTextAnsiStringProc:=@GenericAnsiCompareText;
-    widestringmanager.StrCompAnsiStringProc:=@GenericAnsiStrComp;
-    widestringmanager.StrICompAnsiStringProc:=@GenericAnsiStrIComp;
-    widestringmanager.StrLCompAnsiStringProc:=@GenericAnsiStrLComp;
-    widestringmanager.StrLICompAnsiStringProc:=@GenericAnsiStrLIComp;
-    widestringmanager.StrLowerAnsiStringProc:=@GenericAnsiStrLower;
-    widestringmanager.StrUpperAnsiStringProc:=@GenericAnsiStrUpper;
+    { don't override a previously installed widestring manager }
+    if not assigned(widestringmanager.UpperAnsiStringProc) then
+      widestringmanager.UpperAnsiStringProc:=@GenericAnsiUpperCase;
+    if not assigned(widestringmanager.LowerAnsiStringProc) then
+      widestringmanager.LowerAnsiStringProc:=@GenericAnsiLowerCase;    
+    if not assigned(widestringmanager.CompareStrAnsiStringProc) then
+      widestringmanager.CompareStrAnsiStringProc:=@GenericAnsiCompareStr;
+    if not assigned(widestringmanager.CompareTextAnsiStringProc) then
+      widestringmanager.CompareTextAnsiStringProc:=@GenericAnsiCompareText;
+    if not assigned(widestringmanager.StrCompAnsiStringProc) then
+      widestringmanager.StrCompAnsiStringProc:=@GenericAnsiStrComp;
+    if not assigned(widestringmanager.StrICompAnsiStringProc) then
+      widestringmanager.StrICompAnsiStringProc:=@GenericAnsiStrIComp;
+    if not assigned(widestringmanager.StrLCompAnsiStringProc) then
+      widestringmanager.StrLCompAnsiStringProc:=@GenericAnsiStrLComp;
+    if not assigned(widestringmanager.StrLICompAnsiStringProc) then
+      widestringmanager.StrLICompAnsiStringProc:=@GenericAnsiStrLIComp;
+    if not assigned(widestringmanager.StrLowerAnsiStringProc) then
+      widestringmanager.StrLowerAnsiStringProc:=@GenericAnsiStrLower;
+    if not assigned(widestringmanager.StrUpperAnsiStringProc) then
+      widestringmanager.StrUpperAnsiStringProc:=@GenericAnsiStrUpper;
 {$endif FPC_NOGENERICANSIROUTINES}    
-{$endif}
   end;
   
-{
-  $Log: sysint.inc,v $
-  Revision 1.3  2005/03/13 14:30:24  marco
-   * some 1.0.x fixes
-
-  Revision 1.2  2005/03/12 14:56:22  florian
-    + added Ansi* routines to widestring manager
-    * made them using OS calls on windows
-
-  Revision 1.1  2005/02/26 19:25:01  florian
-    + initial commit
-}  

@@ -1,5 +1,4 @@
 {
-    $Id: t_palmos.pas,v 1.5 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 2001-2002 by Peter Vreman
 
     This unit implements support import,export,link routines
@@ -44,8 +43,10 @@ interface
 implementation
 
     uses
-       cutils,cclasses,
-       globtype,globals,systems,verbose,script,fmodule,i_palmos;
+       SysUtils,
+       cutils,cfileutl,cclasses,
+       globtype,globals,systems,verbose,script,fmodule,i_palmos,
+       comprsrc;
 
 {****************************************************************************
                                TLinkerPalmOS
@@ -74,32 +75,32 @@ Function TLinkerPalmOS.WriteResponseFile : Boolean;
 Var
   linkres  : TLinkRes;
   i        : longint;
-  HPath    : PStringQueueItem;
+  HPath    : TCmdStrListItem;
   s        : string;
   linklibc : boolean;
 begin
   WriteResponseFile:=False;
 
   { Open link.res file }
-  LinkRes:=TLinkRes.Create(outputexedir+Info.ResName);
+  LinkRes:=TLinkRes.Create(outputexedir+Info.ResName,true);
 
   { Write path to search libraries }
-  HPath:=TStringListItem(current_module.locallibrarysearchpath.First);
+  HPath:=TCmdStrListItem(current_module.locallibrarysearchpath.First);
   while assigned(HPath) do
    begin
      LinkRes.Add('-L'+HPath.Str);
-     HPath:=TStringListItem(HPath.Next);
+     HPath:=TCmdStrListItem(HPath.Next);
    end;
-  HPath:=TStringListItem(LibrarySearchPath.First);
+  HPath:=TCmdStrListItem(LibrarySearchPath.First);
   while assigned(HPath) do
    begin
      LinkRes.Add('-L'+HPath.Str);
-     HPath:=TStringListItem(HPath.Next);
+     HPath:=TCmdStrListItem(HPath.Next);
    end;
 
   { add objectfiles, start with crt0 always  }
   { using crt0, we should stick C compatible }
-  LinkRes.AddFileName(FindObjectFile('crt0',''));
+  LinkRes.AddFileName(FindObjectFile('crt0','',false));
 
   { main objectfiles }
   while not ObjectFiles.Empty do
@@ -158,17 +159,17 @@ end;
 function TLinkerPalmOS.MakeExecutable:boolean;
 var
   binstr,
-  cmdstr  : string;
+  cmdstr  : TCmdStr;
   success : boolean;
   StripStr : string[40];
   i : longint;
 begin
-  if not(cs_link_extern in aktglobalswitches) then
-    Message1(exec_i_linking,current_module^.exefilename^);
+  if not(cs_link_nolink in current_settings.globalswitches) then
+    Message1(exec_i_linking,current_module.exefilename);
 
   { Create some replacements }
   StripStr:='';
-  if (cs_link_strip in aktglobalswitches) then
+  if (cs_link_strip in current_settings.globalswitches) then
    StripStr:='-s';
 
   { Write used files and libraries }
@@ -181,9 +182,9 @@ begin
      SplitBinCmd(Info.ExeCmd[i],binstr,cmdstr);
      if binstr<>'' then
       begin
-        Replace(cmdstr,'$EXE',MaybeQuote(current_module.exefilename^));
+        Replace(cmdstr,'$EXE',MaybeQuoted(current_module.exefilename));
         Replace(cmdstr,'$OPT',Info.ExtraOptions);
-        Replace(cmdstr,'$RES',maybequoted(outputexedir+Info.ResName));
+        Replace(cmdstr,'$RES',MaybeQuoted(outputexedir+Info.ResName));
         Replace(cmdstr,'$STRIP',StripStr);
         Replace(cmdstr,'$SCRIPT',FindUtil('palm.ld'));
         Replace(cmdstr,'$APPNAME',palmos_applicationname);
@@ -195,8 +196,8 @@ begin
    end;
 
   { Remove ReponseFile }
-  if (success) and not(cs_link_extern in aktglobalswitches) then
-   RemoveFile(outputexedir+Info.ResName);
+  if (success) and not(cs_link_nolink in current_settings.globalswitches) then
+   DeleteFile(outputexedir+Info.ResName);
 
   MakeExecutable:=success;   { otherwise a recursive call to link method }
 end;
@@ -207,13 +208,11 @@ end;
 
 initialization
 {$ifdef m68k}
-  RegisterTarget(target_m68k_palmos_info);
-  RegisterRes(res_m68k_palmos_info);
+  RegisterTarget(system_m68k_palmos_info);
+  RegisterRes(res_m68k_palmos_info,TResourceFile);
 {$endif m68k}
+{$ifdef arm}
+  RegisterTarget(system_arm_palmos_info);
+  RegisterRes(res_arm_palmos_info,TResourceFile);
+{$endif arm}
 end.
-{
-  $Log: t_palmos.pas,v $
-  Revision 1.5  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

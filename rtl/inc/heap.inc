@@ -1,5 +1,4 @@
 {
-    $Id: heap.inc,v 1.51 2005/04/04 15:40:30 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team.
 
@@ -15,6 +14,46 @@
  **********************************************************************}
 
 {****************************************************************************}
+{ Do not use standard memory manager }
+{ $define HAS_MEMORYMANAGER}
+
+{ Memory manager }
+{$ifndef EMBEDDED}
+const
+  MemoryManager: TMemoryManager = (
+    NeedLock: false;  // Obsolete
+    GetMem: @SysGetMem;
+    FreeMem: @SysFreeMem;
+    FreeMemSize: @SysFreeMemSize;
+    AllocMem: @SysAllocMem;
+    ReAllocMem: @SysReAllocMem;
+    MemSize: @SysMemSize;
+    InitThread: nil;
+    DoneThread: nil;
+    RelocateHeap: nil;
+    GetHeapStatus: @SysGetHeapStatus;
+    GetFPCHeapStatus: @SysGetFPCHeapStatus;
+  );
+{$else}
+{$ifndef FPC_IN_HEAPMGR}
+const
+  MemoryManager: TMemoryManager = (
+    NeedLock: false;  // Obsolete
+    GetMem: nil;
+    FreeMem: nil;
+    FreeMemSize: nil;
+    AllocMem: nil;
+    ReAllocMem: nil;
+    MemSize: nil;
+    InitThread: nil;
+    DoneThread: nil;
+    RelocateHeap: nil;
+    GetHeapStatus: nil;
+    GetFPCHeapStatus: nil;
+  );public name 'FPC_SYSTEM_MEMORYMANAGER';
+{$endif FPC_IN_HEAPMGR}
+{$endif EMBEDDED}
+
 
 { Try to find the best matching block in general freelist }
 { define BESTMATCH}
@@ -22,31 +61,48 @@
 { DEBUG: Dump info when the heap needs to grow }
 { define DUMPGROW}
 
-{ DEBUG: Test the FreeList on correctness }
+{ Memory profiling: at moment in time of max heap size usage,
+  keep statistics of number of each size allocated 
+  (with 16 byte granularity) }
+{ define DUMP_MEM_USAGE}
 
-{$ifdef SYSTEMDEBUG}
-{$define TestFreeLists}
-{$endif SYSTEMDEBUG}
+{$ifdef DUMP_MEM_USAGE}
+  {$define SHOW_MEM_USAGE}
+{$endif}
 
+{$ifndef HAS_MEMORYMANAGER}
 const
 {$ifdef CPU64}
   blocksize    = 32;  { at least size of freerecord }
-  blockshr     = 5;   { shr value for blocksize=2^blockshr}
+  blockshift   = 5;   { shr value for blocksize=2^blockshift}
   maxblocksize = 512+blocksize; { 1024+8 needed for heaprecord }
 {$else}
   blocksize    = 16;  { at least size of freerecord }
-  blockshr     = 4;   { shr value for blocksize=2^blockshr}
+  blockshift   = 4;   { shr value for blocksize=2^blockshift}
   maxblocksize = 512+blocksize; { 1024+8 needed for heaprecord }
 {$endif}
   maxblockindex = maxblocksize div blocksize; { highest index in array of lists of memchunks }
-  maxreusebigger = 8; { max reuse bigger tries }
 
-  usedflag = 1;        { flag if the block is used or not }
-  lastblockflag = 2;   { flag if the block is the last in os chunk }
-  firstblockflag = 4;  { flag if the block is the first in os chunk }
-  fixedsizeflag = 8;   { flag if the block is of fixed size }
+  { common flags }
+  fixedsizeflag  = 1;   { flag if the block is of fixed size }
+  { memchunk var flags }
+  usedflag       = 2;   { flag if the block is used or not }
+  lastblockflag  = 4;   { flag if the block is the last in os chunk }
+  firstblockflag = 8;   { flag if the block is the first in os chunk }
+  { os chunk flags }
+  ocrecycleflag  = 1;
+  { above flags stored in size field }
   sizemask = not(blocksize-1);
-  fixedsizemask = sizemask and $ffff;
+  fixedoffsetshift = 12;
+  fixedsizemask = sizemask and ((1 shl fixedoffsetshift) - 1);
+  { After how many successive allocations of oschunks for fixed freelist
+    purposes should we double the size of locgrowheapsizesmall for the
+    current thread. Since the allocations of oschunks are added together for
+    all blocksizes, this is only a fuzzy indication of when the size will be
+    doubled rather than a hard and fast boundary. }
+  fixedallocthreshold = (maxblocksize shr blockshift) * 8;
+  { maximum size to which locgrowheapsizesmall can grow }
+  maxgrowheapsizesmall = 256*1024;
 
 {****************************************************************************}
 
@@ -54,51 +110,66 @@ const
   {$define DUMPBLOCKS}
 {$endif}
 
-{ Forward defines }
-procedure SysHeapMutexInit;forward;
-procedure SysHeapMutexDone;forward;
-procedure SysHeapMutexLock;forward;
-procedure SysHeapMutexUnlock;forward;
+{
+  We use 'fixed' size chunks for small allocations,
+  and os chunks with variable sized blocks for big
+  allocations.
 
-{ Memory manager }
-const
-  MemoryManager: TMemoryManager = (
-    NeedLock: true;
-    GetMem: @SysGetMem;
-    FreeMem: @SysFreeMem;
-    FreeMemSize: @SysFreeMemSize;
-    AllocMem: @SysAllocMem;
-    ReAllocMem: @SysReAllocMem;
-    MemSize: @SysMemSize;
-    GetHeapStatus: @SysGetHeapStatus;
-{$ifdef HASGETFPCHEAPSTATUS}
-    GetFPCHeapStatus: @SysGetFPCHeapStatus;
-{$endif HASGETFPCHEAPSTATUS}
-  );
+  * a block is an area allocated by user
+  * a chunk is a block plus our bookkeeping
+  * an os chunk is a collection of chunks
 
-  MemoryMutexManager: TMemoryMutexManager = (
-    MutexInit: @SysHeapMutexInit;
-    MutexDone: @SysHeapMutexDone;
-    MutexLock: @SysHeapMutexLock;
-    MutexUnlock: @SysHeapMutexUnlock;
-  );
+  Memory layout:
+    fixed:                         < chunk size > [ ... user data ... ]
+    variable:  < prev chunk size > < chunk size > [ ... user data ... ]
+
+  When all chunks in an os chunk are free, we keep a few around
+  but otherwise it will be freed to the OS.
+
+  Fixed os chunks can be converted to variable os chunks and back
+  (if not too big). To prevent repeated conversion overhead in case
+  of user freeing/allocing same or a small set of sizes, we only do
+  the conversion to the new fixed os chunk size format after we
+  reuse the os chunk for another fixed size, or variable. Note that
+  while the fixed size os chunk is on the freelists.oslist, it is also 
+  still present in a freelists.fixedlists, therefore we can easily remove 
+  the os chunk from the freelists.oslist if this size is needed again; we 
+  don't need to search freelists.oslist in alloc_oschunk, since it won't
+  be present anymore if alloc_oschunk is reached. Note that removing
+  from the freelists.oslist is not really done, only the recycleflag is
+  set, allowing to reset the flag easily. alloc_oschunk will clean up
+  the list while passing over it, that was a slow function anyway.
+}
 
 type
-  pmemchunk_fixed  = ^tmemchunk_fixed;
+  pfreelists = ^tfreelists;
+
+  poschunk = ^toschunk;
+  toschunk = record
+    size : 0..high(ptrint); {Cannot be ptruint because used field is signed.}
+    next_free : poschunk;
+    prev_any : poschunk;
+    next_any : poschunk;
+    used : ptrint;          { 0: free, >0: fixed, -1: var }
+    freelists : pfreelists;
+    { padding inserted automatically by alloc_oschunk }
+  end;
+
+  ppmemchunk_fixed = ^pmemchunk_fixed;
+  pmemchunk_fixed = ^tmemchunk_fixed;
   tmemchunk_fixed = record
-{$ifdef cpusparc}
-    { Sparc needs to alloc aligned on 8 bytes, to allow doubles }
-    _dummy : ptrint;
-{$endif cpusparc}
-    size  : ptrint;
+    { aligning is done automatically in alloc_oschunk }
+    size  : ptruint;
     next_fixed,
     prev_fixed : pmemchunk_fixed;
   end;
 
-  pmemchunk_var  = ^tmemchunk_var;
+  ppmemchunk_var = ^pmemchunk_var;
+  pmemchunk_var = ^tmemchunk_var;
   tmemchunk_var = record
-    prevsize : ptrint;
-    size  : ptrint;
+    prevsize : ptruint;
+    freelists : pfreelists;
+    size  : ptruint;
     next_var,
     prev_var  : pmemchunk_var;
   end;
@@ -108,423 +179,212 @@ type
     last field. Reason is that the overlap is starting from the end of the
     record. }
   tmemchunk_fixed_hdr = record
-{$ifdef cpusparc}
-    { Sparc needs to alloc aligned on 8 bytes, to allow doubles }
-    _dummy : ptrint;
-{$endif cpusparc}
-    size : ptrint;
+    { aligning is done automatically in alloc_oschunk }
+    size : ptruint;
   end;
   tmemchunk_var_hdr = record
-    prevsize : ptrint;
-    size : ptrint;
+    prevsize : ptruint;
+    freelists : pfreelists;
+    size : ptruint;
   end;
 
-  poschunk = ^toschunk;
-  toschunk = record
-    size : ptrint;
-    next,
-    prev : poschunk;
-    used : ptrint;
+  pfpcheapstatus = ^tfpcheapstatus;
+
+  tfixedfreelists = array[1..maxblockindex] of pmemchunk_fixed;
+
+  tfreelists = record
+    oslist : poschunk;      { os chunks free, available for use }
+    fixedlists : tfixedfreelists;
+    oscount : dword;        { number of os chunks on oslist }
+    { how many oschunks have been allocated in this thread since
+      the last time we doubled the locgrowheapsizesmall size }
+    fixedallocated: dword;
+    { the size of oschunks allocated for fixed allocations in this thread;
+      initialised on thread creation with the global growheapsizesmall setting }
+    locgrowheapsizesmall: ptruint;
+    oslist_all : poschunk;  { all os chunks allocated }
+    varlist : pmemchunk_var;
+    { chunks waiting to be freed from other thread }
+    waitfixed : pmemchunk_fixed;
+    waitvar : pmemchunk_var;
+    { heap statistics }
+    internal_status : TFPCHeapStatus;
   end;
 
-  tfreelists   = array[1..maxblockindex] of pmemchunk_fixed;
-  pfreelists   = ^tfreelists;
+const
+  fixedfirstoffset = ((sizeof(toschunk) + sizeof(tmemchunk_fixed_hdr) + $f) 
+      and not $f) - sizeof(tmemchunk_fixed_hdr);
+  varfirstoffset = ((sizeof(toschunk) + sizeof(tmemchunk_var_hdr) + $f) 
+      and not $f) - sizeof(tmemchunk_var_hdr);
+{$ifdef BESTMATCH}
+  matcheffort = high(longint);
+{$else}
+  matcheffort = 10;
+{$endif}
 
 var
-{$ifdef HASGETFPCHEAPSTATUS}
-  internal_status : TFPCHeapStatus;
-{$else HASGETFPCHEAPSTATUS}
-  internal_status : THeapStatus;
-{$endif HASGETFPCHEAPSTATUS}
+  orphaned_freelists : tfreelists;
+{$ifdef FPC_HAS_FEATURE_THREADING}
+  heap_lock : trtlcriticalsection;
+  heap_lock_use : integer;
+{$endif}
+threadvar
+  freelists : tfreelists;
 
-  freelists_fixed    : tfreelists;
-  freelist_var       : pmemchunk_var;
-  freeoslist         : poschunk;
-  freeoslistcount    : dword;
-
-{$ifdef TestFreeLists}
-{ this can be turned on by debugger }
+{$ifdef DUMP_MEM_USAGE}
 const
-  test_each : boolean = false;
-{$endif TestFreeLists}
+  sizeusageshift = 4;
+  sizeusageindex = 2049;
+  sizeusagesize = sizeusageindex shl sizeusageshift;
+type
+  tsizeusagelist = array[0..sizeusageindex] of longint;
+threadvar
+  sizeusage, maxsizeusage: tsizeusagelist;
+{$endif}
+
+{$endif HAS_MEMORYMANAGER}
 
 {*****************************************************************************
                              Memory Manager
 *****************************************************************************}
 
-procedure SetMemoryMutexManager(var MutexMgr: TMemoryMutexManager);
-begin
-  { Release old mutexmanager, the default manager does nothing so
-    calling this without initializing is safe }
-  MemoryMutexManager.MutexDone;
-  { Copy new mutexmanager }
-  MemoryMutexManager := MutexMgr;
-  { Init new mutexmanager }
-  MemoryMutexManager.MutexInit;
-end;
-
-
+{$ifndef FPC_IN_HEAPMGR}
 procedure GetMemoryManager(var MemMgr:TMemoryManager);
 begin
-  if IsMultiThread and MemoryManager.NeedLock then
-   begin
-     try
-       MemoryMutexManager.MutexLock;
-       MemMgr := MemoryManager;
-     finally
-       MemoryMutexManager.MutexUnlock;
-     end;
-   end
-  else
-   begin
-     MemMgr := MemoryManager;
-   end;
+  MemMgr := MemoryManager;
 end;
 
 
 procedure SetMemoryManager(const MemMgr:TMemoryManager);
 begin
-  if IsMultiThread and MemoryManager.NeedLock then
-   begin
-     try
-       MemoryMutexManager.MutexLock;
-       MemoryManager := MemMgr;
-     finally
-       MemoryMutexManager.MutexUnlock;
-     end;
-   end
-  else
-   begin
-     MemoryManager := MemMgr;
-   end;
+  MemoryManager := MemMgr;
 end;
-
 
 function IsMemoryManagerSet:Boolean;
 begin
-  if IsMultiThread and MemoryManager.NeedLock then
-   begin
-     try
-       MemoryMutexManager.MutexLock;
-       IsMemoryManagerSet := (MemoryManager.GetMem<>@SysGetMem) or
-                           (MemoryManager.FreeMem<>@SysFreeMem);
-     finally
-       MemoryMutexManager.MutexUnlock;
-     end;
-   end
-  else
-   begin
-     IsMemoryManagerSet := (MemoryManager.GetMem<>@SysGetMem) or
-                         (MemoryManager.FreeMem<>@SysFreeMem);
-   end;
+{$ifdef HAS_MEMORYMANAGER}
+  Result:=false;
+{$else HAS_MEMORYMANAGER}
+  IsMemoryManagerSet := (MemoryManager.GetMem<>@SysGetMem) 
+    or (MemoryManager.FreeMem<>@SysFreeMem);
+{$endif HAS_MEMORYMANAGER}
 end;
 
-
-procedure GetMem(Var p:pointer;Size:ptrint);
+{$ifdef FPC_HAS_FEATURE_HEAP}
+procedure GetMem(Out p:pointer;Size:ptruint);
 begin
-  if IsMultiThread and MemoryManager.NeedLock then
-   begin
-     try
-       MemoryMutexManager.MutexLock;
-       p := MemoryManager.GetMem(Size);
-     finally
-       MemoryMutexManager.MutexUnlock;
-     end;
-   end
-  else
-   begin
-     p := MemoryManager.GetMem(Size);
-   end;
+  p := MemoryManager.GetMem(Size);
 end;
 
-procedure GetMemory(Var p:pointer;Size:ptrint);
+procedure GetMemory(Out p:pointer;Size:ptruint);
 begin
   GetMem(p,size);
 end;
 
-procedure FreeMem(p:pointer;Size:ptrint);
+procedure FreeMem(p:pointer;Size:ptruint);
 begin
-  if IsMultiThread and MemoryManager.NeedLock then
-   begin
-     try
-       MemoryMutexManager.MutexLock;
-       MemoryManager.FreeMemSize(p,Size);
-     finally
-       MemoryMutexManager.MutexUnlock;
-     end;
-   end
-  else
-   begin
-     MemoryManager.FreeMemSize(p,Size);
-   end;
+  MemoryManager.FreeMemSize(p,Size);
 end;
 
-
-procedure FreeMemory(p:pointer;Size:ptrint);
+procedure FreeMemory(p:pointer;Size:ptruint);
 begin
   FreeMem(p,size);
 end;
 
 
-{$ifdef HASGETFPCHEAPSTATUS}
 function GetHeapStatus:THeapStatus;
 begin
-  if IsMultiThread and MemoryManager.NeedLock then
-   begin
-     try
-       MemoryMutexManager.MutexLock;
-       result:=MemoryManager.GetHeapStatus();
-     finally
-       MemoryMutexManager.MutexUnlock;
-     end;
-   end
-  else
-   begin
-     result:=MemoryManager.GetHeapStatus();
-   end;
+  Result:=MemoryManager.GetHeapStatus();
 end;
 
 
 function GetFPCHeapStatus:TFPCHeapStatus;
 begin
-  if IsMultiThread and MemoryManager.NeedLock then
-   begin
-     try
-       MemoryMutexManager.MutexLock;
-       result:=MemoryManager.GetFPCHeapStatus();
-     finally
-       MemoryMutexManager.MutexUnlock;
-     end;
-   end
-  else
-   begin
-     Result:=MemoryManager.GetFPCHeapStatus();
-   end;
+  Result:=MemoryManager.GetFPCHeapStatus();
 end;
-{$else HASGETFPCHEAPSTATUS}
-procedure GetHeapStatus(var status:THeapStatus);
+
+
+function MemSize(p:pointer):ptruint;
 begin
-  if IsMultiThread and MemoryManager.NeedLock then
-   begin
-     try
-       MemoryMutexManager.MutexLock;
-       MemoryManager.GetHeapStatus(status);
-     finally
-       MemoryMutexManager.MutexUnlock;
-     end;
-   end
-  else
-   begin
-     MemoryManager.GetHeapStatus(status);
-   end;
-end;
-{$endif HASGETFPCHEAPSTATUS}
-
-
-
-function MemSize(p:pointer):ptrint;
-begin
-  if IsMultiThread and MemoryManager.NeedLock then
-   begin
-     try
-       MemoryMutexManager.MutexLock;
-       MemSize := MemoryManager.MemSize(p);
-     finally
-       MemoryMutexManager.MutexUnlock;
-     end;
-   end
-  else
-   begin
-     MemSize := MemoryManager.MemSize(p);
-   end;
+  MemSize := MemoryManager.MemSize(p);
 end;
 
 
 { Delphi style }
-function FreeMem(p:pointer):ptrint;
+function FreeMem(p:pointer):ptruint;[Public,Alias:'FPC_FREEMEM_X'];
 begin
-  if IsMultiThread and MemoryManager.NeedLock then
-   begin
-     try
-       MemoryMutexManager.MutexLock;
-       Freemem := MemoryManager.FreeMem(p);
-     finally
-       MemoryMutexManager.MutexUnlock;
-     end;
-   end
-  else
-   begin
-     Freemem := MemoryManager.FreeMem(p);
-   end;
+  FreeMem := MemoryManager.FreeMem(p);
 end;
 
-function FreeMemory(p:pointer):ptrint;
-
+function FreeMemory(p:pointer):ptruint; cdecl;
 begin
- FreeMemory := FreeMem(p);
+  FreeMemory := FreeMem(p);
 end;
 
-function GetMem(size:ptrint):pointer;
+function GetMem(size:ptruint):pointer;
 begin
-  if IsMultiThread and MemoryManager.NeedLock then
-   begin
-     try
-       MemoryMutexManager.MutexLock;
-       GetMem := MemoryManager.GetMem(Size);
-     finally
-       MemoryMutexManager.MutexUnlock;
-     end;
-   end
-  else
-   begin
-     GetMem := MemoryManager.GetMem(Size);
-   end;
+  GetMem := MemoryManager.GetMem(Size);
 end;
 
-function GetMemory(size:ptrint):pointer;
-
+function GetMemory(size:ptruint):pointer; cdecl;
 begin
- GetMemory := Getmem(size);
+  GetMemory := GetMem(size);
 end;
 
-function AllocMem(Size:ptrint):pointer;
+function AllocMem(Size:ptruint):pointer;
 begin
-  if IsMultiThread and MemoryManager.NeedLock then
-   begin
-     try
-       MemoryMutexManager.MutexLock;
-       AllocMem := MemoryManager.AllocMem(size);
-     finally
-       MemoryMutexManager.MutexUnlock;
-     end;
-   end
-  else
-   begin
-     AllocMem := MemoryManager.AllocMem(size);
-   end;
+  AllocMem := MemoryManager.AllocMem(size);
 end;
 
 
-function ReAllocMem(var p:pointer;Size:ptrint):pointer;
+function ReAllocMem(var p:pointer;Size:ptruint):pointer;
 begin
-  if IsMultiThread and MemoryManager.NeedLock then
-   begin
-     try
-       MemoryMutexManager.MutexLock;
-       ReAllocMem := MemoryManager.ReAllocMem(p,size);
-     finally
-       MemoryMutexManager.MutexUnlock;
-     end;
-   end
-  else
-   begin
-     ReAllocMem := MemoryManager.ReAllocMem(p,size);
-   end;
+  ReAllocMem := MemoryManager.ReAllocMem(p,size);
 end;
 
-
-function ReAllocMemory(var p:pointer;Size:ptrint):pointer;
-
+function ReAllocMemory(p:pointer;Size:ptruint):pointer; cdecl;
 begin
- ReAllocMemory := ReAllocMem(p,size);
+  ReAllocMemory := ReAllocMem(p,size);
 end;
 
-{$ifdef ValueGetmem}
 
 { Needed for calls from Assembler }
-function fpc_getmem(size:ptrint):pointer;compilerproc;[public,alias:'FPC_GETMEM'];
+function fpc_getmem(size:ptruint):pointer;compilerproc;[public,alias:'FPC_GETMEM'];
 begin
-  if IsMultiThread and MemoryManager.NeedLock then
-   begin
-     try
-       MemoryMutexManager.MutexLock;
-       fpc_GetMem := MemoryManager.GetMem(size);
-     finally
-       MemoryMutexManager.MutexUnlock;
-     end;
-   end
-  else
-   begin
-     fpc_GetMem := MemoryManager.GetMem(size);
-   end;
+  fpc_GetMem := MemoryManager.GetMem(size);
 end;
-
-{$else ValueGetmem}
-
-{ Needed for calls from Assembler }
-procedure AsmGetMem(var p:pointer;size:ptrint);[public,alias:'FPC_GETMEM'];
-begin
-  p := MemoryManager.GetMem(size);
-end;
-
-{$endif ValueGetmem}
-
-{$ifdef ValueFreemem}
 
 procedure fpc_freemem(p:pointer);compilerproc;[public,alias:'FPC_FREEMEM'];
 begin
-  if IsMultiThread and MemoryManager.NeedLock then
-   begin
-     try
-       MemoryMutexManager.MutexLock;
-       if p <> nil then
-         MemoryManager.FreeMem(p);
-     finally
-       MemoryMutexManager.MutexUnlock;
-     end;
-   end
-  else
-   begin
-     if p <> nil then
-       MemoryManager.FreeMem(p);
-   end;
+  MemoryManager.FreeMem(p);
 end;
+{$endif FPC_HAS_FEATURE_HEAP}
+{$endif FPC_IN_HEAPMGR}
 
-{$else ValueFreemem}
-
-procedure AsmFreeMem(var p:pointer);[public,alias:'FPC_FREEMEM'];
-begin
-  if p <> nil then
-    MemoryManager.FreeMem(p);
-end;
-
-{$endif ValueFreemem}
-
-
-{ Bootstrapping }
-{$ifndef HASGETHEAPSTATUS}
-Function  Memavail:ptrint;
-begin
-  result:=0;
-end;
-Function  Maxavail:ptrint;
-begin
-  result:=0;
-end;
-Function  Heapsize:ptrint;
-begin
-  result:=0;
-end;
-{$endif HASGETHEAPSTATUS}
-
+{$if defined(FPC_HAS_FEATURE_HEAP) or defined(FPC_IN_HEAPMGR)}
+{$ifndef HAS_MEMORYMANAGER}
 {*****************************************************************************
                                GetHeapStatus
 *****************************************************************************}
 
-{$ifdef HASGETFPCHEAPSTATUS}
 function SysGetFPCHeapStatus:TFPCHeapStatus;
+var
+  status: pfpcheapstatus;
 begin
-  internal_status.CurrHeapFree:=internal_status.CurrHeapSize-internal_status.CurrHeapUsed;
-  result:=internal_status;
+  status := @freelists.internal_status;
+  status^.CurrHeapFree := status^.CurrHeapSize - status^.CurrHeapUsed;
+  result := status^;
 end;
 
 function SysGetHeapStatus :THeapStatus;
-
+var
+  status: pfpcheapstatus;
 begin
-  internal_status.CurrHeapFree:=internal_status.CurrHeapSize-internal_status.CurrHeapUsed;
-  result.TotalAllocated   :=internal_status.CurrHeapUsed;
-  result.TotalFree        :=internal_status.CurrHeapFree;
-  result.TotalAddrSpace   :=0;
+  status := @freelists.internal_status;
+  status^.CurrHeapFree := status^.CurrHeapSize - status^.CurrHeapUsed;
+  result.TotalAllocated   :=status^.CurrHeapUsed;
+  result.TotalFree        :=status^.CurrHeapFree;
+  result.TotalAddrSpace   :=status^.CurrHeapSize;
   result.TotalUncommitted :=0;
   result.TotalCommitted   :=0;
   result.FreeSmall        :=0;
@@ -533,144 +393,173 @@ begin
   result.Overhead         :=0;
   result.HeapErrorCode    :=0;
 end;
-{$else}
-procedure SysGetHeapStatus(var status:THeapStatus);
-begin
-  internal_status.CurrHeapFree:=internal_status.CurrHeapSize-internal_status.CurrHeapUsed;
-  status:=internal_status;
-end;
-{$endif HASGETFPCHEAPSTATUS}
-
 
 
 {$ifdef DUMPBLOCKS}   // TODO
-procedure DumpBlocks;
+procedure DumpBlocks(loc_freelists: pfreelists);
 var
-  s,i,j : ptrint;
-  hp  : pfreerecord;
+  s,i,j : ptruint;
+  hpfixed  : pmemchunk_fixed;
+  hpvar  : pmemchunk_var;
 begin
-  for i := 1 to maxblock do
+  { fixed freelist }
+  for i := 1 to maxblockindex do
    begin
-     hp := freelists[i];
+     hpfixed := loc_freelists^.fixedlists[i];
      j := 0;
-     while assigned(hp) do
+     while assigned(hpfixed) do
       begin
         inc(j);
-        hp := hp^.next;
+        hpfixed := hpfixed^.next_fixed;
       end;
      writeln('Block ',i*blocksize,': ',j);
    end;
-{ freelist 0 }
-  hp := freelists[0];
+  { var freelist }
+  hpvar := loc_freelists^.varlist;
   j := 0;
   s := 0;
-  while assigned(hp) do
+  while assigned(hpvar) do
    begin
      inc(j);
-     if hp^.size>s then
-      s := hp^.size;
-     hp := hp^.next;
+     if hpvar^.size>s then
+      s := hpvar^.size;
+     hpvar := hpvar^.next_var;
    end;
-  writeln('Main: ',j,' maxsize: ',s);
+  writeln('Variable: ',j,' maxsize: ',s);
 end;
 {$endif}
 
 
-{$ifdef TestFreeLists}
-procedure TestFreeLists;
-var
-  i,j : ptrint;
-  mc  : pmemchunk_fixed;
-begin
-  for i := 1 to maxblockindex do
-   begin
-    j := 0;
-    mc := freelists_fixed[i];
-    while assigned(mc) do
-      begin
-        inc(j);
-      if ((mc^.size and fixedsizemask) <> i * blocksize) then
-          RunError(204);
-      mc := mc^.next_fixed;
-      end;
-    end;
-end;
-{$endif TestFreeLists}
+{*****************************************************************************
+                                Forwards
+*****************************************************************************}
+
+procedure finish_waitfixedlist(loc_freelists: pfreelists); forward;
+procedure finish_waitvarlist(loc_freelists: pfreelists); forward;
+function  try_finish_waitfixedlist(loc_freelists: pfreelists): boolean; forward;
+procedure try_finish_waitvarlist(loc_freelists: pfreelists); forward;
 
 {*****************************************************************************
                                 List adding/removal
 *****************************************************************************}
 
-procedure append_to_list_fixed(blockindex: ptrint; pmc: pmemchunk_fixed);
+procedure append_to_list_var(pmc: pmemchunk_var); inline;
+var
+  varlist: ppmemchunk_var;
 begin
-  pmc^.prev_fixed := nil;
-  pmc^.next_fixed := freelists_fixed[blockindex];
-  if freelists_fixed[blockindex]<>nil then
-    freelists_fixed[blockindex]^.prev_fixed := pmc;
-  freelists_fixed[blockindex] := pmc;
-end;
-
-procedure append_to_list_var(pmc: pmemchunk_var);
-begin
+  varlist := @pmc^.freelists^.varlist;
   pmc^.prev_var := nil;
-  pmc^.next_var := freelist_var;
-  if freelist_var<>nil then
-    freelist_var^.prev_var := pmc;
-  freelist_var := pmc;
+  pmc^.next_var := varlist^;
+  if varlist^<>nil then
+    varlist^^.prev_var := pmc;
+  varlist^ := pmc;
 end;
 
-procedure remove_from_list_fixed(blockindex: ptrint; pmc: pmemchunk_fixed);
+{$ifdef HEAP_DEBUG}
+
+function find_fixed_mc(loc_freelists: pfreelists; chunkindex: ptruint; 
+  pmc: pmemchunk_fixed): boolean;
+var
+  pmc_temp: pmemchunk_fixed;
+begin
+  pmc_temp := loc_freelists^.fixedlists[chunkindex];
+  while pmc_temp <> nil do
+  begin
+    if pmc_temp = pmc then exit(true);
+    pmc_temp := pmc_temp^.next_fixed;
+  end;
+  result := false;
+end;
+
+{$endif}
+
+procedure remove_from_list_fixed(pmc: pmemchunk_fixed; fixedlist: ppmemchunk_fixed); inline;
 begin
   if assigned(pmc^.next_fixed) then
     pmc^.next_fixed^.prev_fixed := pmc^.prev_fixed;
   if assigned(pmc^.prev_fixed) then
     pmc^.prev_fixed^.next_fixed := pmc^.next_fixed
   else
-    freelists_fixed[blockindex] := pmc^.next_fixed;
+    fixedlist^ := pmc^.next_fixed;
 end;
 
-procedure remove_from_list_var(pmc: pmemchunk_var);
+procedure remove_from_list_var(pmc: pmemchunk_var); inline;
 begin
   if assigned(pmc^.next_var) then
     pmc^.next_var^.prev_var := pmc^.prev_var;
   if assigned(pmc^.prev_var) then
     pmc^.prev_var^.next_var := pmc^.next_var
   else
-    freelist_var := pmc^.next_var;
+    pmc^.freelists^.varlist := pmc^.next_var;
+end;
+
+procedure remove_freed_fixed_chunks(poc: poschunk);
+  { remove all fixed chunks from the fixed free list, as this os chunk
+    is going to be used for other purpose }
+var
+  pmc, pmc_end: pmemchunk_fixed;
+  fixedlist: ppmemchunk_fixed;
+  chunksize: ptruint;
+begin
+  { exit if this is a var size os chunk, function only applicable to fixed size }
+  if poc^.used < 0 then
+    exit;
+  pmc := pmemchunk_fixed(pointer(poc)+fixedfirstoffset);
+  chunksize := pmc^.size and fixedsizemask;
+  pmc_end := pmemchunk_fixed(pointer(poc)+(poc^.size and sizemask)-chunksize);
+  fixedlist := @poc^.freelists^.fixedlists[chunksize shr blockshift];
+  repeat
+    remove_from_list_fixed(pmc, fixedlist);
+    pmc := pointer(pmc)+chunksize;
+  until pmc > pmc_end;
+end;
+
+procedure free_oschunk(loc_freelists: pfreelists; poc: poschunk);
+var
+  pocsize: ptruint;
+begin
+  remove_freed_fixed_chunks(poc);
+  if assigned(poc^.prev_any) then
+    poc^.prev_any^.next_any := poc^.next_any
+  else
+    loc_freelists^.oslist_all := poc^.next_any;
+  if assigned(poc^.next_any) then
+    poc^.next_any^.prev_any := poc^.prev_any;
+  if poc^.used >= 0 then
+    dec(loc_freelists^.fixedallocated);
+  pocsize := poc^.size and sizemask;
+  dec(loc_freelists^.internal_status.currheapsize, pocsize);
+  SysOSFree(poc, pocsize);
 end;
 
 procedure append_to_oslist(poc: poschunk);
+var
+  loc_freelists: pfreelists;
 begin
+  loc_freelists := poc^.freelists;
+  { check if already on list }
+  if (poc^.size and ocrecycleflag) <> 0 then
+    begin
+      inc(loc_freelists^.oscount);
+      poc^.size := poc^.size and not ocrecycleflag;
+      exit;
+    end;
   { decide whether to free block or add to list }
 {$ifdef HAS_SYSOSFREE}
-  if freeoslistcount >= 3 then
+  if (loc_freelists^.oscount >= MaxKeptOSChunks) or
+     ((poc^.size and sizemask) > growheapsize2) then
     begin
-      dec(internal_status.currheapsize, poc^.size);
-      SysOSFree(poc, poc^.size);
+      free_oschunk(loc_freelists, poc);
     end
   else
     begin
 {$endif}
-      poc^.prev := nil;
-      poc^.next := freeoslist;
-      if freeoslist <> nil then
-        freeoslist^.prev := poc;
-      freeoslist := poc;
-      inc(freeoslistcount);
+      poc^.next_free := loc_freelists^.oslist;
+      loc_freelists^.oslist := poc;
+      inc(loc_freelists^.oscount);
 {$ifdef HAS_SYSOSFREE}
-   end;
+    end;
 {$endif}
-end;
-
-procedure remove_from_oslist(poc: poschunk);
-begin
-  if assigned(poc^.next) then
-    poc^.next^.prev := poc^.prev;
-  if assigned(poc^.prev) then
-    poc^.prev^.next := poc^.next
-  else
-    freeoslist := poc^.next;
-  dec(freeoslistcount);
 end;
 
 procedure append_to_oslist_var(pmc: pmemchunk_var);
@@ -678,52 +567,79 @@ var
   poc: poschunk;
 begin
   // block eligable for freeing
-  poc := pointer(pmc)-sizeof(toschunk);
+  poc := pointer(pmc)-varfirstoffset;
   remove_from_list_var(pmc);
   append_to_oslist(poc);
 end;
 
-procedure append_to_oslist_fixed(blockindex, chunksize: ptrint; poc: poschunk);
+procedure modify_oschunk_freelists(poc: poschunk; new_freelists: pfreelists);
 var
-  pmc: pmemchunk_fixed;
-  i, count: ptrint;
+  pmcv: pmemchunk_var;
 begin
-  count := (poc^.size - sizeof(toschunk)) div chunksize;
-  pmc := pmemchunk_fixed(pointer(poc)+sizeof(toschunk));
-  for i := 0 to count - 1 do
-    begin
-      remove_from_list_fixed(blockindex, pmc);
-      pmc := pointer(pmc)+chunksize;
-    end;
-  append_to_oslist(poc);
+  poc^.freelists := new_freelists;
+  { only if oschunk contains var memchunks, we need additional assignments }
+  if poc^.used <> -1 then exit;
+  pmcv := pmemchunk_var(pointer(poc)+varfirstoffset);
+  repeat
+    pmcv^.freelists := new_freelists;
+    if (pmcv^.size and lastblockflag) <> 0 then
+      break;
+    pmcv := pmemchunk_var(pointer(pmcv)+(pmcv^.size and sizemask));
+  until false;
+end;
+
+function modify_freelists(loc_freelists, new_freelists: pfreelists): poschunk;
+var
+  poc: poschunk;
+begin
+  poc := loc_freelists^.oslist_all;
+  if assigned(poc) then
+  begin
+    repeat
+      { fixed and var freelist for orphaned freelists do not need maintenance }
+      { we assume the heap is not severely fragmented at thread exit }
+      modify_oschunk_freelists(poc, new_freelists);
+      if not assigned(poc^.next_any) then
+        exit(poc);
+      poc := poc^.next_any;
+    until false;
+  end;
+  modify_freelists := nil;
 end;
 
 {*****************************************************************************
                          Split block
 *****************************************************************************}
 
-procedure split_block(pcurr: pmemchunk_var; size: ptrint);
+function split_block(pcurr: pmemchunk_var; size: ptruint): ptruint;
 var
   pcurr_tmp : pmemchunk_var;
-  sizeleft: ptrint;
+  size_flags, oldsize, sizeleft: ptruint;
 begin
-  sizeleft := (pcurr^.size and sizemask)-size;
-  if sizeleft>=blocksize then
+  size_flags := pcurr^.size;
+  oldsize := size_flags and sizemask;
+  sizeleft := oldsize-size;
+  if sizeleft>=sizeof(tmemchunk_var) then
     begin
       pcurr_tmp := pmemchunk_var(pointer(pcurr)+size);
       { update prevsize of block to the right }
-      if (pcurr^.size and lastblockflag) = 0 then
-        pmemchunk_var(pointer(pcurr)+(pcurr^.size and sizemask))^.prevsize := sizeleft;
+      if (size_flags and lastblockflag) = 0 then
+        pmemchunk_var(pointer(pcurr)+oldsize)^.prevsize := sizeleft;
       { inherit the lastblockflag }
-      pcurr_tmp^.size := sizeleft or (pcurr^.size and lastblockflag);
+      pcurr_tmp^.size := sizeleft or (size_flags and lastblockflag);
       pcurr_tmp^.prevsize := size;
+      pcurr_tmp^.freelists := pcurr^.freelists;
       { the block we return is not the last one anymore (there's now a block after it) }
       { decrease size of block to new size }
-      pcurr^.size := size or (pcurr^.size and (not sizemask and not lastblockflag));
+      pcurr^.size := size or (size_flags and (not sizemask and not lastblockflag));
       { insert the block in the freelist }
       append_to_list_var(pcurr_tmp);
-    end;
+      result := size;
+    end
+  else
+    result := oldsize;
 end;
+
 
 {*****************************************************************************
                          Try concat freerecords
@@ -732,7 +648,7 @@ end;
 procedure concat_two_blocks(mc_left, mc_right: pmemchunk_var);
 var
   mc_tmp : pmemchunk_var;
-  size_right : ptrint;
+  size_right : ptruint;
 begin
   // mc_right can't be a fixed size block
   if mc_right^.size and fixedsizeflag<>0 then
@@ -755,11 +671,12 @@ begin
   remove_from_list_var(mc_right);
 end;
 
-procedure try_concat_free_chunk_forward(mc: pmemchunk_var);
+function try_concat_free_chunk_forward(mc: pmemchunk_var): boolean;
 var
   mc_tmp : pmemchunk_var;
 begin
   { try concat forward }
+  result := false;
   if (mc^.size and lastblockflag) = 0 then
    begin
      mc_tmp := pmemchunk_var(pointer(mc)+(mc^.size and sizemask));
@@ -767,6 +684,7 @@ begin
        begin
          // next block free: concat
          concat_two_blocks(mc, mc_tmp);
+         result := true;
        end;
    end;
 end;
@@ -793,241 +711,327 @@ begin
 end;
 
 
-function check_concat_free_chunk_forward(mc: pmemchunk_var;reqsize:ptrint):boolean;
-var
-  mc_tmp : pmemchunk_var;
-  freesize : ptrint;
-begin
-  check_concat_free_chunk_forward:=false;
-  freesize:=0;
-  mc_tmp:=mc;
-  repeat
-     inc(freesize,mc_tmp^.size and sizemask);
-     if freesize>=reqsize then
-       begin
-         check_concat_free_chunk_forward:=true;
-         exit;
-       end;
-     if (mc_tmp^.size and lastblockflag) <> 0 then
-       break;
-     mc_tmp := pmemchunk_var(pointer(mc_tmp)+(mc_tmp^.size and sizemask));
-     if (mc_tmp^.size and usedflag) <> 0 then
-       break;
-  until false;
-end;
-
-
 {*****************************************************************************
                                 Grow Heap
 *****************************************************************************}
 
-function alloc_oschunk(blockindex, size: ptrint): pointer;
+function find_free_oschunk(loc_freelists: pfreelists; 
+  minsize, maxsize: ptruint; var size: ptruint): poschunk;
 var
-  pmc       : pmemchunk_fixed;
-  pmcv      : pmemchunk_var;
-  minsize,
-  maxsize,
-  i, count  : ptrint;
-  chunksize : ptrint;
+  prev_poc, poc: poschunk;
+  pocsize: ptruint;
 begin
-  { increase size by size needed for os block header }
-  minsize := size + sizeof(toschunk);
-  if blockindex<>0 then
-    maxsize := (size * $ffff) + sizeof(toschunk)
-  else
-    maxsize := high(ptrint);
-  { blocks available in freelist? }
-  result := freeoslist;
-  while result <> nil do
+  poc := loc_freelists^.oslist;
+  prev_poc := nil;
+  while poc <> nil do
     begin
-      if (poschunk(result)^.size >= minsize) and
-         (poschunk(result)^.size <= maxsize) then
+      if (poc^.size and ocrecycleflag) <> 0 then
+      begin
+        { oops! we recycled this chunk; remove it from list }
+        poc^.size := poc^.size and not ocrecycleflag;
+        poc := poc^.next_free;
+        if prev_poc = nil then
+          loc_freelists^.oslist := poc
+        else
+          prev_poc^.next_free := poc;
+        continue;
+      end;
+      pocsize := poc^.size and sizemask;
+      if (pocsize >= minsize) and
+         (pocsize <= maxsize) then
         begin
-          size := poschunk(result)^.size;
-          remove_from_oslist(poschunk(result));
+          size := pocsize;
+          if prev_poc = nil then
+            loc_freelists^.oslist := poc^.next_free
+          else
+            prev_poc^.next_free := poc^.next_free;
+          dec(loc_freelists^.oscount);
+          remove_freed_fixed_chunks(poc);
           break;
         end;
-      result := poschunk(result)^.next;
+      prev_poc := poc;
+      poc := poc^.next_free;
     end;
-  if result = nil then
+  result := poc;
+end;
+
+function alloc_oschunk(loc_freelists: pfreelists; chunkindex, size: ptruint): pointer;
+var
+  pmc,
+  pmc_next  : pmemchunk_fixed;
+  pmcv      : pmemchunk_var;
+  poc       : poschunk;
+  minsize,
+  maxsize,
+  i         : ptruint;
+  chunksize : ptruint;
+  status    : pfpcheapstatus;
+begin
+  { increase size by size needed for os block header }
+  minsize := size + varfirstoffset;
+  { for fixed size chunks we keep offset from os chunk to mem chunk in
+    upper bits, so maximum os chunk size is 64K on 32bit for fixed size }
+  if chunkindex<>0 then
+    maxsize := 1 shl (32-fixedoffsetshift)
+  else
+    maxsize := high(ptruint);
+  poc:=nil;
+  { blocks available in freelist? }
+  { do not reformat fixed size chunks too quickly }
+  if loc_freelists^.oscount >= MaxKeptOSChunks then
+    poc := find_free_oschunk(loc_freelists, minsize, maxsize, size);
+  { if none available, try to recycle orphaned os chunks }
+  if not assigned(poc) and (assigned(orphaned_freelists.waitfixed)
+      or assigned(orphaned_freelists.waitvar) or (orphaned_freelists.oscount > 0)) then
+    begin
+{$ifdef FPC_HAS_FEATURE_THREADING}
+      entercriticalsection(heap_lock);
+{$endif}
+      finish_waitfixedlist(@orphaned_freelists);
+      finish_waitvarlist(@orphaned_freelists);
+      if orphaned_freelists.oscount > 0 then
+        begin
+          { blocks available in orphaned freelist ? }
+          poc := find_free_oschunk(@orphaned_freelists, minsize, maxsize, size);
+          if assigned(poc) then
+            begin
+              { adopt this os chunk }
+              poc^.freelists := loc_freelists;
+              if assigned(poc^.prev_any) then
+                poc^.prev_any^.next_any := poc^.next_any
+              else
+                orphaned_freelists.oslist_all := poc^.next_any;
+              if assigned(poc^.next_any) then
+                poc^.next_any^.prev_any := poc^.prev_any;
+              poc^.next_any := loc_freelists^.oslist_all;
+              if assigned(loc_freelists^.oslist_all) then
+                loc_freelists^.oslist_all^.prev_any := poc;
+              poc^.prev_any := nil;
+              loc_freelists^.oslist_all := poc;
+            end;
+        end;
+{$ifdef FPC_HAS_FEATURE_THREADING}
+      leavecriticalsection(heap_lock);
+{$endif}
+    end;
+  if poc = nil then
     begin
 {$ifdef DUMPGROW}
-      writeln('growheap(',size,')  allocating ',(size+sizeof(toschunk)+$ffff) and $ffff0000);
-      DumpBlocks;
+      writeln('growheap(',size,')  allocating ',(size+sizeof(toschunk)+$ffff) and not $ffff);
+      DumpBlocks(loc_freelists);
 {$endif}
       { allocate by 64K size }
-      size := (size+sizeof(toschunk)+$ffff) and not $ffff;
+      size := (size+varfirstoffset+$ffff) and not $ffff;
       { allocate smaller blocks for fixed-size chunks }
-      if blockindex<>0 then
+      if chunkindex<>0 then
         begin
-          result := SysOSAlloc(GrowHeapSizeSmall);
-          if result<>nil then
-            size := GrowHeapSizeSmall;
+          poc := SysOSAlloc(loc_freelists^.LocGrowHeapSizeSmall);
+          if poc<>nil then
+            size := loc_freelists^.LocGrowHeapSizeSmall;
         end
     { first try 256K (default) }
-    else if size<=GrowHeapSize1 then
-      begin
-        result := SysOSAlloc(GrowHeapSize1);
-        if result<>nil then
-          size := GrowHeapSize1;
-      end
-    { second try 1024K (default) }
-    else if size<=GrowHeapSize2 then
-      begin
-        result := SysOSAlloc(GrowHeapSize2);
-        if result<>nil then
-          size := GrowHeapSize2;
-      end
-    { else allocate the needed bytes }
-    else
-      result := SysOSAlloc(size);
-    { try again }
-    if result=nil then
-    begin
-      result := SysOSAlloc(size);
-      if (result=nil) then
+      else if size<=GrowHeapSize1 then
         begin
-          if ReturnNilIfGrowHeapFails then
-            exit
-          else
-            HandleError(203);
-        end;
+          poc := SysOSAlloc(GrowHeapSize1);
+          if poc<>nil then
+            size := GrowHeapSize1;
+        end
+    { second try 1024K (default) }
+      else if size<=GrowHeapSize2 then
+        begin
+          poc := SysOSAlloc(GrowHeapSize2);
+          if poc<>nil then
+            size := GrowHeapSize2;
+        end
+    { else allocate the needed bytes }
+      else
+        poc := SysOSAlloc(size);
+    { try again }
+      if poc=nil then
+      begin
+        poc := SysOSAlloc(size);
+        if poc=nil then
+          begin
+            if ReturnNilIfGrowHeapFails then
+              begin
+                result := nil;
+                exit
+              end
+            else
+              HandleError(203);
+          end;
+      end;
+      poc^.freelists := loc_freelists;
+      poc^.prev_any := nil;
+      poc^.next_any := loc_freelists^.oslist_all;
+      if assigned(loc_freelists^.oslist_all) then
+        loc_freelists^.oslist_all^.prev_any := poc;
+      loc_freelists^.oslist_all := poc;
+      { set the total new heap size }
+      status := @loc_freelists^.internal_status;
+      inc(status^.currheapsize, size);
+      if status^.currheapsize > status^.maxheapsize then
+        status^.maxheapsize := status^.currheapsize;
     end;
-    { set the total new heap size }
-    inc(internal_status.currheapsize,size);
-    if internal_status.currheapsize>internal_status.maxheapsize then
-      internal_status.maxheapsize:=internal_status.currheapsize;
-  end;
   { initialize os-block }
-  poschunk(result)^.used := 0;
-  poschunk(result)^.size := size;
-  inc(result, sizeof(toschunk));
-  if blockindex<>0 then
+  poc^.size := size;
+  if chunkindex<>0 then
     begin
+      poc^.used := 0;
       { chop os chunk in fixedsize parts,
         maximum of $ffff elements are allowed, otherwise
         there will be an overflow }
-      chunksize := blockindex shl blockshr;
-      count := (size-sizeof(toschunk)) div chunksize;
-      if count>$ffff then
+      chunksize := chunkindex shl blockshift;
+      if ptruint(size-chunksize)>maxsize then
         HandleError(204);
+      { we need to align the user pointers to 8 byte at least for
+        mmx/sse and doubles on sparc, align to 16 bytes }
+      i := fixedfirstoffset;
+      result := pointer(poc) + i;
       pmc := pmemchunk_fixed(result);
       pmc^.prev_fixed := nil;
-      i := 0;
       repeat
-        pmc^.size := fixedsizeflag or chunksize or (i shl 16);
-        pmc^.next_fixed := pointer(pmc)+chunksize;
-        inc(i);
-        if i < count then
-          begin
-            pmc := pmemchunk_fixed(pointer(pmc)+chunksize);
-            pmc^.prev_fixed := pointer(pmc)-chunksize;
-          end
-        else
-          begin
-            break;
-          end;
+        pmc^.size := fixedsizeflag or chunksize or (i shl fixedoffsetshift);
+        inc(i, chunksize);
+        if i > ptruint(size - chunksize) then break;
+        pmc_next := pmemchunk_fixed(pointer(pmc)+chunksize);
+        pmc^.next_fixed := pmc_next;
+        pmc_next^.prev_fixed := pmc;
+        pmc := pmc_next;
       until false;
-      append_to_list_fixed(blockindex, pmc);
-      pmc^.prev_fixed := pointer(pmc)-chunksize;
-      freelists_fixed[blockindex] := pmemchunk_fixed(result);
+      pmc_next := loc_freelists^.fixedlists[chunkindex];
+      pmc^.next_fixed := pmc_next;
+      if pmc_next<>nil then
+        pmc_next^.prev_fixed := pmc;
+      loc_freelists^.fixedlists[chunkindex] := pmemchunk_fixed(result);
+      { check whether we should increase the size of the fixed freelist blocks }
+      inc(loc_freelists^.fixedallocated);
+      if loc_freelists^.fixedallocated > fixedallocthreshold then
+        begin
+          if loc_freelists^.locgrowheapsizesmall < maxgrowheapsizesmall then
+            inc(loc_freelists^.locgrowheapsizesmall, loc_freelists^.locgrowheapsizesmall);
+          { also set to zero in case we did not grow the blocksize to
+            prevent oveflows of this counter in case the rtl is compiled
+            range/overflow checking }
+          loc_freelists^.fixedallocated := 0;
+        end;
     end
   else
     begin
+      poc^.used := -1;
+      { we need to align the user pointers to 8 byte at least for
+        mmx/sse and doubles on sparc, align to 16 bytes }
+      result := pointer(poc)+varfirstoffset;
       pmcv := pmemchunk_var(result);
-      append_to_list_var(pmcv);
-      pmcv^.size := ((size-sizeof(toschunk)) and sizemask) or (firstblockflag or lastblockflag);
+      pmcv^.size := (ptruint(size-varfirstoffset) and sizemask) or (firstblockflag or lastblockflag);
       pmcv^.prevsize := 0;
+      pmcv^.freelists := loc_freelists;
+      append_to_list_var(pmcv);
     end;
-{$ifdef TestFreeLists}
-  TestFreeLists;
-{$endif TestFreeLists}
 end;
 
 {*****************************************************************************
                                  SysGetMem
 *****************************************************************************}
 
-function SysGetMem_Fixed(size: ptrint): pointer;
+function SysGetMem_Fixed(chunksize: ptruint): pointer;
 var
-  pcurr: pmemchunk_fixed;
+  pmc, pmc_next: pmemchunk_fixed;
   poc: poschunk;
-  s: ptrint;
+  chunkindex: ptruint;
+  loc_freelists: pfreelists;
 begin
-  result:=nil;
   { try to find a block in one of the freelists per size }
-  s := size shr blockshr;
-  pcurr := freelists_fixed[s];
+  chunkindex := chunksize shr blockshift;
+  loc_freelists := @freelists;
+  pmc := loc_freelists^.fixedlists[chunkindex];
   { no free blocks ? }
-  if not assigned(pcurr) then
+  if assigned(pmc) then
     begin
-      pcurr := alloc_oschunk(s, size);
-      if not assigned(pcurr) then
-        exit;
+      { remove oschunk from free list in case we recycle it }
+      poc := poschunk(pointer(pmc) - (pmc^.size shr fixedoffsetshift));
+      if poc^.used = 0 then
+        begin
+          poc^.size := poc^.size or ocrecycleflag;
+          dec(loc_freelists^.oscount);
+        end;
+    end
+  else if try_finish_waitfixedlist(loc_freelists) then
+      { freed some to-be freed chunks, retry allocation }
+    exit(SysGetMem_Fixed(chunksize))
+  else
+    begin
+      pmc := alloc_oschunk(loc_freelists, chunkindex, chunksize);
+      if not assigned(pmc) then
+        exit(nil);
+      poc := poschunk(pointer(pmc)-fixedfirstoffset);
     end;
+  prefetch(poc^.used);
   { get a pointer to the block we should return }
-  result := pointer(pcurr)+sizeof(tmemchunk_fixed_hdr);
-  { flag as in-use }
-  pcurr^.size := pcurr^.size or usedflag;
+  result := pointer(pmc)+sizeof(tmemchunk_fixed_hdr);
   { update freelist }
-  freelists_fixed[s] := pcurr^.next_fixed;
-  if assigned(freelists_fixed[s]) then
-    freelists_fixed[s]^.prev_fixed := nil;
-  poc := poschunk(pointer(pcurr)-((pcurr^.size shr 16)*(pcurr^.size and fixedsizemask)+sizeof(toschunk)));
-  inc(poc^.used);
+  pmc_next := pmc^.next_fixed;
+  loc_freelists^.fixedlists[chunkindex] := pmc_next;
+  prefetch((pointer(@chunksize)-4)^);
+  if assigned(pmc_next) then
+    pmc_next^.prev_fixed := nil;
   { statistics }
-  inc(internal_status.currheapused,size);
-  if internal_status.currheapused>internal_status.maxheapused then
-    internal_status.maxheapused:=internal_status.currheapused;
-{$ifdef TestFreeLists}
-  if test_each then
-    TestFreeLists;
-{$endif TestFreeLists}
+  with loc_freelists^.internal_status do
+  begin
+    inc(currheapused, chunksize);
+    if currheapused > maxheapused then
+    begin
+      maxheapused := currheapused;
+{$ifdef DUMP_MEM_USAGE}        
+      maxsizeusage := sizeusage;
+{$endif}        
+    end;
+  end;
+  inc(poc^.used);
 end;
 
-function SysGetMem_Var(size: ptrint): pointer;
+function SysGetMem_Var(size: ptruint): pointer;
 var
   pcurr : pmemchunk_var;
-{$ifdef BESTMATCH}
   pbest : pmemchunk_var;
-{$endif}
+  loc_freelists : pfreelists;
+  iter : cardinal;
 begin
   result:=nil;
-{$ifdef BESTMATCH}
+  { check for maximum possible allocation (everything is rounded up to the
+    next multiple of 64k) }
+  if (size>high(ptruint)-$ffff) then
+    if ReturnNilIfGrowHeapFails then
+      exit
+    else
+      HandleError(204);
+  { free pending items }
+  loc_freelists := @freelists;
+  try_finish_waitvarlist(loc_freelists);
   pbest := nil;
-{$endif}
-  pcurr := freelist_var;
-  while assigned(pcurr) do
+  pcurr := loc_freelists^.varlist;
+  iter := high(iter);
+  while assigned(pcurr) and (iter>0) do
+  begin
+    if (pcurr^.size>=size) then
     begin
-{$ifdef BESTMATCH}
-      if pcurr^.size=size then
-        begin
+      if not assigned(pbest) or (pcurr^.size<pbest^.size) then
+      begin
+        pbest := pcurr;
+        if pcurr^.size = size then
           break;
-        end
-      else
-        begin
-          if (pcurr^.size>size) then
-            begin
-              if (not assigned(pbest)) or
-                 (pcurr^.size<pbest^.size) then
-               pbest := pcurr;
-            end;
-        end;
-{$else BESTMATCH}
-      if pcurr^.size>=size then
-        break;
-{$endif BESTMATCH}
-      pcurr := pcurr^.next_var;
+        iter := matcheffort;
+      end;
     end;
-{$ifdef BESTMATCH}
-  if not assigned(pcurr) then
-    pcurr := pbest;
-{$endif}
+    pcurr := pcurr^.next_var;
+    dec(iter);
+  end;
+  pcurr := pbest;
 
   if not assigned(pcurr) then
    begin
     // all os-chunks full, allocate a new one
-    pcurr := alloc_oschunk(0, size);
+    pcurr := alloc_oschunk(loc_freelists, 0, size);
     if not assigned(pcurr) then
       exit;
    end;
@@ -1037,42 +1041,50 @@ begin
   { remove the current block from the freelist }
   remove_from_list_var(pcurr);
   { create the left over freelist block, if at least 16 bytes are free }
-  split_block(pcurr, size);
+  size := split_block(pcurr, size);
   { flag block as used }
   pcurr^.size := pcurr^.size or usedflag;
   { statistics }
-  inc(internal_status.currheapused,size);
-  if internal_status.currheapused>internal_status.maxheapused then
-    internal_status.maxheapused:=internal_status.currheapused;
-{$ifdef TestFreeLists}
-  if test_each then
-    TestFreeLists;
-{$endif TestFreeLists}
+  with loc_freelists^.internal_status do
+  begin
+    inc(currheapused, size);
+    if currheapused > maxheapused then
+    begin
+      maxheapused := currheapused;
+{$ifdef DUMP_MEM_USAGE}        
+      maxsizeusage := sizeusage;
+{$endif}        
+    end;
+  end;
 end;
 
-function SysGetMem(size : ptrint):pointer;
+function SysGetMem(size : ptruint):pointer;
 begin
 { Something to allocate ? }
-  if size<=0 then
-    begin
-      { give an error for < 0 }
-      if size<0 then
-        HandleError(204);
-      { we always need to allocate something, using heapend is not possible,
-        because heappend can be changed by growheap (PFV) }
-      size := 1;
-    end;
+  if size=0 then
+    { we always need to allocate something, using heapend is not possible,
+      because heappend can be changed by growheap (PFV) }
+    size := 1;
 { calc to multiple of 16 after adding the needed bytes for memchunk header }
   if size <= (maxblocksize - sizeof(tmemchunk_fixed_hdr)) then
     begin
-      size := (size+sizeof(tmemchunk_fixed_hdr)+(blocksize-1)) and fixedsizemask;
-      sysgetmem := sysgetmem_fixed(size);
+      size := (size+(sizeof(tmemchunk_fixed_hdr)+(blocksize-1))) and fixedsizemask;
+      result := sysgetmem_fixed(size);
     end
   else
     begin
-      size := (size+sizeof(tmemchunk_var_hdr)+(blocksize-1)) and sizemask;
-      sysgetmem := sysgetmem_var(size);
+      if size < high(ptruint)-((sizeof(tmemchunk_var_hdr)+(blocksize-1))) then
+        size := (size+(sizeof(tmemchunk_var_hdr)+(blocksize-1))) and sizemask;
+      result := sysgetmem_var(size);
     end;
+
+{$ifdef DUMP_MEM_USAGE}
+  size := sysmemsize(result);
+  if size > sizeusagesize then
+    inc(sizeusage[sizeusageindex])
+  else
+    inc(sizeusage[size shr sizeusageshift]);
+{$endif}
 end;
 
 
@@ -1080,109 +1092,196 @@ end;
                                SysFreeMem
 *****************************************************************************}
 
-function SysFreeMem_Fixed(pcurr: pmemchunk_fixed; size: ptrint): ptrint;
+procedure waitfree_fixed(pmc: pmemchunk_fixed; poc: poschunk);
+begin
+{$ifdef FPC_HAS_FEATURE_THREADING}
+  entercriticalsection(heap_lock);
+{$endif}
+  pmc^.next_fixed := poc^.freelists^.waitfixed;
+  poc^.freelists^.waitfixed := pmc;
+{$ifdef FPC_HAS_FEATURE_THREADING}
+  leavecriticalsection(heap_lock);
+{$endif}
+end;
+
+procedure waitfree_var(pmcv: pmemchunk_var);
+begin
+{$ifdef FPC_HAS_FEATURE_THREADING}
+  entercriticalsection(heap_lock);
+{$endif}
+  pmcv^.next_var := pmcv^.freelists^.waitvar;
+  pmcv^.freelists^.waitvar := pmcv;
+{$ifdef FPC_HAS_FEATURE_THREADING}
+  leavecriticalsection(heap_lock);
+{$endif}
+end;
+
+function SysFreeMem_Fixed(loc_freelists: pfreelists; pmc: pmemchunk_fixed): ptruint;
 var
-  pcurrsize: ptrint;
-  blockindex: ptrint;
+  chunkindex,
+  chunksize: ptruint;
   poc: poschunk;
+  pmc_next: pmemchunk_fixed;
+  pocfreelists: pfreelists;
 begin
-  pcurrsize := pcurr^.size and fixedsizemask;
-  if size<>pcurrsize then
-   HandleError(204);
-  dec(internal_status.currheapused,pcurrsize);
-  { insert the block in it's freelist }
-  pcurr^.size := pcurr^.size and (not usedflag);
-  blockindex := pcurrsize shr blockshr;
-  append_to_list_fixed(blockindex, pcurr);
-  { decrease used blocks count }
-  poc := poschunk(pointer(pcurr)-(pcurr^.size shr 16)*pcurrsize-sizeof(toschunk));
-  if poc^.used = 0 then
-    HandleError(204);
-  dec(poc^.used);
-  if poc^.used = 0 then
-  begin
-    // block eligable for freeing
-    append_to_oslist_fixed(blockindex, pcurrsize, poc);
-  end;
-  SysFreeMem_Fixed := pcurrsize;
-{$ifdef TestFreeLists}
-  if test_each then
-    TestFreeLists;
-{$endif TestFreeLists}
-end;
-
-function SysFreeMem_Var(pcurr: pmemchunk_var; size: ptrint): ptrint;
-var
-  pcurrsize: ptrint;
-begin
-  pcurrsize := pcurr^.size and sizemask;
-  if size<>pcurrsize then
-    HandleError(204);
-  dec(internal_status.currheapused,pcurrsize);
-  { insert the block in it's freelist }
-  pcurr^.size := pcurr^.size and (not usedflag);
-  append_to_list_var(pcurr);
-  SysFreeMem_Var := pcurrsize;
-  pcurr := try_concat_free_chunk(pcurr);
-  if (pcurr^.size and (firstblockflag or lastblockflag)) = (firstblockflag or lastblockflag) then
-  begin
-    append_to_oslist_var(pcurr);
-  end;
-{$ifdef TestFreeLists}
-  if test_each then
-    TestFreeLists;
-{$endif TestFreeLists}
-end;
-
-
-function SysFreeMem(p: pointer): ptrint;
-var
-  pcurrsize: ptrint;
-begin
-  if p=nil then
-    exit;
-  pcurrsize := pmemchunk_fixed(p-sizeof(tmemchunk_fixed_hdr))^.size;
-  { check if this is a fixed- or var-sized chunk }
-  if (pcurrsize and fixedsizeflag) = 0 then
+  poc := poschunk(pointer(pmc)-(pmc^.size shr fixedoffsetshift));
+  { start memory access to poc^.freelists already }
+  pocfreelists := poc^.freelists;
+  chunksize := pmc^.size and fixedsizemask;
+  if loc_freelists = pocfreelists then
     begin
-      result := sysfreemem_var(pmemchunk_var(p-sizeof(tmemchunk_var_hdr)), pcurrsize and sizemask);
+      { decrease used blocks count (well in advance of poc^.used check below,
+        to avoid stalling due to a dependency) }
+      dec(poc^.used);
+
+      { insert the block in its freelist }
+      chunkindex := chunksize shr blockshift;
+      pmc_next := loc_freelists^.fixedlists[chunkindex];
+      pmc^.prev_fixed := nil;
+      pmc^.next_fixed := pmc_next;
+      if assigned(pmc_next) then
+        pmc_next^.prev_fixed := pmc;
+      loc_freelists^.fixedlists[chunkindex] := pmc;
+
+      dec(loc_freelists^.internal_status.currheapused, chunksize);
+
+      if poc^.used <= 0 then
+        begin
+          { decrease used blocks count }
+          if poc^.used<0 then
+            HandleError(204);
+          { osblock can be freed? }
+          append_to_oslist(poc);
+        end;
     end
   else
     begin
-      result := sysfreemem_fixed(pmemchunk_fixed(p-sizeof(tmemchunk_fixed_hdr)), pcurrsize and fixedsizemask);
+      { deallocated in wrong thread! add to to-be-freed list of correct thread }
+      waitfree_fixed(pmc, poc);
     end;
+  result := chunksize;
+end;
+
+function SysFreeMem_Var(loc_freelists: pfreelists; pmcv: pmemchunk_var): ptruint;
+var
+  chunksize: ptruint;
+begin
+  chunksize := pmcv^.size and sizemask;
+  if loc_freelists <> pmcv^.freelists then
+  begin
+    { deallocated in wrong thread! add to to-be-freed list of correct thread }
+    waitfree_var(pmcv);
+    exit(chunksize);
+  end;
+
+  { insert the block in it's freelist }
+  pmcv^.size := pmcv^.size and (not usedflag);
+  append_to_list_var(pmcv);
+  pmcv := try_concat_free_chunk(pmcv);
+  if (pmcv^.size and (firstblockflag or lastblockflag)) = (firstblockflag or lastblockflag) then
+    append_to_oslist_var(pmcv);
+  dec(loc_freelists^.internal_status.currheapused, chunksize);
+  result := chunksize;
+end;
+
+
+function SysFreeMem(p: pointer): ptruint;
+var
+  pmc: pmemchunk_fixed;
+  loc_freelists: pfreelists;
+{$ifdef DUMP_MEM_USAGE}
+  size: sizeint;
+{$endif}
+begin
+  pmc := pmemchunk_fixed(p-sizeof(tmemchunk_fixed_hdr));
+  prefetch(pmc^.size);
+  if p=nil then
+    begin
+      result:=0;
+      exit;
+    end;
+{$ifdef DUMP_MEM_USAGE}
+  size := sysmemsize(p);
+  if size > sizeusagesize then
+    dec(sizeusage[sizeusageindex])
+  else
+    dec(sizeusage[size shr sizeusageshift]);
+{$endif}
+  { loc_freelists is a threadvar, so it can be worth it to prefetch }
+  loc_freelists := @freelists;
+  prefetch(loc_freelists^.internal_status.currheapused);
+  { check if this is a fixed- or var-sized chunk }
+  if (pmc^.size and fixedsizeflag) = 0 then
+    result := sysfreemem_var(loc_freelists, pmemchunk_var(p-sizeof(tmemchunk_var_hdr)))
+  else
+    result := sysfreemem_fixed(loc_freelists, pmc);
+end;
+
+procedure finish_waitfixedlist(loc_freelists: pfreelists);
+  { free to-be-freed chunks, return whether we freed anything }
+var
+  pmc: pmemchunk_fixed;
+begin
+  while loc_freelists^.waitfixed <> nil do
+  begin
+    { keep next_fixed, might be destroyed }
+    pmc := loc_freelists^.waitfixed;
+    loc_freelists^.waitfixed := pmc^.next_fixed;
+    SysFreeMem_Fixed(loc_freelists, pmc);
+  end;
+end;
+
+function try_finish_waitfixedlist(loc_freelists: pfreelists): boolean;
+begin
+  if loc_freelists^.waitfixed = nil then 
+    exit(false);
+{$ifdef FPC_HAS_FEATURE_THREADING}
+  entercriticalsection(heap_lock);
+{$endif}
+  finish_waitfixedlist(loc_freelists);
+{$ifdef FPC_HAS_FEATURE_THREADING}
+  leavecriticalsection(heap_lock);
+{$endif}
+  result := true;
+end;
+
+procedure finish_waitvarlist(loc_freelists: pfreelists);
+  { free to-be-freed chunks, return whether we freed anything }
+var
+  pmcv: pmemchunk_var;
+begin
+  while loc_freelists^.waitvar <> nil do
+  begin
+    { keep next_var, might be destroyed }
+    pmcv := loc_freelists^.waitvar;
+    loc_freelists^.waitvar := pmcv^.next_var;
+    SysFreeMem_Var(loc_freelists, pmcv);
+  end;
+end;
+
+procedure try_finish_waitvarlist(loc_freelists: pfreelists);
+begin
+  if loc_freelists^.waitvar = nil then 
+    exit;
+{$ifdef FPC_HAS_FEATURE_THREADING}
+  entercriticalsection(heap_lock);
+{$endif}
+  finish_waitvarlist(loc_freelists);
+{$ifdef FPC_HAS_FEATURE_THREADING}
+  leavecriticalsection(heap_lock);
+{$endif}
 end;
 
 {*****************************************************************************
                               SysFreeMemSize
 *****************************************************************************}
 
-Function SysFreeMemSize(p: pointer; size: ptrint):ptrint;
-var
-  pcurrsize: ptrint;
+Function SysFreeMemSize(p: pointer; size: ptruint):ptruint;
 begin
-  SysFreeMemSize := 0;
-  if size<=0 then
-    begin
-      if size<0 then
-        HandleError(204);
-      exit;
-    end;
-  if p=nil then
-    HandleError(204);
-
-  pcurrsize := pmemchunk_fixed(p-sizeof(tmemchunk_fixed_hdr))^.size;
-  { check if this is a fixed- or var-sized chunk }
-  if (pcurrsize and fixedsizeflag) = 0 then
-    begin
-      size := (size+sizeof(tmemchunk_var_hdr)+(blocksize-1)) and sizemask;
-      result := sysfreemem_var(pmemchunk_var(p-sizeof(tmemchunk_var_hdr)), size);
-    end
-  else
-    begin
-      size := (size+sizeof(tmemchunk_fixed_hdr)+(blocksize-1)) and fixedsizemask;
-      result := sysfreemem_fixed(pmemchunk_fixed(p-sizeof(tmemchunk_fixed_hdr)), size);
-    end;
+  if size=0 then
+    exit(0);
+  { can't free partial blocks, ignore size }
+  result := SysFreeMem(p);
 end;
 
 
@@ -1190,18 +1289,18 @@ end;
                                  SysMemSize
 *****************************************************************************}
 
-function SysMemSize(p: pointer): ptrint;
+function SysMemSize(p: pointer): ptruint;
 begin
-  SysMemSize := pmemchunk_fixed(pointer(p)-sizeof(tmemchunk_fixed_hdr))^.size;
-  if (SysMemSize and fixedsizeflag) = 0 then
+  result := pmemchunk_fixed(pointer(p)-sizeof(tmemchunk_fixed_hdr))^.size;
+  if (result and fixedsizeflag) = 0 then
     begin
-      SysMemSize := SysMemSize and sizemask;
-      dec(SysMemSize, sizeof(tmemchunk_var_hdr));
+      result := result and sizemask;
+      dec(result, sizeof(tmemchunk_var_hdr));
     end
   else
     begin
-      SysMemSize := SysMemSize and fixedsizemask;
-      dec(SysMemSize, sizeof(tmemchunk_fixed_hdr));
+      result := result and fixedsizemask;
+      dec(result, sizeof(tmemchunk_fixed_hdr));
     end;
 end;
 
@@ -1210,11 +1309,11 @@ end;
                                  SysAllocMem
 *****************************************************************************}
 
-function SysAllocMem(size: ptrint): pointer;
+function SysAllocMem(size: ptruint): pointer;
 begin
-  sysallocmem := MemoryManager.GetMem(size);
-  if sysallocmem<>nil then
-    FillChar(sysallocmem^,MemoryManager.MemSize(sysallocmem),0);
+  result := MemoryManager.GetMem(size);
+  if result<>nil then
+    FillChar(result^,MemoryManager.MemSize(result),0);
 end;
 
 
@@ -1222,76 +1321,87 @@ end;
                                  SysResizeMem
 *****************************************************************************}
 
-function SysTryResizeMem(var p: pointer; size: ptrint): boolean;
+function SysTryResizeMem(var p: pointer; size: ptruint): boolean;
 var
-  pcurrsize,
+  chunksize,
   oldsize,
-  currsize : ptrint;
+  currsize : ptruint;
   pcurr : pmemchunk_var;
+  loc_freelists : pfreelists;
 begin
   SysTryResizeMem := false;
 
   { fix p to point to the heaprecord }
-  pcurrsize := pmemchunk_fixed(p-sizeof(tmemchunk_fixed_hdr))^.size;
-  if (pcurrsize and fixedsizeflag) = 0 then
+  chunksize := pmemchunk_fixed(p-sizeof(tmemchunk_fixed_hdr))^.size;
+
+  { handle fixed memchuncks separate. Only allow resizes when the
+    new size fits in the same block }
+  if (chunksize and fixedsizeflag) <> 0 then
     begin
-      currsize := pcurrsize and sizemask;
-      size := (size+sizeof(tmemchunk_var_hdr)+(blocksize-1)) and sizemask;
-    end
-  else
-    begin
-      currsize := pcurrsize and fixedsizemask;
-      size := (size+sizeof(tmemchunk_fixed_hdr)+(blocksize-1)) and fixedsizemask;
+      currsize := chunksize and fixedsizemask;
+
+      { 1. Resizing to smaller sizes will never allocate a new block. We just keep the current block. This
+           is needed for the expectations that resizing to a small block will not move the contents of
+           a memory block
+        2. For resizing to greater size first check if the size fits in the fixed block range to prevent
+           "truncating" the size by the fixedsizemask }
+      if ((size <= (maxblocksize - sizeof(tmemchunk_fixed_hdr))) and
+          ((size+(sizeof(tmemchunk_fixed_hdr)+(blocksize-1))) and sizemask <= currsize)) then
+        begin
+          systryresizemem:=true;
+          exit;
+        end;
+
+      { we need to allocate a new fixed or var memchunck }
+      exit;
     end;
 
+  { var memchunk }
+
+  { do not fragment the heap with small shrinked blocks }
+  {  also solves problem with var sized chunks smaller than sizeof(tmemchunk_var) }
+  if size < maxblocksize div 2 then
+    exit(false);
+
+  currsize := chunksize and sizemask;
+  size := (size+sizeof(tmemchunk_var_hdr)+(blocksize-1)) and sizemask;
+
   { is the allocated block still correct? }
-  if (currsize>=size) and (size>(currsize-blocksize)) then
+  if (currsize>=size) and (size>ptruint(currsize-blocksize)) then
     begin
       SysTryResizeMem := true;
-{$ifdef TestFreeLists}
-       if test_each then
-         TestFreeLists;
-{$endif TestFreeLists}
-       exit;
-   end;
-
-  { don't do resizes on fixed-size blocks }
-  if (pcurrsize and fixedsizeflag) <> 0 then
-    exit;
+      exit;
+    end;
 
   { get pointer to block }
+  loc_freelists := @freelists;
   pcurr := pmemchunk_var(pointer(p)-sizeof(tmemchunk_var_hdr));
+  if pcurr^.freelists <> loc_freelists then
+    exit;
   oldsize := currsize;
 
   { do we need to allocate more memory ? }
+  if try_concat_free_chunk_forward(pcurr) then
+    currsize := pcurr^.size and sizemask;
   if size>currsize then
-   begin
-     { the size is bigger than the previous size, we need to allocated more mem.
-       We first check if the blocks after the current block are free. If not we
-       simply call getmem/freemem to get the new block }
-     if check_concat_free_chunk_forward(pcurr,size) then
-       begin
-         try_concat_free_chunk_forward(pcurr);
-         currsize := (pcurr^.size and sizemask);
-       end;
-   end;
-
-  { not enough space? }
-  if size>currsize then
-    exit;
-
+    begin
+      { the size is bigger than the previous size, we need to allocate more mem
+        but we could not concatenate with next block or not big enough }
+      exit;
+    end
+  else
   { is the size smaller then we can adjust the block to that size and insert
     the other part into the freelist }
   if currsize>size then
-    split_block(pcurr, size);
+    currsize := split_block(pcurr, size);
 
-  inc(internal_status.currheapused,size-oldsize);
+  with loc_freelists^.internal_status do
+  begin
+    inc(currheapused, currsize-oldsize);
+    if currheapused > maxheapused then
+      maxheapused := currheapused;
+  end;
   SysTryResizeMem := true;
-
-{$ifdef TestFreeLists}
-  if test_each then
-    TestFreeLists;
-{$endif TestFreeLists}
 end;
 
 
@@ -1299,9 +1409,11 @@ end;
                                  SysResizeMem
 *****************************************************************************}
 
-function SysReAllocMem(var p: pointer; size: ptrint):pointer;
+function SysReAllocMem(var p: pointer; size: ptruint):pointer;
 var
-  minsize : ptrint;
+  newsize,
+  oldsize,
+  minsize : ptruint;
   p2 : pointer;
 begin
   { Free block? }
@@ -1320,50 +1432,57 @@ begin
       p := MemoryManager.GetMem(size);
     end
   else
-   { Resize block }
-   if not SysTryResizeMem(p,size) then
+   begin
+    { Resize block }
+{$ifdef DUMP_MEM_USAGE}
+    oldsize:=SysMemSize(p);
+{$endif}
+    if not SysTryResizeMem(p,size) then
     begin
-      minsize := MemoryManager.MemSize(p);
-      if size < minsize then
-        minsize := size;
-      p2 := MemoryManager.GetMem(size);
+      oldsize:=MemoryManager.MemSize(p);
+      { Grow with bigger steps to prevent the need for
+        multiple getmem/freemem calls for fixed blocks. It might cost a bit
+        of extra memory, but in most cases a reallocmem is done multiple times. }
+      if oldsize<maxblocksize then
+        begin
+          newsize:=oldsize*2+blocksize;
+          if size>newsize then
+            newsize:=size;
+        end
+      else
+        newsize:=size;
+      { calc size of data to move }
+      minsize:=oldsize;
+      if newsize < minsize then
+        minsize := newsize;
+      p2 := MemoryManager.GetMem(newsize);
       if p2<>nil then
         Move(p^,p2^,minsize);
       MemoryManager.FreeMem(p);
       p := p2;
+{$ifdef DUMP_MEM_USAGE}
+    end else begin
+      size := sysmemsize(p);
+      if size <> oldsize then
+      begin
+        if oldsize > sizeusagesize then
+          dec(sizeusage[sizeusageindex])
+        else if oldsize >= 0 then
+          dec(sizeusage[oldsize shr sizeusageshift]);
+        if size > sizeusagesize then
+          inc(sizeusage[sizeusageindex])
+        else if size >= 0 then
+          inc(sizeusage[size shr sizeusageshift]);
+      end;
+{$endif}
     end;
+   end;
   SysReAllocMem := p;
 end;
 
+{$endif HAS_MEMORYMANAGER}
 
-{*****************************************************************************
-                       MemoryMutexManager default hooks
-*****************************************************************************}
-
-procedure SysHeapMutexInit;
-begin
-  { nothing todo }
-end;
-
-procedure SysHeapMutexDone;
-begin
-  { nothing todo }
-end;
-
-procedure SysHeapMutexLock;
-begin
-  { give an runtime error. the program is running multithreaded without
-    any heap protection. this will result in unpredictable errors so
-    stopping here with an error is more safe (PFV) }
-  runerror(244);
-end;
-
-procedure SysHeapMutexUnLock;
-begin
-  { see SysHeapMutexLock for comment }
-  runerror(244);
-end;
-
+{$ifndef HAS_MEMORYMANAGER}
 
 {*****************************************************************************
                                  InitHeap
@@ -1371,48 +1490,133 @@ end;
 
 { This function will initialize the Heap manager and need to be called from
   the initialization of the system unit }
-procedure InitHeap;
+{$ifdef FPC_HAS_FEATURE_THREADING}
+procedure InitHeapThread;
+var
+  loc_freelists: pfreelists;
 begin
-  FillChar(freelists_fixed,sizeof(tfreelists),0);
-  freelist_var := nil;
-  freeoslist := nil;
-  freeoslistcount := 0;
-  fillchar(internal_status,sizeof(internal_status),0);
+  if heap_lock_use > 0 then
+  begin
+    entercriticalsection(heap_lock);
+    inc(heap_lock_use);
+    leavecriticalsection(heap_lock);
+  end;
+  loc_freelists := @freelists;
+  fillchar(loc_freelists^,sizeof(tfreelists),0);
+  { initialise the local blocksize for allocating oschunks for fixed
+    freelists with the default starting value }
+  loc_freelists^.locgrowheapsizesmall:=growheapsizesmall;
+{$ifdef DUMP_MEM_USAGE}
+  fillchar(sizeusage,sizeof(sizeusage),0);
+  fillchar(maxsizeusage,sizeof(sizeusage),0);
+{$endif}
+end;
+{$endif}
+
+procedure InitHeap; public name '_FPC_InitHeap';
+var
+  loc_freelists: pfreelists;
+begin
+{$ifdef FPC_HAS_FEATURE_THREADING}
+  { we cannot initialize the locks here yet, thread support is
+    not loaded yet }
+  heap_lock_use := 0;
+{$endif}
+  loc_freelists := @freelists;
+  fillchar(loc_freelists^,sizeof(tfreelists),0);
+  { initialise the local blocksize for allocating oschunks for fixed
+    freelists with the default starting value }
+  loc_freelists^.locgrowheapsizesmall:=growheapsizesmall;
+  fillchar(orphaned_freelists,sizeof(orphaned_freelists),0);
 end;
 
-{
-  $Log: heap.inc,v $
-  Revision 1.51  2005/04/04 15:40:30  peter
-    * check if there is enough room before concatting blocks in
-      systryresizemem()
+procedure RelocateHeap;
+var
+  loc_freelists: pfreelists;
+begin
+  { this function should be called in main thread context }
+{$ifdef FPC_HAS_FEATURE_THREADING}
+  if heap_lock_use > 0 then
+    exit;
+  heap_lock_use := 1;
+  initcriticalsection(heap_lock);
+{$endif}
+  loc_freelists := @freelists;
+  { loc_freelists still points to main thread's freelists, but they
+    have a reference to the global main freelists, fix them to point
+    to the main thread specific variable }
+  modify_freelists(loc_freelists, loc_freelists);
+  if MemoryManager.RelocateHeap <> nil then
+    MemoryManager.RelocateHeap();
+end;
 
-  Revision 1.50  2005/03/25 22:53:39  jonas
-    * fixed several warnings and notes about unused variables (mainly) or
-      uninitialised use of variables/function results (a few)
+procedure FinalizeHeap;
+var
+  poc, poc_next: poschunk;
+  loc_freelists: pfreelists;
+{$ifdef FPC_HAS_FEATURE_THREADING}
+  last_thread: boolean;
+{$endif}
+{$ifdef DUMP_MEM_USAGE}
+  i : longint;
+{$endif}
+begin
+  loc_freelists := @freelists;
+{$ifdef FPC_HAS_FEATURE_THREADING}
+  if heap_lock_use > 0 then
+  begin
+    entercriticalsection(heap_lock);
+    finish_waitfixedlist(loc_freelists);
+    finish_waitvarlist(loc_freelists);
+  end;
+{$endif}
+{$ifdef HAS_SYSOSFREE}
+  poc := loc_freelists^.oslist;
+  while assigned(poc) do
+  begin
+    poc_next := poc^.next_free;
+    { check if this os chunk was 'recycled' i.e. taken in use again }
+    if (poc^.size and ocrecycleflag) = 0 then
+      free_oschunk(loc_freelists, poc)
+    else
+      poc^.size := poc^.size and not ocrecycleflag;
+    poc := poc_next;
+  end;
+  loc_freelists^.oslist := nil;
+  loc_freelists^.oscount := 0;
+{$endif HAS_SYSOSFREE}
+{$ifdef FPC_HAS_FEATURE_THREADING}
+  if heap_lock_use > 0 then
+  begin
+    poc := modify_freelists(loc_freelists, @orphaned_freelists);
+    if assigned(poc) then
+    begin
+      poc^.next_any := orphaned_freelists.oslist_all;
+      if assigned(orphaned_freelists.oslist_all) then
+        orphaned_freelists.oslist_all^.prev_any := poc;
+      orphaned_freelists.oslist_all := loc_freelists^.oslist_all;
+    end;
+    dec(heap_lock_use);
+    last_thread := heap_lock_use = 0;
+    leavecriticalsection(heap_lock);
+    if last_thread then
+      donecriticalsection(heap_lock);
+  end;
+{$endif}
+{$ifdef SHOW_MEM_USAGE}
+  writeln('Max heap used/size: ', loc_freelists^.internal_status.maxheapused, '/', 
+    loc_freelists^.internal_status.maxheapsize);
+  flush(output);
+{$endif}
+{$ifdef DUMP_MEM_USAGE}
+  for i := 0 to sizeusageindex-1 do
+    if maxsizeusage[i] <> 0 then
+      writeln('size ', i shl sizeusageshift, ' usage ', maxsizeusage[i]);
+  writeln('size >', sizeusagesize, ' usage ', maxsizeusage[sizeusageindex]);
+  flush(output);
+{$endif}
+end;
 
-  Revision 1.49  2005/03/21 16:31:33  peter
-    * fix crash under win32 with previous reallocmem fix
-
-  Revision 1.48  2005/03/20 18:57:29  peter
-    * fixed tryresizemem
-
-  Revision 1.47  2005/03/04 16:49:34  peter
-    * fix getheapstatus bootstrapping
-
-  Revision 1.46  2005/03/02 14:25:19  marco
-   * small typo fix on last commit
-
-  Revision 1.45  2005/03/02 10:46:10  marco
-   * getfpcheapstatus now also on memmgr
-
-  Revision 1.44  2005/02/28 15:38:38  marco
-   * getFPCheapstatus  (no, FPC HEAP, not FP CHEAP!)
-
-  Revision 1.43  2005/02/14 17:13:22  peter
-    * truncate log
-
-  Revision 1.42  2005/01/30 11:56:29  peter
-    * allow Freemem(nil)
-
-}
+{$endif HAS_MEMORYMANAGER}
+{$endif defined(FPC_HAS_FEATURE_HEAP) or defined(FPC_IN_HEAPMGR)}
 

@@ -1,5 +1,4 @@
 {
-    $Id: pp.pas,v 1.35 2005/02/14 17:13:07 peter Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl
 
     Commandline compiler for Free Pascal
@@ -23,15 +22,15 @@
 program pp;
 
 {
-  possible compiler switches (* marks a currently required switch):
+  possible compiler switches:
   -----------------------------------------------------------------
-  GDB*                support of the GNU Debugger
   CMEM                use cmem unit for better memory debugging
   I386                generate a compiler for the Intel i386+
   x86_64              generate a compiler for the AMD x86-64 architecture
   M68K                generate a compiler for the M68000
   SPARC               generate a compiler for SPARC
   POWERPC             generate a compiler for the PowerPC
+  POWERPC64           generate a compiler for the PowerPC64 architecture
   VIS                 generate a compile for the VIS
   DEBUG               version with debug code is generated
   EXTDEBUG            some extra debug code is executed
@@ -40,121 +39,150 @@ program pp;
                       MMX instructions
   EXTERN_MSG          Don't compile the msgfiles in the compiler, always
                       use external messagefiles, default for TP
-  NOAG386INT          no Intel Assembler output
-  NOAG386NSM          no NASM output
-  NOAG386BIN          leaves out the binary writer, default for TP
-  NORA386DIR          No direct i386 assembler reader
-  TEST_GENERIC        Test Generic version of code generator
-                      (uses generic RTL calls)
+  FPC_ARMEL           create an arm eabi compiler
+  FPC_ARMEB           create an arm big endian compiler
+  FPC_OARM            create an arm oabi compiler, only needed when the host
+                      compiler is ARMEL or ARMEB
+  FPC_ARMHF           create an armhf (eabi vfp variant) compiler
   -----------------------------------------------------------------
   cpuflags            The target processor has status flags (on by default)
   cpufpemu            The target compiler will also support emitting software
                        floating point operations
-  cpu64bit            The target is a 64-bit processor
+  cpu64bitaddr        Generate code for a 64-bit address space
+  cpu64bitalu         The target cpu has 64-bit registers and a 64 bit alu
+                      (required for cpu64bitaddr; optional with 32 bit addr space)
   -----------------------------------------------------------------
-
-  Required switches for a i386 compiler be compiled by Free Pascal Compiler:
-  GDB;I386
 }
 
 {$i fpcdefs.inc}
 
-{$ifdef FPC}
-   {$ifndef GDB}
-      { people can try to compile without GDB }
-      { $error The compiler switch GDB must be defined}
-   {$endif GDB}
-   { exactly one target CPU must be defined }
-   {$ifdef I386}
-     {$ifdef CPUDEFINED}
-        {$fatal ONLY one of the switches for the CPU type must be defined}
-     {$endif CPUDEFINED}
-     {$define CPUDEFINED}
-   {$endif I386}
-   {$ifdef x86_64}
-     {$ifdef CPUDEFINED}
-        {$fatal ONLY one of the switches for the CPU type must be defined}
-     {$endif CPUDEFINED}
-     {$define CPUDEFINED}
-   {$endif x86_64}
-   {$ifdef M68K}
-     {$ifdef CPUDEFINED}
-        {$fatal ONLY one of the switches for the CPU type must be defined}
-     {$endif CPUDEFINED}
-     {$define CPUDEFINED}
-   {$endif M68K}
-   {$ifdef vis}
-     {$ifdef CPUDEFINED}
-        {$fatal ONLY one of the switches for the CPU type must be defined}
-     {$endif CPUDEFINED}
-     {$define CPUDEFINED}
-   {$endif}
-   {$ifdef iA64}
-     {$ifdef CPUDEFINED}
-        {$fatal ONLY one of the switches for the CPU type must be defined}
-     {$endif CPUDEFINED}
-     {$define CPUDEFINED}
-   {$endif iA64}
-   {$ifdef POWERPC}
-     {$ifdef CPUDEFINED}
-        {$fatal ONLY one of the switches for the CPU type must be defined}
-     {$endif CPUDEFINED}
-     {$define CPUDEFINED}
-   {$endif POWERPC}
-   {$ifdef ALPHA}
-     {$ifdef CPUDEFINED}
-        {$fatal ONLY one of the switches for the CPU type must be defined}
-     {$endif CPUDEFINED}
-     {$define CPUDEFINED}
-   {$endif ALPHA}
-   {$ifdef SPARC}
-     {$ifdef CPUDEFINED}
-        {$fatal ONLY one of the switches for the CPU type must be defined}
-     {$endif CPUDEFINED}
-     {$define CPUDEFINED}
-   {$endif SPARC}
-   {$ifdef ARM}
-     {$ifdef CPUDEFINED}
-        {$fatal ONLY one of the switches for the CPU type must be defined}
-     {$endif CPUDEFINED}
-     {$define CPUDEFINED}
-   {$endif ARM}
-   {$ifdef MIPS}
-     {$ifdef CPUDEFINED}
-        {$fatal ONLY one of the switches for the CPU type must be defined}
-     {$endif CPUDEFINED}
-     {$define CPUDEFINED}
-   {$endif MIPS}
-   {$ifndef CPUDEFINED}
-     {$fatal A CPU type switch must be defined}
-   {$endif CPUDEFINED}
-   {$ifdef support_mmx}
-     {$ifndef i386}
-       {$fatal I386 switch must be on for MMX support}
-     {$endif i386}
-   {$endif support_mmx}
+{ Require at least 2.0.2 }
+{$ifdef VER2_0}
+  {$if FPC_PATCH<2}
+    {$fatal At least FPC 2.0.2 is required to compile the compiler}
+  {$endif}
+{$endif VER2_0}
+
+{ exactly one target CPU must be defined }
+{$ifdef I386}
+  {$ifdef CPUDEFINED}
+    {$fatal ONLY one of the switches for the CPU type must be defined}
+  {$endif CPUDEFINED}
+  {$define CPUDEFINED}
+{$endif I386}
+{$ifdef x86_64}
+  {$ifdef CPUDEFINED}
+    {$fatal ONLY one of the switches for the CPU type must be defined}
+  {$endif CPUDEFINED}
+  {$define CPUDEFINED}
+{$endif x86_64}
+{$ifdef M68K}
+  {$ifdef CPUDEFINED}
+    {$fatal ONLY one of the switches for the CPU type must be defined}
+  {$endif CPUDEFINED}
+  {$define CPUDEFINED}
+{$endif M68K}
+{$ifdef vis}
+  {$ifdef CPUDEFINED}
+    {$fatal ONLY one of the switches for the CPU type must be defined}
+  {$endif CPUDEFINED}
+  {$define CPUDEFINED}
 {$endif}
+{$ifdef iA64}
+  {$ifdef CPUDEFINED}
+    {$fatal ONLY one of the switches for the CPU type must be defined}
+  {$endif CPUDEFINED}
+  {$define CPUDEFINED}
+{$endif iA64}
+{$ifdef POWERPC}
+  {$ifdef CPUDEFINED}
+    {$fatal ONLY one of the switches for the CPU type must be defined}
+  {$endif CPUDEFINED}
+  {$define CPUDEFINED}
+{$endif POWERPC}
+{$ifdef POWERPC64}
+  {$ifdef CPUDEFINED}
+    {$fatal ONLY one of the switches for the CPU type must be defined}
+  {$endif CPUDEFINED}
+  {$define CPUDEFINED}
+{$endif POWERPC64}
+{$ifdef ALPHA}
+  {$ifdef CPUDEFINED}
+    {$fatal ONLY one of the switches for the CPU type must be defined}
+  {$endif CPUDEFINED}
+  {$define CPUDEFINED}
+{$endif ALPHA}
+{$ifdef SPARC}
+  {$ifdef CPUDEFINED}
+    {$fatal ONLY one of the switches for the CPU type must be defined}
+  {$endif CPUDEFINED}
+  {$define CPUDEFINED}
+{$endif SPARC}
+{$ifdef ARM}
+  {$ifdef CPUDEFINED}
+    {$fatal ONLY one of the switches for the CPU type must be defined}
+  {$endif CPUDEFINED}
+  {$define CPUDEFINED}
+{$endif ARM}
+{$ifdef MIPS}
+  {$ifdef CPUDEFINED}
+    {$fatal ONLY one of the switches for the CPU type must be defined}
+  {$endif CPUDEFINED}
+  {$define CPUDEFINED}
+{$endif MIPS}
+{$ifdef AVR}
+  {$ifdef CPUDEFINED}
+    {$fatal ONLY one of the switches for the CPU type must be defined}
+  {$endif CPUDEFINED}
+  {$define CPUDEFINED}
+{$endif AVR}
+{$ifdef JVM}
+  {$ifdef CPUDEFINED}
+    {$fatal ONLY one of the switches for the CPU type must be defined}
+  {$endif CPUDEFINED}
+  {$define CPUDEFINED}
+{$endif}
+{$ifndef CPUDEFINED}
+  {$fatal A CPU type switch must be defined}
+{$endif CPUDEFINED}
+{$ifdef support_mmx}
+  {$ifndef i386}
+    {$fatal I386 switch must be on for MMX support}
+  {$endif i386}
+{$endif support_mmx}
+
+
+{ Don't care about minstacksize or maxstacksize not beeing supported by current OS }
+{$WARN 2077 OFF}
+{$WARN 2078 OFF}
+
+{$ifdef win32}
+  { 256 MB stack }
+  { under windows the stack can't grow }
+  {$MAXSTACKSIZE 256000000}
+{$else win32}
+  {$ifdef win64}
+    { 512 MB stack }
+    { under windows the stack can't grow }
+    {$MAXSTACKSIZE 512000000}
+  {$else win64}
+    { 1 MB stack }
+    {$MINSTACKSIZE 1000000}
+  {$endif win64}
+{$endif win32}
 
 uses
 {$ifdef cmem}
   cmem,
 {$endif cmem}
-{$ifdef FPC}
-  {$ifdef profile}
-    profile,
-  {$endif profile}
-  {$ifndef NOCATCH}
-    {$ifdef Unix}
-      catch,
-    {$endif}
-    {$ifdef go32v2}
-      catch,
-    {$endif}
-    {$ifdef WATCOM}
-      catch,
-    {$endif}
-  {$endif NOCATCH}
-{$endif FPC}
+{$ifdef profile}
+  profile,
+{$endif profile}
+{$ifndef NOCATCH}
+  {$if defined(Unix) or defined(Go32v2) or defined(Watcom)}
+    catch,
+  {$endif}
+{$endif NOCATCH}
   globals,compiler;
 
 var
@@ -190,10 +218,10 @@ begin
            writeln('Error: Out of memory');
         end;
      end;
-     { we cannot use aktfilepos.file because all memory might have been
+     { we cannot use current_filepos.file because all memory might have been
        freed already !
        But we can use global parser_current_file var }
-     Writeln('Compilation aborted ',parser_current_file,':',aktfilepos.line);
+     Writeln('Compilation aborted ',parser_current_file,':',current_filepos.line);
    end;
 end;
 
@@ -203,17 +231,6 @@ begin
 {$ifdef extheaptrc}
   keepreleased:=true;
 {$endif extheaptrc}
-  SetFPUExceptionMask([exInvalidOp, exDenormalized, exZeroDivide,
-                        exOverflow, exUnderflow, exPrecision]);
 { Call the compiler with empty command, so it will take the parameters }
   Halt(compiler.Compile(''));
 end.
-{
-  $Log: pp.pas,v $
-  Revision 1.35  2005/02/14 17:13:07  peter
-    * truncate log
-
-  Revision 1.34  2005/02/13 18:55:19  florian
-    + overflow checking for the arm
-
-}

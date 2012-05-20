@@ -1,8 +1,8 @@
 {
-    $Id: aggas.pas,v 1.62 2005/02/14 17:13:06 peter Exp $
-    Copyright (c) 1998-2004 by the Free Pascal team
+    Copyright (c) 1998-2006 by the Free Pascal team
 
-    This unit implements generic GNU assembler (v2.8 or later)
+    This unit implements the generic part of the GNU assembler
+    (v2.8 or later) writer
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -29,75 +29,88 @@ unit aggas;
 interface
 
     uses
-{$IFDEF USE_SYSUTILS}
-      SysUtils,
-{$ELSE USE_SYSUTILS}
-      dos,
-{$ENDIF USE_SYSUTILS}
       cclasses,
-      globals,
-      aasmbase,aasmtai,aasmcpu,
+      globtype,globals,
+      aasmbase,aasmtai,aasmdata,aasmcpu,
       assemble;
 
-
     type
+      TCPUInstrWriter = class;
       {# This is a derived class which is used to write
          GAS styled assembler.
+      }
 
-         The WriteInstruction() method must be overriden
+      { TGNUAssembler }
+
+      TGNUAssembler=class(texternalassembler)
+      protected
+        function sectionname(atype:TAsmSectiontype;const aname:string;aorder:TAsmSectionOrder):string;virtual;
+        function sectionattrs_coff(atype:TAsmSectiontype):string;virtual;
+        function sectionalignment_aix(atype:TAsmSectiontype;secalign: byte):string;
+        procedure WriteSection(atype:TAsmSectiontype;const aname:string;aorder:TAsmSectionOrder;secalign:byte);
+        procedure WriteExtraHeader;virtual;
+        procedure WriteExtraFooter;virtual;
+        procedure WriteInstruction(hp: tai);
+        procedure WriteWeakSymbolDef(s: tasmsymbol); virtual;
+        procedure WriteAixStringConst(hp: tai_string);
+        procedure WriteAixIntConst(hp: tai_const);
+        procedure WriteDirectiveName(dir: TAsmDirective); virtual;
+       public
+        function MakeCmdLine: TCmdStr; override;
+        procedure WriteTree(p:TAsmList);override;
+        procedure WriteAsmList;override;
+        destructor destroy; override;
+       private
+        setcount: longint;
+        procedure WriteDecodedSleb128(a: int64);
+        procedure WriteDecodedUleb128(a: qword);
+        function NextSetLabel: string;
+       protected
+        InstrWriter: TCPUInstrWriter;
+      end;
+
+
+      {# This is the base class for writing instructions.
+
+         The WriteInstruction() method must be overridden
          to write a single instruction to the assembler
          file.
       }
-      TGNUAssembler=class(texternalassembler)
-      protected
-        function sectionname(atype:tasmsectiontype;const aname:string):string;virtual;
-        procedure WriteSection(atype:tasmsectiontype;const aname:string);
-        procedure WriteExtraHeader;virtual;
-{$ifdef GDB}
-        procedure WriteFileLineInfo(var fileinfo : tfileposinfo);
-        procedure WriteFileEndInfo;
-{$endif}
-        procedure WriteInstruction(hp: tai);  virtual; abstract;
-      public
-        procedure WriteTree(p:TAAsmoutput);override;
-        procedure WriteAsmList;override;
+      TCPUInstrWriter = class
+        constructor create(_owner: TGNUAssembler);
+        procedure WriteInstruction(hp : tai); virtual; abstract;
+       protected
+        owner: TGNUAssembler;
       end;
 
-    const
-      regname_count=45;
-      regname_count_bsstart=32;   { Largest power of 2 out of regname_count. }
+
+      { TAppleGNUAssembler }
+
+      TAppleGNUAssembler=class(TGNUAssembler)
+       protected
+        function sectionname(atype:TAsmSectiontype;const aname:string;aorder:TAsmSectionOrder):string;override;
+        procedure WriteWeakSymbolDef(s: tasmsymbol); override;
+
+       end;
+
+
+      TAoutGNUAssembler=class(TGNUAssembler)
+        function sectionname(atype:TAsmSectiontype;const aname:string;aorder:TAsmSectionOrder):string;override;
+       end;
 
 
 implementation
 
     uses
-      cutils,globtype,systems,
+      SysUtils,
+      cutils,cfileutl,systems,
       fmodule,finput,verbose,
-      itcpugas
-{$ifdef GDB}
-{$IFDEF USE_SYSUTILS}
-{$ELSE USE_SYSUTILS}
-      ,strings
-{$ENDIF USE_SYSUTILS}
-      ,gdb
-{$endif GDB}
-      ;
+      itcpugas,cpubase;
 
     const
       line_length = 70;
 
-var
-{$ifdef GDB}
-      n_line       : byte;     { different types of source lines }
-      linecount,
-      includecount : longint;
-      funcname     : pchar;
-      stabslastfileinfo : tfileposinfo;
-{$endif}
-      lasTSecType  : TAsmSectionType; { last section type written }
-      lastfileinfo : tfileposinfo;
-      infile,
-      lastinfile   : tinputfile;
+    var
       symendcount  : longint;
 
     type
@@ -110,25 +123,6 @@ var
 {****************************************************************************}
 {                          Support routines                                  }
 {****************************************************************************}
-
-   function fixline(s:string):string;
-   {
-     return s with all leading and ending spaces and tabs removed
-   }
-     var
-       i,j,k : integer;
-     begin
-       i:=length(s);
-       while (i>0) and (s[i] in [#9,' ']) do
-        dec(i);
-       j:=1;
-       while (j<i) and (s[j] in [#9,' ']) do
-        inc(j);
-       for k:=j to i do
-        if s[k] in [#0..#31,#127..#255] then
-         s[k]:='.';
-       fixline:=Copy(s,j,i-j+1);
-     end;
 
     function single2str(d : single) : string;
       var
@@ -203,160 +197,454 @@ var
 
 
     const
-      ait_const2str : array[ait_const_128bit..ait_const_indirect_symbol] of string[20]=(
+      ait_const2str : array[aitconst_128bit..aitconst_half16bit] of string[20]=(
         #9'.fixme128'#9,#9'.quad'#9,#9'.long'#9,#9'.short'#9,#9'.byte'#9,
         #9'.sleb128'#9,#9'.uleb128'#9,
-        #9'.rva'#9,#9'.indirect_symbol'#9
+        #9'.rva'#9,#9'.secrel32'#9,#9'.quad'#9,#9'.long'#9,#9'.short'#9
       );
 
 {****************************************************************************}
 {                          GNU Assembler writer                              }
 {****************************************************************************}
 
-{$ifdef GDB}
-      procedure TGNUAssembler.WriteFileLineInfo(var fileinfo : tfileposinfo);
-        var
-          curr_n : byte;
-        begin
-          if not ((cs_debuginfo in aktmoduleswitches) or
-             (cs_gdb_lineinfo in aktglobalswitches)) then
-           exit;
-        { file changed ? (must be before line info) }
-          if (fileinfo.fileindex<>0) and
-             (stabslastfileinfo.fileindex<>fileinfo.fileindex) then
-           begin
-             infile:=current_module.sourcefiles.get_file(fileinfo.fileindex);
-             if assigned(infile) then
-              begin
-                if includecount=0 then
-                 curr_n:=n_sourcefile
-                else
-                 curr_n:=n_includefile;
-                if (infile.path^<>'') then
-                 begin
-                   AsmWriteLn(#9'.stabs "'+BsToSlash(FixPath(infile.path^,false))+'",'+
-                     tostr(curr_n)+',0,0,'+target_asm.labelprefix+'text'+ToStr(IncludeCount));
-                 end;
-                AsmWriteLn(#9'.stabs "'+FixFileName(infile.name^)+'",'+
-                  tostr(curr_n)+',0,0,'+target_asm.labelprefix+'text'+ToStr(IncludeCount));
-                AsmWriteLn(target_asm.labelprefix+'text'+ToStr(IncludeCount)+':');
-                inc(includecount);
-                { force new line info }
-                stabslastfileinfo.line:=-1;
-              end;
-           end;
-        { line changed ? }
-          if (stabslastfileinfo.line<>fileinfo.line) and (fileinfo.line<>0) then
-           begin
-             if (n_line=n_textline) and assigned(funcname) and
-                (target_info.use_function_relative_addresses) then
-              begin
-                AsmWriteLn(target_asm.labelprefix+'l'+tostr(linecount)+':');
-                AsmWrite(#9'.stabn '+tostr(n_line)+',0,'+tostr(fileinfo.line)+','+
-                           target_asm.labelprefix+'l'+tostr(linecount)+' - ');
-                AsmWritePChar(FuncName);
-                AsmLn;
-                inc(linecount);
-              end
-             else
-              AsmWriteLn(#9'.stabd'#9+tostr(n_line)+',0,'+tostr(fileinfo.line));
-           end;
-          stabslastfileinfo:=fileinfo;
-        end;
-
-      procedure TGNUAssembler.WriteFileEndInfo;
-
-        begin
-          if not ((cs_debuginfo in aktmoduleswitches) or
-             (cs_gdb_lineinfo in aktglobalswitches)) then
-           exit;
-          WriteSection(sec_code,'');
-          AsmWriteLn(#9'.stabs "",'+tostr(n_sourcefile)+',0,0,'+target_asm.labelprefix+'etext');
-          AsmWriteLn(target_asm.labelprefix+'etext:');
-        end;
-
-{$endif GDB}
-
-
-    function TGNUAssembler.sectionname(atype:tasmsectiontype;const aname:string):string;
-      const
-        secnames : array[tasmsectiontype] of string[12] = ('',
-{$warning TODO .rodata not yet working}
-          '.text','.data','.data','.bss',
-          'common',
-          '.note',
-          '.stab','.stabstr',
-          '.idata$2','.idata$4','.idata$5','.idata$6','.idata$7','.edata',
-          '.eh_frame',
-          '.debug_frame'
-        );
+    destructor TGNUAssembler.Destroy;
       begin
-        if (target_info.system = system_powerpc_darwin) and
-           (atype = sec_bss) then
-          atype := sec_code;
-        if use_smartlink_section and
-           (atype<>sec_bss) and
-           (aname<>'') then
-          result:='.gnu.linkonce'+copy(secnames[atype],1,2)+'.'+aname
-        else
-          result:=secnames[atype];
+        InstrWriter.free;
+        inherited destroy;
       end;
 
 
-    procedure TGNUAssembler.WriteSection(atype:tasmsectiontype;const aname:string);
+    function TGNUAssembler.MakeCmdLine: TCmdStr;
+      begin
+        result := inherited MakeCmdLine;
+        // MWE: disabled again. It generates dwarf info for the generated .s
+        //      files as well. This conflicts with the info we generate
+        // if target_dbg.id = dbg_dwarf then
+        //  result := result + ' --gdwarf-2';
+      end;
+
+
+    function TGNUAssembler.NextSetLabel: string;
+      begin
+        inc(setcount);
+        result := target_asm.labelprefix+'$set$'+tostr(setcount);
+      end;
+
+    function is_smart_section(atype:TAsmSectiontype):boolean;
+      begin
+        { For bss we need to set some flags that are target dependent,
+          it is easier to disable it for smartlinking. It doesn't take up
+          filespace }
+        result:=not(target_info.system in systems_darwin) and
+           create_smartlink_sections and
+           (atype<>sec_toc) and
+           (atype<>sec_user) and
+           { on embedded systems every byte counts, so smartlink bss too }
+           ((atype<>sec_bss) or (target_info.system in systems_embedded));
+      end;
+
+    function TGNUAssembler.sectionname(atype:TAsmSectiontype;const aname:string;aorder:TAsmSectionOrder):string;
+      const
+        secnames : array[TAsmSectiontype] of string[length('__DATA, __datacoal_nt,coalesced')] = ('','',
+          '.text',
+          '.data',
+{ why doesn't .rodata work? (FK) }
+{ sometimes we have to create a data.rel.ro instead of .rodata, e.g. for  }
+{ vtables (and anything else containing relocations), otherwise those are }
+{ not relocated properly on e.g. linux/ppc64. g++ generates there for a   }
+{ vtable for a class called Window:                                       }
+{ .section .data.rel.ro._ZTV6Window,"awG",@progbits,_ZTV6Window,comdat    }
+{ TODO: .data.ro not yet working}
+{$if defined(arm) or defined(powerpc)}
+          '.rodata',
+{$else arm}
+          '.data',
+{$endif arm}
+{$if defined(m68k)} { Amiga/m68k GNU AS doesn't seem to like .rodata (KB) }
+          '.data',
+{$else}
+          '.rodata',
+{$endif}
+          '.bss',
+          '.threadvar',
+          '.pdata',
+          '', { stubs }
+          '__DATA,__nl_symbol_ptr',
+          '__DATA,__la_symbol_ptr',
+          '__DATA,__mod_init_func',
+          '__DATA,__mod_term_func',
+          '.stab',
+          '.stabstr',
+          '.idata$2','.idata$4','.idata$5','.idata$6','.idata$7','.edata',
+          '.eh_frame',
+          '.debug_frame','.debug_info','.debug_line','.debug_abbrev',
+          '.fpc',
+          '.toc',
+          '.init',
+          '.fini',
+          '.objc_class',
+          '.objc_meta_class',
+          '.objc_cat_cls_meth',
+          '.objc_cat_inst_meth',
+          '.objc_protocol',
+          '.objc_string_object',
+          '.objc_cls_meth',
+          '.objc_inst_meth',
+          '.objc_cls_refs',
+          '.objc_message_refs',
+          '.objc_symbols',
+          '.objc_category',
+          '.objc_class_vars',
+          '.objc_instance_vars',
+          '.objc_module_info',
+          '.objc_class_names',
+          '.objc_meth_var_types',
+          '.objc_meth_var_names',
+          '.objc_selector_strs',
+          '.objc_protocol_ext',
+          '.objc_class_ext',
+          '.objc_property',
+          '.objc_image_info',
+          '.objc_cstring_object',
+          '.objc_sel_fixup',
+          '__DATA,__objc_data',
+          '__DATA,__objc_const',
+          '.objc_superrefs',
+          '__DATA, __datacoal_nt,coalesced',
+          '.objc_classlist',
+          '.objc_nlclasslist',
+          '.objc_catlist',
+          '.obcj_nlcatlist',
+          '.objc_protolist'
+        );
+        secnames_pic : array[TAsmSectiontype] of string[length('__DATA, __datacoal_nt,coalesced')] = ('','',
+          '.text',
+          '.data.rel',
+          '.data.rel',
+          '.data.rel',
+          '.bss',
+          '.threadvar',
+          '.pdata',
+          '', { stubs }
+          '__DATA,__nl_symbol_ptr',
+          '__DATA,__la_symbol_ptr',
+          '__DATA,__mod_init_func',
+          '__DATA,__mod_term_func',
+          '.stab',
+          '.stabstr',
+          '.idata$2','.idata$4','.idata$5','.idata$6','.idata$7','.edata',
+          '.eh_frame',
+          '.debug_frame','.debug_info','.debug_line','.debug_abbrev',
+          '.fpc',
+          '.toc',
+          '.init',
+          '.fini',
+          '.objc_class',
+          '.objc_meta_class',
+          '.objc_cat_cls_meth',
+          '.objc_cat_inst_meth',
+          '.objc_protocol',
+          '.objc_string_object',
+          '.objc_cls_meth',
+          '.objc_inst_meth',
+          '.objc_cls_refs',
+          '.objc_message_refs',
+          '.objc_symbols',
+          '.objc_category',
+          '.objc_class_vars',
+          '.objc_instance_vars',
+          '.objc_module_info',
+          '.objc_class_names',
+          '.objc_meth_var_types',
+          '.objc_meth_var_names',
+          '.objc_selector_strs',
+          '.objc_protocol_ext',
+          '.objc_class_ext',
+          '.objc_property',
+          '.objc_image_info',
+          '.objc_cstring_object',
+          '.objc_sel_fixup',
+          '__DATA, __objc_data',
+          '__DATA, __objc_const',
+          '.objc_superrefs',
+          '__DATA, __datacoal_nt,coalesced',
+          '.objc_classlist',
+          '.objc_nlclasslist',
+          '.objc_catlist',
+          '.obcj_nlcatlist',
+          '.objc_protolist'
+        );
+      var
+        sep     : string[3];
+        secname : string;
+      begin
+        if (cs_create_pic in current_settings.moduleswitches) and
+           not(target_info.system in systems_darwin) then
+          secname:=secnames_pic[atype]
+        else
+          secname:=secnames[atype];
+{$ifdef m68k}
+        { old Amiga GNU AS doesn't support .section .fpc }
+        if (atype=sec_fpc) and (target_info.system = system_m68k_amiga) then
+            secname:=secnames[sec_data];
+{$endif}
+        if (atype=sec_fpc) and (Copy(aname,1,3)='res') then
+          begin
+            result:=secname+'.'+aname;
+            exit;
+          end;
+
+        if (atype=sec_threadvar) and
+          (target_info.system in (systems_windows+systems_wince)) then
+          secname:='.tls';
+
+        { go32v2 stub only loads .text and .data sections, and allocates space for .bss.
+          Thus, data which normally goes into .rodata and .rodata_norel sections must
+          end up in .data section }
+        if (atype in [sec_rodata,sec_rodata_norel]) and
+          (target_info.system=system_i386_go32v2) then
+          secname:='.data';
+
+        { section type user gives the user full controll on the section name }
+        if atype=sec_user then
+          secname:=aname;
+
+        if is_smart_section(atype) and (aname<>'') then
+          begin
+            case aorder of
+              secorder_begin :
+                sep:='.b_';
+              secorder_end :
+                sep:='.z_';
+              else
+                sep:='.n_';
+            end;
+            result:=secname+sep+aname
+          end
+        else
+          result:=secname;
+      end;
+
+
+    function TGNUAssembler.sectionattrs_coff(atype:TAsmSectiontype):string;
+      begin
+        case atype of
+          sec_code, sec_init, sec_fini, sec_stub:
+            result:='x';
+
+          { TODO: must be individual for each section }
+          sec_user:
+            result:='d';
+
+          sec_data, sec_data_lazy, sec_data_nonlazy, sec_fpc,
+          sec_idata2, sec_idata4, sec_idata5, sec_idata6, sec_idata7:
+            result:='d';
+
+          { TODO: these need a fix to become read-only }
+          sec_rodata, sec_rodata_norel:
+            result:='d';
+
+          sec_bss:
+            result:='b';
+
+          { TODO: Somewhat questionable. FPC does not allow initialized threadvars,
+            so no sense to mark it as containing data. But Windows allows it to
+            contain data, and Linux even has .tdata and .tbss }
+          sec_threadvar:
+            result:='b';
+
+          sec_pdata, sec_edata, sec_eh_frame, sec_toc:
+            result:='r';
+
+          sec_stab,sec_stabstr,
+          sec_debug_frame,sec_debug_info,sec_debug_line,sec_debug_abbrev:
+            result:='n';
+        else
+          result:='';  { defaults to data+load }
+        end;
+      end;
+
+
+    function TGNUAssembler.sectionalignment_aix(atype:TAsmSectiontype;secalign: byte): string;
+      var
+        l: longint;
+      begin
+        if (secalign=0) or
+           not(atype in [sec_code,sec_bss,sec_rodata_norel,sec_rodata,sec_data]) then
+          begin
+            result:='';
+            exit;
+          end;
+        if not ispowerof2(secalign,l) then
+          internalerror(2012022201);
+        result:=tostr(l);
+      end;
+
+
+    procedure TGNUAssembler.WriteSection(atype:TAsmSectiontype;const aname:string;aorder:TAsmSectionOrder;secalign:byte);
       var
         s : string;
       begin
         AsmLn;
         case target_info.system of
-         system_powerpc_darwin, system_i386_OS2, system_i386_EMX: ;
+         system_i386_OS2,
+         system_i386_EMX,
+         system_m68k_amiga,  { amiga has old GNU AS (2.14), which blews up from .section (KB) }
+         system_m68k_linux: ;
+         system_powerpc_darwin,
+         system_i386_darwin,
+         system_i386_iphonesim,
+         system_powerpc64_darwin,
+         system_x86_64_darwin,
+         system_arm_darwin,
+         system_powerpc_aix,
+         system_powerpc64_aix:
+           begin
+             if (atype in [sec_stub,sec_objc_data,sec_objc_const,sec_data_coalesced]) then
+               AsmWrite('.section ');
+           end
          else
           AsmWrite('.section ');
         end;
-        s:=sectionname(atype,aname);
+        s:=sectionname(atype,aname,aorder);
         AsmWrite(s);
-        if copy(s,1,4)='.gnu' then
-          begin
-            case atype of
-              sec_rodata,
-              sec_data :
-                AsmWrite(',""');
-              sec_code :
-                AsmWrite(',"x"');
-            end;
-          end;
-        AsmLn;
-{$ifdef GDB}
-        { this is needed for line info in data }
-        funcname:=nil;
         case atype of
-          sec_code :
-            n_line:=n_textline;
-          sec_rodata,
-          sec_data :
-            n_line:=n_dataline;
-          sec_bss  :
-            n_line:=n_bssline;
-          else
-            n_line:=n_dataline;
+          sec_fpc :
+            if aname = 'resptrs' then
+              AsmWrite(', "a", @progbits');
+          sec_stub :
+            begin
+              case target_info.system of
+                { there are processor-independent shortcuts available    }
+                { for this, namely .symbol_stub and .picsymbol_stub, but }
+                { they don't work and gcc doesn't use them either...     }
+                system_powerpc_darwin,
+                system_powerpc64_darwin:
+                  if (cs_create_pic in current_settings.moduleswitches) then
+                    AsmWriteln('__TEXT,__picsymbolstub1,symbol_stubs,pure_instructions,32')
+                  else
+                    AsmWriteln('__TEXT,__symbol_stub1,symbol_stubs,pure_instructions,16');
+                system_i386_darwin,
+                system_i386_iphonesim:
+                  AsmWriteln('__IMPORT,__jump_table,symbol_stubs,self_modifying_code+pure_instructions,5');
+                system_arm_darwin:
+                  if (cs_create_pic in current_settings.moduleswitches) then
+                    AsmWriteln('.section __TEXT,__picsymbolstub4,symbol_stubs,none,16')
+                  else
+                    AsmWriteln('.section __TEXT,__symbol_stub4,symbol_stubs,none,12')
+                { darwin/x86-64 uses RIP-based GOT addressing, no symbol stubs }
+                else
+                  internalerror(2006031101);
+              end;
+            end;
+        else
+          { GNU AS won't recognize '.text.n_something' section name as belonging
+            to '.text' and assigns default attributes to it, which is not
+            always correct. We have to fix it.
+
+            TODO: This likely applies to all systems which smartlink without
+            creating libraries }
+          if (target_info.system in [system_i386_win32,system_x86_64_win64]) and
+            is_smart_section(atype) and (aname<>'') then
+            begin
+              s:=sectionattrs_coff(atype);
+              if (s<>'') then
+                AsmWrite(',"'+s+'"');
+            end
+         else if target_info.system in systems_aix then
+           begin
+             s:=sectionalignment_aix(atype,secalign);
+             if s<>'' then
+               AsmWrite(','+s);
+           end;
         end;
-{$endif GDB}
-        LasTSecType:=atype;
+        AsmLn;
+        LastSecType:=atype;
       end;
 
 
-    procedure TGNUAssembler.WriteTree(p:TAAsmoutput);
-    const
-      regallocstr : array[tregalloctype] of string[10]=(' allocated',' released',' sync',' resized');
-      tempallocstr : array[boolean] of string[10]=(' released',' allocated');
+    procedure TGNUAssembler.WriteDecodedUleb128(a: qword);
+      var
+        i,len : longint;
+        buf   : array[0..63] of byte;
+      begin
+        len:=EncodeUleb128(a,buf);
+        for i:=0 to len-1 do
+          begin
+            if (i > 0) then
+              AsmWrite(',');
+            AsmWrite(tostr(buf[i]));
+          end;
+      end;
+
+
+    procedure TGNUAssembler.WriteDecodedSleb128(a: int64);
+      var
+        i,len : longint;
+        buf   : array[0..255] of byte;
+      begin
+        len:=EncodeSleb128(a,buf);
+        for i:=0 to len-1 do
+          begin
+            if (i > 0) then
+              AsmWrite(',');
+            AsmWrite(tostr(buf[i]));
+          end;
+      end;
+
+
+    procedure TGNUAssembler.WriteTree(p:TAsmList);
+
+      function needsObject(hp : tai_symbol) : boolean;
+        begin
+          needsObject :=
+              (
+                assigned(hp.next) and
+                 (tai(hp.next).typ in [ait_const,ait_datablock,
+                  ait_real_32bit,ait_real_64bit,ait_real_80bit,ait_comp_64bit])
+              ) or
+              (hp.sym.typ=AT_DATA);
+
+        end;
+
+
+      procedure doalign(alignment: byte; use_op: boolean; fillop: byte; out last_align: longint);
+        var
+          i: longint;
+        begin
+          last_align:=alignment;
+          if alignment>1 then
+            begin
+              if not(target_info.system in (systems_darwin+systems_aix)) then
+                begin
+                  AsmWrite(#9'.balign '+tostr(alignment));
+                  if use_op then
+                    AsmWrite(','+tostr(fillop))
+{$ifdef x86}
+                  { force NOP as alignment op code }
+                  else if LastSecType=sec_code then
+                    AsmWrite(',0x90');
+{$endif x86}
+                end
+              else
+                begin
+                  { darwin and aix as only support .align }
+                  if not ispowerof2(alignment,i) then
+                    internalerror(2003010305);
+                  AsmWrite(#9'.align '+tostr(i));
+                  last_align:=i;
+                end;
+              AsmLn;
+            end;
+        end;
+
     var
       ch       : char;
       hp       : tai;
-      hp1      : tailineinfo;
-      consttyp : taitype;
-      s        : string;
+      constdef : taiconst_type;
+      s,t      : string;
       i,pos,l  : longint;
-      InlineLevel : longint;
+      InlineLevel : cardinal;
       last_align : longint;
       co       : comp;
       sin      : single;
@@ -365,72 +653,30 @@ var
       e        : extended;
 {$endif cpuextended}
       do_line  : boolean;
+
+      sepChar : char;
+      replaceforbidden: boolean;
     begin
       if not assigned(p) then
        exit;
+      replaceforbidden:=target_asm.dollarsign<>'$';
+
       last_align := 2;
       InlineLevel:=0;
-      { lineinfo is only needed for codesegment (PFV) }
-      do_line:=(cs_asm_source in aktglobalswitches) or
-               ((cs_lineinfo in aktmoduleswitches)
-                 and (p=codesegment));
+      { lineinfo is only needed for al_procedures (PFV) }
+      do_line:=(cs_asm_source in current_settings.globalswitches) or
+               ((cs_lineinfo in current_settings.moduleswitches)
+                 and (p=current_asmdata.asmlists[al_procedures]));
       hp:=tai(p.first);
       while assigned(hp) do
        begin
+         prefetch(pointer(hp.next)^);
          if not(hp.typ in SkipLineInfo) then
           begin
-            hp1 := hp as tailineinfo;
-            aktfilepos:=hp1.fileinfo;
-{$ifdef GDB}
-             { write stabs }
-             if (cs_debuginfo in aktmoduleswitches) or
-                (cs_gdb_lineinfo in aktglobalswitches) then
-               WriteFileLineInfo(hp1.fileinfo);
-{$endif GDB}
-             { no line info for inlined code }
-             if do_line and (inlinelevel=0) then
-              begin
-                { load infile }
-                if lastfileinfo.fileindex<>hp1.fileinfo.fileindex then
-                 begin
-                   infile:=current_module.sourcefiles.get_file(hp1.fileinfo.fileindex);
-                   if assigned(infile) then
-                    begin
-                      { open only if needed !! }
-                      if (cs_asm_source in aktglobalswitches) then
-                       infile.open;
-                    end;
-                   { avoid unnecessary reopens of the same file !! }
-                   lastfileinfo.fileindex:=hp1.fileinfo.fileindex;
-                   { be sure to change line !! }
-                   lastfileinfo.line:=-1;
-                 end;
-              { write source }
-                if (cs_asm_source in aktglobalswitches) and
-                   assigned(infile) then
-                 begin
-                   if (infile<>lastinfile) then
-                     begin
-                       AsmWriteLn(target_asm.comment+'['+infile.name^+']');
-                       if assigned(lastinfile) then
-                         lastinfile.close;
-                     end;
-                   if (hp1.fileinfo.line<>lastfileinfo.line) and
-                      ((hp1.fileinfo.line<infile.maxlinebuf) or (InlineLevel>0)) then
-                     begin
-                       if (hp1.fileinfo.line<>0) and
-                          ((infile.linebuf^[hp1.fileinfo.line]>=0) or (InlineLevel>0)) then
-                         AsmWriteLn(target_asm.comment+'['+tostr(hp1.fileinfo.line)+'] '+
-                           fixline(infile.GetLineStr(hp1.fileinfo.line)));
-                       { set it to a negative value !
-                       to make that is has been read already !! PM }
-                       if (infile.linebuf^[hp1.fileinfo.line]>=0) then
-                         infile.linebuf^[hp1.fileinfo.line]:=-infile.linebuf^[hp1.fileinfo.line]-1;
-                     end;
-                 end;
-                lastfileinfo:=hp1.fileinfo;
-                lastinfile:=infile;
-              end;
+            current_filepos:=tailineinfo(hp).fileinfo;
+            { no line info for inlined code }
+            if do_line and (inlinelevel=0) then
+              WriteSourceLine(hp as tailineinfo);
           end;
 
          case hp.typ of
@@ -444,11 +690,11 @@ var
 
            ait_regalloc :
              begin
-               if (cs_asm_regalloc in aktglobalswitches) then
+               if (cs_asm_regalloc in current_settings.globalswitches) then
                  begin
                    AsmWrite(#9+target_asm.comment+'Register ');
                    repeat
-                     AsmWrite(gas_regname(Tai_regalloc(hp).reg));
+                     AsmWrite(std_regname(Tai_regalloc(hp).reg));
                      if (hp.next=nil) or
                         (tai(hp.next).typ<>ait_regalloc) or
                         (tai_regalloc(hp.next).ratype<>tai_regalloc(hp).ratype) then
@@ -456,151 +702,306 @@ var
                      hp:=tai(hp.next);
                      AsmWrite(',');
                    until false;
+                   AsmWrite(' ');
                    AsmWriteLn(regallocstr[tai_regalloc(hp).ratype]);
                  end;
              end;
 
            ait_tempalloc :
              begin
-               if (cs_asm_tempalloc in aktglobalswitches) then
-                 begin
-{$ifdef EXTDEBUG}
-                   if assigned(tai_tempalloc(hp).problem) then
-                     AsmWriteLn(target_asm.comment+'Temp '+tostr(tai_tempalloc(hp).temppos)+','+
-                       tostr(tai_tempalloc(hp).tempsize)+' '+tai_tempalloc(hp).problem^)
-                   else
-{$endif EXTDEBUG}
-                     AsmWriteLn(target_asm.comment+'Temp '+tostr(tai_tempalloc(hp).temppos)+','+
-                       tostr(tai_tempalloc(hp).tempsize)+tempallocstr[tai_tempalloc(hp).allocation]);
-                 end;
+               if (cs_asm_tempalloc in current_settings.globalswitches) then
+                 WriteTempalloc(tai_tempalloc(hp));
              end;
 
            ait_align :
              begin
-               if tai_align(hp).aligntype>1 then
-                 begin
-                   if target_info.system <> system_powerpc_darwin then
-                     begin
-                       AsmWrite(#9'.balign '+tostr(tai_align(hp).aligntype));
-                       if tai_align(hp).use_op then
-                        AsmWrite(','+tostr(tai_align(hp).fillop))
-                     end
-                   else
-                     begin
-                       { darwin as only supports .align }
-                       if not ispowerof2(tai_align(hp).aligntype,i) then
-                         internalerror(2003010305);
-                       AsmWrite(#9'.align '+tostr(i));
-                       last_align := i;
-                     end;
-                   AsmLn;
-                 end;
+               doalign(tai_align_abstract(hp).aligntype,tai_align_abstract(hp).use_op,tai_align_abstract(hp).fillop,last_align);
              end;
 
            ait_section :
              begin
                if tai_section(hp).sectype<>sec_none then
-                begin
-                  WriteSection(tai_section(hp).sectype,tai_section(hp).name^);
-{$ifdef GDB}
-                  lastfileinfo.line:=-1;
-{$endif GDB}
-                end
+                 if replaceforbidden then
+                   WriteSection(tai_section(hp).sectype,ReplaceForbiddenAsmSymbolChars(tai_section(hp).name^),tai_section(hp).secorder,tai_section(hp).secalign)
+                 else
+                   WriteSection(tai_section(hp).sectype,tai_section(hp).name^,tai_section(hp).secorder,tai_section(hp).secalign)
                else
-                begin
+                 begin
 {$ifdef EXTDEBUG}
-                  AsmWrite(target_asm.comment);
-                  AsmWriteln(' sec_none');
+                   AsmWrite(target_asm.comment);
+                   AsmWriteln(' sec_none');
 {$endif EXTDEBUG}
                 end;
              end;
 
            ait_datablock :
              begin
-               if tai_datablock(hp).is_global then
-                AsmWrite(#9'.comm'#9)
+               if (target_info.system in systems_darwin) then
+                 begin
+                   { On Mac OS X you can't have common symbols in a shared library
+                     since those are in the TEXT section and the text section is
+                     read-only in shared libraries (so it can be shared among different
+                     processes). The alternate code creates some kind of common symbols
+                     in the data segment.
+                   }
+                   if tai_datablock(hp).is_global then
+                     begin
+                       asmwrite('.globl ');
+                       asmwriteln(tai_datablock(hp).sym.name);
+                       asmwriteln('.data');
+                       asmwrite('.zerofill __DATA, __common, ');
+                       asmwrite(tai_datablock(hp).sym.name);
+                       asmwriteln(', '+tostr(tai_datablock(hp).size)+','+tostr(last_align));
+                       if not(LastSecType in [sec_data,sec_none]) then
+                         writesection(LastSecType,'',secorder_default,1 shl last_align);
+                     end
+                   else
+                     begin
+                       asmwrite(#9'.lcomm'#9);
+                       asmwrite(tai_datablock(hp).sym.name);
+                       asmwrite(','+tostr(tai_datablock(hp).size));
+                       asmwrite(','+tostr(last_align));
+                       asmln;
+                     end;
+                 end
+               else if target_info.system in systems_aix then
+                 begin
+                   if tai_datablock(hp).is_global then
+                     begin
+                       asmwrite(#9'.globl ');
+                       asmwriteln(ReplaceForbiddenAsmSymbolChars(tai_datablock(hp).sym.name));
+                       asmwrite(ReplaceForbiddenAsmSymbolChars(tai_datablock(hp).sym.name));
+                       asmwriteln(':');
+                       asmwrite(#9'.space ');
+                       asmwriteln(tostr(tai_datablock(hp).size));
+                       if not(LastSecType in [sec_data,sec_none]) then
+                         writesection(LastSecType,'',secorder_default,1 shl last_align);
+                     end
+                   else
+                     begin
+                       asmwrite(#9'.lcomm ');
+                       asmwrite(ReplaceForbiddenAsmSymbolChars(tai_datablock(hp).sym.name));
+                       asmwrite(',_data.bss_[RW],');
+                       asmwrite(tostr(tai_datablock(hp).size)+',');
+                       asmwriteln(tostr(last_align));
+                     end;
+                 end
                else
-                AsmWrite(#9'.lcomm'#9);
-               AsmWrite(tai_datablock(hp).sym.name);
-               AsmWrite(','+tostr(tai_datablock(hp).size));
-               if (target_info.system = system_powerpc_darwin) and
-                  not(tai_datablock(hp).is_global) then
-                 AsmWrite(','+tostr(last_align));
-               AsmWriteln('');
+                 begin
+{$ifdef USE_COMM_IN_BSS}
+                   if writingpackages then
+                     begin
+                       { The .comm is required for COMMON symbols. These are used
+                         in the shared library loading. All the symbols declared in
+                         the .so file need to resolve to the data allocated in the main
+                         program (PFV) }
+                       if tai_datablock(hp).is_global then
+                         begin
+                           asmwrite(#9'.comm'#9);
+                           if replaceforbidden then
+                             asmwrite(ReplaceForbiddenAsmSymbolChars(tai_datablock(hp).sym.name))
+                           else
+                             asmwrite(tai_datablock(hp).sym.name);
+                           asmwrite(','+tostr(tai_datablock(hp).size));
+                           asmwrite(','+tostr(last_align));
+                           asmln;
+                         end
+                       else
+                         begin
+                           asmwrite(#9'.lcomm'#9);
+                           if replaceforbidden then
+                             asmwrite(ReplaceForbiddenAsmSymbolChars(tai_datablock(hp).sym.name));
+                           else
+                             asmwrite(tai_datablock(hp).sym.name);
+                           asmwrite(','+tostr(tai_datablock(hp).size));
+                           asmwrite(','+tostr(last_align));
+                           asmln;
+                         end
+                     end
+                   else
+{$endif USE_COMM_IN_BSS}
+                     begin
+                       if Tai_datablock(hp).is_global then
+                         begin
+                           asmwrite(#9'.globl ');
+                           if replaceforbidden then
+                             asmwriteln(ReplaceForbiddenAsmSymbolChars(Tai_datablock(hp).sym.name))
+                           else
+                             asmwriteln(Tai_datablock(hp).sym.name);
+                         end;
+                       if (target_info.system <> system_arm_linux) then
+                         sepChar := '@'
+                       else
+                         sepChar := '%';
+                       if replaceforbidden then
+                         begin
+                           if (tf_needs_symbol_type in target_info.flags) then
+                             asmwriteln(#9'.type '+ReplaceForbiddenAsmSymbolChars(Tai_datablock(hp).sym.name)+','+sepChar+'object');
+                           if (tf_needs_symbol_size in target_info.flags) and (tai_datablock(hp).size > 0) then
+                              asmwriteln(#9'.size '+ReplaceForbiddenAsmSymbolChars(Tai_datablock(hp).sym.name)+','+tostr(Tai_datablock(hp).size));
+                           asmwrite(ReplaceForbiddenAsmSymbolChars(Tai_datablock(hp).sym.name))
+                         end
+                       else
+                         begin
+                           if (tf_needs_symbol_type in target_info.flags) then
+                             asmwriteln(#9'.type '+Tai_datablock(hp).sym.name+','+sepChar+'object');
+                           if (tf_needs_symbol_size in target_info.flags) and (tai_datablock(hp).size > 0) then
+                             asmwriteln(#9'.size '+Tai_datablock(hp).sym.name+','+tostr(Tai_datablock(hp).size));
+                           asmwrite(Tai_datablock(hp).sym.name);
+                         end;
+                       asmwriteln(':');
+                       asmwriteln(#9'.zero '+tostr(Tai_datablock(hp).size));
+                     end;
+                 end;
              end;
 
-{$ifndef cpu64bit}
-           ait_const_128bit :
-              begin
-                internalerror(200404291);
-              end;
-
-           ait_const_64bit :
-              begin
-                if assigned(tai_const(hp).sym) then
-                  internalerror(200404292);
-                AsmWrite(ait_const2str[ait_const_32bit]);
-                if target_info.endian = endian_little then
-                  begin
-                    AsmWrite(tostr(longint(lo(tai_const(hp).value))));
-                    AsmWrite(',');
-                    AsmWrite(tostr(longint(hi(tai_const(hp).value))));
-                  end
-                else
-                  begin
-                    AsmWrite(tostr(longint(hi(tai_const(hp).value))));
-                    AsmWrite(',');
-                    AsmWrite(tostr(longint(lo(tai_const(hp).value))));
-                  end;
-                AsmLn;
-              end;
-{$endif cpu64bit}
-
-           ait_const_uleb128bit,
-           ait_const_sleb128bit,
-{$ifdef cpu64bit}
-           ait_const_128bit,
-           ait_const_64bit,
-{$endif cpu64bit}
-           ait_const_32bit,
-           ait_const_16bit,
-           ait_const_8bit,
-           ait_const_rva_symbol,
-           ait_const_indirect_symbol :
+           ait_const:
              begin
-               AsmWrite(ait_const2str[hp.typ]);
-               consttyp:=hp.typ;
-               l:=0;
-               repeat
-                 if assigned(tai_const(hp).sym) then
+               constdef:=tai_const(hp).consttype;
+               case constdef of
+{$ifndef cpu64bitaddr}
+                 aitconst_128bit :
+                    begin
+                      internalerror(200404291);
+                    end;
+
+                 aitconst_64bit :
+                    begin
+                      if assigned(tai_const(hp).sym) then
+                        internalerror(200404292);
+                      if not(target_info.system in systems_aix) then
+                        begin
+                          AsmWrite(ait_const2str[aitconst_32bit]);
+                          if target_info.endian = endian_little then
+                            begin
+                              AsmWrite(tostr(longint(lo(tai_const(hp).value))));
+                              AsmWrite(',');
+                              AsmWrite(tostr(longint(hi(tai_const(hp).value))));
+                            end
+                          else
+                            begin
+                              AsmWrite(tostr(longint(hi(tai_const(hp).value))));
+                              AsmWrite(',');
+                              AsmWrite(tostr(longint(lo(tai_const(hp).value))));
+                            end;
+                        end
+                      else
+                        WriteAixIntConst(tai_const(hp));
+                      AsmLn;
+                    end;
+{$endif cpu64bitaddr}
+                 aitconst_uleb128bit,
+                 aitconst_sleb128bit,
+{$ifdef cpu64bitaddr}
+                 aitconst_128bit,
+                 aitconst_64bit,
+{$endif cpu64bitaddr}
+                 aitconst_32bit,
+                 aitconst_16bit,
+                 aitconst_8bit,
+                 aitconst_rva_symbol,
+                 aitconst_secrel32_symbol,
+                 aitconst_darwin_dwarf_delta32,
+                 aitconst_darwin_dwarf_delta64,
+                 aitconst_half16bit:
                    begin
-                     if assigned(tai_const(hp).endsym) then
-                       s:=tai_const(hp).endsym.name+'-'+tai_const(hp).sym.name
+                     { the AIX assembler (and for compatibility, the GNU
+                       assembler when targeting AIX) automatically aligns
+                       .short/.long/.llong to a multiple of 2/4/8 bytes. We
+                       don't want that, since this may be data inside a packed
+                       record -> use .vbyte instead (byte stream of fixed
+                       length) }
+                     if (target_info.system in systems_aix) and
+                        (constdef in [aitconst_128bit,aitconst_64bit,aitconst_32bit,aitconst_16bit]) and
+                        not assigned(tai_const(hp).sym) then
+                       begin
+                         WriteAixIntConst(tai_const(hp));
+                       end
+                     else if (target_info.system in systems_darwin) and
+                        (constdef in [aitconst_uleb128bit,aitconst_sleb128bit]) then
+                       begin
+                         AsmWrite(ait_const2str[aitconst_8bit]);
+                         case tai_const(hp).consttype of
+                           aitconst_uleb128bit:
+                             WriteDecodedUleb128(qword(tai_const(hp).value));
+                           aitconst_sleb128bit:
+                             WriteDecodedSleb128(int64(tai_const(hp).value));
+                         end
+                       end
                      else
-                       s:=tai_const(hp).sym.name;
-                     if tai_const(hp).value<>0 then
-                       s:=s+tostr_with_plus(tai_const(hp).value);
-                   end
+                       begin
+                         if not(target_info.system in systems_aix) or
+                            (constdef<>aitconst_64bit) then
+                           AsmWrite(ait_const2str[constdef])
+                         else
+                           { can't use .llong, because that forces 8 byte
+                             alignnment and we sometimes store addresses on
+                             4-byte aligned addresses (e.g. in the RTTI) }
+                           AsmWrite('.vbyte'#9'8,');
+                         l:=0;
+                         t := '';
+                         repeat
+                           if assigned(tai_const(hp).sym) then
+                             begin
+                               if assigned(tai_const(hp).endsym) then
+                                 begin
+                                   if (constdef in [aitconst_darwin_dwarf_delta32,aitconst_darwin_dwarf_delta64]) then
+                                     begin
+                                       s := NextSetLabel;
+                                       t := #9'.set '+s+','+tai_const(hp).endsym.name+'-'+tai_const(hp).sym.name;
+                                     end
+                                   else
+                                     s:=tai_const(hp).endsym.name+'-'+tai_const(hp).sym.name
+                                  end
+                               else
+                                 s:=tai_const(hp).sym.name;
+                               if replaceforbidden then
+                                 s:=ReplaceForbiddenAsmSymbolChars(s);
+                               if tai_const(hp).value<>0 then
+                                 s:=s+tostr_with_plus(tai_const(hp).value);
+                             end
+                           else
+{$ifdef cpu64bitaddr}
+                             s:=tostr(tai_const(hp).value);
+{$else cpu64bitaddr}
+                             { 64 bit constants are already handled above in this case }
+                             s:=tostr(longint(tai_const(hp).value));
+{$endif cpu64bitaddr}
+                           if constdef = aitconst_half16bit then
+                             s:='('+s+')/2';
+
+                           AsmWrite(s);
+                           inc(l,length(s));
+                           { Values with symbols are written on a single line to improve
+                             reading of the .s file (PFV) }
+                           if assigned(tai_const(hp).sym) or
+                              not(LastSecType in [sec_data,sec_rodata,sec_rodata_norel]) or
+                              (l>line_length) or
+                              (hp.next=nil) or
+                              (tai(hp.next).typ<>ait_const) or
+                              (tai_const(hp.next).consttype<>constdef) or
+                              assigned(tai_const(hp.next).sym) then
+                             break;
+                           hp:=tai(hp.next);
+                           AsmWrite(',');
+                         until false;
+                         if (t <> '') then
+                           begin
+                             AsmLn;
+                             AsmWrite(t);
+                           end;
+                       end;
+                      AsmLn;
+                   end;
                  else
-                   s:=tostr(tai_const(hp).value);
-                 AsmWrite(s);
-                 inc(l,length(s));
-                 { Values with symbols are written on a single line to improve
-                   reading of the .s file (PFV) }
-                 if assigned(tai_const(hp).sym) or
-                    not(LasTSecType in [sec_data,sec_rodata]) or
-                    (l>line_length) or
-                    (hp.next=nil) or
-                    (tai(hp.next).typ<>consttyp) or
-                    assigned(tai_const(hp.next).sym) then
-                   break;
-                 hp:=tai(hp.next);
-                 AsmWrite(',');
-               until false;
-               AsmLn;
+                   internalerror(200704251);
+               end;
              end;
 
-{$ifdef cpuextended}
+           { the "and defined(FPC_HAS_TYPE_EXTENDED)" isn't optimal but currently the only solution
+             it prevents proper cross compilation to i386 though
+           }
+{$if defined(cpuextended) and defined(FPC_HAS_TYPE_EXTENDED)}
            ait_real_80bit :
              begin
                if do_line then
@@ -615,6 +1016,8 @@ var
                    AsmWrite(',');
                   AsmWrite(tostr(t80bitarray(e)[i]));
                 end;
+               for i:=11 to tai_real_80bit(hp).savesize do
+                 AsmWrite(',0');
                AsmLn;
              end;
 {$endif cpuextended}
@@ -629,8 +1032,6 @@ var
                  swap64bitarray(t64bitarray(d));
                AsmWrite(#9'.byte'#9);
 {$ifdef arm}
-{ on a real arm cpu, it's already hi/lo swapped }
-{$ifndef cpuarm}
                if tai_real_64bit(hp).formatoptions=fo_hiloswapped then
                  begin
                    for i:=4 to 7 do
@@ -646,7 +1047,6 @@ var
                      end;
                  end
                else
-{$endif cpuarm}
 {$endif arm}
                  begin
                    for i:=0 to 7 do
@@ -682,11 +1082,7 @@ var
                if do_line then
                 AsmWriteLn(target_asm.comment+'value: '+extended2str(tai_comp_64bit(hp).value));
                AsmWrite(#9'.byte'#9);
-{$ifdef FPC}
                co:=comp(tai_comp_64bit(hp).value);
-{$else}
-               co:=tai_comp_64bit(hp).value;
-{$endif}
                { swap the values to correct endian if required }
                if source_info.endian <> target_info.endian then
                  swap64bitarray(t64bitarray(co));
@@ -699,107 +1095,172 @@ var
                AsmLn;
              end;
 
-           ait_direct :
-             begin
-               AsmWritePChar(tai_direct(hp).str);
-               AsmLn;
-{$IfDef GDB}
-               if strpos(tai_direct(hp).str,'.data')<>nil then
-                 n_line:=n_dataline
-               else if strpos(tai_direct(hp).str,'.text')<>nil then
-                 n_line:=n_textline
-               else if strpos(tai_direct(hp).str,'.bss')<>nil then
-                 n_line:=n_bssline;
-{$endif GDB}
-             end;
-
            ait_string :
              begin
                pos:=0;
-               for i:=1 to tai_string(hp).len do
-                begin
-                  if pos=0 then
-                   begin
-                     AsmWrite(#9'.ascii'#9'"');
-                     pos:=20;
-                   end;
-                  ch:=tai_string(hp).str[i-1];
-                  case ch of
-                     #0, {This can't be done by range, because a bug in FPC}
-                #1..#31,
-             #128..#255 : s:='\'+tostr(ord(ch) shr 6)+tostr((ord(ch) and 63) shr 3)+tostr(ord(ch) and 7);
-                    '"' : s:='\"';
-                    '\' : s:='\\';
-                  else
-                   s:=ch;
-                  end;
-                  AsmWrite(s);
-                  inc(pos,length(s));
-                  if (pos>line_length) or (i=tai_string(hp).len) then
-                   begin
-                     AsmWriteLn('"');
-                     pos:=0;
-                   end;
-                end;
+               if not(target_info.system in systems_aix) then
+                 begin
+                   for i:=1 to tai_string(hp).len do
+                    begin
+                      if pos=0 then
+                       begin
+                         AsmWrite(#9'.ascii'#9'"');
+                         pos:=20;
+                       end;
+                      ch:=tai_string(hp).str[i-1];
+                      case ch of
+                                #0, {This can't be done by range, because a bug in FPC}
+                           #1..#31,
+                        #128..#255 : s:='\'+tostr(ord(ch) shr 6)+tostr((ord(ch) and 63) shr 3)+tostr(ord(ch) and 7);
+                               '"' : s:='\"';
+                               '\' : s:='\\';
+                      else
+                        s:=ch;
+                      end;
+                      AsmWrite(s);
+                      inc(pos,length(s));
+                      if (pos>line_length) or (i=tai_string(hp).len) then
+                       begin
+                         AsmWriteLn('"');
+                         pos:=0;
+                       end;
+                    end;
+                 end
+               else
+                 WriteAixStringConst(tai_string(hp));
              end;
 
            ait_label :
              begin
-               if (tai_label(hp).l.is_used) then
+               if (tai_label(hp).labsym.is_used) then
                 begin
-                  if tai_label(hp).l.defbind=AB_GLOBAL then
+                  if (tai_label(hp).labsym.bind=AB_PRIVATE_EXTERN) then
+                    begin
+                      AsmWrite(#9'.private_extern ');
+                      AsmWriteln(tai_label(hp).labsym.name);
+                    end;
+                  if tai_label(hp).labsym.bind in [AB_GLOBAL,AB_PRIVATE_EXTERN] then
                    begin
                      AsmWrite('.globl'#9);
-                     AsmWriteLn(tai_label(hp).l.name);
+                     if replaceforbidden then
+                       AsmWriteLn(ReplaceForbiddenAsmSymbolChars(tai_label(hp).labsym.name))
+                     else
+                       AsmWriteLn(tai_label(hp).labsym.name);
                    end;
-                  AsmWrite(tai_label(hp).l.name);
+                  if replaceforbidden then
+                    AsmWrite(ReplaceForbiddenAsmSymbolChars(tai_label(hp).labsym.name))
+                  else
+                    AsmWrite(tai_label(hp).labsym.name);
                   AsmWriteLn(':');
                 end;
              end;
 
            ait_symbol :
              begin
+               if (tai_symbol(hp).sym.bind=AB_PRIVATE_EXTERN) then
+                 begin
+                   AsmWrite(#9'.private_extern ');
+                   if replaceforbidden then
+                     AsmWriteln(ReplaceForbiddenAsmSymbolChars(tai_symbol(hp).sym.name))
+                   else
+                     AsmWriteln(tai_symbol(hp).sym.name);
+                 end;
+               if (target_info.system = system_powerpc64_linux) and
+                 (tai_symbol(hp).sym.typ = AT_FUNCTION) and (cs_profile in current_settings.moduleswitches) then
+                 AsmWriteLn('.globl _mcount');
+
                if tai_symbol(hp).is_global then
                 begin
                   AsmWrite('.globl'#9);
-                  AsmWriteLn(tai_symbol(hp).sym.name);
+                  if replaceforbidden then
+                    AsmWriteln(ReplaceForbiddenAsmSymbolChars(tai_symbol(hp).sym.name))
+                  else
+                    AsmWriteln(tai_symbol(hp).sym.name);
                 end;
-               if target_info.system in [system_i386_linux,system_i386_beos,
-                                         system_powerpc_linux,system_m68k_linux,
-                                         system_sparc_linux,system_alpha_linux,
-                                         system_x86_64_linux,system_arm_linux] then
+               if target_info.system in [system_mipsel_linux,system_mips_linux] then
                 begin
-                   AsmWrite(#9'.type'#9);
-                   AsmWrite(tai_symbol(hp).sym.name);
-                   if assigned(tai(hp.next)) and
-                      (tai(hp.next).typ in [ait_const_rva_symbol,
-                         ait_const_32bit,ait_const_16bit,ait_const_8bit,ait_datablock,
-                         ait_real_32bit,ait_real_64bit,ait_real_80bit,ait_comp_64bit]) then
+                  AsmWrite(#9'.ent'#9);
+                  if replaceforbidden then
+                    AsmWriteln(ReplaceForbiddenAsmSymbolChars(tai_symbol(hp).sym.name))
+                  else
+                    AsmWriteln(tai_symbol(hp).sym.name);
+                end;
+               if (target_info.system = system_powerpc64_linux) and
+                 (tai_symbol(hp).sym.typ = AT_FUNCTION) then
+                 begin
+                   AsmWriteLn('.section ".opd", "aw"');
+                   AsmWriteLn('.align 3');
+                   AsmWriteLn(tai_symbol(hp).sym.name + ':');
+                   AsmWriteLn('.quad .' + tai_symbol(hp).sym.name + ', .TOC.@tocbase, 0');
+                   AsmWriteLn('.previous');
+                   AsmWriteLn('.size ' + tai_symbol(hp).sym.name + ', 24');
+                   if (tai_symbol(hp).is_global) then
+                     AsmWriteLn('.globl .' + tai_symbol(hp).sym.name);
+                   AsmWriteLn('.type .' + tai_symbol(hp).sym.name + ', @function');
+                   { the dotted name is the name of the actual function entry }
+                   AsmWrite('.');
+                 end
+               else if (target_info.system in systems_aix) and
+                  (tai_symbol(hp).sym.typ = AT_FUNCTION) then
+                 begin
+                   if target_info.system=system_powerpc_aix then
                      begin
-                       if target_info.system = system_arm_linux then
-                         AsmWriteLn(',#object')
-                       else
-                         AsmWriteLn(',@object')
+                       s:=#9'.long .';
+                       ch:='2';
                      end
                    else
                      begin
-                       if target_info.system = system_arm_linux then
-                         AsmWriteLn(',#function')
-                       else
-                         AsmWriteLn(',@function');
+                       s:=#9'.llong .';
+                       ch:='3';
                      end;
-                   if tai_symbol(hp).sym.size>0 then
-                    begin
-                      AsmWrite(#9'.size'#9);
-                      AsmWrite(tai_symbol(hp).sym.name);
-                      AsmWrite(', ');
-                      AsmWriteLn(tostr(tai_symbol(hp).sym.size));
-                    end;
-                end;
-               AsmWrite(tai_symbol(hp).sym.name);
-               AsmWriteLn(':');
+                   AsmWriteLn(#9'.csect '+ReplaceForbiddenAsmSymbolChars(tai_symbol(hp).sym.name)+'[DS],'+ch);
+                   AsmWriteLn(ReplaceForbiddenAsmSymbolChars(tai_symbol(hp).sym.name)+':');
+                   AsmWriteln(s+ReplaceForbiddenAsmSymbolChars(tai_symbol(hp).sym.name)+', TOC[tc0], 0');
+                   AsmWriteln(#9'.csect .text[PR]');
+                   if (tai_symbol(hp).is_global) then
+                     AsmWriteLn('.globl .'+ReplaceForbiddenAsmSymbolChars(tai_symbol(hp).sym.name))
+                   else
+                     AsmWriteLn('.lglobl .'+ReplaceForbiddenAsmSymbolChars(tai_symbol(hp).sym.name));
+                   { the dotted name is the name of the actual function entry }
+                   AsmWrite('.');
+                 end
+               else
+                 begin
+                   if (target_info.system <> system_arm_linux) then
+                     sepChar := '@'
+                   else
+                     sepChar := '#';
+                   if (tf_needs_symbol_type in target_info.flags) then
+                     begin
+                       AsmWrite(#9'.type'#9 + tai_symbol(hp).sym.name);
+                       if (needsObject(tai_symbol(hp))) then
+                         AsmWriteLn(',' + sepChar + 'object')
+                       else
+                         AsmWriteLn(',' + sepChar + 'function');
+                     end;
+                 end;
+               if replaceforbidden then
+                 if not(tai_symbol(hp).has_value) then
+                   AsmWriteLn(ReplaceForbiddenAsmSymbolChars(tai_symbol(hp).sym.name + ':'))
+                 else
+                   AsmWriteLn(ReplaceForbiddenAsmSymbolChars(tai_symbol(hp).sym.name + '=' + tostr(tai_symbol(hp).value)))
+               else if not(tai_symbol(hp).has_value) then
+                 AsmWriteLn(tai_symbol(hp).sym.name + ':')
+               else
+                 AsmWriteLn(tai_symbol(hp).sym.name + '=' + tostr(tai_symbol(hp).value));
              end;
-
+{$ifdef arm}
+           ait_thumb_func:
+             begin
+               AsmWriteLn(#9'.thumb_func');
+             end;
+{$endif arm}
+{$if defined(alpha)}
+           ait_ent:
+             begin
+               AsmWriteLn(#9'.ent'#9+tai_ent(hp).Name);
+             end;
+{$endif alpha}
            ait_symbol_end :
              begin
                if tf_needs_symbol_size in target_info.flags then
@@ -808,9 +1269,19 @@ var
                   inc(symendcount);
                   AsmWriteLn(s+':');
                   AsmWrite(#9'.size'#9);
-                  AsmWrite(tai_symbol_end(hp).sym.name);
+                  if (target_info.system = system_powerpc64_linux) and (tai_symbol_end(hp).sym.typ = AT_FUNCTION) then
+                    AsmWrite('.');
+                  if replaceforbidden then
+                    AsmWrite(ReplaceForbiddenAsmSymbolChars(tai_symbol_end(hp).sym.name))
+                  else
+                    AsmWrite(tai_symbol_end(hp).sym.name);
                   AsmWrite(', '+s+' - ');
-                  AsmWriteLn(tai_symbol_end(hp).sym.name);
+                  if (target_info.system = system_powerpc64_linux) and (tai_symbol_end(hp).sym.typ = AT_FUNCTION) then
+                     AsmWrite('.');
+                  if replaceforbidden then
+                    AsmWriteLn(ReplaceForbiddenAsmSymbolChars(tai_symbol_end(hp).sym.name))
+                  else
+                    AsmWriteLn(tai_symbol_end(hp).sym.name);
                 end;
              end;
 
@@ -819,33 +1290,19 @@ var
                WriteInstruction(hp);
              end;
 
-{$ifdef GDB}
-           ait_stabs :
+           ait_stab :
              begin
-               if assigned(tai_stabs(hp).str) then
+               if assigned(tai_stab(hp).str) then
                  begin
-                   AsmWrite(#9'.stabs ');
-                   AsmWritePChar(tai_stabs(hp).str);
+                   AsmWrite(#9'.'+stabtypestr[tai_stab(hp).stabtype]+' ');
+                   AsmWritePChar(tai_stab(hp).str);
                    AsmLn;
                  end;
              end;
 
-           ait_stabn :
-             begin
-               if assigned(tai_stabn(hp).str) then
-                 begin
-                   AsmWrite(#9'.stabn ');
-                   AsmWritePChar(tai_stabn(hp).str);
-                   AsmLn;
-                 end;
-             end;
-
-           ait_force_line :
-             stabslastfileinfo.line:=0;
-
-           ait_stab_function_name:
-             funcname:=tai_stab_function_name(hp).str;
-{$endif GDB}
+           ait_force_line,
+           ait_function_name :
+             ;
 
            ait_cutobject :
              begin
@@ -864,33 +1321,66 @@ var
                   while assigned(hp.next) and (tai(hp.next).typ in [ait_cutobject,ait_section,ait_comment]) do
                    begin
                      if tai(hp.next).typ=ait_section then
-                       lasTSectype:=tai_section(hp.next).sectype;
+                       LastSecType:=tai_section(hp.next).sectype;
                      hp:=tai(hp.next);
                    end;
-{$ifdef GDB}
-                  { force write of filename }
-                  FillChar(stabslastfileinfo,sizeof(stabslastfileinfo),0);
-                  includecount:=0;
-                  funcname:=nil;
-                  WriteFileLineInfo(aktfilepos);
-{$endif GDB}
-                  if lasTSectype<>sec_none then
-                    WriteSection(lasTSectype,'');
+                  if LastSecType<>sec_none then
+                    WriteSection(LastSecType,'',secorder_default,last_align);
                   AsmStartSize:=AsmSize;
                 end;
              end;
 
            ait_marker :
-             if tai_marker(hp).kind=InlineStart then
+             if tai_marker(hp).kind=mark_NoLineInfoStart then
                inc(InlineLevel)
-             else if tai_marker(hp).kind=InlineEnd then
+             else if tai_marker(hp).kind=mark_NoLineInfoEnd then
                dec(InlineLevel);
 
-           ait_non_lazy_symbol_pointer:
-             AsmWriteLn('.non_lazy_symbol_pointer');
+           ait_directive :
+             begin
+               WriteDirectiveName(tai_directive(hp).directive);
+               if tai_directive(hp).name <>'' then
+                 AsmWrite(tai_directive(hp).name);
+               AsmLn;
+             end;
 
+           ait_seh_directive :
+             begin
+{$ifdef TEST_WIN64_SEH}
+               AsmWrite(sehdirectivestr[tai_seh_directive(hp).kind]);
+               case tai_seh_directive(hp).datatype of
+                 sd_none:;
+                 sd_string:
+                   begin
+                     AsmWrite(' '+tai_seh_directive(hp).data.name^);
+                     if (tai_seh_directive(hp).data.flags and 1)<>0 then
+                       AsmWrite(',@except');
+                     if (tai_seh_directive(hp).data.flags and 2)<>0 then
+                       AsmWrite(',@unwind');
+                   end;
+                 sd_reg:
+                   AsmWrite(' '+gas_regname(tai_seh_directive(hp).data.reg));
+                 sd_offset:
+                   AsmWrite(' '+tostr(tai_seh_directive(hp).data.offset));
+                 sd_regoffset:
+                   AsmWrite(' '+gas_regname(tai_seh_directive(hp).data.reg)+', '+
+                     tostr(tai_seh_directive(hp).data.offset));
+               end;
+               AsmLn;
+{$endif TEST_WIN64_SEH}
+             end;
+           ait_varloc:
+             begin
+               if tai_varloc(hp).newlocationhi<>NR_NO then
+                 AsmWrite(strpnew('Var '+tai_varloc(hp).varsym.realname+' located in register '+
+                   std_regname(tai_varloc(hp).newlocationhi)+':'+std_regname(tai_varloc(hp).newlocation)))
+               else
+                 AsmWrite(strpnew('Var '+tai_varloc(hp).varsym.realname+' located in register '+
+                   std_regname(tai_varloc(hp).newlocation)));
+               AsmLn;
+             end;
            else
-             internalerror(10000);
+             internalerror(2006012201);
          end;
          hp:=tai(hp.next);
        end;
@@ -898,95 +1388,485 @@ var
 
 
     procedure TGNUAssembler.WriteExtraHeader;
-
       begin
       end;
 
+
+    procedure TGNUAssembler.WriteExtraFooter;
+      begin
+      end;
+
+
+    procedure TGNUAssembler.WriteInstruction(hp: tai);
+      begin
+        InstrWriter.WriteInstruction(hp);
+      end;
+
+
+    procedure TGNUAssembler.WriteWeakSymbolDef(s: tasmsymbol);
+      begin
+        AsmWriteLn(#9'.weak '+s.name);
+      end;
+
+
+    procedure TGNUAssembler.WriteAixStringConst(hp: tai_string);
+      type
+        tterminationkind = (term_none,term_string,term_nostring);
+
+      var
+        i: longint;
+        pos: longint;
+        s: string;
+        ch: char;
+        instring: boolean;
+
+      procedure newstatement(terminationkind: tterminationkind);
+        begin
+          case terminationkind of
+            term_none: ;
+            term_string:
+              AsmWriteLn('"');
+            term_nostring:
+              AsmLn;
+          end;
+          AsmWrite(#9'.byte'#9);
+          pos:=20;
+          instring:=false;
+        end;
+
+      begin
+        pos:=0;
+        for i:=1 to hp.len do
+          begin
+            if pos=0 then
+              newstatement(term_none);
+            ch:=hp.str[i-1];
+            case ch of
+              #0..#31,
+              #127..#255 :
+                begin
+                  if instring then
+                    newstatement(term_string);
+                  if pos=20 then
+                    s:=tostr(ord(ch))
+                  else
+                    s:=', '+tostr(ord(ch))
+                end;
+              '"' :
+                if instring then
+                  s:='""'
+                else
+                  begin
+                    if pos<>20 then
+                      newstatement(term_nostring);
+                    s:='"""';
+                    instring:=true;
+                  end;
+              else
+                if not instring then
+                  begin
+                    if (pos<>20) then
+                      newstatement(term_nostring);
+                    s:='"'+ch;
+                    instring:=true;
+                  end
+                else
+                  s:=ch;
+            end;
+            AsmWrite(s);
+            inc(pos,length(s));
+            if (pos>line_length) or (i=tai_string(hp).len) then
+              begin
+                if instring then
+                  AsmWriteLn('"')
+                else
+                  AsmLn;
+                pos:=0;
+              end;
+         end;
+      end;
+
+
+    procedure TGNUAssembler.WriteAixIntConst(hp: tai_const);
+      var
+        pos, size: longint;
+      begin
+        { only big endian AIX supported for now }
+        if target_info.endian<>endian_big then
+          internalerror(2012010401);
+        { limitation: can only write 4 bytes at a time }
+        pos:=0;
+        size:=tai_const(hp).size;
+        while pos<(size-4) do
+          begin
+            AsmWrite(#9'.vbyte'#9'4, ');
+            AsmWriteln(tostr(longint(tai_const(hp).value shr ((size-pos-4)*8))));
+            inc(pos,4);
+         end;
+        AsmWrite(#9'.vbyte'#9);
+        AsmWrite(tostr(size-pos));
+        AsmWrite(', ');
+        case size-pos of
+          1: AsmWrite(tostr(byte(tai_const(hp).value)));
+          2: AsmWrite(tostr(word(tai_const(hp).value)));
+          4: AsmWrite(tostr(longint(tai_const(hp).value)));
+          else
+            internalerror(2012010402);
+        end;
+      end;
+
+
+    procedure TGNUAssembler.WriteDirectiveName(dir: TAsmDirective);
+    begin
+      AsmWrite('.'+directivestr[dir]+' ');
+    end;
+
+
     procedure TGNUAssembler.WriteAsmList;
     var
-      p:dirstr;
-      n:namestr;
-      e:extstr;
-{$ifdef GDB}
-      fileinfo : tfileposinfo;
-{$endif GDB}
-
+      n : string;
+      hal : tasmlisttype;
+      i: longint;
     begin
 {$ifdef EXTDEBUG}
       if assigned(current_module.mainsource) then
-       Comment(V_Debug,'Start writing gas-styled assembler output for '+current_module.mainsource^);
+       Comment(V_Debug,'Start writing gas-styled assembler output for '+current_module.mainsource);
 {$endif}
 
-      LasTSectype:=sec_none;
-{$ifdef GDB}
-      FillChar(stabslastfileinfo,sizeof(stabslastfileinfo),0);
-{$endif GDB}
-      FillChar(lastfileinfo,sizeof(lastfileinfo),0);
-      LastInfile:=nil;
-
-      if assigned(current_module.mainsource) then
-{$IFDEF USE_SYSUTILS}
-      begin
-       p := SplitPath(current_module.mainsource^);
-       n := SplitName(current_module.mainsource^);
-       e := SplitExtension(current_module.mainsource^);
-      end
-{$ELSE USE_SYSUTILS}
-       fsplit(current_module.mainsource^,p,n,e)
-{$ENDIF USE_SYSUTILS}
+      if current_module.mainsource<>'' then
+        n:=ExtractFileName(current_module.mainsource)
       else
-       begin
-         p:=inputdir;
-         n:=inputfile;
-         e:=inputextension;
-       end;
-    { to get symify to work }
-      AsmWriteLn(#9'.file "'+FixFileName(n+e)+'"');
+        n:=InputFileName;
+
+      { gcc does not add it either for Darwin. Grep for
+        TARGET_ASM_FILE_START_FILE_DIRECTIVE in gcc/config/*.h
+      }
+      if not(target_info.system in systems_darwin) then
+        AsmWriteLn(#9'.file "'+FixFileName(n)+'"');
+
       WriteExtraHeader;
-{$ifdef GDB}
-      n_line:=n_bssline;
-      funcname:=nil;
-      linecount:=1;
-      includecount:=0;
-      fileinfo.fileindex:=1;
-      fileinfo.line:=1;
-      { Write main file }
-      WriteFileLineInfo(fileinfo);
-{$endif GDB}
       AsmStartSize:=AsmSize;
       symendcount:=0;
 
-      If (cs_debuginfo in aktmoduleswitches) then
-        WriteTree(debuglist);
-      WriteTree(codesegment);
-      WriteTree(datasegment);
-      WriteTree(consts);
-      WriteTree(rttilist);
-      WriteTree(picdata);
-      Writetree(resourcestringlist);
-      WriteTree(bsssegment);
-      Writetree(importssection);
-      { exports are written by DLLTOOL
-        if we use it so don't insert it twice (PM) }
-      if not UseDeffileForExports and assigned(exportssection) then
-        Writetree(exportssection);
-      Writetree(resourcesection);
-      Writetree(dwarflist);
-      {$ifdef GDB}
-      WriteFileEndInfo;
-      {$ENDIF}
+      for hal:=low(TasmlistType) to high(TasmlistType) do
+        begin
+          AsmWriteLn(target_asm.comment+'Begin asmlist '+AsmlistTypeStr[hal]);
+          writetree(current_asmdata.asmlists[hal]);
+          AsmWriteLn(target_asm.comment+'End asmlist '+AsmlistTypeStr[hal]);
+        end;
+
+      { add weak symbol markers }
+      for i:=0 to current_asmdata.asmsymboldict.count-1 do
+        if (tasmsymbol(current_asmdata.asmsymboldict[i]).bind=AB_WEAK_EXTERNAL) then
+          writeweaksymboldef(tasmsymbol(current_asmdata.asmsymboldict[i]));
+
+      if create_smartlink_sections and
+         (target_info.system in systems_darwin) then
+        AsmWriteLn(#9'.subsections_via_symbols');
+
+      { "no executable stack" marker for Linux }
+      if (target_info.system in systems_linux) and
+         not(cs_executable_stack in current_settings.moduleswitches) then
+        begin
+          AsmWriteLn('.section .note.GNU-stack,"",%progbits');
+        end;
 
       AsmLn;
 {$ifdef EXTDEBUG}
       if assigned(current_module.mainsource) then
-       Comment(V_Debug,'Done writing gas-styled assembler output for '+current_module.mainsource^);
+       Comment(V_Debug,'Done writing gas-styled assembler output for '+current_module.mainsource);
 {$endif EXTDEBUG}
     end;
 
-end.
-{
-  $Log: aggas.pas,v $
-  Revision 1.62  2005/02/14 17:13:06  peter
-    * truncate log
 
-}
+{****************************************************************************}
+{                        Apple/GNU Assembler writer                          }
+{****************************************************************************}
+
+    function TAppleGNUAssembler.sectionname(atype:TAsmSectiontype;const aname:string;aorder:TAsmSectionOrder):string;
+      begin
+        if (target_info.system in systems_darwin) then
+          case atype of
+            sec_bss:
+              { all bss (lcomm) symbols are automatically put in the right }
+              { place by using the lcomm assembler directive               }
+              atype := sec_none;
+            sec_debug_frame,
+            sec_eh_frame:
+              begin
+                result := '.section __DWARF,__debug_info,regular,debug';
+                exit;
+              end;
+            sec_debug_line:
+              begin
+                result := '.section __DWARF,__debug_line,regular,debug';
+                exit;
+              end;
+            sec_debug_info:
+              begin
+                result := '.section __DWARF,__debug_info,regular,debug';
+                exit;
+              end;
+            sec_debug_abbrev:
+               begin
+                 result := '.section __DWARF,__debug_abbrev,regular,debug';
+                 exit;
+               end;
+            sec_rodata:
+              begin
+                result := '.const_data';
+                exit;
+              end;
+            sec_rodata_norel:
+              begin
+                result := '.const';
+                exit;
+              end;
+            sec_fpc:
+              begin
+                result := '.section __TEXT, .fpc, regular, no_dead_strip';
+                exit;
+              end;
+            sec_code:
+              begin
+                if (aname='fpc_geteipasebx') or
+                   (aname='fpc_geteipasecx') then
+                  begin
+                    result:='.section __TEXT,__textcoal_nt,coalesced,pure_instructions'#10'.weak_definition '+aname+
+                      #10'.private_extern '+aname;
+                    exit;
+                  end;
+              end;
+            sec_data_nonlazy:
+              begin
+                result:='.section __DATA, __nl_symbol_ptr,non_lazy_symbol_pointers';
+                exit;
+              end;
+            sec_data_lazy:
+              begin
+                result:='.section __DATA, __la_symbol_ptr,lazy_symbol_pointers';
+                exit;
+              end;
+            sec_init_func:
+              begin
+                result:='.section __DATA, __mod_init_func, mod_init_funcs';
+                exit;
+              end;
+            sec_term_func:
+              begin
+                result:='.section __DATA, __mod_term_func, mod_term_funcs';
+                exit;
+              end;
+            sec_objc_protocol_ext:
+              begin
+                result:='.section __OBJC, __protocol_ext, regular, no_dead_strip';
+                exit;
+              end;
+            sec_objc_class_ext:
+              begin
+                result:='.section __OBJC, __class_ext, regular, no_dead_strip';
+                exit;
+              end;
+            sec_objc_property:
+              begin
+                result:='.section __OBJC, __property, regular, no_dead_strip';
+                exit;
+              end;
+            sec_objc_image_info:
+              begin
+                result:='.section __OBJC, __image_info, regular, no_dead_strip';
+                exit;
+              end;
+            sec_objc_cstring_object:
+              begin
+                result:='.section __OBJC, __cstring_object, regular, no_dead_strip';
+                exit;
+              end;
+            sec_objc_sel_fixup:
+              begin
+                result:='.section __OBJC, __sel_fixup, regular, no_dead_strip';
+                exit;
+              end;
+            sec_objc_message_refs:
+              begin
+                if (target_info.system in systems_objc_nfabi) then
+                  begin
+                    result:='.section __DATA, __objc_selrefs, literal_pointers, no_dead_strip';
+                    exit;
+                  end;
+              end;
+            sec_objc_cls_refs:
+              begin
+                if (target_info.system in systems_objc_nfabi) then
+                  begin
+                    result:='.section __DATA, __objc_clsrefs, regular, no_dead_strip';
+                    exit;
+                  end;
+              end;
+            sec_objc_meth_var_names,
+            sec_objc_class_names:
+              begin
+                if (target_info.system in systems_objc_nfabi) then
+                  begin
+                    result:='.cstring';
+                    exit
+                  end;
+              end;
+            sec_objc_inst_meth,
+            sec_objc_cls_meth,
+            sec_objc_cat_inst_meth,
+            sec_objc_cat_cls_meth:
+              begin
+                if (target_info.system in systems_objc_nfabi) then
+                  begin
+                    result:='.section __DATA, __objc_const';
+                    exit;
+                  end;
+              end;
+            sec_objc_meta_class,
+            sec_objc_class:
+              begin
+                if (target_info.system in systems_objc_nfabi) then
+                  begin
+                    result:='.section __DATA, __objc_data';
+                    exit;
+                  end;
+              end;
+            sec_objc_sup_refs:
+              begin
+                result:='.section __DATA, __objc_superrefs, regular, no_dead_strip';
+                exit
+              end;
+            sec_objc_classlist:
+              begin
+                result:='.section __DATA, __objc_classlist, regular, no_dead_strip';
+                exit
+              end;
+            sec_objc_nlclasslist:
+              begin
+                result:='.section __DATA, __objc_nlclasslist, regular, no_dead_strip';
+                exit
+              end;
+            sec_objc_catlist:
+              begin
+                result:='.section __DATA, __objc_catlist, regular, no_dead_strip';
+                exit
+              end;
+            sec_objc_nlcatlist:
+              begin
+                result:='.section __DATA, __objc_nlcatlist, regular, no_dead_strip';
+                exit
+              end;
+            sec_objc_protolist:
+              begin
+                result:='.section __DATA, __objc_protolist, coalesced, no_dead_strip';
+                exit;
+              end;
+          end;
+        result := inherited sectionname(atype,aname,aorder);
+      end;
+
+
+    procedure TAppleGNUAssembler.WriteWeakSymbolDef(s: tasmsymbol);
+      begin
+        AsmWriteLn(#9'.weak_reference '+s.name);
+      end;
+
+
+{****************************************************************************}
+{                       a.out/GNU Assembler writer                           }
+{****************************************************************************}
+
+    function TAoutGNUAssembler.sectionname(atype:TAsmSectiontype;const aname:string;aorder:TAsmSectionOrder):string;
+    const
+(* Translation table - replace unsupported section types with basic ones. *)
+        SecXTable: array[TAsmSectionType] of TAsmSectionType = (
+         sec_none,
+         sec_none,
+         sec_code,
+         sec_data,
+         sec_data (* sec_rodata *),
+         sec_data (* sec_rodata_norel *),
+         sec_bss,
+         sec_data (* sec_threadvar *),
+         { used for wince exception handling }
+         sec_code (* sec_pdata *),
+         { used for darwin import stubs }
+         sec_code (* sec_stub *),
+         sec_data,(* sec_data_nonlazy *)
+         sec_data,(* sec_data_lazy *)
+         sec_data,(* sec_init_func *)
+         sec_data,(* sec_term_func *)
+         { stabs }
+         sec_stab,sec_stabstr,
+         { win32 }
+         sec_data (* sec_idata2 *),
+         sec_data (* sec_idata4 *),
+         sec_data (* sec_idata5 *),
+         sec_data (* sec_idata6 *),
+         sec_data (* sec_idata7 *),
+         sec_data (* sec_edata *),
+         { C++ exception handling unwinding (uses dwarf) }
+         sec_eh_frame,
+         { dwarf }
+         sec_debug_frame,
+         sec_debug_info,
+         sec_debug_line,
+         sec_debug_abbrev,
+         { ELF resources (+ references to stabs debug information sections) }
+         sec_code (* sec_fpc *),
+         { Table of contents section }
+         sec_code (* sec_toc *),
+         sec_code (* sec_init *),
+         sec_code (* sec_fini *),
+         sec_none (* sec_objc_class *),
+         sec_none (* sec_objc_meta_class *),
+         sec_none (* sec_objc_cat_cls_meth *),
+         sec_none (* sec_objc_cat_inst_meth *),
+         sec_none (* sec_objc_protocol *),
+         sec_none (* sec_objc_string_object *),
+         sec_none (* sec_objc_cls_meth *),
+         sec_none (* sec_objc_inst_meth *),
+         sec_none (* sec_objc_cls_refs *),
+         sec_none (* sec_objc_message_refs *),
+         sec_none (* sec_objc_symbols *),
+         sec_none (* sec_objc_category *),
+         sec_none (* sec_objc_class_vars *),
+         sec_none (* sec_objc_instance_vars *),
+         sec_none (* sec_objc_module_info *),
+         sec_none (* sec_objc_class_names *),
+         sec_none (* sec_objc_meth_var_types *),
+         sec_none (* sec_objc_meth_var_names *),
+         sec_none (* sec_objc_selector_strs *),
+         sec_none (* sec_objc_protocol_ext *),
+         sec_none (* sec_objc_class_ext *),
+         sec_none (* sec_objc_property *),
+         sec_none (* sec_objc_image_info *),
+         sec_none (* sec_objc_cstring_object *),
+         sec_none (* sec_objc_sel_fixup *),
+         sec_none (* sec_objc_data *),
+         sec_none (* sec_objc_const *),
+         sec_none (* sec_objc_sup_refs *),
+         sec_none (* sec_data_coalesced *),
+         sec_none (* sec_objc_classlist *),
+         sec_none (* sec_objc_nlclasslist *),
+         sec_none (* sec_objc_catlist *),
+         sec_none (* sec_objc_nlcatlist *),
+         sec_none (* sec_objc_protlist *)
+        );
+      begin
+        Result := inherited SectionName (SecXTable [AType], AName, AOrder);
+      end;
+
+
+{****************************************************************************}
+{                        Abstract Instruction Writer                         }
+{****************************************************************************}
+
+     constructor TCPUInstrWriter.create(_owner: TGNUAssembler);
+       begin
+         inherited create;
+         owner := _owner;
+       end;
+
+end.

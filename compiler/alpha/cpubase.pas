@@ -1,5 +1,4 @@
 {
-    $Id: cpubase.pas,v 1.9 2005/02/14 17:13:09 peter Exp $
     Copyright (C) 1998-2000 by Florian Klaempfl
 
     This unit implements an asmlistitem class for the Alpha architecture.
@@ -121,7 +120,8 @@ unit cpubase;
 
        { Defines the default address size for a processor, }
        OS_ADDR = OS_64;
-       { the natural int size for a processor,             }
+       { the natural int size for a processor,
+         has to match osuinttype/ossinttype as initialized in psystem }
        OS_INT = OS_64;
        { the maximum float size for a processor,           }
        OS_FLOAT = OS_F80;
@@ -156,40 +156,13 @@ unit cpubase;
        LoReg = R_0;
        HiReg = R_31;
 
-       { Constant defining possibly all registers which might require saving }
-       ALL_REGISTERS = [firstreg..lastreg];
-
-       general_registers = [R_0..R_31];
-
-       availabletempregsint = [R_0..R_14,R_16..R_25,R_28];
-       availabletempregsfpu = [R_F0..R_F30];
-       availabletempregsmm  = [];
-
-       intregs = [R_0..R_31];
-       usableregsint = [];
-       c_countusableregsint = 26;
-
        maxfpuregs = 32;
-       fpuregs = [R_F0..R_F31];
-       usableregsfpu = [];
-       c_countusableregsfpu = 31;
-
-       mmregs = [];
-       usableregsmm = [];
-       c_countusableregsmm  = 0;
 
        max_operands = 4;
 
        registers_saved_on_cdecl = [R_9..R_14,R_F2..R_F9];
 
-       firstsaveintreg = R_NO;
-       lastsaveintreg  = R_NO;
-       firstsavefpureg = R_NO;
-       lastsavefpureg  = R_NO;
-       firstsavemmreg  = R_NO;
-       lastsavemmreg   = R_NO;
        maxvarregs = 6;
-
        varregs : Array [1..maxvarregs] of Tregister =
                  (R_9,R_10,R_11,R_12,R_13,R_14);
 
@@ -456,9 +429,3 @@ end;
     end;
 
 end.
-{
-  $Log: cpubase.pas,v $
-  Revision 1.9  2005/02/14 17:13:09  peter
-    * truncate log
-
-}

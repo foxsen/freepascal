@@ -1,5 +1,4 @@
 {
-    $Id: cpuinfo.pas,v 1.28 2005/02/14 17:13:09 peter Exp $
     Copyright (c) 1998-2004 by Florian Klaempfl
 
     Basic Processor information
@@ -40,21 +39,23 @@ Type
    pbestreal=^bestreal;
 
    { possible supported processors for this target }
-   tprocessors =
-      (no_processor,
-       Class386,
-       ClassPentium,
-       ClassPentium2,
-       ClassPentium3,
-       ClassPentium4
+   tcputype =
+      (cpu_none,
+       cpu_386,
+       cpu_Pentium,
+       cpu_Pentium2,
+       cpu_Pentium3,
+       cpu_Pentium4,
+       cpu_PentiumM
       );
 
    tfputype =
-     (no_fpuprocessor,
-      fpu_soft,
+     (fpu_none,
+//      fpu_soft,
       fpu_x87,
       fpu_sse,
-      fpu_sse2
+      fpu_sse2,
+      fpu_sse3
      );
 
 
@@ -62,8 +63,6 @@ Const
    { calling conventions supported by the code generator }
    supported_calling_conventions : tproccalloptions = [
      pocall_internproc,
-     pocall_compilerproc,
-     pocall_inline,
      pocall_register,
      pocall_safecall,
      pocall_stdcall,
@@ -71,33 +70,45 @@ Const
      pocall_cppdecl,
      pocall_far16,
      pocall_pascal,
-     pocall_oldfpccall
+     pocall_oldfpccall,
+     pocall_mwpascal
    ];
 
-   processorsstr : array[tprocessors] of string[10] = ('',
-     '386',
+   cputypestr : array[tcputype] of string[10] = ('',
+     '80386',
      'PENTIUM',
      'PENTIUM2',
      'PENTIUM3',
-     'PENTIUM4'
+     'PENTIUM4',
+     'PENTIUMM'
    );
 
    fputypestr : array[tfputype] of string[6] = ('',
-     'SOFT',
+//     'SOFT',
      'X87',
      'SSE',
-     'SSE2'
+     'SSE2',
+     'SSE3'
    );
 
-   sse_singlescalar : set of tfputype = [fpu_sse,fpu_sse2];
-   sse_doublescalar : set of tfputype = [fpu_sse2];
+   sse_singlescalar : set of tfputype = [fpu_sse,fpu_sse2,fpu_sse3];
+   sse_doublescalar : set of tfputype = [fpu_sse2,fpu_sse3];
+
+   { Supported optimizations, only used for information }
+   supported_optimizerswitches = genericlevel1optimizerswitches+
+                                 genericlevel2optimizerswitches+
+                                 genericlevel3optimizerswitches-
+                                 { no need to write info about those }
+                                 [cs_opt_level1,cs_opt_level2,cs_opt_level3]+
+                                 [cs_opt_peephole,cs_opt_regvar,cs_opt_stackframe,
+                                  cs_opt_asmcse,cs_opt_loopunroll,cs_opt_uncertain,
+								  cs_opt_tailrecursion,cs_opt_nodecse];
+
+   level1optimizerswitches = genericlevel1optimizerswitches + [cs_opt_peephole];
+   level2optimizerswitches = genericlevel2optimizerswitches + level1optimizerswitches +
+     [cs_opt_regvar,cs_opt_stackframe,cs_opt_tailrecursion,cs_opt_nodecse];
+   level3optimizerswitches = genericlevel3optimizerswitches + level2optimizerswitches + [{,cs_opt_loopunroll}];
 
 Implementation
 
 end.
-{
-  $Log: cpuinfo.pas,v $
-  Revision 1.28  2005/02/14 17:13:09  peter
-    * truncate log
-
-}

@@ -1,5 +1,4 @@
 {
-    $Id: graphics.pas,v 1.2 2005/02/14 17:13:30 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2004 Karoly Balogh for Genesi S.a.r.l. <www.genesi.lu>
 
@@ -2299,7 +2298,7 @@ SysCall GfxBase 228;
 procedure SetRast(rp : pRastPort location 'a1'; pen : CARDINAL location 'd0');
 SysCall GfxBase 234;
 
-procedure Move(rp : pRastPort location 'a1'; x : LongInt location 'd0'; y : LongInt location 'd1');
+procedure gfxMove(rp : pRastPort location 'a1'; x : LongInt location 'd0'; y : LongInt location 'd1');
 SysCall GfxBase 240;
 
 procedure Draw(rp : pRastPort location 'a1'; x : LongInt location 'd0'; y : LongInt location 'd1');
@@ -2632,7 +2631,7 @@ SysCall GfxBase 942;
 procedure ReleasePen(cm : pColorMap location 'a0'; n : CARDINAL location 'd0');
 SysCall GfxBase 948;
 
-function ObtainPen(cm : pColorMap location 'a0'; n : CARDINAL location 'd0'; r : CARDINAL location 'd1'; g : CARDINAL location 'd2'; b : CARDINAL location 'd3'; f : LongInt location 'd4') : CARDINAL;
+function ObtainPen(cm : pColorMap location 'a0'; n : longint location 'd0'; r : CARDINAL location 'd1'; g : CARDINAL location 'd2'; b : CARDINAL location 'd3'; f : LongInt location 'd4') : CARDINAL;
 SysCall GfxBase 954;
 
 function GetBitMapAttr(bm : pBitMap location 'a0'; attrnum : CARDINAL location 'd1') : CARDINAL;
@@ -2835,10 +2834,3 @@ begin
 end;
 
 end.
-
-{
-  $Log: graphics.pas,v $
-  Revision 1.2  2005/02/14 17:13:30  peter
-    * truncate log
-
-}

@@ -1,5 +1,4 @@
 {
-    $Id: pthread.inc,v 1.8 2005/04/09 20:28:04 marco Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Peter Vreman
     member of the Free Pascal development team.
@@ -23,6 +22,7 @@
 CONST PTHREAD_EXPLICIT_SCHED       = 0;
       PTHREAD_CREATE_DETACHED      = 1;
       PTHREAD_SCOPE_PROCESS        = 0;
+      SEM_SAFE = 255;
 
  TYPE
     ppthread_t      = ^pthread_t;
@@ -37,24 +37,59 @@ CONST PTHREAD_EXPLICIT_SCHED       = 0;
     ppthread_mutexattr_t = ^pthread_mutexattr_t;
     ppthread_mutex_attr_t = ^pthread_mutexattr_t;
 
-    sem_t           = cint;
-    psem_t          = ^sem_t;
+{
+  From FreeBSD 8.2 sys/_semaphore.h
+}
+
+(*
+struct sem {
+#define SEM_MAGIC       ((u_int32_t) 0x09fa4012)
+        u_int32_t       magic;
+        pthread_mutex_t lock;
+        pthread_cond_t  gtzero;
+        u_int32_t       count;
+        u_int32_t       nwaiters;
+#define SEM_USER        (NULL)
+        semid_t         semid;  /* semaphore id if kernel (shared) semaphore */
+        int             syssem; /* 1 if kernel (shared) semaphore */
+        LIST_ENTRY(sem) entry;
+        struct sem      **backpointer;
+}; *)
+    semid_t        = pointer;
+    psem_t         = ^sem_t;
+    ppsem_t        = ^psem_t;
+    sem_t = record
+       magic   : cuint32;
+       lock    : pthread_mutex_t;
+       gtzero  : pthread_cond_t;
+       count   : cuint32;
+       nwaiters: cuint32;
+       semid   : semid_t;
+       sysse   : cint;
+       entry   : psem_t;
+       backpointer : ppsem_t;
+       spare   : array[0..SEM_SAFE] of char;
+
+    end;
+
     TSemaphore         = sem_t;
     PSemaphore         = ^TSemaphore;
 
 function  pthread_getspecific      (t : pthread_key_t):pointer; cdecl; external;
 function  pthread_setspecific      (t : pthread_key_t;p:pointer):cint; cdecl; external;
 function  pthread_key_create       (p : ppthread_key_t;f: __destr_func_t):cint; cdecl;external;
-function  pthread_attr_init           (p : ppthread_key_t):cint; cdecl; external;
+function  pthread_attr_init           (p : ppthread_attr_t):cint; cdecl; external;
 function  pthread_attr_setinheritsched(p : ppthread_attr_t;i:cint):cint; cdecl; external;
 function  pthread_attr_setscope      (p : ppthread_attr_t;i:cint):cint;cdecl;external;
 function  pthread_attr_setdetachstate (p : ppthread_attr_t;i:cint):cint;cdecl;external;
+function  pthread_attr_setstacksize(p: ppthread_attr_t; stacksize: size_t):cint;cdecl;external;
 function  pthread_create ( p: ppthread_t;attr : ppthread_attr_t;f:__startroutine_t;arg:pointer):cint;cdecl;external;
 procedure pthread_exit  ( p: pointer); cdecl;external;
-function  pthread_self:cint; cdecl;external;
+function  pthread_self:pthread_t; cdecl;external;
 function  pthread_mutex_init (p:ppthread_mutex_t;o:ppthread_mutex_attr_t):cint; cdecl;external;
 function  pthread_mutex_destroy (p:ppthread_mutex_attr_t):cint; cdecl;external;
 function  pthread_mutex_lock    (p:ppthread_mutex_attr_t):cint; cdecl;external;
+function  pthread_mutex_trylock    (p:ppthread_mutex_attr_t):cint; cdecl;external;
 function  pthread_mutex_unlock  (p:ppthread_mutex_attr_t):cint; cdecl;external;
 function  pthread_cancel(_para1:pthread_t):cint;cdecl;external;
 function  pthread_detach(_para1:pthread_t):cint;cdecl;external;
@@ -62,7 +97,10 @@ function  pthread_join(_para1:pthread_t; _para2:Ppointer):cint;cdecl;external;
 function pthread_cond_destroy(_para1:Ppthread_cond_t):cint;cdecl;external;
 function pthread_cond_init(_para1:Ppthread_cond_t;_para2:Ppthread_condattr_t):cint;cdecl;external;
 function pthread_cond_signal(_para1:Ppthread_cond_t):cint;cdecl;external;
+function pthread_cond_broadcast(_para1:Ppthread_cond_t):cint;cdecl;external;
 function pthread_cond_wait(_para1:Ppthread_cond_t;_para2:Ppthread_mutex_t):cint;cdecl;external;
+function pthread_kill(__thread:pthread_t; __signo:cint):cint;cdecl;external;
+function pthread_sigmask(how: cint; nset: psigset; oset: psigset): cint; cdecl; external;
 
 function sem_init(__sem:Psem_t; __pshared:cint;__value:dword):cint;cdecl; external;
 function sem_destroy(__sem:Psem_t):cint;cdecl;external ;
@@ -80,12 +118,3 @@ function pthread_cond_timedwait(__cond:ppthread_cond_t; __mutex:ppthread_mutex_t
 
 
 
-{
-  $Log: pthread.inc,v $
-  Revision 1.8  2005/04/09 20:28:04  marco
-   * added condtimedwait
-
-  Revision 1.7  2005/02/14 17:13:22  peter
-    * truncate log
-
-}

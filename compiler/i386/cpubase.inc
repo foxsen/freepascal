@@ -1,5 +1,4 @@
 {
-    $Id: cpubase.inc,v 1.18 2005/02/14 17:13:09 peter Exp $
     Copyright (c) 1998-2000 by Florian Klaempfl and Peter Vreman
 
     Contains the basic declarations for the i386 architecture
@@ -34,7 +33,8 @@
         S_FS,S_FL,S_FX,S_FV,S_FXX,
         S_MD,
         S_NEAR,S_FAR,S_SHORT,
-        S_T
+        S_T,
+        S_XMM
       );
 
 
@@ -47,30 +47,6 @@
          processor manufacturer.
       }
       std_op2str:op2strtable={$i i386int.inc}
-
-{*****************************************************************************
-                                 Constants
-*****************************************************************************}
-      c_countusableregsint = 4;
-
-{
-      firstsaveintreg = RS_EAX;
-      lastsaveintreg  = RS_EDX;
-      firstsavefpureg = RS_INVALID;
-      lastsavefpureg  = RS_INVALID;
-      firstsavemmreg  = RS_MM0;
-      lastsavemmreg   = RS_MM7;
-
-      general_superregisters = [RS_EAX,RS_EBX,RS_ECX,RS_EDX];
-
-      maxvarregs = 4;
-      varregs : array[1..maxvarregs] of tsuperregister =
-         (RS_EBX,RS_EDX,RS_ECX,RS_EAX);
-
-      maxfpuvarregs = 8;
-
-      maxmmvarregs = 8;
-}
 
 {*****************************************************************************
                                GDB Information
@@ -94,12 +70,14 @@
 
       {# Defines the default address size for a processor, }
       OS_ADDR = OS_32;
-      {# the natural int size for a processor,             }
+      {# the natural int size for a processor,
+         has to match osuinttype/ossinttype as initialized in psystem }
       OS_INT = OS_32;
+      OS_SINT = OS_S32;
       {# the maximum float size for a processor,           }
       OS_FLOAT = OS_F80;
       {# the size of a vector register for a processor     }
-      OS_VECTOR = OS_M64;
+      OS_VECTOR = OS_M128;
 
 {*****************************************************************************
                           Generic Register names
@@ -158,6 +136,8 @@
          GCC source.
       }
       saved_standard_registers : array[0..2] of tsuperregister = (RS_EBX,RS_ESI,RS_EDI);
+
+      saved_mm_registers : array[0..0] of tsuperregister = (RS_INVALID);
       {# Required parameter alignment when calling a routine declared as
          stdcall and cdecl. The alignment value should be the one defined
          by GCC or the target ABI.
@@ -166,14 +146,3 @@
          PARM_BOUNDARY / BITS_PER_UNIT in the GCC source.
       }
       std_param_align = 4;
-
-
-{
-  $Log: cpubase.inc,v $
-  Revision 1.18  2005/02/14 17:13:09  peter
-    * truncate log
-
-  Revision 1.17  2005/01/20 16:38:45  peter
-    * load jmp_buf_size from system unit
-
-}

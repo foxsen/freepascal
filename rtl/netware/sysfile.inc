@@ -1,5 +1,4 @@
 {
-    $Id: sysfile.inc,v 1.1 2005/02/06 16:57:18 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2001 by Free Pascal development team
 
@@ -277,14 +276,4 @@ end;
 
 
 
-{
-   $Log: sysfile.inc,v $
-   Revision 1.1  2005/02/06 16:57:18  peter
-     * threads for go32v2,os,emx,netware
-
-   Revision 1.1  2005/02/06 13:06:20  peter
-     * moved file and dir functions to sysfile/sysdir
-     * win32 thread in systemunit
-
-}
 

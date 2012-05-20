@@ -1,5 +1,4 @@
 {
-    $Id: intuition.pas,v 1.3 2005/02/14 17:13:30 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2004 Karoly Balogh for Genesi S.a.r.l. <www.genesi.lu>
 
@@ -4347,6 +4346,8 @@ SysCall IntuitionBase 630;
 function NewObjectA(classPtr : pIClass location 'a0'; classID : PChar location 'a1'; tagList : pTagItem location 'a2') : POINTER;
 SysCall IntuitionBase 636;
 
+function NewObject(classPtr : pIClass; classID : PChar; tags: array of LongWord) : POINTER;
+
 procedure DisposeObject(object1 : POINTER location 'a0');
 SysCall IntuitionBase 642;
 
@@ -4488,6 +4489,11 @@ end;
 function OpenWindowTags(newWindow : pNewWindow; tagList : array of DWord) : pWindow; Inline;
 begin
   OpenWindowTags:=OpenWindowTagList(newWindow,@tagList);
+end;
+
+function NewObject(classPtr : pIClass; classID : PChar; tags: array of LongWord) : POINTER; inline;
+begin
+  NewObject:=NewObjectA(classPtr, classID, @tags);
 end;
 
 
@@ -4688,12 +4694,3 @@ end;
 
 end. (* UNIT INTUITION *)
 
-{
-  $Log: intuition.pas,v $
-  Revision 1.3  2005/02/14 17:13:30  peter
-    * truncate log
-
-  Revision 1.2  2005/01/30 19:00:09  karoly
-    * changes for ASL and AHI support
-
-}

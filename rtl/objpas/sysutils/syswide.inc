@@ -1,6 +1,5 @@
 {
     *********************************************************************
-    $Id: syswide.inc,v 1.7 2005/03/12 14:56:22 florian Exp $
     Copyright (C) 2002-2005 by Florian Klaempfl
 
     This program is free software; you can redistribute it and/or modify
@@ -18,6 +17,44 @@
     Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
     *********************************************************************
 }
+
+function Trim(const S: widestring): widestring;
+	var 
+	  Ofs, Len: sizeint;
+	begin
+	  len := Length(S);
+	  while (Len>0) and (S[Len]<=' ') do
+	   dec(Len);
+	  Ofs := 1;
+	  while (Ofs<=Len) and (S[Ofs]<=' ') do
+	   Inc(Ofs);
+	  result := Copy(S, Ofs, 1 + Len - Ofs);
+	end;
+	
+
+{   TrimLeft returns a copy of S with all blank characters on the left stripped off  }
+function TrimLeft(const S: widestring): widestring;
+	var 
+	  i,l:sizeint;
+	begin
+	  l := length(s);
+	  i := 1;
+	  while (i<=l) and (s[i]<=' ') do
+	   inc(i);
+	  Result := copy(s, i, l);
+	end;
+	
+
+{   TrimRight returns a copy of S with all blank characters on the right stripped off  }
+function TrimRight(const S: widestring): widestring;
+	var 
+		l:sizeint;
+	begin
+	  l := length(s);
+	  while (l>0) and (s[l]<=' ') do
+	   dec(l);
+	  result := copy(s,1,l);
+	end;
 
 
 function WideUpperCase(const s : WideString) : WideString;{$ifdef SYSUTILSINLINE}inline;{$endif}
@@ -62,7 +99,7 @@ function WideSameText(const s1, s2 : WideString) : Boolean;{$ifdef SYSUTILSINLIN
 {$define TFormatString:=widestring}
 {$define TFormatChar:=widechar}
 
-Function WideFormat (Const Fmt : WideString; const Args : Array of const) : WideString;
+Function WideFormat (Const Fmt : WideString; const Args : Array of const; Const FormatSettings: TFormatSettings) : WideString;
 {$i sysformt.inc}
 
 {$undef TFormatString}
@@ -70,55 +107,82 @@ Function WideFormat (Const Fmt : WideString; const Args : Array of const) : Wide
 {$undef INWIDEFORMAT}
 {$macro off}
 
+Function WideFormat (Const Fmt : WideString; const Args : Array of const) : WideString;
+
+begin
+  Result:=WideFormat(Fmt,Args,DefaultFormatSettings);
+end;
+
+
+
+Function WideFormatBuf (Var Buffer; BufLen : Cardinal;
+                     Const Fmt; fmtLen : Cardinal;
+                     Const Args : Array of const; Const FormatSettings: TFormatSettings) : Cardinal;
+Var 
+  S,F : WideString;
+begin
+  Setlength(F,fmtlen);
+  if fmtlen > 0 then
+    Move(fmt,F[1],fmtlen*sizeof(Widechar));
+  S:=WideFormat (F,Args);
+  If Cardinal(Length(S))<Buflen then
+    Result:=Length(S)
+  else
+    Result:=Buflen;
+  Move(S[1],Buffer,Result);
+end;
 
 Function WideFormatBuf (Var Buffer; BufLen : Cardinal;
                      Const Fmt; fmtLen : Cardinal;
                      Const Args : Array of const) : Cardinal;
-  Var 
-    S,F : WideString;
-  begin
-    Setlength(F,fmtlen);
-    if fmtlen > 0 then
-      Move(fmt,F[1],fmtlen*sizeof(Widechar));
-    S:=WideFormat (F,Args);
-    If Cardinal(Length(S))<Buflen then
-      Result:=Length(S)
-    else
-      Result:=Buflen;
-    Move(S[1],Buffer,Result);
-  end;
 
+begin
+  Result:=WideFormatBuf(Buffer,BufLEn,Fmt,FmtLen,Args,DefaultFormatSettings);
+end;
+
+Procedure WideFmtStr(Var Res: WideString; Const Fmt : WideString; Const args: Array of const; Const FormatSettings: TFormatSettings);
+
+begin
+  Res:=WideFormat(fmt,Args);
+end;
 
 Procedure WideFmtStr(Var Res: WideString; Const Fmt : WideString; Const args: Array of const);
+
+begin
+  WideFmtStr(Res,Fmt,Args,DefaultFormatSettings);
+end;
+
+function StrCopy(Dest, Source: PWideChar): PWideChar; overload;
+var
+  counter : SizeInt;
+begin
+  counter := 0;
+  while Source[counter] <> #0 do
   begin
-    Res:=WideFormat(fmt,Args);
+    Dest[counter] := widechar(Source[counter]);
+    Inc(counter);
   end;
+  { terminate the string }
+  Dest[counter] := #0;
+  StrCopy := Dest;
+end;
 
+function StrLCopy(Dest,Source: PWideChar; MaxLen: SizeInt): PWideChar; overload;
+var
+  counter: SizeInt;
+begin
+  counter := 0;
+  while (Source[counter] <> #0) and (counter < MaxLen) do
+  begin
+    Dest[counter] := widechar(Source[counter]);
+    Inc(counter);
+  end;
+  { terminate the string }
+  Dest[counter] := #0;
+  StrLCopy := Dest;
+end;
 
-{
-  $Log: syswide.inc,v $
-  Revision 1.7  2005/03/12 14:56:22  florian
-    + added Ansi* routines to widestring manager
-    * made them using OS calls on windows
-
-  Revision 1.6  2005/03/06 18:28:23  florian
-    + WideFormatBuf and WideFmtStr implemented
-
-  Revision 1.5  2005/02/26 15:00:14  florian
-    + WideSameStr
-
-  Revision 1.4  2005/02/26 10:21:17  florian
-    + implemented WideFormat
-    + some Widestring stuff implemented
-    * some Widestring stuff fixed
-
-  Revision 1.3  2005/02/14 17:13:31  peter
-    * truncate log
-
-  Revision 1.2  2005/02/03 18:40:02  florian
-    * compilation with 1.0.x fixed
-    + infrastructure for WideCompareText implemented
-
-  Revision 1.1  2005/02/01 20:22:50  florian
-    * improved widestring infrastructure manager
-}
+Function CharInSet(Ch:WideChar;Const CSet : TSysCharSet) : Boolean;
+begin
+  result:=(Ch<=#$FF) and (ansichar(ch) in CSet);
+end;

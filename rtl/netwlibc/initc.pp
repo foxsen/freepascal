@@ -1,5 +1,4 @@
 {
-    $Id: initc.pp,v 1.2 2005/02/14 17:13:30 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2004 by the Free Pascal development team.
 
@@ -16,39 +15,30 @@
 unit initc;
 
 interface
+uses
+  ctypes;
 
-type libcint   = longint;
-     plibcint = ^libcint;
+function fpgetCerrno:cint;
+procedure fpsetCerrno(err:cint);
 
-function fpgetCerrno:libcint;
-procedure fpsetCerrno(err:libcint);
-
-{$ifdef HASGLOBALPROPERTY}
-property cerrno:libcint read fpgetCerrno write fpsetcerrno;
-{$endif HASGLOBALPROPERTY}
+property cerrno:cint read fpgetCerrno write fpsetcerrno;
 
 implementation
 
 const clib = 'libc';
 
-function geterrnolocation: Plibcint; cdecl;external clib name '___errno';
+function geterrnolocation: pcint; cdecl;external clib name '___errno';
 
-function fpgetCerrno:libcint;
+function fpgetCerrno:cint;
 
 begin
   fpgetCerrno:=geterrnolocation^;
 end;
 
-procedure fpsetCerrno(err:libcint);
+procedure fpsetCerrno(err:cint);
 begin
   geterrnolocation^:=err;
 end;
 
 
 end.
-{
-  $Log: initc.pp,v $
-  Revision 1.2  2005/02/14 17:13:30  peter
-    * truncate log
-
-}

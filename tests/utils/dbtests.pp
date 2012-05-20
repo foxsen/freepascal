@@ -10,7 +10,7 @@ Uses
   mysql4,
 {$else}
   mysql,
-{$endif}  
+{$endif}
   testu;
 
 { ---------------------------------------------------------------------
@@ -20,14 +20,15 @@ Uses
 Function GetTestID(Name : string) : Integer;
 Function GetOSID(Name : String) : Integer;
 Function GetCPUID(Name : String) : Integer;
+Function GetCategoryID(Name : String) : Integer;
 Function GetVersionID(Name : String) : Integer;
 Function GetRunID(OSID, CPUID, VERSIONID : Integer; Date : TDateTime) : Integer;
-Function AddRun(OSID, CPUID, VERSIONID : Integer; Date : TDateTime) : Integer;
+Function AddRun(OSID, CPUID, VERSIONID, CATEGORYID : Integer; Date : TDateTime) : Integer;
 Function AddTest(Name : String; AddSource : Boolean) : Integer;
 Function UpdateTest(ID : Integer; Info : TConfig; Source : String) : Boolean;
 Function AddTestResult(TestID,RunID,TestRes : Integer;
                        OK, Skipped : Boolean;
-                       Log : String) : Integer;
+                       Log : String;var is_new : boolean) : Integer;
 Function RequireTestID(Name : String): Integer;
 Function CleanTestRun(ID : Integer) : Boolean;
 
@@ -39,7 +40,7 @@ Function CleanTestRun(ID : Integer) : Boolean;
 Type
   TQueryResult = PMYSQL_RES;
 
-Function  ConnectToDatabase(DatabaseName,Host,User,Password : String) : Boolean;
+Function  ConnectToDatabase(DatabaseName,Host,User,Password,Port : String) : Boolean;
 Procedure DisconnectDatabase;
 Function  RunQuery (Qry : String; Var res : TQueryResult) : Boolean ;
 Procedure FreeQueryResult (Res : TQueryResult);
@@ -47,6 +48,10 @@ Function  GetResultField (Res : TQueryResult; Id : Integer) : String;
 Function  IDQuery(Qry : String) : Integer;
 Function  EscapeSQL( S : String) : String;
 Function SQLDate(D : TDateTime) : String;
+
+var
+  RelSrcDir,
+  TestSrcDir : string;
 
 Implementation
 
@@ -62,19 +67,26 @@ Var
   Connection : TMYSQL;
 
 
-Function ConnectToDatabase(DatabaseName,Host,User,Password : String) : Boolean;
+Function ConnectToDatabase(DatabaseName,Host,User,Password,Port : String) : Boolean;
 
 Var
   S : String;
-
+  PortNb : longint;
+  Error : word;
 begin
-  Verbose(V_DEBUG,'Connection params : '+DatabaseName+' '+Host+' '+User+' '+Password);
-{$ifdef ver1_0}  
+  Verbose(V_DEBUG,'Connection params : '+DatabaseName+' '+Host+' '+User+' '+Password+' '+Port);
+  if Port<>'' then
+    begin
+      Val(Port,PortNb,Error);
+      if Error<>0 then
+        PortNb:=0;
+    end;
+{$ifdef ver1_0}
   Result:=mysql_connect(@Connection,PChar(Host),PChar(User),PChar(Password))<>Nil;
-{$else}  
+{$else}
   mysql_init(@Connection);
-  Result:=mysql_real_connect(@Connection,PChar(Host),PChar(User),PChar(Password),Nil,0,Nil,0)<>Nil;
-{$endif}  
+  Result:=mysql_real_connect(@Connection,PChar(Host),PChar(User),PChar(Password),Nil,PortNb,Nil,0)<>Nil;
+{$endif}
   If Not Result then
     begin
     S:=Strpas(mysql_error(@connection));
@@ -102,12 +114,25 @@ Function RunQuery (Qry : String; Var res : TQueryResult) : Boolean ;
 
 begin
   Verbose(V_DEBUG,'Running query:'+Qry);
-  Result:=mysql_query(@Connection,PChar(qry))>=0;
+  Result:=mysql_query(@Connection,PChar(qry))=0;
   If Not Result then
     Verbose(V_WARNING,'Query : '+Qry+'Failed : '+Strpas(mysql_error(@connection)))
   else
     Res:=Mysql_store_result(@connection);
 end;
+
+{ No warning if it fails }
+Function RunSilentQuery (Qry : String; Var res : TQueryResult) : Boolean ;
+
+begin
+  Verbose(V_DEBUG,'Running silent query:'+Qry);
+  Result:=mysql_query(@Connection,PChar(qry))=0;
+  If Not Result then
+    Verbose(V_DEBUG,'Silent query : '+Qry+'Failed : '+Strpas(mysql_error(@connection)))
+  else
+    Res:=Mysql_store_result(@connection);
+end;
+
 
 Function GetResultField (Res : TQueryResult; Id : Integer) : String;
 
@@ -150,9 +175,9 @@ end;
 
 Function EscapeSQL( S : String) : String;
 
-
 begin
-  Result:=StringReplace(S,'"','\"',[rfReplaceAll]);
+  Result:=StringReplace(S,'\','\\',[rfReplaceAll]);
+  Result:=StringReplace(Result,'"','\"',[rfReplaceAll]);
   Verbose(V_DEBUG,'EscapeSQL : "'+S+'" -> "'+Result+'"');
 end;
 
@@ -172,16 +197,9 @@ Function GetTestID(Name : string) : Integer;
 
 Const
   SFromName = 'SELECT T_ID FROM TESTS WHERE (T_NAME="%s")';
-  SFromFullName = 'SELECT T_ID FROM TESTS WHERE (T_FULLNAME="%s")';
-
-Var
-  FN : String;
 
 begin
-  FN:=ExtractFileName(Name);
-  Result:=IDQuery(Format(SFromName,[FN]));
-  If Result=-1 then
-    Result:=IDQuery(Format(SFromFullName,[Name]))
+  Result:=IDQuery(Format(SFromName,[Name]));
 end;
 
 Function GetOSID(Name : String) : Integer;
@@ -211,6 +229,14 @@ begin
   Result:=IDQuery(Format(SFromName,[Name]));
 end;
 
+Function GetCategoryID(Name : String) : Integer;
+
+Const
+  SFromName = 'SELECT TCAT_ID FROM TESTCATEGORY WHERE (TCAT_NAME="%s")';
+
+begin
+  Result:=IDQuery(Format(SFromName,[Name]));
+end;
 
 Function GetRunID(OSID, CPUID, VERSIONID : Integer; Date : TDateTime) : Integer;
 
@@ -226,30 +252,109 @@ begin
   Result:=IDQuery(Format(SFromIDS,[OSID,CPUID,VERSIONID,SQLDate(Date)]));
 end;
 
-Function AddRun(OSID, CPUID, VERSIONID : Integer; Date : TDateTime) : Integer;
+Function AddRun(OSID, CPUID, VERSIONID, CATEGORYID : Integer; Date : TDateTime) : Integer;
 
 Const
   SInsertRun = 'INSERT INTO TESTRUN '+
-               '(TU_OS_FK,TU_CPU_FK,TU_VERSION_FK,TU_DATE)'+
+               '(TU_OS_FK,TU_CPU_FK,TU_VERSION_FK,TU_CATEGORY_FK,TU_DATE)'+
                ' VALUES '+
-               '(%d,%d,%d,"%s")';
+               '(%d,%d,%d,%d,"%s")';
 
 Var
   Res : TQueryResult;
 
 begin
-  If RunQuery(Format(SInsertRun,[OSID,CPUID,VERSIONID,SQLDate(Date)]),Res) then
+  If RunQuery(Format(SInsertRun,[OSID,CPUID,VERSIONID,CATEGORYID,SQLDate(Date)]),Res) then
     Result:=mysql_insert_id(@connection)
   else
     Result:=-1;
 end;
 
+function posr(c : Char; const s : AnsiString) : integer;
+var
+  i : integer;
+begin
+  i := length(s);
+  while (i>0) and (s[i] <> c) do dec(i);
+  Result := i;
+end;
+
+function GetUnitTestConfig(const fn : string; var r : TConfig) : Boolean;
+var
+  Path       : string;
+  ClassName  : string;
+  MethodName : string;
+  slashpos   : integer;
+  FileName   : string;
+  s          : string;
+  t          : text;
+begin
+  Result := False;
+  FillChar(r,sizeof(r),0);
+  if pos('.',fn) > 0 then exit; // This is normally not a unit-test
+  slashpos := posr('/',fn);
+  if slashpos < 1 then exit;
+  MethodName := copy(fn,slashpos+1,length(fn));
+  Path := copy(fn,1,slashpos-1);
+  slashpos := posr('/',Path);
+  if slashpos > 0 then
+    begin
+    ClassName := copy(Path,slashpos+1,length(Path));
+    Path := copy(Path,1,slashpos-1);
+    end
+  else
+    begin
+    ClassName := Path;
+    path := '.';
+    end;
+  if upper(ClassName[1])<>'T' then exit;
+  FileName := TestSrcDir+RelSrcDir+Path+DirectorySeparator+copy(lowercase(ClassName),2,length(classname));
+  if FileExists(FileName+'.pas') then
+    FileName := FileName + '.pas'
+  else if FileExists(FileName+'.pp') then
+    FileName := FileName + '.pp'
+  else exit;
+
+  Verbose(V_Debug,'Reading '+FileName);
+  assign(t,FileName);
+  {$I-}
+   reset(t);
+  {$I+}
+  if ioresult<>0 then
+   begin
+     Verbose(V_Error,'Can''t open '+FileName);
+     exit;
+   end;
+  while not eof(t) do
+   begin
+     readln(t,s);
+
+     if s<>'' then
+      begin
+        TrimB(s);
+        if SameText(copy(s,1,9),'PROCEDURE') then
+         begin
+           if pos(';',s)>11 then
+            begin
+              s := copy(s,11,pos(';',s)-11);
+              TrimB(s);
+              if SameText(s,ClassName+'.'+MethodName) then
+               begin
+                 Result := True;
+                 r.Note:= 'unittest';
+               end;
+            end;
+         end;
+      end;
+   end;
+  close(t);
+end;
 
 Function AddTest(Name : String; AddSource : Boolean) : Integer;
 
 Const
-  SInsertTest = 'INSERT INTO TESTS (T_NAME,T_FULLNAME,T_ADDDATE)'+
-                ' VALUES ("%s","%s",NOW())';
+  SInsertTest = 'INSERT INTO TESTS (T_NAME,T_ADDDATE)'+
+                ' VALUES ("%s",NOW())';
 
 Var
   Info : TConfig;
@@ -257,9 +362,11 @@ Var
 
 begin
   Result:=-1;
-  If FileExists(Name) and GetConfig(Name,Info) then
+  If (FileExists(TestSrcDir+RelSrcDir+Name) and
+     GetConfig(TestSrcDir+RelSrcDir+Name,Info)) or
+     GetUnitTestConfig(Name,Info) then
     begin
-    If RunQuery(Format(SInsertTest,[ExtractFileName(Name),Name]),Res) then
+    If RunQuery(Format(SInsertTest,[Name]),Res) then
       begin
       Result:=GetTestID(Name);
       If Result=-1 then
@@ -316,24 +423,45 @@ end;
 
 Function AddTestResult(TestID,RunID,TestRes : Integer;
                        OK, Skipped : Boolean;
-                       Log : String) : Integer;
+                       Log : String;var is_new : boolean) : Integer;
 
 Const
   SInsertRes='Insert into TESTRESULTS '+
-             '(TR_TEST_FK,TR_TESTRUN_FK,TR_OK,TR_SKIP,TR_RESULT,TR_LOG) '+
+             '(TR_TEST_FK,TR_TESTRUN_FK,TR_OK,TR_SKIP,TR_RESULT) '+
              ' VALUES '+
-             '(%d,%d,"%s","%s",%d,"%s") ';
-
+             '(%d,%d,"%s","%s",%d) ';
+  SSelectId='SELECT TR_ID FROM TESTRESULTS WHERE (TR_TEST_FK=%d) '+
+            ' AND (TR_TESTRUN_FK=%d)';
+  SInsertLog='Update TESTRESULTS SET TR_LOG="%s"'+
+             ',TR_OK="%s",TR_SKIP="%s",TR_RESULT=%d WHERE (TR_ID=%d)';
 Var
   Qry : String;
   Res : TQueryResult;
-
+  updateValues : boolean;
 begin
+  updateValues:=false;
   Result:=-1;
   Qry:=Format(SInsertRes,
               [TestID,RunID,B[OK],B[Skipped],TestRes,EscapeSQL(Log)]);
-  If RunQuery(Qry,Res) then
-    Result:=mysql_insert_id(@connection);
+  If RunSilentQuery(Qry,Res) then
+    Result:=mysql_insert_id(@connection)
+  else
+    begin
+      Qry:=format(SSelectId,[TestId,RunId]);
+      Result:=IDQuery(Qry);
+      if Result<>-1 then
+        updateValues:=true;
+    end;
+  if (Result<>-1) and ((Log<>'') or updateValues) then
+    begin
+      Qry:=format(SInsertLog,[EscapeSQL(Log),B[OK],B[Skipped],TestRes,Result]);
+      if not RunQuery(Qry,Res) then
+        begin
+          Verbose(V_Warning,'Insert Log failed');
+        end;
+    end;
+  { If test already existed, return false for is_new to avoid double counting }
+  is_new:=not updateValues;
 end;
 
 Function RequireTestID(Name : String): Integer;

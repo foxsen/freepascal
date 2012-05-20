@@ -1,5 +1,4 @@
 {
-    $Id: osdefs.inc,v 1.3 2005/02/14 17:29:06 peter Exp $
     Copyright (c) 2000-2002 by Marco van de Voort
 
     Target dependent defines used when compileing the baseunix unit
@@ -29,21 +28,59 @@
                                 // (which is a GNU extension)
 {$ifdef FPC_USE_LIBC}
   {$define usegetcwd}
+  {$if not defined(cpux86) and not defined(cpux86_64)}
+  {$linklib m}
+  {$endif}
 {$endif}
 
+{$if defined(cpupowerpc) or defined(cpupowerpc64) or defined(cpui386) or
+  (defined(cpuarm) and defined(FPC_ABI_EABI))}
+  {$DEFINE has_ugetrlimit}
+{$endif}
 
-{
-  $Log: osdefs.inc,v $
-  Revision 1.3  2005/02/14 17:29:06  peter
-    * no stime for x86_64
+{$if (defined(cpuarm) and defined(FPC_ABI_EABI))}
+  {$define FPC_USEGETTIMEOFDAY}
+  {$undef usestime}
 
-  Revision 1.2  2005/02/14 17:13:30  peter
-    * truncate log
+  {$define NO_SYSCALL_TIME}
+  {$define NO_SYSCALL_UMOUNT}
+  {$define NO_SYSCALL_STIME}
+  {$define NO_SYSCALL_ALARM}
+  {$define NO_SYSCALL_UTIME}
+  {$define NO_SYSCALL_GETRLIMIT}
+  {$define NO_SYSCALL_SELECT}
+  {$define NO_SYSCALL_READDIR}
+  {$define NO_SYSCALL_MMAP}
+  {$define NO_SYSCALL_SOCKETCALL}
+  {$define NO_SYSCALL_SYSCALL}
+  {$define NO_SYSCALL_IPC}
+{$endif}
 
-  Revision 1.1  2005/02/13 21:47:56  peter
-    * include file cleanup part 2
+ {$ifdef CPUARM}
+{$define WAIT4}
+{$endif CPUARM}
 
-  Revision 1.1  2005/02/13 20:01:38  peter
-    * include file cleanup
+{$ifdef CPUx86_64}
+{$define WAIT4}
+{$endif CPUx86_64}
 
-}
+{$ifdef CPUSPARC}
+{$define WAIT4}
+{$endif CPUSPARC}
+
+{$ifdef cpui386}
+{$define OLDMMAP}
+{$endif cpui386}
+
+{$ifdef cpum68k}
+{$define OLDMMAP}
+{$endif cpum68k}
+
+{$ifdef cpuarm}
+  {$ifdef FPC_ABI_EABI}
+    {$define MMAP2}
+  {$else FPC_ABI_EABI}
+    {$define OLDMMAP}
+  {$endif FPC_ABI_EABI}
+{$endif cpuarm}
+

@@ -1,5 +1,4 @@
 {
-    $Id: writer.inc,v 1.11 2005/04/15 07:21:09 michael Exp $
     This file is part of the Free Component Library (FCL)
     Copyright (c) 1999-2000 by the Free Pascal development team
 
@@ -16,6 +15,82 @@
 {****************************************************************************}
 {*                         TBinaryObjectWriter                              *}
 {****************************************************************************}
+
+{$ifndef FPUNONE}
+{$IFNDEF FPC_HAS_TYPE_EXTENDED}
+procedure DoubleToExtended(d : double; e : pointer);
+var mant : qword;
+    exp : smallint;
+    sign : boolean;
+begin
+  mant:=(qword(d) and $000FFFFFFFFFFFFF) shl 12;
+  exp :=(qword(d) shr 52) and $7FF;
+  sign:=(qword(d) and $8000000000000000)<>0;
+  case exp of
+       0 : begin
+             if mant<>0 then  //denormalized value: hidden bit is 0. normalize it
+             begin
+               exp:=16383-1022;
+               while (mant and $8000000000000000)=0 do
+               begin
+                 dec(exp);
+                 mant:=mant shl 1;
+               end;
+               dec(exp); //don't shift, most significant bit is not hidden in extended
+             end;
+           end;
+    2047 : exp:=$7FFF //either infinity or NaN
+    else
+    begin
+      inc(exp,16383-1023);
+      mant:=(mant shr 1) or $8000000000000000; //unhide hidden bit
+    end;
+  end;
+  if sign then exp:=exp or $8000;
+  mant:=NtoLE(mant);
+  exp:=NtoLE(word(exp));
+  move(mant,pbyte(e)[0],8); //mantissa         : bytes 0..7
+  move(exp,pbyte(e)[8],2);  //exponent and sign: bytes 8..9
+end;
+{$ENDIF}
+{$endif}
+
+procedure TBinaryObjectWriter.WriteWord(w : word); {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
+begin
+  w:=NtoLE(w);
+  Write(w,2);
+end;
+
+procedure TBinaryObjectWriter.WriteDWord(lw : longword); {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
+begin
+  lw:=NtoLE(lw);
+  Write(lw,4);
+end;
+
+procedure TBinaryObjectWriter.WriteQWord(qw : qword); {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
+begin
+  qw:=NtoLE(qw);
+  Write(qw,8);
+end;
+
+{$ifndef FPUNONE}
+procedure TBinaryObjectWriter.WriteExtended(e : extended); {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
+{$IFNDEF FPC_HAS_TYPE_EXTENDED}
+var ext : array[0..9] of byte;
+{$ENDIF}
+begin
+{$IFNDEF FPC_HAS_TYPE_EXTENDED}
+  {$IFDEF FPC_DOUBLE_HILO_SWAPPED}
+  { SwapDoubleHiLo defined in reader.inc }
+  SwapDoubleHiLo(e);
+  {$ENDIF FPC_DOUBLE_HILO_SWAPPED}
+  DoubleToExtended(e,@(ext[0]));
+  Write(ext[0],10);
+{$ELSE}
+  Write(e,sizeof(e));
+{$ENDIF}
+end;
+{$endif}
 
 constructor TBinaryObjectWriter.Create(Stream: TStream; BufSize: Integer);
 begin
@@ -89,7 +164,7 @@ end;
 procedure TBinaryObjectWriter.WriteBinary(const Buffer; Count: LongInt);
 begin
   WriteValue(vaBinary);
-  Write(Count, 4);
+  WriteDWord(longword(Count));
   Write(Buffer, Count);
 end;
 
@@ -101,32 +176,34 @@ begin
     WriteValue(vaFalse);
 end;
 
+{$ifndef FPUNONE}
 procedure TBinaryObjectWriter.WriteFloat(const Value: Extended);
 begin
   WriteValue(vaExtended);
-  Write(Value, SizeOf(Value));
+  WriteExtended(Value);
 end;
 
 procedure TBinaryObjectWriter.WriteSingle(const Value: Single);
 begin
   WriteValue(vaSingle);
-  Write(Value, SizeOf(Value));
+  WriteDWord(longword(Value));
 end;
+{$endif}
 
-{$ifdef HASCURRENCY}
 procedure TBinaryObjectWriter.WriteCurrency(const Value: Currency);
 begin
   WriteValue(vaCurrency);
-  Write(Value, SizeOf(Value));
+  WriteQWord(qword(Value));
 end;
-{$endif HASCURRENCY}
 
 
+{$ifndef FPUNONE}
 procedure TBinaryObjectWriter.WriteDate(const Value: TDateTime);
 begin
   WriteValue(vaDate);
-  Write(Value, SizeOf(Value));
+  WriteQWord(qword(Value));
 end;
+{$endif}
 
 procedure TBinaryObjectWriter.WriteIdent(const Ident: string);
 begin
@@ -147,26 +224,63 @@ begin
 end;
 
 procedure TBinaryObjectWriter.WriteInteger(Value: Int64);
+var
+  s: ShortInt;
+  i: SmallInt;
+  l: Longint;
 begin
   { Use the smallest possible integer type for the given value: }
   if (Value >= -128) and (Value <= 127) then
   begin
     WriteValue(vaInt8);
-    Write(Value, 1);
+    s := Value;
+    Write(s, 1);
   end else if (Value >= -32768) and (Value <= 32767) then
   begin
     WriteValue(vaInt16);
-    Write(Value, 2);
+    i := Value;
+    WriteWord(word(i));
   end else if (Value >= -$80000000) and (Value <= $7fffffff) then
   begin
     WriteValue(vaInt32);
-    Write(Value, 4);
+    l := Value;
+    WriteDWord(longword(l));
   end else
   begin
     WriteValue(vaInt64);
-    Write(Value, 8);
+    WriteQWord(qword(Value));
   end;
 end;
+
+procedure TBinaryObjectWriter.WriteUInt64(Value: QWord);
+var
+  s: ShortInt;
+  i: SmallInt;
+  l: Longint;
+begin
+  { Use the smallest possible integer type for the given value: }
+  if (Value <= 127) then
+  begin
+    WriteValue(vaInt8);
+    s := Value;
+    Write(s, 1);
+  end else if (Value <= 32767) then
+  begin
+    WriteValue(vaInt16);
+    i := Value;
+    WriteWord(word(i));
+  end else if (Value <= $7fffffff) then
+  begin
+    WriteValue(vaInt32);
+    l := Value;
+    WriteDWord(longword(l));
+  end else
+  begin
+    WriteValue(vaQWord);
+    WriteQWord(Value);
+  end;
+end;
+
 
 procedure TBinaryObjectWriter.WriteMethodName(const Name: String);
 begin
@@ -179,17 +293,16 @@ begin
 end;
 
 procedure TBinaryObjectWriter.WriteSet(Value: LongInt; SetType: Pointer);
+type
+  tset = set of 0..31;
 var
   i: Integer;
-  Mask: LongInt;
 begin
   WriteValue(vaSet);
-  Mask := 1;
   for i := 0 to 31 do
   begin
-    if (Value and Mask) <> 0 then
+    if (i in tset(Value)) then
       WriteStr(GetEnumName(PTypeInfo(SetType), i));
-    Mask := Mask shl 1;
   end;
   WriteStr('');
 end;
@@ -197,32 +310,122 @@ end;
 procedure TBinaryObjectWriter.WriteString(const Value: String);
 var
   i: Integer;
+  b: byte;
 begin
   i := Length(Value);
   if i <= 255 then
   begin
     WriteValue(vaString);
-    Write(i, 1);
+    b := i;
+    Write(b, 1);
   end else
   begin
     WriteValue(vaLString);
-    Write(i, 4);
+    WriteDWord(longword(i));
   end;
   if i > 0 then
     Write(Value[1], i);
 end;
 
-{$ifdef HASWIDESTRING}
 procedure TBinaryObjectWriter.WriteWideString(const Value: WideString);
-var
-  i: Integer;
+var len : longword;
+{$IFDEF ENDIAN_BIG}
+    i : integer;
+    ws : widestring;
+{$ENDIF}
 begin
   WriteValue(vaWString);
-  i := Length(Value);
-  Write(i, 4);
-  Write(Pointer(Value)^, i * 2);
+  len:=Length(Value);
+  WriteDWord(len);
+  if len > 0 then
+  begin
+    {$IFDEF ENDIAN_BIG}
+    setlength(ws,len);
+    for i:=1 to len do
+      ws[i]:=widechar(SwapEndian(word(Value[i])));
+    Write(ws[1], len*sizeof(widechar));
+    {$ELSE}
+    Write(Value[1], len*sizeof(widechar));
+    {$ENDIF}
+  end;
 end;
-{$endif HASWIDESTRING}
+                      
+procedure TBinaryObjectWriter.WriteUnicodeString(const Value: UnicodeString);
+var len : longword;
+{$IFDEF ENDIAN_BIG}
+    i : integer;
+    us : UnicodeString;
+{$ENDIF}
+begin
+  WriteValue(vaUString);
+  len:=Length(Value);
+  WriteDWord(len);
+  if len > 0 then
+  begin
+    {$IFDEF ENDIAN_BIG}
+    setlength(us,len);
+    for i:=1 to len do
+      us[i]:=widechar(SwapEndian(word(Value[i])));
+    Write(us[1], len*sizeof(UnicodeChar));
+    {$ELSE}
+    Write(Value[1], len*sizeof(UnicodeChar));
+    {$ENDIF}
+  end;
+end;
+
+procedure TBinaryObjectWriter.WriteVariant(const VarValue: variant);
+begin
+  { The variant manager will handle varbyref and vararray transparently for us
+  }
+  case (tvardata(VarValue).vtype and varTypeMask) of
+    varEmpty:
+      begin
+        WriteValue(vaNil);
+      end;
+    varNull:
+      begin
+        WriteValue(vaNull);
+      end;
+    { all integer sizes must be split for big endian systems }
+    varShortInt,varSmallInt,varInteger,varInt64:
+      begin
+        WriteInteger(VarValue);
+      end;
+    varQWord:
+      begin
+        WriteUInt64(VarValue);
+      end;
+    varBoolean:
+      begin
+        WriteBoolean(VarValue);
+      end;
+    varCurrency:
+      begin
+        WriteCurrency(VarValue);
+      end;
+{$ifndef fpunone}
+    varSingle:
+      begin
+        WriteSingle(VarValue);
+      end;
+    varDouble:
+      begin
+        WriteFloat(VarValue);
+      end;
+    varDate:
+      begin
+        WriteDate(VarValue);
+      end;
+{$endif fpunone}
+    varOleStr,varString:
+      begin
+        WriteWideString(VarValue);
+      end;
+    else
+      raise EWriteError.CreateFmt(SUnsupportedPropertyVariantType, [Ord(tvardata(VarValue).vtype)]);
+  end;
+end;
+
 
 procedure TBinaryObjectWriter.FlushBuffer;
 begin
@@ -251,18 +454,23 @@ begin
 end;
 
 procedure TBinaryObjectWriter.WriteValue(Value: TValueType);
+var
+  b: byte;
 begin
-  Write(Value, 1);
+  b := byte(Value);
+  Write(b, 1);
 end;
 
 procedure TBinaryObjectWriter.WriteStr(const Value: String);
 var
-  i: Integer;
+  i: integer;
+  b: byte;
 begin
   i := Length(Value);
   if i > 255 then
     i := 255;
-  Write(i, 1);
+  b := i;
+  Write(b, 1);
   if i > 0 then
     Write(Value[1], i);
 end;
@@ -301,10 +509,24 @@ begin
   Result := TBinaryObjectWriter.Create(Stream, BufSize);
 end;
 
+Type
+  TPosComponent = Class(TObject)
+    FPos : Integer;
+    FComponent : TComponent;
+    Constructor Create(APos : Integer; AComponent : TComponent);
+  end;
+
+Constructor TPosComponent.Create(APos : Integer; AComponent : TComponent);
+
+begin
+  FPos:=APos;
+  FComponent:=AComponent;
+end;
+
 // Used as argument for calls to TComponent.GetChildren:
 procedure TWriter.AddToAncestorList(Component: TComponent);
 begin
-  FAncestorList.Add(Component);
+  FAncestors.AddObject(Component.Name,TPosComponent.Create(FAncestors.Count,Component));
 end;
 
 procedure TWriter.DefineProperty(const Name: String;
@@ -329,6 +551,13 @@ begin
     WriteBinary(AWriteData);
     Driver.EndProperty;
   end;
+end;
+
+procedure TWriter.Write(const Buffer; Count: Longint);
+begin
+  //This should give an exception if write is not implemented (i.e. TTextObjectWriter)
+  //but should work with TBinaryObjectWriter.
+  Driver.Write(Buffer, Count);
 end;
 
 procedure TWriter.SetRoot(ARoot: TComponent);
@@ -367,6 +596,11 @@ begin
   WriteString(Value);
 end;
 
+procedure TWriter.WriteWideChar(Value: WideChar);
+begin
+  WriteWideString(Value);
+end;
+
 procedure TWriter.WriteCollection(Value: TCollection);
 var
   i: Integer;
@@ -385,131 +619,141 @@ begin
   WriteListEnd;
 end;
 
-procedure TWriter.WriteComponent(Component: TComponent);
-var
-  SavedAncestor: TPersistent;
-  SavedRootAncestor, AncestorComponent, CurAncestor: TComponent;
-  i: Integer;
-  s: String;
+procedure TWriter.DetermineAncestor(Component : TComponent);
+
+Var
+  I : Integer;
+
 begin
-  SavedAncestor := Ancestor;
-  SavedRootAncestor := RootAncestor;
-
-  try
-    // The component has to know that it is being written now...
-    Include(Component.FComponentState, csWriting);
-
-    // Locate the component in the ancestor list, if necessary
-    if Assigned(FAncestorList) then
+  // Should be set only when we write an inherited with children.
+  if Not Assigned(FAncestors) then
+    exit;
+  I:=FAncestors.IndexOf(Component.Name);
+  If (I=-1) then
     begin
-      Ancestor := nil;
-      s := UpperCase(Component.Name);
-      for i := 0 to FAncestorList.Count - 1 do
+    FAncestor:=Nil;
+    FAncestorPos:=-1;
+    end
+  else
+    With TPosComponent(FAncestors.Objects[i]) do
       begin
-        CurAncestor := TComponent(FAncestorList[i]);
-        if UpperCase(CurAncestor.Name) = s then
-        begin
-          Ancestor := CurAncestor;
-          break;
-        end;
+      FAncestor:=FComponent;
+      FAncestorPos:=FPos;
       end;
+end;
+
+procedure TWriter.DoFindAncestor(Component : TComponent);
+
+Var
+  C : TComponent;
+
+begin
+  if Assigned(FOnFindAncestor) then
+    if (Ancestor=Nil) or (Ancestor is TComponent) then
+      begin
+      C:=TComponent(Ancestor);
+      FOnFindAncestor(Self,Component,Component.Name,C,FRootAncestor);
+      Ancestor:=C;
+      end;
+end;
+
+procedure TWriter.WriteComponent(Component: TComponent);
+
+var
+  SA : TPersistent;
+  SR, SRA : TComponent;
+begin
+  SR:=FRoot;
+  SA:=FAncestor;
+  SRA:=FRootAncestor;
+  Try
+    Component.FComponentState:=Component.FComponentState+[csWriting];
+    Try
+      // Possibly set ancestor.
+      DetermineAncestor(Component);
+      DoFindAncestor(Component); // Mainly for IDE when a parent form had an ancestor renamed...
+      // Will call WriteComponentData.
+      Component.WriteState(Self);
+      FDriver.EndList;
+    Finally
+      Component.FComponentState:=Component.FComponentState-[csWriting];
     end;
+  Finally
+    FAncestor:=SA;
+    FRoot:=SR;
+    FRootAncestor:=SRA;
+  end;
+end;
 
-    // Do we have to call the OnFindAncestor callback?
-    if Assigned(FOnFindAncestor) and
-      ((not Assigned(Ancestor)) or Ancestor.InheritsFrom(TComponent)) then
-    begin
-      AncestorComponent := TComponent(Ancestor);
-      FOnFindAncestor(Self, Component, Component.Name,
-        AncestorComponent, FRootAncestor);
-      Ancestor := AncestorComponent;
-    end;
+procedure TWriter.WriteChildren(Component : TComponent);
 
-    // Finally write the component state
-    Component.WriteState(Self);
-
-    // The writing has been finished now...
-    Exclude(Component.FComponentState, csWriting);
-
+Var
+  SRoot, SRootA : TComponent;
+  SList : TStringList;
+  SPos : Integer;
+  I : Integer;
+  
+begin
+  // Write children list. 
+  // While writing children, the ancestor environment must be saved
+  // This is recursive...
+  SRoot:=FRoot;
+  SRootA:=FRootAncestor;
+  SList:=FAncestors;
+  SPos:=FCurrentPos;
+  try
+    FAncestors:=Nil;
+    FCurrentPos:=0;
+    FAncestorPos:=-1;
+    if csInline in Component.ComponentState then
+       FRoot:=Component;
+    if (FAncestor is TComponent) then
+       begin
+       FAncestors:=TStringList.Create;
+       if csInline in TComponent(FAncestor).ComponentState then
+         FRootAncestor := TComponent(FAncestor);
+       TComponent(FAncestor).GetChildren(@AddToAncestorList,FRootAncestor);
+       FAncestors.Sorted:=True;
+       end;
+    try
+      Component.GetChildren(@WriteComponent, FRoot);
+    Finally
+      If Assigned(Fancestors) then
+        For I:=0 to FAncestors.Count-1 do 
+          FAncestors.Objects[i].Free;
+      FreeAndNil(FAncestors);
+    end;    
   finally
-    Ancestor := SavedAncestor;
-    FRootAncestor := SavedRootAncestor;
+    FAncestors:=Slist;
+    FRoot:=SRoot;
+    FRootAncestor:=SRootA;
+    FCurrentPos:=SPos;
+    FAncestorPos:=Spos;
   end;
 end;
 
 procedure TWriter.WriteComponentData(Instance: TComponent);
-var
-  SavedAncestorList: TList;
-  SavedRoot, SavedRootAncestor: TComponent;
-  SavedAncestorPos, SavedChildPos: Integer;
+var 
   Flags: TFilerFlags;
 begin
-  // Determine the filer flags to store
-  if Assigned(Ancestor) and ((not (csInline in Instance.ComponentState)) or
-    ((csAncestor in Instance.ComponentState) and Assigned(FAncestorList))) then
-    Flags := [ffInherited]
-  else if csInline in Instance.ComponentState then
-    Flags := [ffInline]
-  else
-    Flags := [];
-
-  if Assigned(FAncestorList) and (FAncestorPos < FAncestorList.Count) and
-    ((not Assigned(Ancestor)) or
-    (TPersistent(FAncestorList[FAncestorPos]) <> Ancestor)) then
-    Include(Flags, ffChildPos);
-
-  Driver.BeginComponent(Instance, Flags, FChildPos);
-
-  if Assigned(FAncestorList) and (FAncestorPos < FAncestorList.Count) then
-  begin
-    if Assigned(Ancestor) then
-      Inc(FAncestorPos);
-    Inc(FChildPos);
-  end;
-
-  // Write property list
+  Flags := [];
+  If (Assigned(FAncestor)) and  //has ancestor
+     (not (csInline in Instance.ComponentState) or // no inline component
+      // .. or the inline component is inherited
+      (csAncestor in Instance.Componentstate) and (FAncestors <> nil)) then
+    Flags:=[ffInherited]
+  else If csInline in Instance.ComponentState then
+    Flags:=[ffInline];
+  If (FAncestors<>Nil) and ((FCurrentPos<>FAncestorPos) or (FAncestor=Nil)) then
+    Include(Flags,ffChildPos);
+  FDriver.BeginComponent(Instance,Flags,FCurrentPos);
+  If (FAncestors<>Nil) then
+    Inc(FCurrentPos);
   WriteProperties(Instance);
   WriteListEnd;
-
-  // Write children list
-  SavedAncestorList := FAncestorList;
-  SavedAncestorPos := FAncestorPos;
-  SavedChildPos := FChildPos;
-  SavedRoot := FRoot;
-  SavedRootAncestor := FRootAncestor;
-  try
-    FAncestorList := nil;
-    FAncestorPos := 0;
-    FChildPos := 0;
-    if not IgnoreChildren then
-      try
-        // Set up the ancestor list if we have an ancestor
-        if FAncestor is TComponent then
-        begin
-          if csInline in TComponent(FAncestor).ComponentState then
-            FRootAncestor := TComponent(FAncestor);
-          FAncestorList := TList.Create;
-          TComponent(FAncestor).GetChildren(@AddToAncestorList, FRootAncestor);
-        end;
-
-        if csInline in Instance.ComponentState then
-          FRoot := Instance;
-
-        Instance.GetChildren(@WriteComponent, FRoot);
-
-      finally
-        FAncestorList.Free;
-      end;
-
-  finally
-    FAncestorList := SavedAncestorList;
-    FAncestorPos := SavedAncestorPos;
-    FChildPos := SavedChildPos;
-    FRoot := SavedRoot;
-    FRootAncestor := SavedRootAncestor;
-  end;
-
-  WriteListEnd;
+  // Needs special handling of ancestor.
+  If not IgnoreChildren then
+    WriteChildren(Instance);
 end;
 
 procedure TWriter.WriteDescendent(ARoot: TComponent; AAncestor: TComponent);
@@ -522,6 +766,7 @@ begin
   WriteComponent(ARoot);
 end;
 
+{$ifndef FPUNONE}
 procedure TWriter.WriteFloat(const Value: Extended);
 begin
   Driver.WriteFloat(Value);
@@ -531,18 +776,19 @@ procedure TWriter.WriteSingle(const Value: Single);
 begin
   Driver.WriteSingle(Value);
 end;
+{$endif}
 
-{$ifdef HASCURRENCY}
 procedure TWriter.WriteCurrency(const Value: Currency);
 begin
   Driver.WriteCurrency(Value);
 end;
-{$endif HASCURRENCY}
 
+{$ifndef FPUNONE}
 procedure TWriter.WriteDate(const Value: TDateTime);
 begin
   Driver.WriteDate(Value);
 end;
+{$endif}
 
 procedure TWriter.WriteIdent(const Ident: string);
 begin
@@ -559,6 +805,17 @@ begin
   Driver.WriteInteger(Value);
 end;
 
+procedure TWriter.WriteSet(Value: LongInt; SetType: Pointer); 
+
+begin
+  Driver.WriteSet(Value,SetType);
+end;
+
+procedure TWriter.WriteVariant(const VarValue: Variant);
+begin
+  Driver.WriteVariant(VarValue);
+end;
+
 procedure TWriter.WriteListBegin;
 begin
   Driver.BeginList;
@@ -570,32 +827,21 @@ begin
 end;
 
 procedure TWriter.WriteProperties(Instance: TPersistent);
-var
-  i, PropCount: Integer;
-  PropInfo: PPropInfo;
-  PropList: PPropList;
+var PropCount,i : integer;
+    PropList  : PPropList;
 begin
-  { First step: Write the properties given by the RTTI for Instance }
-  PropCount := GetTypeData(Instance.ClassInfo)^.PropCount;
-  if PropCount > 0 then
-  begin
-    GetMem(PropList, PropCount * SizeOf(PPropInfo));
+  PropCount:=GetPropList(Instance,PropList);
+  if PropCount>0 then 
     try
-      GetPropInfos(Instance.ClassInfo, PropList);
-      for i := 0 to PropCount - 1 do
-      begin
-        PropInfo := PropList^[i];
-        if IsStoredProp(Instance, PropInfo) then
-          WriteProperty(Instance, PropInfo);
-      end;
-    finally
-      FreeMem(PropList);
+      for i := 0 to PropCount-1 do
+        if IsStoredProp(Instance,PropList^[i]) then
+          WriteProperty(Instance,PropList^[i]);
+    Finally    
+      Freemem(PropList);
     end;
-  end;
-
-  { Second step: Give Instance the chance to write its own private data }
   Instance.DefineProperties(Self);
 end;
+
 
 procedure TWriter.WriteProperty(Instance: TPersistent; PropInfo: Pointer);
 var
@@ -604,43 +850,54 @@ var
   Value, DefValue: LongInt;
   Ident: String;
   IntToIdentFn: TIntToIdent;
+{$ifndef FPUNONE}
   FloatValue, DefFloatValue: Extended;
-  MethodValue: TMethod;
-  DefMethodCodeValue: Pointer;
-{$ifdef HASWIDESTRING}
-  WStrValue, WDefStrValue: WideString;
 {$endif}
+  MethodValue: TMethod;
+  DefMethodValue: TMethod;
+  WStrValue, WDefStrValue: WideString;
   StrValue, DefStrValue: String;
+  UStrValue, UDefStrValue: UnicodeString;
   AncestorObj: TObject;
-  Component: TComponent;
+  C,Component: TComponent;
   ObjValue: TObject;
   SavedAncestor: TPersistent;
   SavedPropPath, Name: String;
   Int64Value, DefInt64Value: Int64;
+  VarValue, DefVarValue : tvardata;
   BoolValue, DefBoolValue: boolean;
   Handled: Boolean;
 
 begin
-
-  if (not Assigned(PPropInfo(PropInfo)^.SetProc)) or
-    (not Assigned(PPropInfo(PropInfo)^.GetProc)) then
+  // do not stream properties without getter
+  if not Assigned(PPropInfo(PropInfo)^.GetProc) then
     exit;
+  // properties without setter are only allowed, if they are subcomponents
+  PropType := PPropInfo(PropInfo)^.PropType;
+  if not Assigned(PPropInfo(PropInfo)^.SetProc) then begin
+    if PropType^.Kind<>tkClass then
+      exit;
+    ObjValue := TObject(GetObjectProp(Instance, PropInfo));
+    if not ObjValue.InheritsFrom(TComponent) or
+       not (csSubComponent in TComponent(ObjValue).ComponentStyle) then
+      exit;
+  end;
 
   { Check if the ancestor can be used }
   HasAncestor := Assigned(Ancestor) and ((Instance = Root) or
     (Instance.ClassType = Ancestor.ClassType));
+  //writeln('TWriter.WriteProperty Name=',PropType^.Name,' Kind=',GetEnumName(TypeInfo(TTypeKind),ord(PropType^.Kind)),' HasAncestor=',HasAncestor);
 
-  PropType := PPropInfo(PropInfo)^.PropType;
   case PropType^.Kind of
-    tkInteger, tkChar, tkEnumeration, tkSet:
+    tkInteger, tkChar, tkEnumeration, tkSet, tkWChar:
       begin
         Value := GetOrdProp(Instance, PropInfo);
         if HasAncestor then
           DefValue := GetOrdProp(Ancestor, PropInfo)
         else
           DefValue := PPropInfo(PropInfo)^.Default;
-
-        if Value <> DefValue then
+        // writeln(PPropInfo(PropInfo)^.Name, ', HasAncestor=', ord(HasAncestor), ', Value=', Value, ', Default=', DefValue);
+        if (Value <> DefValue) or (DefValue=longint($80000000)) then
         begin
           Driver.BeginProperty(FPropPath + PPropInfo(PropInfo)^.Name);
           case PropType^.Kind of
@@ -657,6 +914,8 @@ begin
               end;
             tkChar:
               WriteChar(Chr(Value));
+            tkWChar:
+              WriteWideChar(WideChar(Value));
             tkSet:
               Driver.WriteSet(Value, GetTypeData(PropType)^.CompType);
             tkEnumeration:
@@ -665,36 +924,43 @@ begin
           Driver.EndProperty;
         end;
       end;
+{$ifndef FPUNONE}
     tkFloat:
       begin
         FloatValue := GetFloatProp(Instance, PropInfo);
         if HasAncestor then
           DefFloatValue := GetFloatProp(Ancestor, PropInfo)
         else
-          DefFloatValue := 0;
-        if FloatValue <> DefFloatValue then
+          begin
+          DefValue :=PPropInfo(PropInfo)^.Default;
+          DefFloatValue:=PSingle(@PPropInfo(PropInfo)^.Default)^;
+          end;
+        if (FloatValue<>DefFloatValue) or (DefValue=longint($80000000)) then
         begin
           Driver.BeginProperty(FPropPath + PPropInfo(PropInfo)^.Name);
           WriteFloat(FloatValue);
           Driver.EndProperty;
         end;
       end;
+{$endif}
     tkMethod:
       begin
         MethodValue := GetMethodProp(Instance, PropInfo);
         if HasAncestor then
-          DefMethodCodeValue := GetMethodProp(Ancestor, PropInfo).Code
-        else
-          DefMethodCodeValue := nil;
+          DefMethodValue := GetMethodProp(Ancestor, PropInfo)
+        else begin
+          DefMethodValue.Data := nil;
+          DefMethodValue.Code := nil;
+        end;
 
         Handled:=false;
         if Assigned(OnWriteMethodProperty) then
           OnWriteMethodProperty(Self,Instance,PPropInfo(PropInfo),MethodValue,
-            DefMethodCodeValue,Handled);
+            DefMethodValue,Handled);
         if (not Handled) and
-          (MethodValue.Code <> DefMethodCodeValue) and
+          (MethodValue.Code <> DefMethodValue.Code) and
           ((not Assigned(MethodValue.Code)) or
-          ((Length(FLookupRoot.MethodName(MethodValue.Code)) >= 0))) then
+          ((Length(FLookupRoot.MethodName(MethodValue.Code)) > 0))) then
         begin
           Driver.BeginProperty(FPropPath + PPropInfo(PropInfo)^.Name);
           if Assigned(MethodValue.Code) then
@@ -704,9 +970,6 @@ begin
           Driver.EndProperty;
         end;
       end;
-{$ifndef HASWIDESTRING}
-    tkWString,
-{$endif}
     tkSString, tkLString, tkAString:
       begin
         StrValue := GetStrProp(Instance, PropInfo);
@@ -724,7 +987,6 @@ begin
           Driver.EndProperty;
         end;
       end;
-{$ifdef HASWIDESTRING}
     tkWString:
       begin
         WStrValue := GetWideStrProp(Instance, PropInfo);
@@ -740,67 +1002,119 @@ begin
           Driver.EndProperty;
         end;
       end;
-{$endif}
-  {!!!: tkVariant:}
+    tkUString:
+      begin
+        UStrValue := GetUnicodeStrProp(Instance, PropInfo);
+        if HasAncestor then
+          UDefStrValue := GetUnicodeStrProp(Ancestor, PropInfo)
+        else
+          SetLength(UDefStrValue, 0);
+
+        if UStrValue <> UDefStrValue then
+        begin
+          Driver.BeginProperty(FPropPath + PPropInfo(PropInfo)^.Name);
+          WriteUnicodeString(UStrValue);
+          Driver.EndProperty;
+        end;
+      end;
+    tkVariant:
+      begin
+        { Ensure that a Variant manager is installed }
+        if not assigned(VarClearProc) then
+          raise EWriteError.Create(SErrNoVariantSupport);
+
+        VarValue := tvardata(GetVariantProp(Instance, PropInfo));
+        if HasAncestor then
+          DefVarValue := tvardata(GetVariantProp(Ancestor, PropInfo))
+        else
+          FillChar(DefVarValue,sizeof(DefVarValue),0);
+
+        if (CompareByte(VarValue,DefVarValue,sizeof(VarValue)) <> 0) then
+          begin
+            Driver.BeginProperty(FPropPath + PPropInfo(PropInfo)^.Name);
+            { can't use variant() typecast, pulls in variants unit }
+            WriteVariant(pvariant(@VarValue)^);
+            Driver.EndProperty;
+          end;
+      end;
     tkClass:
       begin
         ObjValue := TObject(GetObjectProp(Instance, PropInfo));
         if HasAncestor then
         begin
           AncestorObj := TObject(GetObjectProp(Ancestor, PropInfo));
-          if Assigned(AncestorObj) then
-            if Assigned(ObjValue) and
-              (TComponent(AncestorObj).Owner = FRootAncestor) and
-              (TComponent(ObjValue).Owner = Root) and
-              (UpperCase(TComponent(AncestorObj).Name) = UpperCase(TComponent(ObjValue).Name)) then
-              AncestorObj := ObjValue
-            else
-              AncestorObj := nil;
+          if (AncestorObj is TComponent) and
+             (ObjValue is TComponent) then
+          begin
+            //writeln('TWriter.WriteProperty AncestorObj=',TComponent(AncestorObj).Name,' OwnerFit=',TComponent(AncestorObj).Owner = FRootAncestor,' ',TComponent(ObjValue).Name,' OwnerFit=',TComponent(ObjValue).Owner = Root);
+            if (AncestorObj<> ObjValue) and
+             (TComponent(AncestorObj).Owner = FRootAncestor) and
+             (TComponent(ObjValue).Owner = Root) and
+             (UpperCase(TComponent(AncestorObj).Name) = UpperCase(TComponent(ObjValue).Name)) then
+            begin
+              // different components, but with the same name
+              // treat it like an override
+              AncestorObj := ObjValue;
+            end;
+          end;
         end else
           AncestorObj := nil;
 
         if not Assigned(ObjValue) then
-        begin
-          if ObjValue <> AncestorObj then
           begin
+          if ObjValue <> AncestorObj then
+            begin
             Driver.BeginProperty(FPropPath + PPropInfo(PropInfo)^.Name);
             Driver.WriteIdent('NIL');
             Driver.EndProperty;
+            end
           end
-        end else if ObjValue.InheritsFrom(TPersistent) then
+        else if ObjValue.InheritsFrom(TPersistent) then
+          begin
           { Subcomponents are streamed the same way as persistents }
           if ObjValue.InheritsFrom(TComponent)
-          and not (csSubComponent in TComponent(ObjValue).ComponentStyle) then
-          begin
+            and ((not (csSubComponent in TComponent(ObjValue).ComponentStyle)) 
+                 or ((TComponent(ObjValue).Owner<>Instance) and (TComponent(ObjValue).Owner<>Nil))) then
+            begin
             Component := TComponent(ObjValue);
             if (ObjValue <> AncestorObj)
-            and not (csTransient in Component.ComponentStyle) then
-            begin
-              { Determine the correct name of the component this property contains }
-              if Component.Owner = LookupRoot then
-                Name := Component.Name
-              else if Component = LookupRoot then
-                Name := 'Owner'
-              else if Assigned(Component.Owner) and (Length(Component.Owner.Name) > 0)
-                and (Length(Component.Name) > 0) then
-                Name := Component.Owner.Name + '.' + Component.Name
-              else if Length(Component.Name) > 0 then
-                Name := Component.Name + '.Owner'
-              else
-                SetLength(Name, 0);
-
-              if Length(Name) > 0 then
+                and not (csTransient in Component.ComponentStyle) then
               begin
+              Name:= '';
+              C:= Component;
+              While (C<>Nil) and (C.Name<>'') do
+                begin
+                If (Name<>'') Then
+                  Name:='.'+Name;
+                if C.Owner = LookupRoot then
+                  begin
+                  Name := C.Name+Name;
+                  break;
+                  end
+                else if C = LookupRoot then
+                  begin
+                  Name := 'Owner' + Name;
+                  break;
+                  end;
+                Name:=C.Name + Name;
+                C:= C.Owner;
+                end;
+              if (C=nil) and (Component.Owner=nil) then 
+                if (Name<>'') then              //foreign root
+                  Name:=Name+'.Owner';
+              if Length(Name) > 0 then
+                begin
                 Driver.BeginProperty(FPropPath + PPropInfo(PropInfo)^.Name);
                 WriteIdent(Name);
                 Driver.EndProperty;
-              end;
-            end;
-          end else if ObjValue.InheritsFrom(TCollection) then
-          begin
-            if (not HasAncestor) or (not CollectionsEqual(TCollection(ObjValue),
-              TCollection(GetObjectProp(Ancestor, PropInfo)))) then
+                end;  // length Name>0
+              end; //(ObjValue <> AncestorObj)
+            end // ObjValue.InheritsFrom(TComponent)
+          else if ObjValue.InheritsFrom(TCollection) then
             begin
+            if (not HasAncestor) or (not CollectionsEqual(TCollection(ObjValue),
+              TCollection(GetObjectProp(Ancestor, PropInfo)),root,rootancestor)) then
+              begin
               Driver.BeginProperty(FPropPath + PPropInfo(PropInfo)^.Name);
               SavedPropPath := FPropPath;
               try
@@ -810,9 +1124,10 @@ begin
                 FPropPath := SavedPropPath;
                 Driver.EndProperty;
               end;
-            end;
-          end else
-          begin
+              end;
+            end // Tcollection
+          else
+            begin
             SavedAncestor := Ancestor;
             SavedPropPath := FPropPath;
             try
@@ -824,9 +1139,10 @@ begin
               Ancestor := SavedAncestor;
               FPropPath := SavedPropPath;
             end;
-          end;
+            end;
+          end; // Inheritsfrom(TPersistent)
       end;
-    tkInt64:
+    tkInt64, tkQWord:
       begin
         Int64Value := GetInt64Prop(Instance, PropInfo);
         if HasAncestor then
@@ -846,8 +1162,12 @@ begin
         if HasAncestor then
           DefBoolValue := GetOrdProp(Ancestor, PropInfo)<>0
         else
+          begin
           DefBoolValue := PPropInfo(PropInfo)^.Default<>0;
-        if BoolValue <> DefBoolValue then
+          DefValue:=PPropInfo(PropInfo)^.Default;
+          end;
+        // writeln(PPropInfo(PropInfo)^.Name, ', HasAncestor=', ord(HasAncestor), ', Value=', Value, ', Default=', DefBoolValue);
+        if (BoolValue<>DefBoolValue) or (DefValue=longint($80000000)) then
           begin
           Driver.BeginProperty(FPropPath + PPropInfo(PropInfo)^.Name);
           WriteBoolean(BoolValue);
@@ -867,26 +1187,13 @@ begin
   Driver.WriteString(Value);
 end;
 
-{$ifdef HASWIDESTRING}
 procedure TWriter.WriteWideString(const Value: WideString);
 begin
   Driver.WriteWideString(Value);
 end;
-{$endif HASWIDESTRING}
 
-{
-  $Log: writer.inc,v $
-  Revision 1.11  2005/04/15 07:21:09  michael
-  +  Streaming of subcomponents added by Marc Weustink
+procedure TWriter.WriteUnicodeString(const Value: UnicodeString);
+begin
+  Driver.WriteUnicodeString(Value);
+end;
 
-  Revision 1.10  2005/04/09 20:37:08  michael
-  + Patch from Uberto Barbini to allow creating streams with different drivers
-
-  Revision 1.9  2005/03/25 22:53:39  jonas
-    * fixed several warnings and notes about unused variables (mainly) or
-      uninitialised use of variables/function results (a few)
-
-  Revision 1.8  2005/02/14 17:13:31  peter
-    * truncate log
-
-}

@@ -1,9 +1,3 @@
-/*
-  $Id: cprt0.as,v 1.4 2004/11/02 21:49:46 florian Exp $
-  Dummy implementation
-
-*/
-
 /* This is the canonical entry point, usually the first thing in the text
    segment.  The SVR4/i386 ABI (pages 3-31, 3-32) says that when the entry
    point runs, most registers' values are unspecified, except for:
@@ -50,11 +44,14 @@ _start:
 	popq %rsi		/* Pop the argument count.  */
 	movq %rsp, %rdx		/* argv starts just at the current stack top.  */
 
-        movq     %rsi,operatingsystem_parameter_argc
-	movq     %rsp,operatingsystem_parameter_argv   /* argv starts just at the current stack top.  */
-        leaq     8(,%rsi,8),%rax
-        addq     %rsp,%rax
-        movq     %rax,operatingsystem_parameter_envp
+        movq    operatingsystem_parameter_argc@GOTPCREL(%rip),%rax
+        movq    %rsi,(%rax)
+        movq    operatingsystem_parameter_argv@GOTPCREL(%rip),%rax
+        movq    %rsp,(%rax)   /* argv starts just at the current stack top.  */
+        leaq    8(,%rsi,8),%rax
+        addq    %rsp,%rax
+        movq    operatingsystem_parameter_envp@GOTPCREL(%rip),%rsi
+        movq    %rax,(%rsi)
 
 	/* Align the stack to a 16 byte boundary to follow the ABI.  */
 	andq  $~15, %rsp
@@ -66,18 +63,20 @@ _start:
 	pushq %rsp
 
 	/* Pass address of our own entry points to .fini and .init.  */
-	movq $_init_dummy, %r8
-	movq $_fini_dummy, %rcx
+	movq _init_dummy@GOTPCREL(%rip), %rcx
+	movq _fini_dummy@GOTPCREL(%rip), %r8
 
-	movq $main_stub, %rdi
+	movq main_stub@GOTPCREL(%rip), %rdi
 
 	/* Call the user's main function, and exit with its value.
 	   But let the libc call main.	  */
-	call __libc_start_main
+	call __libc_start_main@PLT
 
 	hlt			/* Crash if somehow `exit' does return.	 */
 
 /* fake main routine which will be run from libc */
+	.globl main_stub
+        .type main_stub,@function
 main_stub:
         /* save return address */
         popq    %rax
@@ -85,26 +84,49 @@ main_stub:
 	// stack alignment
 	pushq	%rax
 
-        movq    %rax,___fpc_ret
-        movq    %rbp,___fpc_ret_rbp
+	movq    ___fpc_ret_rbp@GOTPCREL(%rip),%rcx
+        movq    %rbp,(%rcx)
+	movq    ___fpc_ret@GOTPCREL(%rip),%rcx
+        movq    %rax,(%rcx)
         pushq   %rax
+
+        /* Save initial stackpointer */
+        movq    __stkptr@GOTPCREL(%rip),%rax
+        movq    %rsp,(%rax)
 
         /* start the program */
         xorq    %rbp,%rbp
-        call    PASCALMAIN
+        call    PASCALMAIN@PLT
         hlt
+	.size   main_stub,.-main_stub
+
 
         .globl _haltproc
         .type _haltproc,@function
 _haltproc:
-        movzwq    operatingsystem_result,%rax /* load and save exitcode */
+        movq    operatingsystem_result@GOTPCREL(%rip),%rax
+        movzwl  (%rax),%eax
 
-        movq    ___fpc_ret,%rdx         /* return to libc */
-        movq    ___fpc_ret_rbp,%rbp
+        /* return to libc */
+	movq    ___fpc_ret_rbp@GOTPCREL(%rip),%rcx
+        movq    (%rcx),%rbp
+	movq    ___fpc_ret@GOTPCREL(%rip),%rcx
+        movq    (%rcx),%rdx
         pushq    %rdx
+	ret
+	.size   _haltproc,.-_haltproc
+
+	.globl _init_dummy
+        .type   _init_dummy, @function
 _init_dummy:
+        ret
+	.size   _init_dummy,.-_init_dummy
+
+	.globl  _fini_dummy
+        .type   _fini_dummy, @function
 _fini_dummy:
         ret
+	.size   _fini_dummy,.-_fini_dummy
 
 /* Define a symbol for the first piece of initialized data.  */
 	.data
@@ -113,7 +135,7 @@ __data_start:
 	.long 0
 	.weak data_start
 	data_start = __data_start
-	
+
         .globl  ___fpc_brk_addr         /* heap management */
         .type   ___fpc_brk_addr,@object
         .size   ___fpc_brk_addr,8
@@ -126,6 +148,8 @@ ___fpc_ret_rbp:
         .quad   0
 
 .bss
+        .comm __stkptr,8
+
         .comm operatingsystem_parameter_envp,8
         .comm operatingsystem_parameter_argc,8
         .comm operatingsystem_parameter_argv,8
@@ -145,20 +169,3 @@ ___fpc_ret_rbp:
 3:      .align 4
 
 	.section	.note.GNU-stack,"",@progbits
-
-
-/*
-  $Log: cprt0.as,v $
-  Revision 1.4  2004/11/02 21:49:46  florian
-    * x86_64 requires always 16 byte alignment of the stack
-
-  Revision 1.3  2004/07/03 21:50:31  daniel
-    * Modified bootstrap code so separate prt0.as/prt0_10.as files are no
-      longer necessary
-
-  Revision 1.2  2004/02/20 23:48:27  peter
-    * c stub implemented
-
-  Revision 1.1  2003/01/06 19:39:17  florian
-    + dummy implementations
-*/

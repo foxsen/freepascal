@@ -1,5 +1,4 @@
 {
-    $Id: cpubase.pas,v 1.78 2005/02/26 01:27:00 jonas Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl
 
     Contains the base types for the SPARC
@@ -35,7 +34,7 @@ uses
 *****************************************************************************}
 
     type
-{$WARNING CPU32 opcodes do not fully include the Ultra SPRAC instruction set.}
+{ TODO: CPU32 opcodes do not fully include the Ultra SPRAC instruction set.}
       { don't change the order of these opcodes! }
       TAsmOp=({$i opcode.inc});
 
@@ -74,9 +73,9 @@ uses
 
       { MM Super register first and last }
       first_mm_supreg    = 0;
-      first_mm_imreg     = 0;
+      first_mm_imreg     = 1;
 
-{$warning TODO Calculate bsstart}
+{ TODO: Calculate bsstart}
       regnumber_count_bsstart = 128;
 
       regnumber_table : array[tregisterindex] of tregister = (
@@ -162,50 +161,9 @@ uses
     const
       max_operands = 3;
 
-      {# Constant defining possibly all registers which might require saving }
-      ALL_OTHERREGISTERS = [];
-
-      general_superregisters = [RS_O0..RS_I7];
-
-      {# Table of registers which can be allocated by the code generator
-         internally, when generating the code.
-      }
-      { legend:                                                                }
-      { xxxregs = set of all possibly used registers of that type in the code  }
-      {           generator                                                    }
-      { usableregsxxx = set of all 32bit components of registers that can be   }
-      {           possible allocated to a regvar or using getregisterxxx (this }
-      {           excludes registers which can be only used for parameter      }
-      {           passing on ABI's that define this)                           }
-      { c_countusableregsxxx = amount of registers in the usableregsxxx set    }
-
       maxintregs = 8;
-      { to determine how many registers to use for regvars }
-      maxintscratchregs = 3;
-      usableregsint = [RS_L0..RS_L7];
-      c_countusableregsint = 8;
-
       maxfpuregs = 8;
-      usableregsfpu=[RS_F0..RS_F31];
-      c_countusableregsfpu=32;
-
-      mmregs     = [];
-      usableregsmm  = [];
-      c_countusableregsmm  = 0;
-
-      { no distinction on this platform }
       maxaddrregs = 0;
-      addrregs    = [];
-      usableregsaddr = [];
-      c_countusableregsaddr = 0;
-
-{$warning firstsaveintreg shall be RS_NO}
-      firstsaveintreg = RS_L0; { Temporary, having RS_NO is broken }
-      lastsaveintreg = RS_L0; { L0..L7 are already saved, I0..O7 are parameter }
-      firstsavefpureg = RS_F2; { F0..F1 is used for return value }
-      lastsavefpureg = RS_F31;
-      firstsavemmreg = RS_INVALID;
-      lastsavemmreg = RS_INVALID;
 
       maxvarregs = 8;
       varregs : Array [1..maxvarregs] of Tsuperregister =
@@ -215,19 +173,6 @@ uses
       fpuvarregs : Array [1..maxfpuvarregs] of TsuperRegister =
                 (RS_F2);
 
-      {
-      max_param_regs_int = 6;
-      param_regs_int: Array[1..max_param_regs_int] of TCpuRegister =
-        (R_3,R_4,R_5,R_6,R_7,R_8,R_9,R_10);
-
-      max_param_regs_fpu = 13;
-      param_regs_fpu: Array[1..max_param_regs_fpu] of TCpuRegister =
-        (R_F1,R_F2,R_F3,R_F4,R_F5,R_F6,R_F7,R_F8,R_F9,R_F10,R_F11,R_F12,R_F13);
-
-      max_param_regs_mm = 13;
-      param_regs_mm: Array[1..max_param_regs_mm] of TCpuRegister =
-        (R_M1,R_M2,R_M3,R_M4,R_M5,R_M6,R_M7,R_M8,R_M9,R_M10,R_M11,R_M12,R_M13);
-      }
 
 
 {*****************************************************************************
@@ -236,8 +181,10 @@ uses
 
       {# Defines the default address size for a processor, }
       OS_ADDR = OS_32;
-      {# the natural int size for a processor,             }
+      {# the natural int size for a processor,
+         has to match osuinttype/ossinttype as initialized in psystem }
       OS_INT = OS_32;
+      OS_SINT = OS_S32;
       {# the maximum float size for a processor,           }
       OS_FLOAT = OS_F64;
       {# the size of a vector register for a processor     }
@@ -259,7 +206,7 @@ uses
 
          Taken from GCC rs6000.h
       }
-{$warning As indicated in rs6000.h, but can't find it anywhere else!}
+{ TODO: As indicated in rs6000.h, but can't find it anywhere else!}
       {PIC_OFFSET_REG = R_30;}
       { Return address for DWARF }
       NR_RETURN_ADDRESS_REG = NR_I7;
@@ -304,6 +251,9 @@ uses
       }
       saved_standard_registers : array[0..0] of tsuperregister = (RS_NO);
 
+      { this is only for the generic code which is not used for this architecture }
+      saved_mm_registers : array[0..0] of tsuperregister = (RS_NO);
+
       {# Required parameter alignment when calling a routine declared as
          stdcall and cdecl. The alignment value should be the one defined
          by GCC or the target ABI.
@@ -331,13 +281,14 @@ uses
     procedure inverse_flags(var f: TResFlags);
     function inverse_cond(const c: TAsmCond): TAsmCond; {$ifdef USEINLINE}inline;{$endif USEINLINE}
     function conditions_equal(const c1, c2: TAsmCond): boolean; {$ifdef USEINLINE}inline;{$endif USEINLINE}
-    
+
     function  flags_to_cond(const f: TResFlags) : TAsmCond;
-    function cgsize2subreg(s:Tcgsize):Tsubregister;
+    function cgsize2subreg(regtype: tregistertype; s:Tcgsize):Tsubregister;
     function reg_cgsize(const reg: tregister): tcgsize;
     function std_regname(r:Tregister):string;
     function std_regnum_search(const s:string):Tregister;
     function findreg_by_number(r:Tregister):tregisterindex;
+    function dwarf_reg(r:tregister):shortint;
 
 
 implementation
@@ -391,12 +342,28 @@ implementation
       end;
 
 
-    function cgsize2subreg(s:Tcgsize):Tsubregister;
+    function cgsize2subreg(regtype: tregistertype; s:Tcgsize):Tsubregister;
       begin
-        if s in [OS_64,OS_S64] then
-          cgsize2subreg:=R_SUBQ
-        else
-          cgsize2subreg:=R_SUBWHOLE;
+        case regtype of
+          R_FPUREGISTER:
+            case s of
+              OS_F32:
+                cgsize2subreg:=R_SUBFS;
+              OS_F64:
+                cgsize2subreg:=R_SUBFD;
+              OS_F128:
+                cgsize2subreg:=R_SUBFQ;
+              else
+                internalerror(2009071903);
+            end;
+          else
+            begin
+              if s in [OS_64,OS_S64] then
+                cgsize2subreg:=R_SUBQ
+              else
+                cgsize2subreg:=R_SUBWHOLE;
+            end;
+        end;
       end;
 
 
@@ -428,11 +395,31 @@ implementation
       var
         p : tregisterindex;
       begin
-        p:=findreg_by_number(r);
-        if p<>0 then
-          result:=std_regname_table[p]
+        { For double floats show a pair like %f0:%f1 }
+        if (getsubreg(r)=R_SUBFD) and
+           (getsupreg(r)<first_fpu_imreg) then
+          begin
+            setsubreg(r,R_SUBFS);
+            p:=findreg_by_number(r);
+            if p<>0 then
+              result:=std_regname_table[p]
+            else
+              result:=generic_regname(r);
+            setsupreg(r,getsupreg(r)+1);
+            p:=findreg_by_number(r);
+            if p<>0 then
+              result:=result+':'+std_regname_table[p]
+            else
+              result:=result+':'+generic_regname(r);
+          end
         else
-          result:=generic_regname(r);
+          begin
+            p:=findreg_by_number(r);
+            if p<>0 then
+              result:=std_regname_table[p]
+            else
+              result:=generic_regname(r);
+          end;
       end;
 
 
@@ -459,21 +446,11 @@ implementation
         result := c1 = c2;
       end;
 
+    function dwarf_reg(r:tregister):shortint;
+      begin
+        result:=regdwarf_table[findreg_by_number(r)];
+        if result=-1 then
+          internalerror(200603251);
+      end;
+
 end.
-{
-  $Log: cpubase.pas,v $
-  Revision 1.78  2005/02/26 01:27:00  jonas
-    * fixed generic jumps optimizer and enabled it for ppc (the label table
-      was not being initialised -> getfinaldestination always failed, which
-      caused wrong optimizations in some cases)
-    * changed the inverse_cond into a function, because tasmcond is a record
-      on ppc
-    + added a compare_conditions() function for the same reason
-
-  Revision 1.77  2005/02/14 17:13:10  peter
-    * truncate log
-
-  Revision 1.76  2005/01/20 16:38:45  peter
-    * load jmp_buf_size from system unit
-
-}

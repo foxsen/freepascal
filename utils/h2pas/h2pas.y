@@ -2,7 +2,6 @@
 program h2pas;
 
 (*
-    $Id: h2pas.y,v 1.10 2005/02/20 11:09:41 florian Exp $
     Copyright (c) 1998-2000 by Florian Klaempfl
 
     This program is free software; you can redistribute it and/or modify
@@ -21,24 +20,86 @@ program h2pas;
 
  ****************************************************************************)
 
+{$message TODO: warning Unit types is only needed due to issue 7910}
+
    uses
-     SysUtils,classes,
-     options,scan,converu,lexlib,yacclib;
+     SysUtils,types, classes,
+     h2poptions,scan,converu,h2plexlib,h2pyacclib;
 
    type
      YYSTYPE = presobject;
 
    const
-     SHORT_STR  = 'smallint';
-     USHORT_STR = 'word';
+     SHORT_STR = 'shortint';
+     USHORT_STR = 'byte';
+     //C++ SHORT types usually map to the small types
+     SMALL_STR  = 'smallint';
+     USMALL_STR = 'word';
      INT_STR    = 'longint';
      UINT_STR   = 'dword';
      CHAR_STR   = 'char';
-     UCHAR_STR  = 'byte'; { should we use byte or char for 'unsigned char' ?? }
+     UCHAR_STR  = USHORT_STR; { should we use byte or char for 'unsigned char' ?? }
+
      INT64_STR  = 'int64';
      QWORD_STR  = 'qword';
-     REAL_STR   = 'double';
+     FLOAT_STR  = 'single';
      WCHAR_STR  = 'widechar';
+
+  {ctypes strings}
+  const
+    cint8_STR       = 'cint8';
+    cuint8_STR      = 'cuint8';
+    cchar_STR       = 'cchar';
+    cschar_STR      = 'cschar';
+    cuchar_STR      = 'cuchar';
+
+    cint16_STR      = 'cint16';
+    cuint16_STR     = 'cuint16';
+    cshort_STR      = 'cshort';
+    csshort_STR     = 'csshort';
+    cushort_STR     = 'cushort';
+
+    cint32_STR      = 'cint32';
+    cuint32_STR     = 'cuint32';
+    cint_STR        = 'cint';
+    csint_STR       = 'csint';
+    cuint_STR       = 'cuint';
+
+    csigned_STR     = 'csigned';
+    cunsigned_STR   = 'cunsigned';
+
+    cint64_STR      = 'cint64';
+    cuint64_STR     = 'cuint64';
+    clonglong_STR   = 'clonglong';
+    cslonglong_STR  = 'cslonglong';
+    culonglong_STR  = 'culonglong';
+
+    cbool_STR       = 'cbool';
+
+    clong_STR       = 'clong';
+    cslong_STR      = 'cslong';
+    culong_STR      = 'culong';
+
+    cfloat_STR      = 'cfloat';
+    cdouble_STR     = 'cdouble';
+    clongdouble_STR = 'clongdouble';
+
+  const
+    MAX_CTYPESARRAY = 25;
+    CTypesArray : array [0..MAX_CTYPESARRAY] of string =
+      (cint8_STR,     cuint8_STR,
+       cchar_STR,     cschar_STR,     cuchar_STR,
+       cint16_STR,    cuint16_STR,
+       cshort_STR,    csshort_STR,    cushort_STR,
+       csigned_STR,   cunsigned_STR,
+       cint32_STR,    cuint32_STR,    cint_STR,
+       csint_STR,     cuint_STR,
+       cint64_STR,    cuint64_STR,
+       clonglong_STR, cslonglong_STR, culonglong_STR,
+
+       cbool_STR,
+       clong_STR,      cslong_STR,    culong_STR);
+
 
   var
      hp,ph    : presobject;
@@ -183,7 +244,6 @@ program h2pas;
       end;
 
 
-
     function TypeName(const s:string):string;
       var
         i : longint;
@@ -197,11 +257,32 @@ program h2pas;
          TypeName:=Copy(s,i,255);
       end;
 
+    function IsACType(const s : String) : Boolean;
+    var i : Integer;
+    begin
+      IsACType := True;
+      for i := 0 to MAX_CTYPESARRAY do
+      begin
+        if s = CTypesArray[i] then
+        begin
+          Exit;
+        end;
+      end;
+      IsACType := False;
+    end;
 
     function PointerName(const s:string):string;
       var
         i : longint;
       begin
+        if UseCTypesUnit then
+        begin
+          if IsACType(s) then
+          begin
+            PointerName := 'p'+s;
+            exit;
+          end;
+        end;
         i:=1;
         if RemoveUnderScore and (length(s)>1) and (s[1]='_') then
          i:=2;
@@ -215,7 +296,6 @@ program h2pas;
         if PointerPrefix then
            PTypeList.Add('P'+s);
       end;
-
 
     procedure write_packed_fields_info(var outfile:text; p : presobject; ph : string);
       var
@@ -234,7 +314,7 @@ program h2pas;
          flag_index:=0;
          writeln(outfile);
          writeln(outfile,aktspace,'const');
-         shift(3);
+         shift(2);
          while not eof(tempfile) do
            begin
               readln(tempfile,line);
@@ -277,7 +357,7 @@ program h2pas;
                         write_p_a_def(implemfile,hp3^.p1^.p1,hp2^.p1);
                         writeln(implemfile,';');
                         writeln(implemfile,aktspace,'begin');
-                        shift(3);
+                        shift(2);
                         write(implemfile,aktspace,name,':=(a.flag',flag_index);
                         writeln(implemfile,' and bm_',ph,'_',name,') shr bp_',ph,'_',name,';');
                         popshift;
@@ -300,7 +380,7 @@ program h2pas;
                         write_p_a_def(implemfile,hp3^.p1^.p1,hp2^.p1);
                         writeln(implemfile,');');
                         writeln(implemfile,aktspace,'begin');
-                        shift(3);
+                        shift(2);
                         write(implemfile,aktspace,'a.flag',flag_index,':=');
                         write(implemfile,'a.flag',flag_index,' or ');
                         writeln(implemfile,'((__',name,' shl bp_',ph,'_',name,') and bm_',ph,'_',name,');');
@@ -387,10 +467,15 @@ program h2pas;
                       write(outfile,')');
                       flush(outfile);
                     end;
-            else internalerror(2);
+            else
+              begin
+                writeln(ord(p^.typ));
+                internalerror(2);
+              end;
             end;
          end;
       end;
+
 
     procedure write_ifexpr(var outfile:text; p : presobject);
       begin
@@ -473,8 +558,6 @@ program h2pas;
                end;
              t_funcname :
                begin
-                  if not compactmode then
-                   shift(2);
                   if if_nb>0 then
                     begin
                        writeln(outfile,aktspace,'var');
@@ -491,7 +574,7 @@ program h2pas;
                        if_nb:=0;
                     end;
                   writeln(outfile,aktspace,'begin');
-                  shift(3);
+                  shift(2);
                   write(outfile,aktspace);
                   write_all_ifexpr(outfile,p^.p2);
                   write_expr(outfile,p^.p1);
@@ -536,6 +619,7 @@ program h2pas;
        (* if in args *dname is replaced by pdname *)
        in_args : boolean = false;
        typedef_level : longint = 0;
+       old_in_args : boolean = false;
 
     (* writes an argument list, where p is t_arglist *)
 
@@ -668,7 +752,7 @@ program h2pas;
          error : integer;
          pointerwritten,
          constant : boolean;
-
+         old_in_args : boolean;
       begin
          if not(assigned(p)) then
            begin
@@ -676,109 +760,116 @@ program h2pas;
               exit;
            end;
          case p^.typ of
-            t_pointerdef : begin
-                              (* procedure variable ? *)
-                              if assigned(p^.p1) and (p^.p1^.typ=t_procdef) then
-                                begin
-                                   is_procvar:=true;
-                                   (* distinguish between procedure and function *)
-                                   if (simple_type^.typ=t_void) and (p^.p1^.p1=nil) then
-                                     begin
-                                        write(outfile,'procedure ');
+            t_pointerdef :
+              begin
+                (* procedure variable ? *)
+                if assigned(p^.p1) and (p^.p1^.typ=t_procdef) then
+                  begin
+                     is_procvar:=true;
+                     (* distinguish between procedure and function *)
+                     if (simple_type^.typ=t_void) and (p^.p1^.p1=nil) then
+                       begin
+                          write(outfile,'procedure ');
 
-                                        shift(10);
-                                        (* write arguments *)
-                                        if assigned(p^.p1^.p2) then
-                                          write_args(outfile,p^.p1^.p2);
-                                        flush(outfile);
-                                        popshift;
-                                     end
-                                   else
-                                     begin
-                                        write(outfile,'function ');
-                                        shift(9);
-                                        (* write arguments *)
-                                        if assigned(p^.p1^.p2) then
-                                          write_args(outfile,p^.p1^.p2);
-                                        write(outfile,':');
-                                        flush(outfile);
-                                        write_p_a_def(outfile,p^.p1^.p1,simple_type);
-                                        popshift;
-                                     end
-                                end
-                              else
-                                begin
-                                   (* generate "pointer" ? *)
-                                   if (simple_type^.typ=t_void) and (p^.p1=nil) then
-                                     begin
-                                       write(outfile,'pointer');
-                                       flush(outfile);
-                                     end
-                                   else
-                                     begin
-                                       pointerwritten:=false;
-                                       if (p^.p1=nil) and UsePPointers then
-                                        begin
-                                          if (simple_type^.typ=t_id) then
-                                           begin
-                                             write(outfile,PointerName(simple_type^.p));
-                                             pointerwritten:=true;
-                                           end
-                                          { structure }
-                                          else if (simple_type^.typ in [t_uniondef,t_structdef]) and
-                                                  (simple_type^.p1=nil) and (simple_type^.p2^.typ=t_id) then
-                                           begin
-                                             write(outfile,PointerName(simple_type^.p2^.p));
-                                             pointerwritten:=true;
-                                           end;
-                                        end;
-                                      if not pointerwritten then
-                                       begin
-                                         if in_args then
-                                         begin
-                                          write(outfile,'P');
-                                          pointerprefix:=true;
-                                         end
-                                         else
-                                          write(outfile,'^');
-                                         write_p_a_def(outfile,p^.p1,simple_type);
-                                         pointerprefix:=false;
-                                       end;
-                                     end;
-                                end;
-                           end;
-            t_arraydef : begin
-                             constant:=false;
-                             if assigned(p^.p2) then
-                              begin
-                                if p^.p2^.typ=t_id then
-                                 begin
-                                   val(p^.p2^.str,i,error);
-                                   if error=0 then
-                                    begin
-                                      dec(i);
-                                      constant:=true;
-                                    end;
-                                 end;
-                                if not constant then
-                                 begin
-                                   write(outfile,'array[0..(');
-                                   write_expr(outfile,p^.p2);
-                                   write(outfile,')-1] of ');
-                                 end
-                                else
-                                 begin
-                                   write(outfile,'array[0..',i,'] of ');
-                                 end;
-                              end
-                             else
-                              begin
-                                (* open array *)
-                                write(outfile,'array of ');
-                              end;
-                             flush(outfile);
-                             write_p_a_def(outfile,p^.p1,simple_type);
+                          shift(10);
+                          (* write arguments *)
+                          if assigned(p^.p1^.p2) then
+                            write_args(outfile,p^.p1^.p2);
+                          flush(outfile);
+                          popshift;
+                       end
+                     else
+                       begin
+                          write(outfile,'function ');
+                          shift(9);
+                          (* write arguments *)
+                          if assigned(p^.p1^.p2) then
+                            write_args(outfile,p^.p1^.p2);
+                          write(outfile,':');
+                          flush(outfile);
+
+                          old_in_args:=in_args;
+                          (* write pointers as P.... instead of ^.... *)
+                          in_args:=true;
+                          write_p_a_def(outfile,p^.p1^.p1,simple_type);
+                          in_args:=old_in_args;
+                          popshift;
+                       end
+                  end
+                else
+                  begin
+                     (* generate "pointer" ? *)
+                     if (simple_type^.typ=t_void) and (p^.p1=nil) then
+                       begin
+                         write(outfile,'pointer');
+                         flush(outfile);
+                       end
+                     else
+                       begin
+                         pointerwritten:=false;
+                         if (p^.p1=nil) and UsePPointers then
+                          begin
+                            if (simple_type^.typ=t_id) then
+                             begin
+                               write(outfile,PointerName(simple_type^.p));
+                               pointerwritten:=true;
+                             end
+                            { structure }
+                            else if (simple_type^.typ in [t_uniondef,t_structdef]) and
+                                    (simple_type^.p1=nil) and (simple_type^.p2^.typ=t_id) then
+                             begin
+                               write(outfile,PointerName(simple_type^.p2^.p));
+                               pointerwritten:=true;
+                             end;
                           end;
+                        if not pointerwritten then
+                         begin
+                           if in_args then
+                           begin
+                            write(outfile,'P');
+                            pointerprefix:=true;
+                           end
+                           else
+                            write(outfile,'^');
+                           write_p_a_def(outfile,p^.p1,simple_type);
+                           pointerprefix:=false;
+                         end;
+                       end;
+                  end;
+              end;
+            t_arraydef :
+              begin
+                constant:=false;
+                if assigned(p^.p2) then
+                 begin
+                   if p^.p2^.typ=t_id then
+                    begin
+                      val(p^.p2^.str,i,error);
+                      if error=0 then
+                       begin
+                         dec(i);
+                         constant:=true;
+                       end;
+                    end;
+                   if not constant then
+                    begin
+                      write(outfile,'array[0..(');
+                      write_expr(outfile,p^.p2);
+                      write(outfile,')-1] of ');
+                    end
+                   else
+                    begin
+                      write(outfile,'array[0..',i,'] of ');
+                    end;
+                 end
+                else
+                 begin
+                   (* open array *)
+                   write(outfile,'array of ');
+                 end;
+                flush(outfile);
+                write_p_a_def(outfile,p^.p1,simple_type);
+              end;
             else internalerror(1);
          end;
       end;
@@ -800,6 +891,14 @@ program h2pas;
             t_id :
               begin
                 if pointerprefix then
+                  if UseCtypesUnit then
+                  begin
+                    if not IsACType(p^.p) then
+                    begin
+                      PTypeList.Add('P'+p^.str);
+                    end;
+                  end
+                  else
                    PTypeList.Add('P'+p^.str);
                 if p^.intname then
                  write(outfile,p^.p)
@@ -808,7 +907,7 @@ program h2pas;
               end;
             { what can we do with void defs  ? }
             t_void :
-              write(outfile,'void');
+              write(outfile,'pointer');
             t_pointerdef :
               begin
                  pointerwritten:=false;
@@ -837,11 +936,19 @@ program h2pas;
                   begin
                     if in_args then
                     begin
-                     write(outfile,'P');
-                     pointerprefix:=true;
+                      if UseCTypesUnit and IsACType(p^.p1^.p) then
+                        write(outfile,'p')
+                      else
+                        write(outfile,'P');
+                      pointerprefix:=true;
                     end
                     else
-                     write(outfile,'^');
+                    begin
+                      if UseCTypesUnit and (IsACType(p^.p1^.p)=False) then
+                        write(outfile,'^')
+                      else
+                        write(outfile,'p');
+                    end;
                     write_type_specifier(outfile,p^.p1);
                     pointerprefix:=false;
                   end;
@@ -852,7 +959,8 @@ program h2pas;
                     (p^.p2^.typ=t_id) then
                    begin
                       if pointerprefix then
-                        PTypeList.Add('P'+p^.p2^.str);
+                        if UseCTypesUnit and (IsACType( p^.p2^.p )=False) then
+                          PTypeList.Add('P'+p^.p2^.str);
                       write(outfile,p^.p2^.p);
                    end
                  else
@@ -942,7 +1050,8 @@ program h2pas;
                     (p^.p1=nil) and (p^.p2^.typ=t_id) then
                    begin
                       if pointerprefix then
-                        PTypeList.Add('P'+p^.p2^.str);
+                        if UseCTypesUnit and (IsACType(p^.p2^.str)=false) then
+                          PTypeList.Add('P'+p^.p2^.str);
                      write(outfile,TypeName(p^.p2^.p));
                    end
                  else
@@ -951,7 +1060,7 @@ program h2pas;
                         writeln(outfile,'packed record')
                       else
                         writeln(outfile,'record');
-                      shift(3);
+                      shift(2);
                       hp1:=p^.p1;
 
                       (* walk through all members *)
@@ -963,8 +1072,9 @@ program h2pas;
                            hp3:=hp2^.p2;
                            while assigned(hp3) do
                              begin
-                                if not assigned(hp3^.p1^.p3) or
-                                   (hp3^.p1^.p3^.typ <> t_size_specifier) then
+                                if assigned(hp3^.p1) and
+                                   (not assigned(hp3^.p1^.p3) or
+                                   (hp3^.p1^.p3^.typ <> t_size_specifier)) then
                                   begin
                                      if is_sized then
                                        begin
@@ -984,7 +1094,8 @@ program h2pas;
                                      popshift;
                                   end;
                                 { size specifier  or default value ? }
-                                if assigned(hp3^.p1^.p3) then
+                                if assigned(hp3^.p1) and
+                                   assigned(hp3^.p1^.p3) then
                                   begin
                                      { we could use mask to implement this }
                                      { because we need to respect the positions }
@@ -1039,10 +1150,7 @@ program h2pas;
                                      if is_procvar then
                                        begin
                                           if not no_pop then
-                                            begin
-                                               write(outfile,';cdecl');
-                                               no_pop:=true;
-                                            end;
+                                            write(outfile,';cdecl');
                                           is_procvar:=false;
                                        end;
                                      writeln(outfile,';');
@@ -1084,7 +1192,7 @@ program h2pas;
                         writeln(outfile,'record');
                       shift(2);
                       writeln(outfile,aktspace,'case longint of');
-                      shift(3);
+                      shift(2);
                       l:=0;
                       hp1:=p^.p1;
 
@@ -1144,21 +1252,57 @@ program h2pas;
          end;
       end;
 
+
+    procedure write_statement_block(var outfile:text; p : presobject);
+      begin
+        writeln(outfile,aktspace,'begin');
+        while assigned(p) do
+          begin
+            shift(2);
+            if assigned(p^.p1) then
+              begin
+                case p^.p1^.typ of
+                  t_whilenode:
+                    begin
+                      write(outfile,aktspace,'while ');
+                      write_expr(outfile,p^.p1^.p1);
+                      writeln(outfile,' do');
+                      shift(2);
+                      write_statement_block(outfile,p^.p1^.p2);
+                      popshift;
+                    end;
+                  else
+                    begin
+                      write(outfile,aktspace);
+                      write_expr(outfile,p^.p1);
+                      writeln(outfile,';');
+                    end;
+                end;
+              end;
+            p:=p^.next;
+            popshift;
+          end;
+        writeln(outfile,aktspace,'end;');
+      end;
+
+
 %}
 
+%token _WHILE _FOR _DO _GOTO _CONTINUE _BREAK
 %token TYPEDEF DEFINE
 %token COLON SEMICOLON COMMA
 %token LKLAMMER RKLAMMER LECKKLAMMER RECKKLAMMER
 %token LGKLAMMER RGKLAMMER
 %token STRUCT UNION ENUM
 %token ID NUMBER CSTRING
-%token SHORT UNSIGNED LONG INT REAL _CHAR
+%token SHORT UNSIGNED LONG INT FLOAT _CHAR
 %token VOID _CONST
 %token _FAR _HUGE _NEAR
-%token _ASSIGN NEW_LINE SPACE_DEFINE
+%token NEW_LINE SPACE_DEFINE
 %token EXTERN STDCALL CDECL CALLBACK PASCAL WINAPI APIENTRY WINGDIAPI SYS_TRAP
 %token _PACKED
 %token ELLIPSIS
+%right _ASSIGN
 %right R_AND
 %left EQUAL UNEQUAL GT LT GTE LTE
 %left QUESTIONMARK COLON
@@ -1176,6 +1320,7 @@ program h2pas;
 %left COMMA
 %left STICK
 %token SIGNED
+%token INT8 INT16 INT32 INT64
 %%
 
 file : declaration_list
@@ -1233,182 +1378,406 @@ systrap_specifier:
      | { $$:=nil; }
      ;
 
-declaration :
-     dec_specifier type_specifier dec_modifier declarator_list systrap_specifier SEMICOLON
+statement :
+     expr SEMICOLON { $$:=$1; } |
+     _WHILE LKLAMMER expr RKLAMMER statement_list { $$:=new(presobject,init_two(t_whilenode,$3,$5)); }
+     ;
+
+
+statement_list : statement statement_list
      {
-      IsExtern:=false;
-      (* by default we must pop the args pushed on stack *)
-      no_pop:=false;
-      if (assigned($4)and assigned($4^.p1)and assigned($4^.p1^.p1))
-        and ($4^.p1^.p1^.typ=t_procdef) then
-         begin
-            repeat
-            If UseLib then
-              IsExtern:=true
-            else
-              IsExtern:=assigned($1)and($1^.str='extern');
-            no_pop:=assigned($3) and ($3^.str='no_pop');
+       $$:=new(presobject,init_one(t_statement_list,$1));
+       $$^.next:=$2;
+     } |
+     statement
+     {
+       $$:=new(presobject,init_one(t_statement_list,$1));
+     } |
+     SEMICOLON
+     {
+       $$:=new(presobject,init_one(t_statement_list,nil));
+     } |
+     {
+       $$:=new(presobject,init_one(t_statement_list,nil));
+     }
+     ;
 
-            if (block_type<>bt_func) and not(createdynlib) then
-              begin
-                writeln(outfile);
-                block_type:=bt_func;
-              end;
+statement_block :
+     LGKLAMMER statement_list RGKLAMMER { $$:=$2; }
+     ;
 
-            (* dyn. procedures must be put into a var block *)
-            if createdynlib then
-              begin
-                if (block_type<>bt_var) then
-                 begin
-                    if not(compactmode) then
-                      writeln(outfile);
-                    writeln(outfile,aktspace,'var');
-                    block_type:=bt_var;
-                 end;
-                shift(2);
-              end;
-            if not CompactMode then
-             begin
-               write(outfile,aktspace);
-               if not IsExtern then
-                write(implemfile,aktspace);
-             end;
-            (* distinguish between procedure and function *)
-            if assigned($2) then
-             if ($2^.typ=t_void) and ($4^.p1^.p1^.p1=nil) then
-              begin
-                if createdynlib then
+declaration :
+     dec_specifier type_specifier dec_modifier declarator_list statement_block
+     {
+       IsExtern:=false;
+       (* by default we must pop the args pushed on stack *)
+       no_pop:=false;
+       if (assigned($4)and assigned($4^.p1)and assigned($4^.p1^.p1))
+         and ($4^.p1^.p1^.typ=t_procdef) then
+          begin
+             repeat
+             If UseLib then
+               IsExtern:=true
+             else
+               IsExtern:=assigned($1)and($1^.str='extern');
+             no_pop:=assigned($3) and ($3^.str='no_pop');
+
+             if (block_type<>bt_func) and not(createdynlib) then
+               begin
+                 writeln(outfile);
+                 block_type:=bt_func;
+               end;
+
+             (* dyn. procedures must be put into a var block *)
+             if createdynlib then
+               begin
+                 if (block_type<>bt_var) then
                   begin
-                    write(outfile,$4^.p1^.p2^.p,' : procedure');
-                  end
-                else
-                  begin
-                    shift(10);
-                    write(outfile,'procedure ',$4^.p1^.p2^.p);
+                     if not(compactmode) then
+                       writeln(outfile);
+                     writeln(outfile,aktspace,'var');
+                     block_type:=bt_var;
                   end;
-                if assigned($4^.p1^.p1^.p2) then
-                  write_args(outfile,$4^.p1^.p1^.p2);
-                if createdynlib then
-                   begin
-                     loaddynlibproc.add('pointer('+$4^.p1^.p2^.p+'):=GetProcAddress(hlib,'''+$4^.p1^.p2^.p+''');');
-                     freedynlibproc.add($4^.p1^.p2^.p+':=nil;');
-                   end
-                 else if not IsExtern then
-                 begin
-                   write(implemfile,'procedure ',$4^.p1^.p2^.p);
-                   if assigned($4^.p1^.p1^.p2) then
-                    write_args(implemfile,$4^.p1^.p1^.p2);
-                 end;
-              end
-            else
+                 shift(2);
+               end;
+             if not CompactMode then
               begin
-                if createdynlib then
-                  begin
-                    write(outfile,$4^.p1^.p2^.p,' : function');
-                  end
-                else
-                  begin
-                    shift(9);
-                    write(outfile,'function ',$4^.p1^.p2^.p);
-                  end;
-
-                 if assigned($4^.p1^.p1^.p2) then
-                   write_args(outfile,$4^.p1^.p1^.p2);
-                 write(outfile,':');
-                 write_p_a_def(outfile,$4^.p1^.p1^.p1,$2);
+                write(outfile,aktspace);
+                if not IsExtern then
+                 write(implemfile,aktspace);
+              end;
+             (* distinguish between procedure and function *)
+             if assigned($2) then
+              if ($2^.typ=t_void) and ($4^.p1^.p1^.p1=nil) then
+               begin
                  if createdynlib then
                    begin
-                     loaddynlibproc.add('pointer('+$4^.p1^.p2^.p+'):=GetProcAddress(hlib,'''+$4^.p1^.p2^.p+''');');
-                     freedynlibproc.add($4^.p1^.p2^.p+':=nil;');
+                     write(outfile,$4^.p1^.p2^.p,' : procedure');
                    end
-                 else if not IsExtern then
+                 else
+                   begin
+                     shift(10);
+                     write(outfile,'procedure ',$4^.p1^.p2^.p);
+                   end;
+                 if assigned($4^.p1^.p1^.p2) then
+                   write_args(outfile,$4^.p1^.p1^.p2);
+                 if createdynlib then
+                    begin
+                      loaddynlibproc.add('pointer('+$4^.p1^.p2^.p+'):=GetProcAddress(hlib,'''+$4^.p1^.p2^.p+''');');
+                      freedynlibproc.add($4^.p1^.p2^.p+':=nil;');
+                    end
+                  else if not IsExtern then
                   begin
-                    write(implemfile,'function ',$4^.p1^.p2^.p);
+                    write(implemfile,'procedure ',$4^.p1^.p2^.p);
                     if assigned($4^.p1^.p1^.p2) then
                      write_args(implemfile,$4^.p1^.p1^.p2);
-                    write(implemfile,':');
-                    write_p_a_def(implemfile,$4^.p1^.p1^.p1,$2);
                   end;
-              end;
-            if assigned($5) then
-              write(outfile,';systrap ',$5^.p);
-            (* No CDECL in interface for Uselib *)
-            if IsExtern and (not no_pop) then
-              write(outfile,';cdecl');
-            popshift;
-            if createdynlib then
-              begin
-                writeln(outfile,';');
-              end
-            else if UseLib then
-              begin
-                if IsExtern then
-                 begin
-                   write (outfile,';external');
-                   If UseName then
-                    Write(outfile,' External_library name ''',$4^.p1^.p2^.p,'''');
-                 end;
-                writeln(outfile,';');
-              end
-            else
-              begin
-                writeln(outfile,';');
-                if not IsExtern then
-                 begin
-                   writeln(implemfile,';');
-                   writeln(implemfile,aktspace,'begin');
-                   writeln(implemfile,aktspace,'  { You must implement this function }');
-                   writeln(implemfile,aktspace,'end;');
-                 end;
-              end;
-            IsExtern:=false;
-            if not(compactmode) and not(createdynlib) then
-             writeln(outfile);
-           until not NeedEllipsisOverload;
-         end
-       else (* $4^.p1^.p1^.typ=t_procdef *)
-       if assigned($4)and assigned($4^.p1) then
-         begin
-            shift(2);
-            if block_type<>bt_var then
-              begin
-                 if not(compactmode) then
-                   writeln(outfile);
-                 writeln(outfile,aktspace,'var');
-              end;
-            block_type:=bt_var;
-
-            shift(3);
-
-            IsExtern:=assigned($1)and($1^.str='extern');
-            (* walk through all declarations *)
-            hp:=$4;
-            while assigned(hp) and assigned(hp^.p1) do
-              begin
-                 (* write new var name *)
-                 if assigned(hp^.p1^.p2) and assigned(hp^.p1^.p2^.p) then
-                   write(outfile,aktspace,hp^.p1^.p2^.p);
-                 write(outfile,' : ');
-                 shift(2);
-                 (* write its type *)
-                 write_p_a_def(outfile,hp^.p1^.p1,$2);
-                 if assigned(hp^.p1^.p2)and assigned(hp^.p1^.p2^.p)then
+               end
+             else
+               begin
+                 if createdynlib then
                    begin
-                      if isExtern then
-                        write(outfile,';cvar;external')
-                      else
-                        write(outfile,';cvar;public');
+                     write(outfile,$4^.p1^.p2^.p,' : function');
+                   end
+                 else
+                   begin
+                     shift(9);
+                     write(outfile,'function ',$4^.p1^.p2^.p);
                    end;
+
+                  if assigned($4^.p1^.p1^.p2) then
+                    write_args(outfile,$4^.p1^.p1^.p2);
+                  write(outfile,':');
+                  old_in_args:=in_args;
+                  (* write pointers as P.... instead of ^.... *)
+                  in_args:=true;
+                  write_p_a_def(outfile,$4^.p1^.p1^.p1,$2);
+                  in_args:=old_in_args;
+                  if createdynlib then
+                    begin
+                      loaddynlibproc.add('pointer('+$4^.p1^.p2^.p+'):=GetProcAddress(hlib,'''+$4^.p1^.p2^.p+''');');
+                      freedynlibproc.add($4^.p1^.p2^.p+':=nil;');
+                    end
+                  else if not IsExtern then
+                   begin
+                     write(implemfile,'function ',$4^.p1^.p2^.p);
+                     if assigned($4^.p1^.p1^.p2) then
+                       write_args(implemfile,$4^.p1^.p1^.p2);
+                     write(implemfile,':');
+
+                     old_in_args:=in_args;
+                     (* write pointers as P.... instead of ^.... *)
+                     in_args:=true;
+                     write_p_a_def(implemfile,$4^.p1^.p1^.p1,$2);
+                     in_args:=old_in_args;
+                   end;
+               end;
+             (* No CDECL in interface for Uselib *)
+             if IsExtern and (not no_pop) then
+               write(outfile,';cdecl');
+             popshift;
+             if createdynlib then
+               begin
                  writeln(outfile,';');
-                 popshift;
-                 hp:=hp^.p2;
+               end
+             else if UseLib then
+               begin
+                 if IsExtern then
+                  begin
+                    write (outfile,';external');
+                    If UseName then
+                     Write(outfile,' External_library name ''',$4^.p1^.p2^.p,'''');
+                  end;
+                 writeln(outfile,';');
+               end
+             else
+               begin
+                 writeln(outfile,';');
+                 if not IsExtern then
+                  begin
+                    writeln(implemfile,';');
+                    shift(2);
+                    if $5^.typ=t_statement_list then
+                      write_statement_block(implemfile,$5);
+                    popshift;
+                  end;
+               end;
+             IsExtern:=false;
+             if not(compactmode) and not(createdynlib) then
+              writeln(outfile);
+            until not NeedEllipsisOverload;
+          end
+        else (* $4^.p1^.p1^.typ=t_procdef *)
+        if assigned($4)and assigned($4^.p1) then
+          begin
+             shift(2);
+             if block_type<>bt_var then
+               begin
+                  if not(compactmode) then
+                    writeln(outfile);
+                  writeln(outfile,aktspace,'var');
+               end;
+             block_type:=bt_var;
+
+             shift(2);
+
+             IsExtern:=assigned($1)and($1^.str='extern');
+             (* walk through all declarations *)
+             hp:=$4;
+             while assigned(hp) and assigned(hp^.p1) do
+               begin
+                  (* write new var name *)
+                  if assigned(hp^.p1^.p2) and assigned(hp^.p1^.p2^.p) then
+                    write(outfile,aktspace,hp^.p1^.p2^.p);
+                  write(outfile,' : ');
+                  shift(2);
+                  (* write its type *)
+                  write_p_a_def(outfile,hp^.p1^.p1,$2);
+                  if assigned(hp^.p1^.p2)and assigned(hp^.p1^.p2^.p)then
+                    begin
+                       if isExtern then
+                         write(outfile,';cvar;external')
+                       else
+                         write(outfile,';cvar;public');
+                    end;
+                  writeln(outfile,';');
+                  popshift;
+                  hp:=hp^.p2;
+               end;
+             popshift;
+             popshift;
+          end;
+        if assigned($1) then
+          dispose($1,done);
+        if assigned($2) then
+          dispose($2,done);
+        if assigned($3) then
+          dispose($3,done);
+        if assigned($4) then
+          dispose($4,done);
+        if assigned($5) then
+          dispose($5,done);
+     }
+     | dec_specifier type_specifier dec_modifier declarator_list systrap_specifier SEMICOLON
+     {
+       IsExtern:=false;
+       (* by default we must pop the args pushed on stack *)
+       no_pop:=false;
+       if (assigned($4)and assigned($4^.p1)and assigned($4^.p1^.p1))
+         and ($4^.p1^.p1^.typ=t_procdef) then
+          begin
+             repeat
+             If UseLib then
+               IsExtern:=true
+             else
+               IsExtern:=assigned($1)and($1^.str='extern');
+             no_pop:=assigned($3) and ($3^.str='no_pop');
+
+             if (block_type<>bt_func) and not(createdynlib) then
+               begin
+                 writeln(outfile);
+                 block_type:=bt_func;
+               end;
+
+             (* dyn. procedures must be put into a var block *)
+             if createdynlib then
+               begin
+                 if (block_type<>bt_var) then
+                  begin
+                     if not(compactmode) then
+                       writeln(outfile);
+                     writeln(outfile,aktspace,'var');
+                     block_type:=bt_var;
+                  end;
+                 shift(2);
+               end;
+             if not CompactMode then
+              begin
+                write(outfile,aktspace);
+                if not IsExtern then
+                 write(implemfile,aktspace);
               end;
-            popshift;
-            popshift;
-         end;
-       if assigned($1)then  dispose($1,done);
-       if assigned($2)then  dispose($2,done);
-       if assigned($4)then  dispose($4,done);
+             (* distinguish between procedure and function *)
+             if assigned($2) then
+              if ($2^.typ=t_void) and ($4^.p1^.p1^.p1=nil) then
+               begin
+                 if createdynlib then
+                   begin
+                     write(outfile,$4^.p1^.p2^.p,' : procedure');
+                   end
+                 else
+                   begin
+                     shift(10);
+                     write(outfile,'procedure ',$4^.p1^.p2^.p);
+                   end;
+                 if assigned($4^.p1^.p1^.p2) then
+                   write_args(outfile,$4^.p1^.p1^.p2);
+                 if createdynlib then
+                    begin
+                      loaddynlibproc.add('pointer('+$4^.p1^.p2^.p+'):=GetProcAddress(hlib,'''+$4^.p1^.p2^.p+''');');
+                      freedynlibproc.add($4^.p1^.p2^.p+':=nil;');
+                    end
+                  else if not IsExtern then
+                  begin
+                    write(implemfile,'procedure ',$4^.p1^.p2^.p);
+                    if assigned($4^.p1^.p1^.p2) then
+                     write_args(implemfile,$4^.p1^.p1^.p2);
+                  end;
+               end
+             else
+               begin
+                 if createdynlib then
+                   begin
+                     write(outfile,$4^.p1^.p2^.p,' : function');
+                   end
+                 else
+                   begin
+                     shift(9);
+                     write(outfile,'function ',$4^.p1^.p2^.p);
+                   end;
+
+                  if assigned($4^.p1^.p1^.p2) then
+                    write_args(outfile,$4^.p1^.p1^.p2);
+                  write(outfile,':');
+                  write_p_a_def(outfile,$4^.p1^.p1^.p1,$2);
+                  if createdynlib then
+                    begin
+                      loaddynlibproc.add('pointer('+$4^.p1^.p2^.p+'):=GetProcAddress(hlib,'''+$4^.p1^.p2^.p+''');');
+                      freedynlibproc.add($4^.p1^.p2^.p+':=nil;');
+                    end
+                  else if not IsExtern then
+                   begin
+                     write(implemfile,'function ',$4^.p1^.p2^.p);
+                     if assigned($4^.p1^.p1^.p2) then
+                      write_args(implemfile,$4^.p1^.p1^.p2);
+                     write(implemfile,':');
+
+                     old_in_args:=in_args;
+                     (* write pointers as P.... instead of ^.... *)
+                     in_args:=true;
+                     write_p_a_def(implemfile,$4^.p1^.p1^.p1,$2);
+                     in_args:=old_in_args;
+                   end;
+               end;
+             if assigned($5) then
+               write(outfile,';systrap ',$5^.p);
+             (* No CDECL in interface for Uselib *)
+             if IsExtern and (not no_pop) then
+               write(outfile,';cdecl');
+             popshift;
+             if createdynlib then
+               begin
+                 writeln(outfile,';');
+               end
+             else if UseLib then
+               begin
+                 if IsExtern then
+                  begin
+                    write (outfile,';external');
+                    If UseName then
+                     Write(outfile,' External_library name ''',$4^.p1^.p2^.p,'''');
+                  end;
+                 writeln(outfile,';');
+               end
+             else
+               begin
+                 writeln(outfile,';');
+                 if not IsExtern then
+                  begin
+                    writeln(implemfile,';');
+                    writeln(implemfile,aktspace,'begin');
+                    writeln(implemfile,aktspace,'  { You must implement this function }');
+                    writeln(implemfile,aktspace,'end;');
+                  end;
+               end;
+             IsExtern:=false;
+             if not(compactmode) and not(createdynlib) then
+              writeln(outfile);
+            until not NeedEllipsisOverload;
+          end
+        else (* $4^.p1^.p1^.typ=t_procdef *)
+        if assigned($4)and assigned($4^.p1) then
+          begin
+             shift(2);
+             if block_type<>bt_var then
+               begin
+                  if not(compactmode) then
+                    writeln(outfile);
+                  writeln(outfile,aktspace,'var');
+               end;
+             block_type:=bt_var;
+
+             shift(2);
+
+             IsExtern:=assigned($1)and($1^.str='extern');
+             (* walk through all declarations *)
+             hp:=$4;
+             while assigned(hp) and assigned(hp^.p1) do
+               begin
+                  (* write new var name *)
+                  if assigned(hp^.p1^.p2) and assigned(hp^.p1^.p2^.p) then
+                    write(outfile,aktspace,hp^.p1^.p2^.p);
+                  write(outfile,' : ');
+                  shift(2);
+                  (* write its type *)
+                  write_p_a_def(outfile,hp^.p1^.p1,$2);
+                  if assigned(hp^.p1^.p2)and assigned(hp^.p1^.p2^.p)then
+                    begin
+                       if isExtern then
+                         write(outfile,';cvar;external')
+                       else
+                         write(outfile,';cvar;public');
+                    end;
+                  writeln(outfile,';');
+                  popshift;
+                  hp:=hp^.p2;
+               end;
+             popshift;
+             popshift;
+          end;
+        if assigned($1)then  dispose($1,done);
+        if assigned($2)then  dispose($2,done);
+        if assigned($4)then  dispose($4,done);
      } |
      special_type_specifier SEMICOLON
      {
@@ -1419,45 +1788,45 @@ declaration :
             writeln(outfile,aktspace,'type');
             block_type:=bt_type;
          end;
-       shift(3);
+       shift(2);
        if ( yyv[yysp-1]^.p2  <> nil ) then
          begin
-         (* write new type name *)
-         TN:=TypeName($1^.p2^.p);
-         PN:=PointerName($1^.p2^.p);
-         (* define a Pointer type also for structs *)
-         if UsePPointers and (Uppercase(tn)<>Uppercase(pn)) and
-            assigned($1) and ($1^.typ in [t_uniondef,t_structdef]) then
-          writeln(outfile,aktspace,PN,' = ^',TN,';');
-         write(outfile,aktspace,TN,' = ');
-         shift(2);
-         hp:=$1;
-         write_type_specifier(outfile,hp);
-         popshift;
-         (* enum_to_const can make a switch to const *)
-         if block_type=bt_type then
-          writeln(outfile,';');
-         writeln(outfile);
-         flush(outfile);
-         popshift;
-         if must_write_packed_field then
-           write_packed_fields_info(outfile,hp,TN);
-         if assigned(hp) then
-           dispose(hp,done)
+           (* write new type name *)
+           TN:=TypeName($1^.p2^.p);
+           PN:=PointerName($1^.p2^.p);
+           (* define a Pointer type also for structs *)
+           if UsePPointers and (Uppercase(tn)<>Uppercase(pn)) and
+              assigned($1) and ($1^.typ in [t_uniondef,t_structdef]) then
+            writeln(outfile,aktspace,PN,' = ^',TN,';');
+           write(outfile,aktspace,TN,' = ');
+           shift(2);
+           hp:=$1;
+           write_type_specifier(outfile,hp);
+           popshift;
+           (* enum_to_const can make a switch to const *)
+           if block_type=bt_type then
+            writeln(outfile,';');
+           writeln(outfile);
+           flush(outfile);
+           popshift;
+           if must_write_packed_field then
+             write_packed_fields_info(outfile,hp,TN);
+           if assigned(hp) then
+             dispose(hp,done)
          end
        else
          begin
-         TN:=TypeName(yyv[yysp-1]^.str);
-         PN:=PointerName(yyv[yysp-1]^.str);
-         if UsePPointers then writeln(outfile,aktspace,PN,' = ^',TN,';');
-         if PackRecords then
-            writeln(outfile, aktspace, TN, ' = packed record')
-         else
-            writeln(outfile, aktspace, TN, ' = record');
-         writeln(outfile, aktspace, '    {undefined structure}');
-         writeln(outfile, aktspace, '  end;');
-         writeln(outfile);
-         popshift;
+           TN:=TypeName(yyv[yysp-1]^.str);
+           PN:=PointerName(yyv[yysp-1]^.str);
+           if UsePPointers then writeln(outfile,aktspace,PN,' = ^',TN,';');
+           if PackRecords then
+              writeln(outfile, aktspace, TN, ' = packed record')
+           else
+              writeln(outfile, aktspace, TN, ' = record');
+           writeln(outfile, aktspace, '    {undefined structure}');
+           writeln(outfile, aktspace, '  end;');
+           writeln(outfile);
+           popshift;
          end;
      } |
      TYPEDEF STRUCT dname dname SEMICOLON
@@ -1474,7 +1843,7 @@ declaration :
        TN:=TypeName($4^.p);
        if Uppercase(tn)<>Uppercase(pn) then
         begin
-          shift(3);
+          shift(2);
           writeln(outfile,aktspace,PN,' = ',TN,';');
           popshift;
         end;
@@ -1494,7 +1863,7 @@ declaration :
             block_type:=bt_type;
          end;
        no_pop:=assigned($4) and ($4^.str='no_pop');
-       shift(3);
+       shift(2);
        (* walk through all declarations *)
        hp:=$5;
        if assigned(hp) then
@@ -1537,9 +1906,11 @@ declaration :
               writeln(outfile);
             writeln(outfile,aktspace,'type');
             block_type:=bt_type;
-         end;
+         end
+       else
+         writeln(outfile);
        no_pop:=assigned($3) and ($3^.str='no_pop');
-       shift(3);
+       shift(2);
        (* Get the name to write the type definition for, try
           to use the tag name first *)
        if assigned($2^.p2) then
@@ -1554,7 +1925,6 @@ declaration :
         end;
        (* write type definition *)
        is_procvar:=false;
-       writeln(outfile);
        TN:=TypeName(ph^.p);
        PN:=PointerName(ph^.p);
        if UsePPointers and (Uppercase(tn)<>Uppercase(pn)) and
@@ -1563,7 +1933,7 @@ declaration :
        (* write new type name *)
        write(outfile,aktspace,TN,' = ');
        shift(2);
-       write_type_specifier(outfile,$2);
+       write_p_a_def(outfile,$4^.p1^.p1,$2);
        popshift;
        (* if no_pop it is normal fpc calling convention *)
        if is_procvar and
@@ -1613,10 +1983,11 @@ declaration :
               writeln(outfile);
             writeln(outfile,aktspace,'type');
             block_type:=bt_type;
-         end;
-       shift(3);
+         end
+       else
+         writeln(outfile);
+       shift(2);
        (* write as pointer *)
-       writeln(outfile);
        writeln(outfile,'(* generic typedef  *)');
        writeln(outfile,aktspace,$2^.p,' = pointer;');
        flush(outfile);
@@ -1655,6 +2026,9 @@ define_dec :
              writeln(implemfile,aktspace,'{ return type might be wrong }   ');
            end;
         end;
+       if block_type<>bt_func then
+         writeln(outfile);
+
        block_type:=bt_func;
        write(outfile,aktspace,'function ',$2^.p);
        write(implemfile,aktspace,'function ',$2^.p);
@@ -1720,11 +2094,12 @@ define_dec :
          begin
             if block_type<>bt_const then
               begin
-                 writeln(outfile);
-                 writeln(outfile,aktspace,'const');
+                if block_type<>bt_func then
+                  writeln(outfile);
+                writeln(outfile,aktspace,'const');
               end;
             block_type:=bt_const;
-            shift(3);
+            shift(2);
             write(outfile,aktspace,$2^.p);
             write(outfile,' = ');
             flush(outfile);
@@ -1738,6 +2113,8 @@ define_dec :
          end
        else
          begin
+            if block_type<>bt_func then
+              writeln(outfile);
             if not stripinfo then
              begin
                writeln (outfile,aktspace,'{ was #define dname def_expr }');
@@ -1749,11 +2126,9 @@ define_dec :
             shift(2);
             if not assigned($4^.p3) then
               begin
-                 writeln(outfile,' : longint;');
-                 writeln(outfile,aktspace,'  { return type might be wrong }');
+                 writeln(outfile,' : longint; { return type might be wrong }');
                  flush(outfile);
-                 writeln(implemfile,' : longint;');
-                 writeln(implemfile,aktspace,'  { return type might be wrong }');
+                 writeln(implemfile,' : longint; { return type might be wrong }');
               end
             else
               begin
@@ -1914,7 +2289,6 @@ dname : ID { (*dname*)
            $$:=new(presobject,init_id(act_token));
            }
      ;
-
 special_type_name :
      SIGNED special_type_name
      {
@@ -1923,16 +2297,44 @@ special_type_name :
        if assigned(hp) then
         begin
           s:=strpas(hp^.p);
-          if s=UINT_STR then
-           s:=INT_STR
-          else if s=USHORT_STR then
-           s:=SHORT_STR
-          else if s=UCHAR_STR then
-           s:=CHAR_STR
-          else if s=QWORD_STR then
-           s:=INT64_STR
+          if UseCTypesUnit then
+          begin
+            if s=cint_STR then
+              s:=csint_STR
+            else if s=cshort_STR then
+              s:=csshort_STR
+            else if s=cchar_STR then
+              s:=cschar_STR
+            else if s=clong_STR then
+              s:=cslong_STR
+            else if s=clonglong_STR then
+              s:=cslonglong_STR
+            else if s=cint8_STR then
+              s:=cint8_STR
+            else if s=cint16_STR then
+              s:=cint16_STR
+            else if s=cint32_STR then
+              s:=cint32_STR
+            else if s=cint64_STR then
+              s:=cint64_STR
+            else
+             s:='';
+          end
           else
-           s:='';
+          begin
+            if s=UINT_STR then
+              s:=INT_STR
+            else if s=USHORT_STR then
+              s:=SHORT_STR
+            else if s=USMALL_STR then
+              s:=SMALL_STR
+            else if s=UCHAR_STR then
+              s:=CHAR_STR
+            else if s=QWORD_STR then
+              s:=INT64_STR
+            else
+              s:='';
+          end;
           if s<>'' then
            hp^.setstr(s);
         end;
@@ -1944,51 +2346,131 @@ special_type_name :
        if assigned(hp) then
         begin
           s:=strpas(hp^.p);
-          if s=INT_STR then
-           s:=UINT_STR
-          else if s=SHORT_STR then
-           s:=USHORT_STR
-          else if s=CHAR_STR then
-           s:=UCHAR_STR
-          else if s=INT64_STR then
-           s:=QWORD_STR
+          if UseCTypesUnit then
+          begin
+            if s=cint_STR then
+              s:=cuint_STR
+            else if s=cshort_STR then
+              s:=cushort_STR
+            else if s=cchar_STR then
+              s:=cuchar_STR
+            else if s=clong_STR then
+              s:=culong_STR
+            else if s=clonglong_STR then
+              s:=culonglong_STR
+            else if s=cint8_STR then
+              s:=cuint8_STR
+            else if s=cint16_STR then
+              s:=cuint16_STR
+            else if s=cint32_STR then
+              s:=cuint32_STR
+            else if s=cint64_STR then
+              s:=cuint64_STR
+            else
+              s:='';
+          end
           else
-           s:='';
+          begin
+            if s=INT_STR then
+              s:=UINT_STR
+            else if s=SHORT_STR then
+              s:=USHORT_STR
+            else if s=SMALL_STR then
+              s:=USMALL_STR
+            else if s=CHAR_STR then
+              s:=UCHAR_STR
+            else if s=INT64_STR then
+              s:=QWORD_STR
+            else
+              s:='';
+          end;
           if s<>'' then
            hp^.setstr(s);
         end;
      } |
      INT
      {
+     if UseCTypesUnit then
+       $$:=new(presobject,init_id(cint_STR))
+     else
        $$:=new(presobject,init_intid(INT_STR));
      } |
      LONG
      {
+     if UseCTypesUnit then
+       $$:=new(presobject,init_id(clong_STR))
+     else
        $$:=new(presobject,init_intid(INT_STR));
      } |
      LONG INT
      {
+     if UseCTypesUnit then
+       $$:=new(presobject,init_id(clong_STR))
+     else
        $$:=new(presobject,init_intid(INT_STR));
      } |
      LONG LONG
      {
+     if UseCTypesUnit then
+       $$:=new(presobject,init_id(clonglong_STR))
+     else
        $$:=new(presobject,init_intid(INT64_STR));
      } |
      LONG LONG INT
      {
+     if UseCTypesUnit then
+       $$:=new(presobject,init_id(clonglong_STR))
+     else
        $$:=new(presobject,init_intid(INT64_STR));
      } |
      SHORT
      {
-       $$:=new(presobject,init_intid(SHORT_STR));
+     if UseCTypesUnit then
+       $$:=new(presobject,init_id(cshort_STR))
+     else
+       $$:=new(presobject,init_intid(SMALL_STR));
      } |
      SHORT INT
      {
+     if UseCTypesUnit then
+       $$:=new(presobject,init_id(cshort_STR))
+     else
+       $$:=new(presobject,init_intid(SMALL_STR));
+     } |
+     INT8
+     {
+     if UseCTypesUnit then
+       $$:=new(presobject,init_id(cint8_STR))
+     else
        $$:=new(presobject,init_intid(SHORT_STR));
      } |
-     REAL
+     INT16
      {
-       $$:=new(presobject,init_intid(REAL_STR));
+     if UseCTypesUnit then
+       $$:=new(presobject,init_id(cint16_STR))
+     else
+       $$:=new(presobject,init_intid(SMALL_STR));
+     } |
+     INT32
+     {
+     if UseCTypesUnit then
+       $$:=new(presobject,init_id(cint32_STR))
+     else
+       $$:=new(presobject,init_intid(INT_STR));
+     } |
+     INT64
+     {
+     if UseCTypesUnit then
+       $$:=new(presobject,init_id(cint64_STR))
+     else
+       $$:=new(presobject,init_intid(INT64_STR));
+     } |
+     FLOAT
+     {
+     if UseCTypesUnit then
+       $$:=new(presobject,init_id(cfloat_STR))
+     else
+       $$:=new(presobject,init_intid(FLOAT_STR));
      } |
      VOID
      {
@@ -1996,10 +2478,16 @@ special_type_name :
      } |
      _CHAR
      {
+     if UseCTypesUnit then
+       $$:=new(presobject,init_id(cchar_STR))
+     else
        $$:=new(presobject,init_intid(CHAR_STR));
      } |
      UNSIGNED
      {
+     if UseCTypesUnit then
+       $$:=new(presobject,init_id(cunsigned_STR))
+     else
        $$:=new(presobject,init_intid(UINT_STR));
      }
      ;
@@ -2172,7 +2660,7 @@ declarator :
        $$:=hp;
        while assigned(hp^.p1) do
          hp:=hp^.p1;
-       hp^.p1:=new(presobject,init_two(t_arraydef,nil,nil));
+       hp^.p1:=new(presobject,init_one(t_pointerdef,nil));
      } |
      LKLAMMER declarator RKLAMMER
      {
@@ -2240,7 +2728,7 @@ abstract_declarator :
        $$:=hp;
        while assigned(hp^.p1) do
          hp:=hp^.p1;
-       hp^.p1:=new(presobject,init_two(t_arraydef,nil,nil));
+       hp^.p1:=new(presobject,init_one(t_pointerdef,nil));
      } |
      LKLAMMER abstract_declarator RKLAMMER
      {
@@ -2251,32 +2739,33 @@ abstract_declarator :
      }
      ;
 
-expr    :
-          shift_expr
-          {$$:=$1;}
+expr    : shift_expr
+          { $$:=$1; }
           ;
 
 shift_expr :
-          expr EQUAL expr
-          { $$:=new(presobject,init_bop(' = ',$1,$3));}
+          expr _ASSIGN expr
+          { $$:=new(presobject,init_bop(':=',$1,$3)); }
+          | expr EQUAL expr
+          { $$:=new(presobject,init_bop('=',$1,$3));}
           | expr UNEQUAL expr
-          { $$:=new(presobject,init_bop(' <> ',$1,$3));}
+          { $$:=new(presobject,init_bop('<>',$1,$3));}
           | expr GT expr
-          { $$:=new(presobject,init_bop(' > ',$1,$3));}
+          { $$:=new(presobject,init_bop('>',$1,$3));}
           | expr GTE expr
-          { $$:=new(presobject,init_bop(' >= ',$1,$3));}
+          { $$:=new(presobject,init_bop('>=',$1,$3));}
           | expr LT expr
-          { $$:=new(presobject,init_bop(' < ',$1,$3));}
+          { $$:=new(presobject,init_bop('<',$1,$3));}
           | expr LTE expr
-          { $$:=new(presobject,init_bop(' <= ',$1,$3));}
+          { $$:=new(presobject,init_bop('<=',$1,$3));}
           | expr _PLUS expr
-          { $$:=new(presobject,init_bop(' + ',$1,$3));}
-               | expr MINUS expr
-          { $$:=new(presobject,init_bop(' - ',$1,$3));}
+          { $$:=new(presobject,init_bop('+',$1,$3));}
+          | expr MINUS expr
+          { $$:=new(presobject,init_bop('-',$1,$3));}
                | expr STAR expr
-          { $$:=new(presobject,init_bop(' * ',$1,$3));}
+          { $$:=new(presobject,init_bop('*',$1,$3));}
                | expr _SLASH expr
-          { $$:=new(presobject,init_bop(' / ',$1,$3));}
+          { $$:=new(presobject,init_bop('/',$1,$3));}
                | expr _OR expr
           { $$:=new(presobject,init_bop(' or ',$1,$3));}
                | expr _AND expr
@@ -2288,10 +2777,11 @@ shift_expr :
                | expr _SHR expr
           { $$:=new(presobject,init_bop(' shr ',$1,$3));}
           | expr QUESTIONMARK colon_expr
-          { $3^.p1:=$1;
-          $$:=$3;
-          inc(if_nb);
-          $$^.p:=strpnew('if_local'+str(if_nb));
+          {
+            $3^.p1:=$1;
+            $$:=$3;
+            inc(if_nb);
+            $$^.p:=strpnew('if_local'+str(if_nb));
           } |
           unary_expr {$$:=$1;}
           ;
@@ -2340,6 +2830,10 @@ unary_expr:
      MINUS unary_expr
      {
      $$:=new(presobject,init_preop('-',$2));
+     }|
+     _PLUS unary_expr
+     {
+     $$:=new(presobject,init_preop('+',$2));
      }|
      _AND unary_expr %prec R_AND
      {
@@ -2484,6 +2978,12 @@ begin
      writeln(headerfile,'unit ',unitname,';');
      writeln(headerfile,'interface');
      writeln(headerfile);
+     if UseCTypesUnit then
+     begin
+       writeln(headerfile,'uses');
+       writeln(headerfile,'  ctypes;');
+       writeln(headerfile);
+     end;
      writeln(headerfile,'{');
      writeln(headerfile,'  Automatically converted by H2Pas ',version,' from ',inputfilename);
      writeln(headerfile,'  The following command line parameters were used:');
@@ -2595,15 +3095,10 @@ begin
   if createdynlib then
     begin
       writeln(outfile,'  uses');
-      writeln(outfile,'    SysUtils,');
-      writeln(outfile,'{$ifdef Win32}');
-      writeln(outfile,'    Windows;');
-      writeln(outfile,'{$else}');
-      writeln(outfile,'    DLLFuncs;');
-      writeln(outfile,'{$endif win32}');
+      writeln(outfile,'    SysUtils, dynlibs;');
       writeln(outfile);
       writeln(outfile,'  var');
-      writeln(outfile,'    hlib : thandle;');
+      writeln(outfile,'    hlib : tlibhandle;');
       writeln(outfile);
       writeln(outfile);
       writeln(outfile,'  procedure Free',unitname,';');
@@ -2696,28 +3191,3 @@ begin
   freedynlibproc.free;
   loaddynlibproc.free;
 end.
-
-{
-  $Log: h2pas.y,v $
-  Revision 1.10  2005/02/20 11:09:41  florian
-    + added -P:
-      allows to generate headers which load proc. dyn. from libs
-
-  Revision 1.9  2004/09/08 22:21:41  carl
-    + support for creating packed records
-    * var parameter bugfixes
-
-  Revision 1.8  2004/08/13 02:35:29  carl
-    + bugfixes with C++ comments, they are now placed above the definition
-    * some bugfixes with the _label reserved word.
-
-  Revision 1.7  2004/06/20 17:56:05  marco
-   Patch from Christian Iversen. ioresult check when opening for output
-
-  Revision 1.6  2003/02/13 22:20:24  michael
-  + Patch from Jeff Pohlmeyer to process empty structs
-
-  Revision 1.5  2002/09/07 15:40:33  peter
-    * old logs removed and tabs fixed
-
-}

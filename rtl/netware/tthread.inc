@@ -1,5 +1,4 @@
 {
-    $Id: tthread.inc,v 1.5 2005/02/25 21:41:09 florian Exp $
     This file is part of the Free Component Library (FCL)
     Copyright (c) 2003-2004 Armin Diehl, member of the Free Pascal
     development team
@@ -126,31 +125,8 @@ begin
 end;
 
 
-{ TThread }
-function ThreadProc(args:pointer): Integer;
-var
-  FreeThread: Boolean;
-  Thread : TThread absolute args;
-begin
-  try
-    Thread.Execute;
-  except
-    Thread.FFatalException := TObject(AcquireExceptionObject);
-  end;
-  FreeThread := Thread.FFreeOnTerminate;
-  ThreadProc := Thread.FReturnValue;
-  Thread.FFinished := True;
-  Thread.DoTerminate;
-  if FreeThread then
-  begin
-    Thread.Destroy;
-    Thread.Free;
-  end;
-  EndThread(Result);
-end;
-
-
-constructor TThread.Create(CreateSuspended: Boolean);
+constructor TThread.Create(CreateSuspended: Boolean;
+                           const StackSize: SizeUInt = DefaultStackSize);
 var
   Flags: Integer;
 begin
@@ -256,13 +232,3 @@ begin
     FHandle := 0;
 end;
 
-{
-  $Log: tthread.inc,v $
-  Revision 1.5  2005/02/25 21:41:09  florian
-    * generic tthread.synchronize
-    * delphi compatible wakemainthread
-
-  Revision 1.4  2005/02/14 17:13:30  peter
-    * truncate log
-
-}

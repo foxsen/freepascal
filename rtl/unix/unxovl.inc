@@ -1,5 +1,4 @@
 {
-    $Id: unxovl.inc,v 1.5 2005/02/14 17:13:31 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2002 by Marco van de Voort
 
@@ -14,22 +13,9 @@
 
  **********************************************************************}
 
-Function StatFS(Path:ansistring;Var Info:Tstatfs):cint;
-
-{
-  Get all information on a fileSystem, and return it in Info.
-  Path is the name of a file/directory on the fileSystem you wish to
-  investigate.
-}
+Function fpStatFS(Path:ansistring;Info:PStatfs):cint;
 
 begin
-  statfs:=statfs(pchar(path),info);
+  fpstatfs:=fpstatfs(pchar(path),info);
 end;
-
-{
- $Log: unxovl.inc,v $
- Revision 1.5  2005/02/14 17:13:31  peter
-   * truncate log
-
-}
 

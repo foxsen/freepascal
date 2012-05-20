@@ -1,5 +1,4 @@
 {
-    $Id: ncpuadd.pas,v 1.29 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 2000-2002 by Florian Klaempfl
 
     Code generation for add nodes on the SPARC
@@ -48,8 +47,8 @@ interface
     uses
       systems,
       cutils,verbose,
-      paramgr,
-      aasmtai,aasmcpu,defutil,
+      paramgr,procinfo,
+      aasmtai,aasmdata,aasmcpu,defutil,
       cgbase,cgcpu,cgutils,
       cpupara,
       ncon,nset,nadd,
@@ -69,7 +68,7 @@ interface
           else
             if not(unsigned) then
               begin
-                if nf_swaped in flags then
+                if nf_swapped in flags then
                   case NodeType of
                     ltn:
                       GetResFlags:=F_G;
@@ -94,7 +93,7 @@ interface
               end
             else
               begin
-                if nf_swaped in Flags then
+                if nf_swapped in Flags then
                   case NodeType of
                     ltn:
                       GetResFlags:=F_A;
@@ -130,7 +129,7 @@ interface
             result:=F_FNE;
           else
             begin
-              if nf_swaped in Flags then
+              if nf_swapped in Flags then
                 case NodeType of
                   ltn:
                     result:=F_FG;
@@ -162,15 +161,15 @@ interface
         op : TAsmOp;
       begin
         pass_left_right;
-        if (nf_swaped in flags) then
+        if (nf_swapped in flags) then
           swapleftright;
 
         { force fpureg as location, left right doesn't matter
           as both will be in a fpureg }
-        location_force_fpureg(exprasmlist,left.location,true);
-        location_force_fpureg(exprasmlist,right.location,(left.location.loc<>LOC_CFPUREGISTER));
+        location_force_fpureg(current_asmdata.CurrAsmList,left.location,true);
+        location_force_fpureg(current_asmdata.CurrAsmList,right.location,(left.location.loc<>LOC_CFPUREGISTER));
 
-        location_reset(location,LOC_FPUREGISTER,def_cgsize(resulttype.def));
+        location_reset(location,LOC_FPUREGISTER,def_cgsize(resultdef));
         if left.location.loc<>LOC_CFPUREGISTER then
           location.register:=left.location.register
         else
@@ -209,7 +208,7 @@ interface
             internalerror(200306014);
         end;
 
-        exprasmlist.concat(taicpu.op_reg_reg_reg(op,
+        current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_reg(op,
            left.location.register,right.location.register,location.register));
       end;
 
@@ -219,13 +218,13 @@ interface
         op : tasmop;
       begin
         pass_left_right;
-        if (nf_swaped in flags) then
+        if (nf_swapped in flags) then
           swapleftright;
 
         { force fpureg as location, left right doesn't matter
           as both will be in a fpureg }
-        location_force_fpureg(exprasmlist,left.location,true);
-        location_force_fpureg(exprasmlist,right.location,true);
+        location_force_fpureg(current_asmdata.CurrAsmList,left.location,true);
+        location_force_fpureg(current_asmdata.CurrAsmList,right.location,true);
 
         location_reset(location,LOC_FLAGS,OS_NO);
         location.resflags:=getfpuresflags;
@@ -234,10 +233,10 @@ interface
           op:=A_FCMPd
         else
           op:=A_FCMPs;
-        exprasmlist.concat(taicpu.op_reg_reg(op,
+        current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(op,
              left.location.register,right.location.register));
         { Delay slot (can only contain integer operation) }
-        exprasmlist.concat(taicpu.op_none(A_NOP));
+        current_asmdata.CurrAsmList.concat(taicpu.op_none(A_NOP));
       end;
 
 
@@ -247,9 +246,9 @@ interface
         force_reg_left_right(true,true);
 
         if right.location.loc = LOC_CONSTANT then
-          tcgsparc(cg).handle_reg_const_reg(exprasmlist,A_SUBcc,left.location.register,right.location.value,NR_G0)
+          tcgsparc(cg).handle_reg_const_reg(current_asmdata.CurrAsmList,A_SUBcc,left.location.register,right.location.value,NR_G0)
         else
-          exprasmlist.concat(taicpu.op_reg_reg_reg(A_SUBcc,left.location.register,right.location.register,NR_G0));
+          current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_reg(A_SUBcc,left.location.register,right.location.register,NR_G0));
 
         location_reset(location,LOC_FLAGS,OS_NO);
         location.resflags:=getresflags(true);
@@ -257,17 +256,38 @@ interface
 
 
     procedure tsparcaddnode.second_cmpsmallset;
+      var
+        tmpreg : tregister;
       begin
         pass_left_right;
-        force_reg_left_right(true,true);
-
-        if right.location.loc = LOC_CONSTANT then
-          tcgsparc(cg).handle_reg_const_reg(exprasmlist,A_SUBcc,left.location.register,right.location.value,NR_G0)
-        else
-          exprasmlist.concat(taicpu.op_reg_reg_reg(A_SUBcc,left.location.register,right.location.register,NR_G0));
 
         location_reset(location,LOC_FLAGS,OS_NO);
-        location.resflags:=getresflags(true);
+
+        force_reg_left_right(false,false);
+
+        case nodetype of
+          equaln,
+          unequaln:
+            begin
+              current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_reg(A_SUBcc,left.location.register,right.location.register,NR_G0));
+              location.resflags:=getresflags(true);
+            end;
+          lten,
+          gten:
+            begin
+              if (not(nf_swapped in flags) and
+                  (nodetype = lten)) or
+                 ((nf_swapped in flags) and
+                  (nodetype = gten)) then
+                swapleftright;
+              tmpreg:=cg.getintregister(current_asmdata.CurrAsmList,location.size);
+              current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_reg(A_AND,left.location.register,right.location.register,tmpreg));
+              current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_reg(A_SUBcc,tmpreg,right.location.register,NR_G0));
+              location.resflags:=F_E;
+            end;
+          else
+            internalerror(2012042701);
+        end;
       end;
 
 
@@ -283,11 +303,11 @@ interface
            case nodetype of
               ltn,gtn:
                 begin
-                   cg.a_jmp_flags(exprasmlist,getresflags(unsigned),truelabel);
+                   cg.a_jmp_flags(current_asmdata.CurrAsmList,getresflags(unsigned),current_procinfo.CurrTrueLabel);
                    { cheat a little bit for the negative test }
-                   toggleflag(nf_swaped);
-                   cg.a_jmp_flags(exprasmlist,getresflags(unsigned),falselabel);
-                   toggleflag(nf_swaped);
+                   toggleflag(nf_swapped);
+                   cg.a_jmp_flags(current_asmdata.CurrAsmList,getresflags(unsigned),current_procinfo.CurrFalseLabel);
+                   toggleflag(nf_swapped);
                 end;
               lten,gten:
                 begin
@@ -296,19 +316,19 @@ interface
                      nodetype:=ltn
                    else
                      nodetype:=gtn;
-                   cg.a_jmp_flags(exprasmlist,getresflags(unsigned),truelabel);
+                   cg.a_jmp_flags(current_asmdata.CurrAsmList,getresflags(unsigned),current_procinfo.CurrTrueLabel);
                    { cheat for the negative test }
                    if nodetype=ltn then
                      nodetype:=gtn
                    else
                      nodetype:=ltn;
-                   cg.a_jmp_flags(exprasmlist,getresflags(unsigned),falselabel);
+                   cg.a_jmp_flags(current_asmdata.CurrAsmList,getresflags(unsigned),current_procinfo.CurrFalseLabel);
                    nodetype:=oldnodetype;
                 end;
               equaln:
-                cg.a_jmp_flags(exprasmlist,F_NE,falselabel);
+                cg.a_jmp_flags(current_asmdata.CurrAsmList,F_NE,current_procinfo.CurrFalseLabel);
               unequaln:
-                cg.a_jmp_flags(exprasmlist,F_NE,truelabel);
+                cg.a_jmp_flags(current_asmdata.CurrAsmList,F_NE,current_procinfo.CurrTrueLabel);
            end;
         end;
 
@@ -321,18 +341,18 @@ interface
                 begin
                    { the comparisaion of the low dword have to be }
                    {  always unsigned!                            }
-                   cg.a_jmp_flags(exprasmlist,getresflags(true),truelabel);
-                   cg.a_jmp_always(exprasmlist,falselabel);
+                   cg.a_jmp_flags(current_asmdata.CurrAsmList,getresflags(true),current_procinfo.CurrTrueLabel);
+                   cg.a_jmp_always(current_asmdata.CurrAsmList,current_procinfo.CurrFalseLabel);
                 end;
               equaln:
                 begin
-                   cg.a_jmp_flags(exprasmlist,F_NE,falselabel);
-                   cg.a_jmp_always(exprasmlist,truelabel);
+                   cg.a_jmp_flags(current_asmdata.CurrAsmList,F_NE,current_procinfo.CurrFalseLabel);
+                   cg.a_jmp_always(current_asmdata.CurrAsmList,current_procinfo.CurrTrueLabel);
                 end;
               unequaln:
                 begin
-                   cg.a_jmp_flags(exprasmlist,F_NE,truelabel);
-                   cg.a_jmp_always(exprasmlist,falselabel);
+                   cg.a_jmp_flags(current_asmdata.CurrAsmList,F_NE,current_procinfo.CurrTrueLabel);
+                   cg.a_jmp_always(current_asmdata.CurrAsmList,current_procinfo.CurrFalseLabel);
                 end;
            end;
         end;
@@ -341,14 +361,14 @@ interface
         pass_left_right;
         force_reg_left_right(false,false);
 
-        unsigned:=not(is_signed(left.resulttype.def)) or
-                  not(is_signed(right.resulttype.def));
+        unsigned:=not(is_signed(left.resultdef)) or
+                  not(is_signed(right.resultdef));
 
         location_reset(location,LOC_JUMP,OS_NO);
 
-        exprasmlist.concat(taicpu.op_reg_reg(A_CMP,left.location.register64.reghi,right.location.register64.reghi));
+        current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_CMP,left.location.register64.reghi,right.location.register64.reghi));
         firstjmp64bitcmp;
-        exprasmlist.concat(taicpu.op_reg_reg(A_CMP,left.location.register64.reglo,right.location.register64.reglo));
+        current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_CMP,left.location.register64.reglo,right.location.register64.reglo));
         secondjmp64bitcmp;
       end;
 
@@ -360,13 +380,13 @@ interface
         pass_left_right;
         force_reg_left_right(true,true);
 
-        unsigned:=not(is_signed(left.resulttype.def)) or
-                  not(is_signed(right.resulttype.def));
+        unsigned:=not(is_signed(left.resultdef)) or
+                  not(is_signed(right.resultdef));
 
         if right.location.loc = LOC_CONSTANT then
-          tcgsparc(cg).handle_reg_const_reg(exprasmlist,A_SUBcc,left.location.register,right.location.value,NR_G0)
+          tcgsparc(cg).handle_reg_const_reg(current_asmdata.CurrAsmList,A_SUBcc,left.location.register,right.location.value,NR_G0)
         else
-          exprasmlist.concat(taicpu.op_reg_reg_reg(A_SUBcc,left.location.register,right.location.register,NR_G0));
+          current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_reg(A_SUBcc,left.location.register,right.location.register,NR_G0));
 
         location_reset(location,LOC_FLAGS,OS_NO);
         location.resflags:=getresflags(unsigned);
@@ -375,9 +395,3 @@ interface
 begin
   caddnode:=tsparcaddnode;
 end.
-{
-  $Log: ncpuadd.pas,v $
-  Revision 1.29  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

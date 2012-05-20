@@ -1,5 +1,4 @@
 {
-    $Id: varutilh.inc,v 1.10 2005/02/25 14:39:31 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2000,2001 by the Free Pascal development team
 
@@ -16,37 +15,37 @@
 
  **********************************************************************}
 
-
-{$ifdef HASVARIANT}
 Type
-  EVarianterror = Class(Exception)
-    ErrCode : longint;
-    Constructor CreateCode(Code : Longint);
-  end;
+	  TVarTypeToElementInfo = Record
+ 				   Validbase   : Boolean;	// COM basetype?
+				   ValidElement: Boolean;       // allowable in varrarray ?	
+				   Size	       : Longint;	// elementsize
+				   Flags       : Word;		// see below
+				  end;				
 
 { Variant functions }
 function VariantChangeTypeEx(var VargDest: TVarData; const VargSrc: TVarData; LCID: Integer; Flags: Word; VarType: Word): HRESULT; stdcall;
 function VariantClear(var Varg: TVarData): HRESULT; stdcall;
 function VariantCopy(var VargDest: TVarData; const VargSrc: TVarData): HRESULT; stdcall;
 function VariantCopyInd(var VargDest: TVarData;  const VargSrc: TVarData): HRESULT; stdcall;
-function VariantInit(var Varg: TVarData): HRESULT; stdcall;
+procedure VariantInit(var Varg: TVarData); stdcall;
 
 {  Variant array functions }
 
 function SafeArrayAccessData(psa: PVarArray; var ppvdata: Pointer): HRESULT; stdcall;
 function SafeArrayAllocData(psa: PVarArray): HRESULT; stdcall;
-function SafeArrayAllocDescriptor(DimCount: SizeInt; var psa: PVarArray): HRESULT; stdcall;
+function SafeArrayAllocDescriptor(DimCount: longword; var psa: PVarArray): HRESULT; stdcall;
 function SafeArrayCopy(psa: PVarArray; var psaout: PVarArray): HRESULT; stdcall;
 function SafeArrayCopyData(psa, psaOut: PVarArray): HRESULT; stdcall;
-function SafeArrayCreate(VarType, Dim: SizeInt; const Bounds: TVarArrayBoundArray): PVarArray; stdcall;
+function SafeArrayCreate(VarType, Dim: dword; const Bounds: TVarArrayBoundArray): PVarArray; stdcall;
 function SafeArrayDestroy(psa: PVarArray): HRESULT; stdcall;
 function SafeArrayDestroyData(psa: PVarArray): HRESULT; stdcall;
 function SafeArrayDestroyDescriptor(psa: PVarArray): HRESULT; stdcall;
-function SafeArrayGetDim(psa: PVarArray): SizeInt; stdcall;
+function SafeArrayGetDim(psa: PVarArray):HRESULT; stdcall;
 function SafeArrayGetElemsize(psa: PVarArray): LongWord; stdcall;
 function SafeArrayGetElement(psa: PVarArray; Indices: PVarArrayCoorArray;  Data: Pointer): HRESULT; stdcall;
-function SafeArrayGetLBound(psa: PVarArray; Dim: SizeInt;  var LBound: SizeInt): HRESULT; stdcall;
-function SafeArrayGetUBound(psa: PVarArray; Dim: SizeInt;  var UBound: SizeInt): HRESULT; stdcall;
+function SafeArrayGetLBound(psa: PVarArray; Dim: longword;  var LBound: longint): HRESULT; stdcall;
+function SafeArrayGetUBound(psa: PVarArray; Dim: longword;  var UBound: longint): HRESULT; stdcall;
 function SafeArrayLock(psa: PVarArray): HRESULT; stdcall;
 function SafeArrayPtrOfIndex(psa: PVarArray; Indices: PVarArrayCoorArray;  var Address: Pointer): HRESULT; stdcall;
 function SafeArrayPutElement(psa: PVarArray; Indices: PVarArrayCoorArray;  const Data: Pointer): HRESULT; stdcall;
@@ -56,43 +55,46 @@ function SafeArrayUnlock(psa: PVarArray): HRESULT; stdcall;
 
 { Conversion routines NOT in windows oleaut }
 
-Function VariantToSmallInt(Const VargSrc : TVarData) : SmallInt;
-Function VariantToLongint(Const VargSrc : TVarData) : Longint;
-Function VariantToShortint(Const VargSrc : TVarData) : ShortInt;
-Function VariantToCardinal(Const VargSrc : TVarData) : Cardinal;
-Function VariantToSingle(Const VargSrc : TVarData) : Single;
-Function VariantToDouble(Const VargSrc : TVarData) : Double;
-Function VariantToCurrency(Const VargSrc : TVarData) : Currency;
-Function VariantToDate(Const VargSrc : TVarData) : TDateTime;
-Function VariantToBoolean(Const VargSrc : TVarData) : Boolean;
-Function VariantToByte(Const VargSrc : TVarData) : Byte;
-Function VariantToInt64(Const VargSrc : TVarData ) : Int64;
-Function VariantToQWord(Const VargSrc : TVarData ) : Qword;
-Function VariantToWideString(Const VargSrc : TVarData) : WideString;
-Function VariantToAnsiString(Const VargSrc : TVarData) : AnsiString;
-Function VariantToShortString(Const VargSrc : TVarData) : ShortString;
+function VariantToSmallInt(const VargSrc : TVarData) : SmallInt;
+function VariantToLongint(const VargSrc : TVarData) : Longint;
+function VariantToShortint(const VargSrc : TVarData) : ShortInt;
+function VariantToCardinal(const VargSrc : TVarData) : Cardinal;
+{$ifndef FPUNONE}
+function VariantToSingle(const VargSrc : TVarData) : Single;
+function VariantToDouble(const VargSrc : TVarData) : Double;
+function VariantToDate(const VargSrc : TVarData) : TDateTime;
+{$endif}
+function VariantToCurrency(const VargSrc : TVarData) : Currency;
+function VariantToBoolean(const VargSrc : TVarData) : Boolean;
+function VariantToByte(const VargSrc : TVarData) : Byte;
+function VariantToInt64(const VargSrc : TVarData ) : Int64;
+function VariantToQWord(const VargSrc : TVarData ) : Qword;
+function VariantToWideString(const VargSrc : TVarData) : WideString;
+function VariantToAnsiString(const VargSrc : TVarData) : AnsiString;
+function VariantToShortString(const VargSrc : TVarData) : ShortString;
 
 {Debug routines }
-Procedure DumpVariant(Const VArgSrc : TVarData);
-Procedure DumpVariant(Var F : Text; Const VArgSrc : TVarData);
+procedure DumpVariant(const VSrc : Variant);
+procedure DumpVariant(const aName: string; const VSrc : Variant);
+procedure DumpVariant(var F : Text; const VSrc : Variant);
+procedure DumpVariant(var F : Text; const aName: string; const VSrc : Variant);
+
+procedure DumpVariant(const VArgSrc : TVarData);
+procedure DumpVariant(const aName: string; const VArgSrc : TVarData);
+procedure DumpVariant(var F : Text; const VArgSrc : TVarData);
+procedure DumpVariant(var F : Text; const aName: string; const VArgSrc : TVarData);
 
 
+
+{$IFDEF DEBUG_VARUTILS}
+var
+  __DEBUG_VARUTILS: Boolean;
+{$ENDIF}
+
+
+{$i varerror.inc}
 // Names match the ones in Borland varutils unit.
-
 const
-  VAR_OK            = HRESULT($00000000);
-  VAR_PARAMNOTFOUND = HRESULT($80020004);
-  VAR_TYPEMISMATCH  = HRESULT($80020005);
-  VAR_BADVARTYPE    = HRESULT($80020008);
-  VAR_EXCEPTION     = HRESULT($80020009);
-  VAR_OVERFLOW      = HRESULT($8002000A);
-  VAR_BADINDEX      = HRESULT($8002000B);
-  VAR_ARRAYISLOCKED = HRESULT($8002000D);
-  VAR_NOTIMPL       = HRESULT($80004001);
-  VAR_OUTOFMEMORY   = HRESULT($8007000E);
-  VAR_INVALIDARG    = HRESULT($80070057);
-  VAR_UNEXPECTED    = HRESULT($8000FFFF);
-
   ARR_NONE          = $0000;
   ARR_FIXEDSIZE     = $0010;
   ARR_OLESTR        = $0100;
@@ -100,14 +102,29 @@ const
   ARR_DISPATCH      = $0400;
   ARR_VARIANT       = $0800;
 
-{$endif HASVARIANT}
+  VAR_LOCALE_USER_DEFAULT = $400; // = Windows.LOCALE_USER_DEFAULT
 
-{
-  $Log: varutilh.inc,v $
-  Revision 1.10  2005/02/25 14:39:31  peter
-    * 64bit fixes
-
-  Revision 1.9  2005/02/14 17:13:31  peter
-    * truncate log
-
-}
+  // only the byval types.
+  CVarTypeToElementInfo : array[varempty..varqword] of TVarTypeToElementInfo = (
+   {varempty    }     (Validbase :  true     ;ValidElement:  true    ;Size:     0       ;Flags :  ARR_NONE),
+   {varnull     }     (Validbase :  true     ;ValidElement:  true    ;Size:     0       ;Flags :  ARR_NONE),
+   {varsmallint }     (Validbase :  true     ;ValidElement:  true    ;Size:     2       ;Flags :  ARR_NONE),
+   {varinteger  }     (Validbase :  true     ;ValidElement:  true    ;Size:     4       ;Flags :  ARR_NONE),
+   {varsingle   }     (Validbase :  true     ;ValidElement:  true    ;Size:     4       ;Flags :  ARR_NONE),
+   {vardouble   }     (Validbase :  true     ;ValidElement:  true    ;Size:     8       ;Flags :  ARR_NONE),
+   {varcurrency }     (Validbase :  true     ;ValidElement:  true    ;Size:     8       ;Flags :  ARR_NONE),
+   {vardate     }     (Validbase :  true     ;ValidElement:  true    ;Size:     8       ;Flags :  ARR_NONE),
+   {varolestr   }     (Validbase :  true     ;ValidElement:  true    ;Size:     4       ;Flags :  ARR_OLESTR),
+   {vardispatch }     (Validbase :  true     ;ValidElement:  true    ;Size:     4       ;Flags :  ARR_DISPATCH),
+   {varerror    }     (Validbase :  true     ;ValidElement:  true    ;Size:     4       ;Flags :  ARR_NONE),
+   {varboolean  }     (Validbase :  true     ;ValidElement:  true    ;Size:     2       ;Flags :  ARR_NONE),
+   {varvariant  }     (Validbase :  true     ;ValidElement:  true    ;Size:    16       ;Flags :  ARR_NONE),
+   {varunknown  }     (Validbase :  true     ;ValidElement:  true    ;Size:     4       ;Flags :  ARR_VARIANT),
+   {vardecimal  }     (Validbase :  false    ;ValidElement:  true    ;Size:    14       ;Flags :  ARR_UNKNOWN),
+   {varunused1}	      (ValidBase :  false    ;ValidElement:  false    ;Size:    4       ;Flags :  ARR_NONE), 	
+   {varshortint }     (Validbase :  true     ;ValidElement:  true    ;Size:     1       ;Flags :  ARR_NONE),
+   {varbyte     }     (Validbase :  true     ;ValidElement:  true    ;Size:     1       ;Flags :  ARR_NONE),
+   {varword     }     (Validbase :  true     ;ValidElement:  true    ;Size:     2       ;Flags :  ARR_NONE),
+   {varlongword }     (Validbase :  true     ;ValidElement:  true    ;Size:     4       ;Flags :  ARR_NONE),
+   {varint64    }     (Validbase :  true     ;ValidElement:  true    ;Size:     8       ;Flags :  ARR_NONE),
+   {varqword    }     (Validbase :  true     ;ValidElement:  true    ;Size:     8       ;Flags :  ARR_NONE));

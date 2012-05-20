@@ -1,6 +1,5 @@
 {
-    $Id: pexports.pas,v 1.31 2005/02/14 17:13:07 peter Exp $
-    Copyright (c) 1998-2002 by Florian Klaempfl
+    Copyright (c) 1998-2005 by Florian Klaempfl
 
     This unit handles the exports parsing
 
@@ -29,23 +28,25 @@ interface
     { reads an exports statement in a library }
     procedure read_exports;
 
-
 implementation
 
     uses
        { common }
        cutils,
        { global }
-       globals,tokens,verbose,
+       globals,globtype,tokens,verbose,constexp,
        systems,
+       ppu,fmodule,
        { symtable }
-       symconst,symbase,symtype,symsym,
+       symconst,symbase,symdef,symtype,symsym,
        { pass 1 }
        node,
        ncon,
        { parser }
        scanner,
        pbase,pexpr,
+       { obj-c }
+       objcutil,
        { link }
        gendef,export
        ;
@@ -53,13 +54,16 @@ implementation
 
     procedure read_exports;
       var
-        hp        : texported_item;
         orgs,
-        DefString : string;
+        DefString,
         InternalProcName : string;
-        pt               : tnode;
-        srsym            : tsym;
-        srsymtable : tsymtable;
+        pd         : tprocdef;
+        pt         : tnode;
+        srsym      : tsym;
+        srsymtable : TSymtable;
+        hpname     : shortstring;
+        index      : longint;
+        options    : word;
 
         function IsGreater(hp1,hp2:texported_item):boolean;
         var
@@ -78,97 +82,161 @@ implementation
         end;
 
       begin
+         current_module.flags:=current_module.flags or uf_has_exports;
          DefString:='';
          InternalProcName:='';
          consume(_EXPORTS);
          repeat
-           hp:=texported_item.create;
+           hpname:='';
+           options:=0;
+           index:=0;
            if token=_ID then
              begin
-                orgs:=orgpattern;
-                consume_sym(srsym,srsymtable);
-                hp.sym:=srsym;
+                consume_sym_orgid(srsym,srsymtable,orgs);
+                { orgpattern is still valid here }
                 InternalProcName:='';
                 case srsym.typ of
-                  globalvarsym :
-                    InternalProcName:=tglobalvarsym(srsym).mangledname;
-                  typedconstsym :
-                    InternalProcName:=ttypedconstsym(srsym).mangledname;
+                  staticvarsym :
+                    InternalProcName:=tstaticvarsym(srsym).mangledname;
                   procsym :
                     begin
-                      if (Tprocsym(srsym).procdef_count>1) or
+                      pd:=tprocdef(tprocsym(srsym).ProcdefList[0]);
+                      if (Tprocsym(srsym).ProcdefList.Count>1) or
+                         (po_kylixlocal in pd.procoptions) or
                          ((tf_need_export in target_info.flags) and
-                          not(po_exports in tprocsym(srsym).first_procdef.procoptions)) then
+                          not(po_exports in pd.procoptions)) then
                         Message(parser_e_illegal_symbol_exported)
                       else
-                        InternalProcName:=tprocsym(srsym).first_procdef.mangledname;
+                        InternalProcName:=pd.mangledname;
+                    end;
+                  typesym :
+                    begin
+                      if not is_objcclass(ttypesym(srsym).typedef) then
+                        Message(parser_e_illegal_symbol_exported)
                     end;
                   else
                     Message(parser_e_illegal_symbol_exported)
                 end;
-                if InternalProcName<>'' then
-                 begin
-                   { This is wrong if the first is not
-                     an underline }
-                   if InternalProcName[1]='_' then
-                     delete(InternalProcName,1,1)
-                   else if (target_info.system in [system_i386_win32,system_i386_wdosx]) and UseDeffileForExports then
+                if (srsym.typ<>typesym) then
+                  begin
+                    if InternalProcName<>'' then
                      begin
-                       Message(parser_e_dlltool_unit_var_problem);
-                       Message(parser_e_dlltool_unit_var_problem2);
+                       { This is wrong if the first is not
+                         an underline }
+                       if InternalProcName[1]='_' then
+                         delete(InternalProcName,1,1)
+                       else if (target_info.system in [system_i386_win32,system_i386_wdosx,system_arm_wince,system_i386_wince]) and UseDeffileForExports then
+                         begin
+                           Message(parser_e_dlltool_unit_var_problem);
+                           Message(parser_e_dlltool_unit_var_problem2);
+                         end;
+                       if length(InternalProcName)<2 then
+                        Message(parser_e_procname_to_short_for_export);
+                       DefString:=srsym.realname+'='+InternalProcName;
                      end;
-                   if length(InternalProcName)<2 then
-                    Message(parser_e_procname_to_short_for_export);
-                   DefString:=srsym.realname+'='+InternalProcName;
-                 end;
-                if try_to_consume(_INDEX) then
-                 begin
-                   pt:=comp_expr(true);
-                   if pt.nodetype=ordconstn then
-                    hp.index:=tordconstnode(pt).value
-                   else
+                    if try_to_consume(_INDEX) then
+                     begin
+                       pt:=comp_expr(true,false);
+                       if pt.nodetype=ordconstn then
+                        if (Tordconstnode(pt).value<int64(low(index))) or
+                           (Tordconstnode(pt).value>int64(high(index))) then
+                          begin
+                            index:=0;
+                            message3(type_e_range_check_error_bounds,tostr(Tordconstnode(pt).value),tostr(low(index)),tostr(high(index)))
+                          end
+                        else
+                          index:=Tordconstnode(pt).value.svalue
+                       else
+                        begin
+                          index:=0;
+                          consume(_INTCONST);
+                        end;
+                       options:=options or eo_index;
+                       pt.free;
+                       if target_info.system in [system_i386_win32,system_i386_wdosx,system_arm_wince,system_i386_wince] then
+                        DefString:=srsym.realname+'='+InternalProcName+' @ '+tostr(index)
+                       else
+                        DefString:=srsym.realname+'='+InternalProcName; {Index ignored!}
+                     end;
+                    if try_to_consume(_NAME) then
+                     begin
+                       pt:=comp_expr(true,false);
+                       if pt.nodetype=stringconstn then
+                         hpname:=strpas(tstringconstnode(pt).value_str)
+                       else
+                         consume(_CSTRING);
+                       options:=options or eo_name;
+                       pt.free;
+                       DefString:=hpname+'='+InternalProcName;
+                     end;
+                    if try_to_consume(_RESIDENT) then
+                     begin
+                       options:=options or eo_resident;
+                       DefString:=srsym.realname+'='+InternalProcName;{Resident ignored!}
+                     end;
+                    if (DefString<>'') and UseDeffileForExports then
+                     DefFile.AddExport(DefString);
+                  end;
+                case srsym.typ of
+                  procsym:
                     begin
-                      hp.index:=0;
-                      consume(_INTCONST);
+                      { if no specific name or index was given, then if }
+                      { the procedure has aliases defined export those, }
+                      { otherwise export the name as it appears in the  }
+                      { export section (it doesn't make sense to export }
+                      { the generic mangled name, because the name of   }
+                      { the parent unit is used in that)                }
+                      if ((options and (eo_name or eo_index))=0) and
+                         (tprocdef(tprocsym(srsym).procdeflist[0]).aliasnames.count>1) then
+                        exportallprocsymnames(tprocsym(srsym),options)
+                      else
+                        begin
+                          { there's a name or an index -> export only one name   }
+                          { correct? Or can you export multiple names with the   }
+                          { same index? And/or should we also export the aliases }
+                          { if a name is specified? (JM)                         }
+
+                          if ((options and eo_name)=0) then
+                            { Export names are not mangled on Windows and OS/2 }
+                            if (target_info.system in (systems_all_windows+[system_i386_emx, system_i386_os2])) then
+                              hpname:=orgs
+                            { Use set mangled name in case of cdecl/cppdecl/mwpascal }
+                            { and no name specified                                  }
+                            else if (tprocdef(tprocsym(srsym).procdeflist[0]).proccalloption in [pocall_cdecl,pocall_mwpascal]) then
+                              hpname:=target_info.cprefix+tprocsym(srsym).realname
+                            else if (tprocdef(tprocsym(srsym).procdeflist[0]).proccalloption in [pocall_cppdecl]) then
+                              hpname:=target_info.cprefix+tprocdef(tprocsym(srsym).procdeflist[0]).cplusplusmangledname
+                            else
+                              hpname:=orgs;
+
+                          exportprocsym(srsym,hpname,index,options);
+                        end
                     end;
-                   hp.options:=hp.options or eo_index;
-                   pt.free;
-                   if target_info.system in [system_i386_win32,system_i386_wdosx] then
-                    DefString:=srsym.realname+'='+InternalProcName+' @ '+tostr(hp.index)
-                   else
-                    DefString:=srsym.realname+'='+InternalProcName; {Index ignored!}
-                 end;
-                if try_to_consume(_NAME) then
-                 begin
-                   pt:=comp_expr(true);
-                   if pt.nodetype=stringconstn then
-                    hp.name:=stringdup(strpas(tstringconstnode(pt).value_str))
-                   else
+                  staticvarsym:
                     begin
-                      hp.name:=stringdup('');
-                      consume(_CSTRING);
+                      if ((options and eo_name)=0) then
+                        { for "cvar" }
+                        if (vo_has_mangledname in tstaticvarsym(srsym).varoptions) then
+                          hpname:=srsym.mangledname
+                        else
+                          hpname:=orgs;
+                      exportvarsym(srsym,hpname,index,options);
                     end;
-                   hp.options:=hp.options or eo_name;
-                   pt.free;
-                   DefString:=hp.name^+'='+InternalProcName;
-                 end;
-                if try_to_consume(_RESIDENT) then
-                 begin
-                   hp.options:=hp.options or eo_resident;
-                   DefString:=srsym.realname+'='+InternalProcName;{Resident ignored!}
-                 end;
-                if (DefString<>'') and UseDeffileForExports then
-                 DefFile.AddExport(DefString);
-                { Default to generate a name entry with the provided name }
-                if not assigned(hp.name) then
-                 begin
-                   hp.name:=stringdup(orgs);
-                   hp.options:=hp.options or eo_name;
-                 end;
-                if hp.sym.typ=procsym then
-                  exportlib.exportprocedure(hp)
-                else
-                  exportlib.exportvar(hp);
+                  typesym:
+                    begin
+                      case ttypesym(srsym).typedef.typ of
+                        objectdef:
+                          case tobjectdef(ttypesym(srsym).typedef).objecttype of
+                            odt_objcclass:
+                              exportobjcclass(tobjectdef(ttypesym(srsym).typedef));
+                            else
+                              internalerror(2009092601);
+                          end;
+                        else
+                          internalerror(2009092602);
+                      end;
+                    end;
+                end
              end
            else
              consume(_ID);
@@ -179,10 +247,3 @@ implementation
       end;
 
 end.
-
-{
-  $Log: pexports.pas,v $
-  Revision 1.31  2005/02/14 17:13:07  peter
-    * truncate log
-
-}

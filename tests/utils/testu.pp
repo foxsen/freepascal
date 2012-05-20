@@ -14,6 +14,7 @@ type
 
   TConfig = record
     NeedOptions,
+    DelOptions,
     NeedCPU,
     SkipCPU,
     SkipEmu,
@@ -28,14 +29,19 @@ type
     KnownCompileError : longint;
     NeedRecompile : boolean;
     NeedLibrary   : boolean;
+    NeededAfter   : boolean;
     IsInteractive : boolean;
     IsKnownRunError,
     IsKnownCompileError : boolean;
     NoRun         : boolean;
     UsesGraph     : boolean;
     ShouldFail    : boolean;
+    Timeout       : longint;
     Category      : string;
     Note          : string;
+    Files         : string;
+    WpoParas      : string;
+    WpoPasses     : longint;
   end;
 
 Const
@@ -155,9 +161,11 @@ begin
   while not eof(t) do
    begin
      readln(t,s);
+     if Copy(s,1,3)=#$EF#$BB#$BF then
+       delete(s,1,3);
+     TrimB(s);
      if s<>'' then
       begin
-        TrimB(s);
         if s[1]='{' then
          begin
            delete(s,1,1);
@@ -167,6 +175,9 @@ begin
               delete(s,1,1);
               if GetEntry('OPT') then
                r.NeedOptions:=res
+              else
+               if GetEntry('DELOPT') then
+                r.DelOptions:=res
               else
                if GetEntry('TARGET') then
                 r.NeedTarget:=res
@@ -206,6 +217,9 @@ begin
               else
                if GetEntry('NEEDLIBRARY') then
                 r.NeedLibrary:=true
+              else
+               if GetEntry('NEEDEDAFTER') then
+                r.NeededAfter:=true
               else
                if GetEntry('KNOWNRUNERROR') then
                 begin
@@ -253,6 +267,18 @@ begin
                   R.Note:='Note: '+res;
                   Verbose(V_Normal,r.Note);
                 end
+              else
+               if GetEntry('TIMEOUT') then
+                Val(res,r.Timeout,code)
+              else
+               if GetEntry('FILES') then
+                r.Files:=res
+              else
+                if GetEntry('WPOPARAS') then
+                 r.wpoparas:=res
+              else
+                if GetEntry('WPOPASSES') then
+                 val(res,r.wpopasses,code)
               else
                Verbose(V_Error,'Unknown entry: '+s);
             end;

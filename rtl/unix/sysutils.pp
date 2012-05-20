@@ -1,5 +1,4 @@
 {
-    $Id: sysutils.pp,v 1.59 2005/03/25 22:53:39 jonas Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Florian Klaempfl
     member of the Free Pascal development team
@@ -18,14 +17,22 @@ unit sysutils;
 interface
 
 {$MODE objfpc}
+{$MODESWITCH OUT}
 { force ansistrings }
 {$H+}
 
+{$if (defined(BSD) or defined(SUNOS)) and defined(FPC_USE_LIBC)}
+{$define USE_VFORK}
+{$endif}
+
+{$DEFINE OS_FILESETDATEBYNAME}
 {$DEFINE HAS_SLEEP}
 {$DEFINE HAS_OSERROR}
 {$DEFINE HAS_OSCONFIG}
 {$DEFINE HAS_TEMPDIR}
 {$DEFINE HASUNIX}
+{$DEFINE HASCREATEGUID}
+{$DEFINE HAS_OSUSERDIR}
 
 uses
   Unix,errors,sysconst,Unixtype;
@@ -33,36 +40,235 @@ uses
 { Include platform independent interface part }
 {$i sysutilh.inc}
 
-Procedure AddDisk(const path:string);
+Function AddDisk(const path:string) : Byte;
 
+{ the following is Kylix compatibility stuff, it should be moved to a
+  special compatibilty unit (FK) }
+  const
+    RTL_SIGINT     = 0;
+    RTL_SIGFPE     = 1;
+    RTL_SIGSEGV    = 2;
+    RTL_SIGILL     = 3;
+    RTL_SIGBUS     = 4;
+    RTL_SIGQUIT    = 5;
+    RTL_SIGLAST    = RTL_SIGQUIT;
+    RTL_SIGDEFAULT = -1;
+
+  type
+    TSignalState = (ssNotHooked, ssHooked, ssOverridden);
+
+function InquireSignal(RtlSigNum: Integer): TSignalState;
+procedure AbandonSignalHandler(RtlSigNum: Integer);
+procedure HookSignal(RtlSigNum: Integer);
+procedure UnhookSignal(RtlSigNum: Integer; OnlyIfHooked: Boolean = True);
 
 implementation
 
 Uses
-  {$ifdef FPC_USE_LIBC}initc{$ELSE}Syscall{$ENDIF}, Baseunix;
+  {$ifdef FPC_USE_LIBC}initc{$ELSE}Syscall{$ENDIF}, Baseunix, unixutil;
+
+type
+  tsiginfo = record
+    oldsiginfo: sigactionrec;
+    hooked: boolean;
+  end;
+
+const
+  rtlsig2ossig: array[RTL_SIGINT..RTL_SIGLAST] of byte =
+    (SIGINT,SIGFPE,SIGSEGV,SIGILL,SIGBUS,SIGQUIT);
+  { to avoid linking in all this stuff in every program,
+    as it's unlikely to be used by anything but libraries
+  }
+  signalinfoinited: boolean = false;
+
+var
+  siginfo: array[RTL_SIGINT..RTL_SIGLAST] of tsiginfo;
+  oldsigfpe: SigActionRec; external name '_FPC_OLDSIGFPE';
+  oldsigsegv: SigActionRec; external name '_FPC_OLDSIGSEGV';
+  oldsigbus: SigActionRec; external name '_FPC_OLDSIGBUS';
+  oldsigill: SigActionRec; external name '_FPC_OLDSIGILL';
+
+
+procedure defaultsighandler; external name '_FPC_DEFAULTSIGHANDLER';
+procedure installdefaultsignalhandler(signum: Integer; out oldact: SigActionRec); external name '_FPC_INSTALLDEFAULTSIGHANDLER';
+
+
+function InternalInquireSignal(RtlSigNum: Integer; out act: SigActionRec; frominit: boolean): TSignalState;
+  begin
+    result:=ssNotHooked;
+    if (RtlSigNum<>RTL_SIGDEFAULT) and
+       (RtlSigNum<RTL_SIGLAST) then
+      begin
+        if (frominit or
+            siginfo[RtlSigNum].hooked) and
+           (fpsigaction(rtlsig2ossig[RtlSigNum],nil,@act)=0) then
+          begin
+            if not frominit then
+              begin
+                { check whether the installed signal handler is still ours }
+{$if not defined(aix) and (not defined(linux) or not defined(cpupowerpc64))}
+                if (pointer(act.sa_handler)=pointer(@defaultsighandler)) then
+{$else}
+                { on aix and linux/ppc64, procedure addresses are actually
+                  descriptors -> check whether the code addresses inside the
+                  descriptors match, rather than the descriptors themselves }
+                if (ppointer(act.sa_handler)^=ppointer(@defaultsighandler)^) then
+{$endif}
+                  result:=ssHooked
+                else
+                  result:=ssOverridden;
+              end
+            else if IsLibrary then
+              begin
+                { library -> signals have not been hooked by system init code }
+                exit
+              end
+            else
+              begin
+                { program -> signals have been hooked by system init code }
+                if (byte(RtlSigNum) in [RTL_SIGFPE,RTL_SIGSEGV,RTL_SIGILL,RTL_SIGBUS]) then
+                  begin
+{$if not defined(aix) and (not defined(linux) or not defined(cpupowerpc64))}
+                    if (pointer(act.sa_handler)=pointer(@defaultsighandler)) then
+{$else}
+                    if (ppointer(act.sa_handler)^=ppointer(@defaultsighandler)^) then
+{$endif}
+                      result:=ssHooked
+                    else
+                      result:=ssOverridden;
+                    { return the original handlers as saved by the system unit
+                      (the current call to sigaction simply returned our
+                       system unit's installed handlers)
+                    }
+                    case RtlSigNum of
+                      RTL_SIGFPE:
+                        act:=oldsigfpe;
+                      RTL_SIGSEGV:
+                        act:=oldsigsegv;
+                      RTL_SIGILL:
+                        act:=oldsigill;
+                      RTL_SIGBUS:
+                        act:=oldsigbus;
+                    end;
+                  end
+                else
+                  begin
+                    { these are not hooked in the startup code }
+                    result:=ssNotHooked;
+                  end
+              end
+          end
+      end;
+  end;
+
+
+procedure initsignalinfo;
+  var
+    i: Integer;
+  begin
+    for i:=RTL_SIGINT to RTL_SIGLAST do
+      siginfo[i].hooked:=(InternalInquireSignal(i,siginfo[i].oldsiginfo,true)=ssHooked);
+    signalinfoinited:=true;
+  end;
+
+
+function InquireSignal(RtlSigNum: Integer): TSignalState;
+  var
+    act: SigActionRec;
+  begin
+    if not signalinfoinited then
+      initsignalinfo;
+    result:=InternalInquireSignal(RtlSigNum,act,false);
+  end;
+
+
+procedure AbandonSignalHandler(RtlSigNum: Integer);
+  begin
+    if not signalinfoinited then
+      initsignalinfo;
+    if (RtlSigNum<>RTL_SIGDEFAULT) and
+       (RtlSigNum<RTL_SIGLAST) then
+      siginfo[RtlSigNum].hooked:=false;
+  end;
+
+
+procedure HookSignal(RtlSigNum: Integer);
+  var
+    lowsig, highsig, i: Integer;
+  begin
+    if not signalinfoinited then
+      initsignalinfo;
+    if (RtlSigNum<>RTL_SIGDEFAULT) then
+      begin
+        lowsig:=RtlSigNum;
+        highsig:=RtlSigNum;
+      end
+    else
+      begin
+        { we don't hook SIGINT and SIGQUIT by default }
+        lowsig:=RTL_SIGFPE;
+        highsig:=RTL_SIGBUS;
+      end;
+    { install the default rtl signal handler for the selected signal(s) }
+    for i:=lowsig to highsig do
+      begin
+        installdefaultsignalhandler(rtlsig2ossig[i],siginfo[i].oldsiginfo);
+        siginfo[i].hooked:=true;
+      end;
+  end;
+
+
+procedure UnhookSignal(RtlSigNum: Integer; OnlyIfHooked: Boolean = True);
+  var
+    act: SigActionRec;
+    lowsig, highsig, i: Integer;
+    state: TSignalState;
+  begin
+    if not signalinfoinited then
+      initsignalinfo;
+    if (RtlSigNum<>RTL_SIGDEFAULT) then
+      begin
+        lowsig:=RtlSigNum;
+        highsig:=RtlSigNum;
+      end
+    else
+      begin
+        { we don't hook SIGINT and SIGQUIT by default }
+        lowsig:=RTL_SIGFPE;
+        highsig:=RTL_SIGBUS;
+      end;
+    for i:=lowsig to highsig do
+      begin
+        if not OnlyIfHooked or
+           (InquireSignal(i)=ssHooked) then
+          begin
+            { restore the handler that was present when we hooked the signal,
+              if we hooked it at one time or another. If the user doesn't
+              want this, they have to call AbandonSignalHandler() first
+            }
+            if siginfo[i].hooked then
+              act:=siginfo[i].oldsiginfo
+            else
+              begin
+                fillchar(act,sizeof(act),0);
+                pointer(act.sa_handler):=pointer(SIG_DFL);
+              end;
+            if (fpsigaction(rtlsig2ossig[RtlSigNum],@act,nil)=0) then
+              siginfo[i].hooked:=false;
+          end;
+      end;
+  end;
 
 {$Define OS_FILEISREADONLY} // Specific implementation for Unix.
-
-Function getenv(name:shortstring):Pchar; external name 'FPC_SYSC_FPGETENV';
-
-Type
-  ComStr  = String[255];
-  PathStr = String[255];
-  DirStr  = String[255];
-  NameStr = String[255];
-  ExtStr  = String[255];
-
 
 {$DEFINE FPC_FEXPAND_TILDE} { Tilde is expanded to home }
 {$DEFINE FPC_FEXPAND_GETENVPCHAR} { GetEnv result is a PChar }
 
-{$I fexpand.inc}
-
-{$UNDEF FPC_FEXPAND_GETENVPCHAR}
-{$UNDEF FPC_FEXPAND_TILDE}
-
 { Include platform independent implementation part }
 {$i sysutils.inc}
+
+{ Include SysCreateGUID function }
+{$i suuid.inc}
 
 Const
 {Date Translation}
@@ -144,85 +350,182 @@ Begin
 End;
 
 
+Function DoFileLocking(Handle: Longint; Mode: Integer) : Longint;
+var
+  lockop: cint;
+  lockres: cint;
+  closeres: cint;
+  lockerr: cint;
+begin
+  DoFileLocking:=Handle;
+{$ifdef beos}
+{$else}
+  if (Handle>=0) then
+    begin
+{$if defined(solaris) or defined(aix)}
+      { Solaris' & AIX' flock is based on top of fcntl, which does not allow
+        exclusive locks for files only opened for reading nor shared locks
+        for files opened only for writing.
+        
+        If no locking is specified, we normally need an exclusive lock.
+        So create an exclusive lock for fmOpenWrite and fmOpenReadWrite,
+        but only a shared lock for fmOpenRead (since an exclusive lock
+        is not possible in that case)
+      }
+      if ((mode and (fmShareCompat or fmShareExclusive or fmShareDenyWrite or fmShareDenyRead or fmShareDenyNone)) = 0) then
+        begin
+          if ((mode and (fmOpenRead or fmOpenWrite or fmOpenReadWrite)) = fmOpenRead) then
+            mode := mode or fmShareDenyWrite
+          else
+            mode := mode or fmShareExclusive;
+        end;
+{$endif solaris}
+      case (mode and (fmShareCompat or fmShareExclusive or fmShareDenyWrite or fmShareDenyRead or fmShareDenyNone)) of
+        fmShareCompat,
+        fmShareExclusive:
+          lockop:=LOCK_EX or LOCK_NB;
+        fmShareDenyWrite:
+          lockop:=LOCK_SH or LOCK_NB;
+        fmShareDenyNone:
+          exit;
+        else
+          begin
+            { fmShareDenyRead does not exit under *nix, only shared access
+              (similar to fmShareDenyWrite) and exclusive access (same as
+              fmShareExclusive)
+            }
+            repeat
+              closeres:=FpClose(Handle);
+            until (closeres<>-1) or (fpgeterrno<>ESysEINTR);
+            DoFileLocking:=-1;
+            exit;
+          end;
+      end;
+      repeat
+        lockres:=fpflock(Handle,lockop);
+      until (lockres=0) or
+            (fpgeterrno<>ESysEIntr);
+      lockerr:=fpgeterrno;
+      { Only return an error if locks are working and the file was already
+        locked. Not if locks are simply unsupported (e.g., on Angstrom Linux
+        you always get ESysNOLCK in the default configuration) }
+      if (lockres<>0) and
+         ((lockerr=ESysEAGAIN) or
+          (lockerr=EsysEDEADLK)) then
+        begin
+          repeat
+            closeres:=FpClose(Handle);
+          until (closeres<>-1) or (fpgeterrno<>ESysEINTR);
+          DoFileLocking:=-1;
+          exit;
+        end;
+    end;
+{$endif not beos}
+end;
+
+
 Function FileOpen (Const FileName : string; Mode : Integer) : Longint;
 
-Var LinuxFlags : longint;
-
-BEGIN
+Var
+  LinuxFlags : longint;
+begin
   LinuxFlags:=0;
-  Case (Mode and 3) of
-    0 : LinuxFlags:=LinuxFlags or O_RdOnly;
-    1 : LinuxFlags:=LinuxFlags or O_WrOnly;
-    2 : LinuxFlags:=LinuxFlags or O_RdWr;
+  case (Mode and (fmOpenRead or fmOpenWrite or fmOpenReadWrite)) of
+    fmOpenRead : LinuxFlags:=LinuxFlags or O_RdOnly;
+    fmOpenWrite : LinuxFlags:=LinuxFlags or O_WrOnly;
+    fmOpenReadWrite : LinuxFlags:=LinuxFlags or O_RdWr;
   end;
-  FileOpen:=fpOpen (FileName,LinuxFlags);
-  //!! We need to set locking based on Mode !!
+
+  repeat
+    FileOpen:=fpOpen (pointer(FileName),LinuxFlags);
+  until (FileOpen<>-1) or (fpgeterrno<>ESysEINTR);
+
+  FileOpen:=DoFileLocking(FileOpen, Mode);
 end;
 
 
 Function FileCreate (Const FileName : String) : Longint;
 
 begin
-  FileCreate:=fpOpen(FileName,O_RdWr or O_Creat or O_Trunc);
+  repeat
+    FileCreate:=fpOpen(pointer(FileName),O_RdWr or O_Creat or O_Trunc);
+  until (FileCreate<>-1) or (fpgeterrno<>ESysEINTR);
 end;
 
 
-Function FileCreate (Const FileName : String;Mode : Longint) : Longint;
-
-Var LinuxFlags : longint;
-
-BEGIN
-  LinuxFlags:=0;
-  Case (Mode and 3) of
-    0 : LinuxFlags:=LinuxFlags or O_RdOnly;
-    1 : LinuxFlags:=LinuxFlags or O_WrOnly;
-    2 : LinuxFlags:=LinuxFlags or O_RdWr;
-  end;
-  FileCreate:=fpOpen(FileName,LinuxFlags or O_Creat or O_Trunc);
-end;
-
-
-Function FileRead (Handle : Longint; Var Buffer; Count : longint) : Longint;
+Function FileCreate (Const FileName : String;Rights : Longint) : Longint;
 
 begin
-  FileRead:=fpRead (Handle,Buffer,Count);
+  repeat
+    FileCreate:=fpOpen(pointer(FileName),O_RdWr or O_Creat or O_Trunc,Rights);
+  until (FileCreate<>-1) or (fpgeterrno<>ESysEINTR);
+end;
+
+Function FileCreate (Const FileName : String; ShareMode : Longint; Rights:LongInt ) : Longint;
+
+begin
+  Result:=FileCreate( FileName, Rights );
+  Result:=DoFileLocking(Result,ShareMode);
+end;
+
+
+Function FileRead (Handle : Longint; out Buffer; Count : longint) : Longint;
+
+begin
+  repeat
+    FileRead:=fpRead (Handle,Buffer,Count);
+  until (FileRead<>-1) or (fpgeterrno<>ESysEINTR);
 end;
 
 
 Function FileWrite (Handle : Longint; const Buffer; Count : Longint) : Longint;
 
 begin
-  FileWrite:=fpWrite (Handle,Buffer,Count);
+  repeat
+    FileWrite:=fpWrite (Handle,Buffer,Count);
+  until (FileWrite<>-1) or (fpgeterrno<>ESysEINTR);
 end;
 
 
 Function FileSeek (Handle,FOffset,Origin : Longint) : Longint;
 
 begin
-  FileSeek:=fplSeek (Handle,FOffset,Origin);
+  result:=longint(FileSeek(Handle,int64(FOffset),Origin));
 end;
 
 
-Function FileSeek (Handle : Longint; FOffset,Origin : Int64) : Int64;
-
+Function FileSeek (Handle : Longint; FOffset : Int64; Origin : Longint) : Int64;
 begin
-  {$warning need to add 64bit call }
   FileSeek:=fplSeek (Handle,FOffset,Origin);
 end;
 
 
 Procedure FileClose (Handle : Longint);
-
+var
+  res: cint;
 begin
-  fpclose(Handle);
+  repeat
+    res:=fpclose(Handle);
+  until (res<>-1) or (fpgeterrno<>ESysEINTR);
 end;
 
-Function FileTruncate (Handle,Size: Longint) : boolean;
-
+Function FileTruncate (Handle: THandle; Size: Int64) : boolean;
+var
+  res: cint;
 begin
-  FileTruncate:=fpftruncate(Handle,Size)>=0;
+  if (SizeOf (TOff) < 8)   (* fpFTruncate only supporting signed 32-bit size *)
+     and (Size > high (longint)) then
+    FileTruncate := false
+  else
+    begin
+      repeat
+        res:=fpftruncate(Handle,Size);
+      until (res<>-1) or (fpgeterrno<>ESysEINTR);
+      FileTruncate:=res>=0;
+    end;
 end;
 
+{$ifndef FPUNONE}
 Function UnixToWinAge(UnixAge : time_t): Longint;
 
 Var
@@ -239,19 +542,20 @@ Function FileAge (Const FileName : String): Longint;
 Var Info : Stat;
 
 begin
-  If  fpstat (FileName,Info)<0 then
+  If  (fpstat (pointer(FileName),Info)<0) or fpS_ISDIR(info.st_mode) then
     exit(-1)
-  else
+  else 
     Result:=UnixToWinAge(info.st_mtime);
 end;
+{$endif}
 
 
 Function FileExists (Const FileName : String) : Boolean;
 
-Var Info : Stat;
-
 begin
-  FileExists:=fpstat(filename,Info)>=0;
+  // Don't use stat. It fails on files >2 GB.
+  // Access obeys the same access rules, so the result should be the same.
+  FileExists:=fpAccess(pointer(filename),F_OK)=0;
 end;
 
 
@@ -260,68 +564,39 @@ Function DirectoryExists (Const Directory : String) : Boolean;
 Var Info : Stat;
 
 begin
-  DirectoryExists:=(fpstat(Directory,Info)>=0) and fpS_ISDIR(Info.st_mode);
+  DirectoryExists:=(fpstat(pointer(Directory),Info)>=0) and fpS_ISDIR(Info.st_mode);
 end;
 
 
-Function LinuxToWinAttr (FN : Pchar; Const Info : Stat) : Longint;
+Function LinuxToWinAttr (const FN : Ansistring; Const Info : Stat) : Longint;
 
+Var
+  LinkInfo : Stat;
+  nm : AnsiString;
 begin
   Result:=faArchive;
   If fpS_ISDIR(Info.st_mode) then
     Result:=Result or faDirectory;
-  If (FN[0]='.') and (not (FN[1] in [#0,'.']))  then
+  nm:=ExtractFileName(FN);
+  If (Length(nm)>=2) and
+     (nm[1]='.') and
+     (nm[2]<>'.')  then
     Result:=Result or faHidden;
   If (Info.st_Mode and S_IWUSR)=0 Then
      Result:=Result or faReadOnly;
   If fpS_ISSOCK(Info.st_mode) or fpS_ISBLK(Info.st_mode) or fpS_ISCHR(Info.st_mode) or fpS_ISFIFO(Info.st_mode) Then
      Result:=Result or faSysFile;
-end;
-
-type
-
- pglob = ^tglob;
-  tglob = record
-    name : pchar;
-    next : pglob;
-  end;
-
-Function Dirname(Const path:pathstr):pathstr;
-{
-  This function returns the directory part of a complete path.
-  Unless the directory is root '/', The last character is not
-  a slash.
-}
-var
-  Dir  : PathStr;
-  Name : NameStr;
-  Ext  : ExtStr;
-begin
-  FSplit(Path,Dir,Name,Ext);
-  if length(Dir)>1 then
-   Delete(Dir,length(Dir),1);
-  DirName:=Dir;
+  If fpS_ISLNK(Info.st_mode) Then
+    begin
+    Result:=Result or faSymLink;
+    // Windows reports if the link points to a directory.
+    if (fpstat(FN,LinkInfo)>=0) and fpS_ISDIR(LinkInfo.st_mode) then
+      Result := Result or faDirectory;
+    end;
 end;
 
 
-Function Basename(Const path:pathstr;Const suf:pathstr):pathstr;
-{
-  This function returns the filename part of a complete path. If suf is
-  supplied, it is cut off the filename.
-}
-var
-  Dir  : PathStr;
-  Name : NameStr;
-  Ext  : ExtStr;
-begin
-  FSplit(Path,Dir,Name,Ext);
-  if Suf<>Ext then
-   Name:=Name+Ext;
-  BaseName:=Name;
-end;
-
-
-Function FNMatch(const Pattern,Name:shortstring):Boolean;
+Function FNMatch(const Pattern,Name:string):Boolean;
 Var
   LenPat,LenName : longint;
 
@@ -403,186 +678,157 @@ Begin {start FNMatch}
 End;
 
 
-Procedure Globfree(var p : pglob);
-{
-  Release memory occupied by pglob structure, and names in it.
-  sets p to nil.
-}
-var
-  temp : pglob;
-begin
-  while assigned(p) do
-   begin
-     temp:=p^.next;
-     if assigned(p^.name) then
-      freemem(p^.name);
-     dispose(p);
-     p:=temp;
-   end;
-end;
-
-
-Function Glob(Const path:pathstr):pglob;
-{
-  Fills a tglob structure with entries matching path,
-  and returns a pointer to it. Returns nil on error,
-  linuxerror is set accordingly.
-}
-var
-  temp,
-  temp2   : string[255];
-  thedir  : pdir;
-  buffer  : pdirent;
-  root,
-  current : pglob;
-begin
-{ Get directory }
-  temp:=dirname(path);
-  if temp='' then
-   temp:='.';
-  temp:=temp+#0;
-  thedir:=fpopendir(@temp[1]);
-  if thedir=nil then
-    exit(nil);
-  temp:=basename(path,''); { get the pattern }
-  if thedir^.dd_fd<0 then
-     exit(nil);
-{get the entries}
-  root:=nil;
-  current:=nil;
-  repeat
-    buffer:=fpreaddir(thedir^);
-    if buffer=nil then
-     break;
-    temp2:=strpas(@(buffer^.d_name[0]));
-    if fnmatch(temp,temp2) then
-     begin
-       if root=nil then
-        begin
-          new(root);
-          current:=root;
-        end
-       else
-        begin
-          new(current^.next);
-          current:=current^.next;
-        end;
-       if current=nil then
-        begin
-           fpseterrno(ESysENOMEM);
-          globfree(root);
-          break;
-        end;
-       current^.next:=nil;
-       getmem(current^.name,length(temp2)+1);
-       if current^.name=nil then
-        begin
-          fpseterrno(ESysENOMEM);
-          globfree(root);
-          break;
-        end;
-       move(buffer^.d_name[0],current^.name^,length(temp2)+1);
-     end;
-  until false;
-  fpclosedir(thedir^);
-  glob:=root;
-end;
-
-
-{
- GlobToSearch takes a glob entry, stats the file.
- The glob entry is removed.
- If FileAttributes match, the entry is reused
-}
-
 Type
-  TGlobSearchRec = Record
-    Path       : shortString;
-    GlobHandle : PGlob;
-  end;
-  PGlobSearchRec = ^TGlobSearchRec;
+  TUnixFindData = Record
+    NamePos    : LongInt;     {to track which search this is}
+    DirPtr     : Pointer;     {directory pointer for reading directory}
+    SearchSpec : String;
+    SearchType : Byte;        {0=normal, 1=open will close, 2=only 1 file}
+    SearchAttr : Byte;        {attribute we are searching for}
+  End;
+  PUnixFindData = ^TUnixFindData;
 
-Function GlobToTSearchRec (Var Info : TSearchRec) : Boolean;
-
-Var SInfo : Stat;
-    p     : Pglob;
-    GlobSearchRec : PGlobSearchrec;
-
-begin
-  GlobSearchRec:=Info.FindHandle;
-  P:=GlobSearchRec^.GlobHandle;
-  Result:=P<>Nil;
-  If Result then
+Procedure FindClose(Var f: TSearchRec);
+var
+  UnixFindData : PUnixFindData;
+Begin
+  UnixFindData:=PUnixFindData(f.FindHandle);
+  If (UnixFindData=Nil) then
+    Exit;
+  if UnixFindData^.SearchType=0 then
     begin
-    GlobSearchRec^.GlobHandle:=P^.Next;
-    Result:=Fpstat(GlobSearchRec^.Path+StrPas(p^.name),SInfo)>=0;
-    If Result then
-      begin
-      Info.Attr:=LinuxToWinAttr(p^.name,SInfo);
-      Result:=(Info.ExcludeAttr and Info.Attr)=0;
-      If Result Then
-         With Info do
-           begin
-           Attr:=Info.Attr;
-           If P^.Name<>Nil then
-           Name:=strpas(p^.name);
-           Time:=UnixToWinAge(Sinfo.st_mtime);
-           Size:=Sinfo.st_Size;
-           Mode:=Sinfo.st_mode;
-           end;
-      end;
-    P^.Next:=Nil;
-    GlobFree(P);
+      if UnixFindData^.dirptr<>nil then
+        fpclosedir(pdir(UnixFindData^.dirptr)^);
     end;
-end;
-
-Function DoFind(Var Rslt : TSearchRec) : Longint;
-
-Var
-  GlobSearchRec : PGlobSearchRec;
-
-begin
-  Result:=-1;
-  GlobSearchRec:=Rslt.FindHandle;
-  If (GlobSearchRec^.GlobHandle<>Nil) then
-    While (GlobSearchRec^.GlobHandle<>Nil) and not (Result=0) do
-      If GlobToTSearchRec(Rslt) Then Result:=0;
-end;
+  Dispose(UnixFindData);
+  f.FindHandle:=nil;
+End;
 
 
-
-Function FindFirst (Const Path : String; Attr : Longint; Var Rslt : TSearchRec) : Longint;
-
-Var
-  GlobSearchRec : PGlobSearchRec;
+Function FindGetFileInfo(const s:string;var f:TSearchRec):boolean;
+var
+  st           : baseunix.stat;
+  WinAttr      : longint;
 
 begin
-  New(GlobSearchRec);
-  GlobSearchRec^.Path:=ExpandFileName(ExtractFilePath(Path));
-  GlobSearchRec^.GlobHandle:=Glob(Path);
-  Rslt.ExcludeAttr:=Not Attr and (faHidden or faSysFile or faVolumeID or faDirectory); //!! Not correct !!
-  Rslt.FindHandle:=GlobSearchRec;
-  Result:=DoFind (Rslt);
+  FindGetFileInfo:=false;
+  If Assigned(F.FindHandle) and ((((PUnixFindData(f.FindHandle)^.searchattr)) and faSymlink) > 0) then
+    FindGetFileInfo:=(fplstat(pointer(s),st)=0)
+  else
+    FindGetFileInfo:=(fpstat(pointer(s),st)=0);
+  If not FindGetFileInfo then
+    exit;
+  WinAttr:=LinuxToWinAttr(s,st);
+  If ((WinAttr and Not(PUnixFindData(f.FindHandle)^.searchattr))=0) Then
+   Begin
+     f.Name:=ExtractFileName(s);
+     f.Attr:=WinAttr;
+     f.Size:=st.st_Size;
+     f.Mode:=st.st_mode;
+{$ifndef FPUNONE}
+     f.Time:=UnixToWinAge(st.st_mtime);
+{$endif}
+     FindGetFileInfo:=true;
+   End
+  else
+    FindGetFileInfo:=false;
 end;
 
 
 Function FindNext (Var Rslt : TSearchRec) : Longint;
-
-begin
-  Result:=DoFind (Rslt);
-end;
-
-
-Procedure FindClose (Var F : TSearchrec);
-
+{
+  re-opens dir if not already in array and calls FindGetFileInfo
+}
 Var
-  GlobSearchRec : PGlobSearchRec;
+  DirName  : String;
+  FName,
+  SName    : string;
+  Found,
+  Finished : boolean;
+  p        : pdirent;
+  UnixFindData : PUnixFindData;
+Begin
+  Result:=-1;
+  UnixFindData:=PUnixFindData(Rslt.FindHandle);
+  { SearchSpec='' means that there were no wild cards, so only one file to
+    find.
+  }
+  If (UnixFindData=Nil) then 
+    exit;
+  if UnixFindData^.SearchSpec='' then
+    exit;
+  if (UnixFindData^.SearchType=0) and
+     (UnixFindData^.Dirptr=nil) then
+    begin
+      If UnixFindData^.NamePos = 0 Then
+        DirName:='./'
+      Else
+        DirName:=Copy(UnixFindData^.SearchSpec,1,UnixFindData^.NamePos);
+      UnixFindData^.DirPtr := fpopendir(Pchar(pointer(DirName)));
+    end;
+  SName:=Copy(UnixFindData^.SearchSpec,UnixFindData^.NamePos+1,Length(UnixFindData^.SearchSpec));
+  Found:=False;
+  Finished:=(UnixFindData^.dirptr=nil);
+  While Not Finished Do
+   Begin
+     p:=fpreaddir(pdir(UnixFindData^.dirptr)^);
+     if p=nil then
+      FName:=''
+     else
+      FName:=p^.d_name;
+     If FName='' Then
+      Finished:=True
+     Else
+      Begin
+        If FNMatch(SName,FName) Then
+         Begin
+           Found:=FindGetFileInfo(Copy(UnixFindData^.SearchSpec,1,UnixFindData^.NamePos)+FName,Rslt);
+           if Found then
+             begin
+               Result:=0;
+               exit;
+             end;
+         End;
+      End;
+   End;
+End;
 
-begin
-  GlobSearchRec:=F.FindHandle;
-  GlobFree (GlobSearchRec^.GlobHandle);
-  Dispose(GlobSearchRec);
-end;
+
+Function FindFirst (Const Path : String; Attr : Longint; out Rslt : TSearchRec) : Longint;
+{
+  opens dir and calls FindNext if needed.
+}
+var
+  UnixFindData : PUnixFindData;
+Begin
+  Result:=-1;
+  fillchar(Rslt,sizeof(Rslt),0);
+  if Path='' then
+    exit;
+  { Allocate UnixFindData (we always need it, for the search attributes) }
+  New(UnixFindData);
+  FillChar(UnixFindData^,sizeof(UnixFindData^),0);
+  Rslt.FindHandle:=UnixFindData;
+   {We always also search for readonly and archive, regardless of Attr:}
+  UnixFindData^.SearchAttr := Attr or faarchive or fareadonly;
+  {Wildcards?}
+  if (Pos('?',Path)=0)  and (Pos('*',Path)=0) then
+    begin
+    if FindGetFileInfo(Path,Rslt) then
+      Result:=0;
+    end
+  else
+    begin
+    {Create Info}
+    UnixFindData^.SearchSpec := Path;
+    UnixFindData^.NamePos := Length(UnixFindData^.SearchSpec);
+    while (UnixFindData^.NamePos>0) and (UnixFindData^.SearchSpec[UnixFindData^.NamePos]<>'/') do
+      dec(UnixFindData^.NamePos);
+    Result:=FindNext(Rslt);
+    end;
+  If (Result<>0) then
+    FindClose(Rslt); 
+End;
 
 
 Function FileGetDate (Handle : Longint) : Longint;
@@ -608,9 +854,12 @@ end;
 Function FileGetAttr (Const FileName : String) : Longint;
 
 Var Info : Stat;
-
+  res : Integer;
 begin
-  If  FpStat (FileName,Info)<0 then
+  res:=FpLStat (pointer(FileName),Info);
+  if res<0 then
+    res:=FpStat (pointer(FileName),Info);
+  if res<0 then
     Result:=-1
   Else
     Result:=LinuxToWinAttr(Pchar(FileName),Info);
@@ -627,20 +876,33 @@ end;
 Function DeleteFile (Const FileName : String) : Boolean;
 
 begin
-  Result:=fpUnLink (FileName)>=0;
+  Result:=fpUnLink (pointer(FileName))>=0;
 end;
 
 
 Function RenameFile (Const OldName, NewName : String) : Boolean;
 
 begin
-  RenameFile:=BaseUnix.FpRename(OldNAme,NewName)>=0;
+  RenameFile:=BaseUnix.FpRename(pointer(OldNAme),pointer(NewName))>=0;
 end;
 
 Function FileIsReadOnly(const FileName: String): Boolean;
 
 begin
-  Result := fpAccess(PChar(FileName),W_OK)<>0;
+  Result := fpAccess(PChar(pointer(FileName)),W_OK)<>0;
+end;
+
+Function FileSetDate (Const FileName : String;Age : Longint) : Longint;
+
+var
+  t: TUTimBuf;
+
+begin
+  Result := 0;
+  t.actime := Age;
+  t.modtime := Age;
+  if fputime(PChar(pointer(FileName)), @t) = -1 then
+    Result := fpgeterrno;
 end;
 
 {****************************************************************************
@@ -649,7 +911,7 @@ end;
 
 {
   The Diskfree and Disksize functions need a file on the specified drive, since this
-  is required for the statfs system call.
+  is required for the fpstatfs system call.
   These filenames are set in drivestr[0..26], and have been preset to :
    0 - '.'      (default drive - hence current dir is ok.)
    1 - '/fd0/.'  (floppy drive 1 - should be adapted to local system )
@@ -667,15 +929,16 @@ Const
     '/.'
     );
 var
-  Drives   : byte;
+  Drives   : byte = 4;
   DriveStr : array[4..26] of pchar;
 
-Procedure AddDisk(const path:string);
+Function AddDisk(const path:string) : Byte;
 begin
   if not (DriveStr[Drives]=nil) then
-   FreeMem(DriveStr[Drives],StrLen(DriveStr[Drives])+1);
+   FreeMem(DriveStr[Drives]);
   GetMem(DriveStr[Drives],length(Path)+1);
   StrPCopy(DriveStr[Drives],path);
+  Result:=Drives;
   inc(Drives);
   if Drives>26 then
    Drives:=4;
@@ -686,8 +949,8 @@ Function DiskFree(Drive: Byte): int64;
 var
   fs : tstatfs;
 Begin
-  if ((Drive<4) and (not (fixdrivestr[Drive]=nil)) and (statfs(StrPas(fixdrivestr[drive]),fs)<>-1)) or
-     ((not (drivestr[Drive]=nil)) and (statfs(StrPas(drivestr[drive]),fs)<>-1)) then
+  if ((Drive in [Low(FixDriveStr)..High(FixDriveStr)]) and (not (fixdrivestr[Drive]=nil)) and (fpstatfs(StrPas(fixdrivestr[drive]),@fs)<>-1)) or
+     ((Drive <= High(drivestr)) and (not (drivestr[Drive]=nil)) and (fpstatfs(StrPas(drivestr[drive]),@fs)<>-1)) then
    Diskfree:=int64(fs.bavail)*int64(fs.bsize)
   else
    Diskfree:=-1;
@@ -699,12 +962,26 @@ Function DiskSize(Drive: Byte): int64;
 var
   fs : tstatfs;
 Begin
-  if ((Drive<4) and (not (fixdrivestr[Drive]=nil)) and (statfs(StrPas(fixdrivestr[drive]),fs)<>-1)) or
-     ((not (drivestr[Drive]=nil)) and (statfs(StrPas(drivestr[drive]),fs)<>-1)) then
+  if ((Drive in [Low(FixDriveStr)..High(FixDriveStr)]) and (not (fixdrivestr[Drive]=nil)) and (fpstatfs(StrPas(fixdrivestr[drive]),@fs)<>-1)) or
+     ((drive <= High(drivestr)) and (not (drivestr[Drive]=nil)) and (fpstatfs(StrPas(drivestr[drive]),@fs)<>-1)) then
    DiskSize:=int64(fs.blocks)*int64(fs.bsize)
   else
    DiskSize:=-1;
 End;
+
+
+Procedure FreeDriveStr;
+var
+  i: longint;
+begin
+  for i:=low(drivestr) to high(drivestr) do
+    if assigned(drivestr[i]) then
+      begin
+        freemem(drivestr[i]);
+        drivestr[i]:=nil;
+      end;
+end;
+
 
 
 Function GetCurrentDir : String;
@@ -744,9 +1021,6 @@ end;
                               Misc Functions
 ****************************************************************************}
 
-procedure Beep;
-begin
-end;
 
 
 {****************************************************************************
@@ -763,12 +1037,11 @@ begin
   GetEpochTime:=fptime;
 end;
 
-procedure GetTime(var hour,min,sec,msec,usec:word);
-{
-  Gets the current time, adjusted to local time
-}
+// Now, adjusted to local time.
+
+Procedure DoGetLocalDateTime(var year, month, day, hour, min,  sec, msec, usec : word);
+
 var
-  year,day,month:Word;
   tz:timeval;
 begin
   fpgettimeofday(@tz,nil);
@@ -777,14 +1050,23 @@ begin
   usec:=tz.tv_usec mod 1000;
 end;
 
+procedure GetTime(var hour,min,sec,msec,usec:word);
+
+Var
+  year,day,month:Word;
+
+begin
+  DoGetLocalDateTime(year,month,day,hour,min,sec,msec,usec);
+end;
+
 procedure GetTime(var hour,min,sec,sec100:word);
 {
   Gets the current time, adjusted to local time
 }
 var
-  usec : word;
+  year,day,month,usec : word;
 begin
-  gettime(hour,min,sec,sec100,usec);
+  DoGetLocalDateTime(year,month,day,hour,min,sec,sec100,usec);
   sec100:=sec100 div 10;
 end;
 
@@ -793,9 +1075,9 @@ Procedure GetTime(Var Hour,Min,Sec:Word);
   Gets the current time, adjusted to local time
 }
 var
-  msec,usec : Word;
+  year,day,month,msec,usec : Word;
 Begin
-  gettime(hour,min,sec,msec,usec);
+  DoGetLocalDateTime(year,month,day,hour,min,sec,msec,usec);
 End;
 
 Procedure GetDate(Var Year,Month,Day:Word);
@@ -803,31 +1085,34 @@ Procedure GetDate(Var Year,Month,Day:Word);
   Gets the current date, adjusted to local time
 }
 var
-  hour,minute,second : word;
+  hour,minute,second,msec,usec : word;
 Begin
-  EpochToLocal(fptime,year,month,day,hour,minute,second);
+  DoGetLocalDateTime(year,month,day,hour,minute,second,msec,usec);
 End;
 
 Procedure GetDateTime(Var Year,Month,Day,hour,minute,second:Word);
 {
   Gets the current date, adjusted to local time
 }
+Var
+  usec,msec : word;
+  
 Begin
-  EpochToLocal(fptime,year,month,day,hour,minute,second);
+  DoGetLocalDateTime(year,month,day,hour,minute,second,msec,usec);
 End;
 
 
 
 
+{$ifndef FPUNONE}
 Procedure GetLocalTime(var SystemTime: TSystemTime);
 
 var
   usecs : Word;
 begin
-  GetTime(SystemTime.Hour, SystemTime.Minute, SystemTime.Second, SystemTime.MilliSecond, usecs);
-  GetDate(SystemTime.Year, SystemTime.Month, SystemTime.Day);
-//  SystemTime.MilliSecond := 0;
+  DoGetLocalDateTime(SystemTime.Year, SystemTime.Month, SystemTime.Day,SystemTime.Hour, SystemTime.Minute, SystemTime.Second, SystemTime.MilliSecond, usecs);
 end ;
+{$endif}
 
 
 Procedure InitAnsi;
@@ -872,7 +1157,7 @@ end;
 Function GetEnvironmentVariable(Const EnvVar : String) : String;
 
 begin
-  Result:=StrPas(BaseUnix.FPGetenv(PChar(EnvVar)));
+  Result:=StrPas(BaseUnix.FPGetenv(PChar(pointer(EnvVar))));
 end;
 
 Function GetEnvironmentVariableCount : Integer;
@@ -888,8 +1173,7 @@ begin
 end;
 
 
-{$define FPC_USE_FPEXEC}  // leave the old code under IFDEF for a while.
-function ExecuteProcess(Const Path: AnsiString; Const ComLine: AnsiString):integer;
+function ExecuteProcess(Const Path: AnsiString; Const ComLine: AnsiString;Flags:TExecuteFlags=[]):integer;
 var
   pid    : longint;
   e      : EOSError;
@@ -901,13 +1185,17 @@ Begin
     so that long filenames will always be accepted. But don't
     do it if there are already double quotes!
   }
-  {$ifdef FPC_USE_FPEXEC}       // Only place we still parse
+
+   // Only place we still parse
    cmdline2:=nil;
    if Comline<>'' Then
      begin
        CommandLine:=ComLine;
+       { Make an unique copy because stringtoppchar modifies the
+         string }
+       UniqueString(CommandLine);
        cmdline2:=StringtoPPChar(CommandLine,1);
-       cmdline2^:=pchar(Path);
+       cmdline2^:=pchar(pointer(Path));
      end
    else
      begin
@@ -915,23 +1203,16 @@ Begin
        cmdline2^:=pchar(Path);
        cmdline2[1]:=nil;
      end;
-  {$else}
-  if Pos ('"', Path) = 0 then
-    CommandLine := '"' + Path + '"'
-  else
-    CommandLine := Path;
-  if ComLine <> '' then
-    CommandLine := Commandline + ' ' + ComLine;
-  {$endif}
+
+  {$ifdef USE_VFORK}
+  pid:=fpvFork;
+  {$else USE_VFORK}
   pid:=fpFork;
+  {$endif USE_VFORK}
   if pid=0 then
    begin
    {The child does the actual exec, and then exits}
-    {$ifdef FPC_USE_FPEXEC}
-      fpexecv(pchar(Path),Cmdline2);
-    {$else}
-      Execl(CommandLine);
-    {$endif}
+      fpexecv(pchar(pointer(Path)),Cmdline2);
      { If the execve fails, we return an exitvalue of 127, to let it be known}
      fpExit(127);
    end
@@ -946,6 +1227,9 @@ Begin
   { We're in the parent, let's wait. }
   result:=WaitProcess(pid); // WaitPid and result-convert
 
+  if Comline<>'' Then
+    freemem(cmdline2);
+
   if (result<0) or (result=127) then
     begin
     E:=EOSError.CreateFmt(SExecuteProcessFailed,[Path,result]);
@@ -954,17 +1238,13 @@ Begin
     end;
 End;
 
-function ExecuteProcess(Const Path: AnsiString; Const ComLine: Array Of AnsiString):integer;
+function ExecuteProcess(Const Path: AnsiString; Const ComLine: Array Of AnsiString;Flags:TExecuteFlags=[]):integer;
 
 var
   pid    : longint;
   e : EOSError;
 
 Begin
-  { always surround the name of the application by quotes
-    so that long filenames will always be accepted. But don't
-    do it if there are already double quotes!
-  }
   pid:=fpFork;
   if pid=0 then
    begin
@@ -996,22 +1276,15 @@ End;
 procedure Sleep(milliseconds: Cardinal);
 
 Var
-  fd : Integer;
-  fds : TfdSet;
-  timeout : TimeVal;
-
+  timeout,timeoutresult : TTimespec;
+  res: cint;
 begin
-  fd:=FileOpen('/dev/null',fmOpenRead);
-  If Not(Fd<0) then
-    try
-      fpfd_zero(fds);
-      fpfd_set(0,fds);
-      timeout.tv_sec:=Milliseconds div 1000;
-      timeout.tv_usec:=(Milliseconds mod 1000) * 1000;
-      fpSelect(1,Nil,Nil,@fds,@timeout);
-    finally
-      FileClose(fd);
-    end;
+  timeout.tv_sec:=milliseconds div 1000;
+  timeout.tv_nsec:=1000*1000*(milliseconds mod 1000);
+  repeat
+    res:=fpnanosleep(@timeout,@timeoutresult);
+    timeout:=timeoutresult;
+  until (res<>-1) or (fpgeterrno<>ESysEINTR);
 end;
 
 Function GetLastOSError : Integer;
@@ -1019,6 +1292,8 @@ Function GetLastOSError : Integer;
 begin
   Result:=fpgetErrNo;
 end;
+
+
 
 { ---------------------------------------------------------------------
     Application config files
@@ -1030,45 +1305,52 @@ Function GetHomeDir : String;
 begin
   Result:=GetEnvironmentVariable('HOME');
   If (Result<>'') then
-  Result:=IncludeTrailingPathDelimiter(Result);
+    Result:=IncludeTrailingPathDelimiter(Result);
+end;
+
+{ Follows base-dir spec,
+  see [http://freedesktop.org/Standards/basedir-spec].
+  Always ends with PathDelim. }
+Function XdgConfigHome : String;
+begin
+  Result:=GetEnvironmentVariable('XDG_CONFIG_HOME');
+  if (Result='') then
+    Result:=GetHomeDir + '.config/'
+  else
+    Result:=IncludeTrailingPathDelimiter(Result);
 end;
 
 Function GetAppConfigDir(Global : Boolean) : String;
 
 begin
   If Global then
-    Result:=SysConfigDir
+    Result:=IncludeTrailingPathDelimiter(SysConfigDir)
   else
-    Result:=GetHomeDir+ApplicationName;
+    Result:=IncludeTrailingPathDelimiter(XdgConfigHome);
+  if VendorName<>'' then
+    Result:=IncludeTrailingPathDelimiter(Result+VendorName);
+  Result:=IncludeTrailingPathDelimiter(Result+ApplicationName);
 end;
 
 Function GetAppConfigFile(Global : Boolean; SubDir : Boolean) : String;
 
 begin
-  if Global then
-    begin
-    Result:=IncludeTrailingPathDelimiter(SysConfigDir);
-    if SubDir then
-      Result:=IncludeTrailingPathDelimiter(Result+ApplicationName);
-    Result:=Result+ApplicationName+ConfigExtension;
-    end
+  If Global then
+    Result:=IncludeTrailingPathDelimiter(SysConfigDir)
   else
+    Result:=IncludeTrailingPathDelimiter(XdgConfigHome);
+  if SubDir then
     begin
-    if SubDir then
-      begin
-      Result:=IncludeTrailingPathDelimiter(GetAppConfigDir(False));
-      Result:=Result+ApplicationName+ConfigExtension;
-      end
-    else
-      begin
-      Result:=GetHomeDir;
-      Result:=Result+'.'+ApplicationName;
-      end;
+      if VendorName<>'' then
+        Result:=IncludeTrailingPathDelimiter(Result+VendorName);
+      Result:=IncludeTrailingPathDelimiter(Result+ApplicationName);
     end;
+  Result:=Result+ApplicationName+ConfigExtension;
 end;
 
+
 {****************************************************************************
-                              Initialization code
+                              GetTempDir 
 ****************************************************************************}
 
 
@@ -1082,11 +1364,41 @@ begin
     Result:=GetEnvironmentVariable('TEMP');
     If (Result='') Then
       Result:=GetEnvironmentVariable('TMP');
+    If (Result='') Then
+      Result:=GetEnvironmentVariable('TMPDIR');
     if (Result='') then
       Result:='/tmp/' // fallback.
     end;
   if (Result<>'') then
     Result:=IncludeTrailingPathDelimiter(Result);
+end;
+
+{****************************************************************************
+                              GetUserDir 
+****************************************************************************}
+
+Var
+  TheUserDir : String;
+
+Function GetUserDir : String;
+
+begin
+  If (TheUserDir='') then
+    begin
+    TheUserDir:=GetEnvironmentVariable('HOME'); 
+    if (TheUserDir<>'') then
+      TheUserDir:=IncludeTrailingPathDelimiter(TheUserDir)
+    else
+      TheUserDir:=GetTempDir(False);
+    end;
+  Result:=TheUserDir;    
+end;
+
+Procedure SysBeep;
+
+begin
+  Write(#7);
+  Flush(Output);
 end;
 
 {****************************************************************************
@@ -1097,153 +1409,9 @@ Initialization
   InitExceptions;       { Initialize exceptions. OS independent }
   InitInternational;    { Initialize internationalization settings }
   SysConfigDir:='/etc'; { Initialize system config dir }
+  OnBeep:=@SysBeep;
+  
 Finalization
+  FreeDriveStr;
   DoneExceptions;
 end.
-{
-
-  $Log: sysutils.pp,v $
-  Revision 1.59  2005/03/25 22:53:39  jonas
-    * fixed several warnings and notes about unused variables (mainly) or
-      uninitialised use of variables/function results (a few)
-
-  Revision 1.58  2005/02/26 14:38:14  florian
-    + SysLocale
-
-  Revision 1.57  2005/02/14 17:13:31  peter
-    * truncate log
-
-   * getenv had ansistring as param due to {$H+} now shortstring.
-
-  Revision 1.52  2004/11/02 13:59:42  marco
-   * timezone stuff back to unix
-
-  Revision 1.51  2004/11/01 07:10:56  peter
-    * 1.0.x bootstrap fix
-
-  Revision 1.50  2004/10/31 22:25:31  olle
-    * Fix for FPC_USE_LIBC
-
-  Revision 1.49  2004/10/30 20:55:54  marco
-   * unix interface cleanup
-
-  Revision 1.48  2004/10/12 15:22:23  michael
-  + Fixed sleep: file needs to be closed again
-
-  Revision 1.47  2004/10/10 10:28:34  michael
-  + Implementation of GetTempDir and GetTempFileName
-
-  Revision 1.46  2004/08/30 11:20:39  michael
-  + Give path, not comline in ExecuteProcess
-
-  Revision 1.45  2004/08/30 11:13:20  michael
-  + Fixed ExecuteProcess. Now returns the exit code or raises an exception on failure
-
-  Revision 1.44  2004/08/05 07:32:51  michael
-  Added getappconfig calls
-
-  Revision 1.43  2004/07/03 21:50:31  daniel
-    * Modified bootstrap code so separate prt0.as/prt0_10.as files are no
-      longer necessary
-
-  Revision 1.42  2004/06/15 07:36:03  michael
-  + Fixed Globtosearchrec to use unixtowinage
-
-  Revision 1.41  2004/05/22 14:25:03  michael
-  + Fixed FindFirst/FindNext so it treats the attributes correctly
-
-  Revision 1.40  2004/04/28 20:48:20  peter
-    * ordinal-pointer conversions fixed
-
-  Revision 1.39  2004/04/26 14:50:19  peter
-    * FileIsReadOnly fixed
-
-  Revision 1.38  2004/04/20 18:24:32  marco
-   * small fix for NIL arg ptr in first executeprocess
-
-  Revision 1.37  2004/03/04 22:15:16  marco
-   * UnixType changes. Please report problems to me.
-
-  Revision 1.36  2004/02/13 10:50:23  marco
-   * Hopefully last large changes to fpexec and friends.
-        - naming conventions changes from Michael.
-        - shell functions get alternative under ifdef.
-        - arraystring function moves to unixutil
-        - unixutil now regards quotes in stringtoppchar.
-        - sysutils/unix get executeprocess(ansi,array of ansi), and
-                both executeprocess functions are fixed
-        - Sysutils/win32 get executeprocess(ansi,array of ansi)
-
-  Revision 1.35  2004/02/12 15:31:06  marco
-   * First version of fpexec change. Still under ifdef or silently overloaded
-
-  Revision 1.34  2004/02/09 17:11:17  marco
-   * fixed for 1.0 errno->fpgeterrno
-
-  Revision 1.33  2004/02/08 14:50:51  michael
-  + Added fileIsReadOnly
-
-  Revision 1.32  2004/02/08 11:01:17  michael
-  + Implemented getlastoserror
-
-  Revision 1.31  2004/01/20 23:13:53  hajny
-    * ExecuteProcess fixes, ProcessID and ThreadID added
-
-  Revision 1.30  2004/01/10 17:34:36  michael
-  + Implemented sleep() on Unix.
-
-  Revision 1.29  2004/01/05 22:42:35  florian
-    * compilation error fixed
-
-  Revision 1.28  2004/01/05 22:37:15  florian
-    * changed sysutils.exec to ExecuteProcess
-
-  Revision 1.27  2004/01/03 09:09:11  marco
-   * Unix exec(ansistring)
-
-  Revision 1.26  2003/11/26 20:35:14  michael
-  + Some fixes to have everything compile again
-
-  Revision 1.25  2003/11/17 10:05:51  marco
-   * threads for FreeBSD. Not working tho
-
-  Revision 1.24  2003/10/25 23:43:59  hajny
-    * THandle in sysutils common using System.THandle
-
-  Revision 1.23  2003/10/07 08:28:49  marco
-   * fix from Vincent to casetables
-
-  Revision 1.22  2003/09/27 12:51:33  peter
-    * fpISxxx macros renamed to C compliant fpS_ISxxx
-
-  Revision 1.21  2003/09/17 19:07:44  marco
-   * more fixes for Unix<->unixutil
-
-  Revision 1.20  2003/09/17 12:41:31  marco
-   * Uses more baseunix, less unix now
-
-  Revision 1.19  2003/09/14 20:15:01  marco
-   * Unix reform stage two. Remove all calls from Unix that exist in Baseunix.
-
-  Revision 1.18  2003/04/01 15:57:41  peter
-    * made THandle platform dependent and unique type
-
-  Revision 1.17  2003/03/30 10:38:00  armin
-  * corrected typo in DirectoryExists
-
-  Revision 1.16  2003/03/29 18:21:42  hajny
-    * DirectoryExists declaration changed to that one from fixes branch
-
-  Revision 1.15  2003/03/28 19:06:59  peter
-    * directoryexists added
-
-  Revision 1.14  2003/01/03 20:41:04  peter
-    * FileCreate(string,mode) overload added
-
-  Revision 1.13  2002/09/07 16:01:28  peter
-    * old logs removed and tabs fixed
-
-  Revision 1.12  2002/01/25 16:23:03  peter
-    * merged filesearch() fix
-
-}

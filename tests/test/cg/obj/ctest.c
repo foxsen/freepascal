@@ -9,13 +9,19 @@
    to use them.
 */
 
+#if defined(__BORLANDC__)
+#define long_long __int64
+#else
+#define long_long long long
+#endif
+
 unsigned char global_u8bit;
 unsigned short global_u16bit;
 unsigned int global_u32bit;
 short global_s16bit;
 int global_s32bit;
-long long global_s64bit;
-unsigned long long global_u64bit;
+long_long global_s64bit;
+unsigned long_long global_u64bit;
 float global_float;
 double global_double;
 long double global_long_double;
@@ -59,7 +65,7 @@ struct _5BYTE_
 struct _7BYTE_
 {
 	unsigned char u8;
-	long long s64;
+	long_long s64;
 	unsigned short u16;
 };
 
@@ -96,12 +102,12 @@ void test_param_s32(int v)
 }
 
 
-void test_param_s64(long long v)
+void test_param_s64(long_long v)
 {
   global_s64bit = v;
 }
 
-void test_param_u64(unsigned long long v)
+void test_param_u64(unsigned long_long v)
 {
   global_u64bit = v;
 }
@@ -151,12 +157,12 @@ void test_array_param_s32(int v[2])
 }
 
 
-void test_array_param_s64(long long v[2])
+void test_array_param_s64(long_long v[2])
 {
   global_s64bit = v[1];
 }
 
-void test_array_param_u64(unsigned long long v[2])
+void test_array_param_u64(unsigned long_long v[2])
 {
   global_u64bit = v[1];
 }
@@ -196,7 +202,7 @@ void test_param_mixed_u32(unsigned char z, unsigned int x, unsigned char y)
 	global_u8bit = y;
 }
 
-void test_param_mixed_s64(unsigned char z, long long x, unsigned char y)
+void test_param_mixed_s64(unsigned char z, long_long x, unsigned char y)
 {
 	global_s64bit = x;
 	global_u8bit = y;
@@ -305,7 +311,7 @@ unsigned int test_function_u32()
 	return RESULT_U32BIT;
 }
 
-unsigned long long test_function_u64()
+unsigned long_long test_function_u64()
 {
 	return RESULT_U64BIT;
 }
@@ -320,7 +326,7 @@ unsigned int test_function_s32()
 	return RESULT_S32BIT;
 }
 
-unsigned long long test_function_s64()
+unsigned long_long test_function_s64()
 {
 	return RESULT_S64BIT;
 }
@@ -382,30 +388,3 @@ struct _7BYTE_ test_function_struct()
 	test_struct.u16 = RESULT_U16BIT;
 	return test_struct;
 }
-
-/*
-  $Log: ctest.c,v $
-  Revision 1.7  2005/02/06 20:00:41  peter
-    * use int for 32bit types
-
-  Revision 1.6  2002/11/18 00:42:16  pierre
-   + records with really 3 byte size tests added
-
-  Revision 1.5  2002/11/04 15:17:45  pierre
-   * compatibility with C checks improved
-
-  Revision 1.4  2002/09/07 15:40:56  peter
-    * old logs removed and tabs fixed
-
-  Revision 1.3  2002/05/04 16:57:23  carl
-  + var parameter testing
-  + function result testing
-  + floating point testing
-
-  Revision 1.2  2002/04/22 19:09:12  carl
-  + added structure testing
-
-  Revision 1.1  2002/04/13 21:06:39  carl
-  + c module testing
-
-*/

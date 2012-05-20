@@ -1,5 +1,4 @@
 {
-    $Id: cputarg.pas,v 1.7 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 2001 by Peter Vreman
 
     Includes the x86-64 dependent target units
@@ -43,26 +42,53 @@ implementation
     {$ifndef NOTARGETFREEBSD}
       ,t_bsd
     {$endif}
-    {$ifndef NOTARGETWIN32}
-      ,t_win32
+    {$ifndef NOTARGETWIN}
+      ,t_win
+      ,win64unw
+    {$endif}
+    {$ifndef NOTARGETSUNOS}
+      ,t_sunos
     {$endif}
 
 {**************************************
              Assemblers
 **************************************}
 
+    {$ifndef NOAGX86_64INT}
+      ,agx86int
+    {$endif}
     {$ifndef NOAGX86_64ATT}
       ,agx86att
     {$endif}
 
       ,ogcoff
       ,ogelf
+
+{**************************************
+        Assembler Readers
+**************************************}
+
+  {$ifndef NoRax64att}
+       ,rax64att
+  {$endif NoRax64att}
+  {$ifndef NoRax64int}
+       ,rax64int
+  {$endif NoRax64int}
+
+{**************************************
+             Debuginfo
+**************************************}
+
+  {$ifndef NoCFIDwarf}
+      ,cfidwarf
+  {$endif NoCFIDwarf}
+  {$ifndef NoDbgStabs}
+      ,dbgstabs
+  {$endif NoDbgStabs}
+  {$ifndef NoDbgDwarf}
+      ,dbgdwarf
+  {$endif NoDbgDwarf}
+
       ;
 
 end.
-{
-  $Log: cputarg.pas,v $
-  Revision 1.7  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

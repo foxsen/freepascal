@@ -1,12 +1,7 @@
 {
-    $Id: ogelf.pas,v 1.25 2005/02/14 17:13:06 peter Exp $
-    Copyright (c) 1998-2002 by Peter Vreman
+    Copyright (c) 1998-2006 by Peter Vreman
 
     Contains the binary elf writer
-
-    * This code was inspired by the NASM sources
-      The Netwide Assembler is Copyright (c) 1996 Simon Tatham and
-      Julian Hall. All rights reserved.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -36,12 +31,13 @@ interface
        { target }
        systems,
        { assembler }
-       cpuinfo,cpubase,aasmbase,aasmtai,assemble,
+       cpuinfo,cpubase,aasmbase,aasmtai,aasmdata,assemble,
        { output }
-       ogbase;
+       ogbase,
+       owbase;
 
     type
-       telf32section = class(TAsmSection)
+       TElfObjSection = class(TObjSection)
        public
           secshidx  : longint; { index for the section in symtab }
           shstridx,
@@ -49,62 +45,51 @@ interface
           shflags,
           shlink,
           shinfo,
-          entsize   : longint;
-          { relocation }
-          relocsect : telf32Section;
-          constructor create(const Aname:string;Atype:TAsmSectionType;Aalign:longint;Aoptions:TAsmSectionOptions);override;
-          constructor create_ext(const Aname:string;Atype:TAsmSectionType;Ashtype,Ashflags,Ashlink,Ashinfo,Aalign,Aentsize:longint);
-          destructor  destroy;override;
+          shentsize : longint;
+          constructor create(AList:TFPHashObjectList;const Aname:string;Aalign:shortint;Aoptions:TObjSectionOptions);override;
+          constructor create_ext(AList:TFPHashObjectList;const Aname:string;Ashtype,Ashflags,Ashlink,Ashinfo:longint;Aalign:shortint;Aentsize:longint);
        end;
 
-       telf32objectdata = class(TAsmObjectData)
+       TElfObjData = class(TObjData)
        public
+         constructor create(const n:string);override;
+         function  sectionname(atype:TAsmSectiontype;const aname:string;aorder:TAsmSectionOrder):string;override;
+         procedure CreateDebugSections;override;
+         procedure writereloc(data:aint;len:aword;p:TObjSymbol;reltype:TObjRelocationType);override;
+       end;
+
+       TElfObjectOutput = class(tObjOutput)
+       private
          symtabsect,
          strtabsect,
-         shstrtabsect,
-         gotpcsect,
+         shstrtabsect: TElfObjSection;
+         {gotpcsect,
          gotoffsect,
          goTSect,
          plTSect,
-         symsect  : telf32Section;
-         syms     : Tdynamicarray;
-         constructor create(const n:string);
-         destructor  destroy;override;
-         function  sectionname(atype:tasmsectiontype;const aname:string):string;override;
-         procedure writereloc(data,len:aint;p:tasmsymbol;relative:TAsmRelocationType);override;
-         procedure writesymbol(p:tasmsymbol);override;
-         procedure writestabs(offset:aint;p:pchar;nidx,nother,line:longint;reloc:boolean);override;
-         procedure writesymstabs(offset:aint;p:pchar;ps:tasmsymbol;nidx,nother,line:longint;reloc:boolean);override;
-         procedure beforealloc;override;
-         procedure beforewrite;override;
-       end;
-
-       telf32objectoutput = class(tobjectoutput)
-       private
-         elf32data : telf32objectdata;
-         initsym   : longint;
-         procedure createrelocsection(s:telf32section);
-         procedure createshstrtab;
-         procedure createsymtab;
-         procedure writesectionheader(s:telf32section);
-         procedure writesectiondata(s:telf32section);
-         procedure section_write_symbol(p:tnamedindexitem;arg:pointer);
-         procedure section_write_sh_string(p:tnamedindexitem;arg:pointer);
-         procedure section_number_symbol(p:tnamedindexitem;arg:pointer);
-         procedure section_count_sects(p:tnamedindexitem;arg:pointer);
-         procedure section_create_relocsec(p:tnamedindexitem;arg:pointer);
-         procedure section_set_datapos(p:tnamedindexitem;arg:pointer);
-         procedure section_relocsec_set_datapos(p:tnamedindexitem;arg:pointer);
-         procedure section_write_data(p:tnamedindexitem;arg:pointer);
-         procedure section_write_sechdr(p:tnamedindexitem;arg:pointer);
-         procedure section_write_relocsec(p:tnamedindexitem;arg:pointer);
+         symsect   : TElfObjSection;}
+         symidx,
+         localsyms : longint;
+         procedure createrelocsection(s:TElfObjSection;data:TObjData);
+         procedure createshstrtab(data:TObjData);
+         procedure createsymtab(data: TObjData);
+         procedure writesectionheader(s:TElfObjSection);
+         procedure writesectiondata(s:TElfObjSection);
+         procedure write_internal_symbol(astridx:longint;ainfo:byte;ashndx:word);
+         procedure section_write_symbol(p:TObject;arg:pointer);
+         procedure section_write_sh_string(p:TObject;arg:pointer);
+         procedure section_count_sections(p:TObject;arg:pointer);
+         procedure section_create_relocsec(p:TObject;arg:pointer);
+         procedure section_set_datapos(p:TObject;arg:pointer);
+         procedure section_write_data(p:TObject;arg:pointer);
+         procedure section_write_sechdr(p:TObject;arg:pointer);
        protected
-         function writedata(data:TAsmObjectData):boolean;override;
+         function writedata(data:TObjData):boolean;override;
        public
-         function newobjectdata(const n:string):TAsmObjectData;override;
+         constructor Create(AWriter:TObjectWriter);override;
        end;
 
-       telf32assembler = class(tinternalassembler)
+       TElfAssembler = class(tinternalassembler)
          constructor create(smart:boolean);override;
        end;
 
@@ -112,7 +97,7 @@ interface
 implementation
 
       uses
-        strings,
+        SysUtils,
         verbose,
         cutils,globals,fmodule;
 
@@ -120,12 +105,78 @@ implementation
       symbolresize = 200*18;
 
     const
+      { Relocation types }
+{$ifdef i386}
       R_386_32 = 1;                    { ordinary absolute relocation }
       R_386_PC32 = 2;                  { PC-relative relocation }
       R_386_GOT32 = 3;                 { an offset into GOT }
       R_386_PLT32 = 4;                 { a PC-relative offset into PLT }
       R_386_GOTOFF = 9;                { an offset from GOT base }
       R_386_GOTPC = 10;                { a PC-relative offset _to_ GOT }
+      R_386_GNU_VTINHERIT = 250;
+      R_386_GNU_VTENTRY = 251;
+{$endif i386}
+{$ifdef sparc}
+      R_SPARC_32 = 3;
+      R_SPARC_WDISP30 = 7;
+      R_SPARC_HI22 = 9;
+      R_SPARC_LO10 = 12;
+      R_SPARC_GNU_VTINHERIT = 250;
+      R_SPARC_GNU_VTENTRY = 251;
+{$endif sparc}
+{$ifdef x86_64}
+      R_X86_64_NONE = 0;
+      { Direct 64 bit   }
+      R_X86_64_64 = 1;
+      { PC relative 32 bit signed  }
+      R_X86_64_PC32 = 2;
+      { 32 bit GOT entry  }
+      R_X86_64_GOT32 = 3;
+      { 32 bit PLT address  }
+      R_X86_64_PLT32 = 4;
+      { Copy symbol at runtime  }
+      R_X86_64_COPY = 5;
+      { Create GOT entry  }
+      R_X86_64_GLOB_DAT = 6;
+      { Create PLT entry  }
+      R_X86_64_JUMP_SLOT = 7;
+      { Adjust by program base  }
+      R_X86_64_RELATIVE = 8;
+      { 32 bit signed PC relative offset to GOT  }
+      R_X86_64_GOTPCREL = 9;
+      { Direct 32 bit zero extended  }
+      R_X86_64_32 = 10;
+      { Direct 32 bit sign extended  }
+      R_X86_64_32S = 11;
+      { Direct 16 bit zero extended  }
+      R_X86_64_16 = 12;
+      { 16 bit sign extended PC relative  }
+      R_X86_64_PC16 = 13;
+      { Direct 8 bit sign extended   }
+      R_X86_64_8 = 14;
+      { 8 bit sign extended PC relative  }
+      R_X86_64_PC8 = 15;
+      { ID of module containing symbol  }
+      R_X86_64_DTPMOD64 = 16;
+      { Offset in module's TLS block  }
+      R_X86_64_DTPOFF64 = 17;
+      { Offset in initial TLS block  }
+      R_X86_64_TPOFF64 = 18;
+      { 32 bit signed PC relative offset to two GOT entries for GD symbol  }
+      R_X86_64_TLSGD = 19;
+      { 32 bit signed PC relative offset to two GOT entries for LD symbol  }
+      R_X86_64_TLSLD = 20;
+      { Offset in TLS block  }
+      R_X86_64_DTPOFF32 = 21;
+      { 32 bit signed PC relative offset to GOT entry for IE symbol  }
+      R_X86_64_GOTTPOFF = 22;
+      { Offset in initial TLS block  }
+      R_X86_64_TPOFF32 = 23;
+      { GNU extension to record C++ vtable hierarchy }
+      R_X86_64_GNU_VTINHERIT = 24;
+      { GNU extension to record C++ vtable member usage }
+      R_X86_64_GNU_VTENTRY = 25;
+{$endif x86_64}
 
       SHN_UNDEF     = 0;
       SHN_ABS       = $fff1;
@@ -160,7 +211,7 @@ implementation
 
       type
       { Structures which are written directly to the output file }
-        telf32header=packed record
+        TElf32header=packed record
           magic0123         : longint;
           file_class        : byte;
           data_encoding     : byte;
@@ -180,7 +231,7 @@ implementation
           e_shnum           : word;             { 0..e_shnum-1 of entrys }
           e_shstrndx        : word;             { index of string section header }
         end;
-        telf32sechdr=packed record
+        TElf32sechdr=packed record
           sh_name           : longint;
           sh_type           : longint;
           sh_flags          : longint;
@@ -192,11 +243,11 @@ implementation
           sh_addralign      : longint;
           sh_entsize        : longint;
         end;
-        telf32reloc=packed record
+        TElf32reloc=packed record
           address : longint;
           info    : longint; { bit 0-7: type, 8-31: symbol }
         end;
-        telf32symbol=packed record
+        TElf32symbol=packed record
           st_name  : longint;
           st_value : longint;
           st_size  : longint;
@@ -204,311 +255,549 @@ implementation
           st_other : byte;
           st_shndx : word;
         end;
-        telf32stab=packed record
-          strpos  : longint;
-          ntype   : byte;
-          nother  : byte;
-          ndesc   : word;
-          nvalue  : longint;
+
+
+        telf64header=packed record
+          magic0123         : longint;
+          file_class        : byte;
+          data_encoding     : byte;
+          file_version      : byte;
+          padding           : array[$07..$0f] of byte;
+          e_type            : word;
+          e_machine         : word;
+          e_version         : longint;
+          e_entry           : qword;            { entrypoint }
+          e_phoff           : qword;            { program header offset }
+          e_shoff           : qword;            { sections header offset }
+          e_flags           : longint;
+          e_ehsize          : word;             { elf header size in bytes }
+          e_phentsize       : word;             { size of an entry in the program header array }
+          e_phnum           : word;             { 0..e_phnum-1 of entrys }
+          e_shentsize       : word;             { size of an entry in sections header array }
+          e_shnum           : word;             { 0..e_shnum-1 of entrys }
+          e_shstrndx        : word;             { index of string section header }
+        end;
+        telf64sechdr=packed record
+          sh_name           : longint;
+          sh_type           : longint;
+          sh_flags          : qword;
+          sh_addr           : qword;
+          sh_offset         : qword;
+          sh_size           : qword;
+          sh_link           : longint;
+          sh_info           : longint;
+          sh_addralign      : qword;
+          sh_entsize        : qword;
+        end;
+        telf64reloc=packed record
+          address : qword;
+          info    : qword; { bit 0-31: type, 32-63: symbol }
+          addend  : int64; { signed! }
+        end;
+        telf64symbol=packed record
+          st_name  : longint;
+          st_info  : byte; { bit 0-3: type, 4-7: bind }
+          st_other : byte;
+          st_shndx : word;
+          st_value : qword;
+          st_size  : qword;
+        end;
+
+
+{$ifdef cpu64bitaddr}
+        telfheader = telf64header;
+        telfreloc = telf64reloc;
+        telfsymbol = telf64symbol;
+        telfsechdr = telf64sechdr;
+{$else cpu64bitaddr}
+        telfheader = telf32header;
+        telfreloc = telf32reloc;
+        telfsymbol = telf32symbol;
+        telfsechdr = telf32sechdr;
+{$endif cpu64bitaddr}
+
+
+      function MayBeSwapHeader(h : telf32header) : telf32header;
+        begin
+          result:=h;
+          if source_info.endian<>target_info.endian then
+            with h do
+              begin
+                result.e_type:=swapendian(e_type);
+                result.e_machine:=swapendian(e_machine);
+                result.e_version:=swapendian(e_version);
+                result.e_entry:=swapendian(e_entry);
+                result.e_phoff:=swapendian(e_phoff);
+                result.e_shoff:=swapendian(e_shoff);
+                result.e_flags:=swapendian(e_flags);
+                result.e_ehsize:=swapendian(e_ehsize);
+                result.e_phentsize:=swapendian(e_phentsize);
+                result.e_phnum:=swapendian(e_phnum);
+                result.e_shentsize:=swapendian(e_shentsize);
+                result.e_shnum:=swapendian(e_shnum);
+                result.e_shstrndx:=swapendian(e_shstrndx);
+              end;
+        end;
+
+
+      function MayBeSwapHeader(h : telf64header) : telf64header;
+        begin
+          result:=h;
+          if source_info.endian<>target_info.endian then
+            with h do
+              begin
+                result.e_type:=swapendian(e_type);
+                result.e_machine:=swapendian(e_machine);
+                result.e_version:=swapendian(e_version);
+                result.e_entry:=swapendian(e_entry);
+                result.e_phoff:=swapendian(e_phoff);
+                result.e_shoff:=swapendian(e_shoff);
+                result.e_flags:=swapendian(e_flags);
+                result.e_ehsize:=swapendian(e_ehsize);
+                result.e_phentsize:=swapendian(e_phentsize);
+                result.e_phnum:=swapendian(e_phnum);
+                result.e_shentsize:=swapendian(e_shentsize);
+                result.e_shnum:=swapendian(e_shnum);
+                result.e_shstrndx:=swapendian(e_shstrndx);
+              end;
+        end;
+
+
+      function MaybeSwapSecHeader(h : telf32sechdr) : telf32sechdr;
+        begin
+          result:=h;
+          if source_info.endian<>target_info.endian then
+            with h do
+              begin
+                result.sh_name:=swapendian(sh_name);
+                result.sh_type:=swapendian(sh_type);
+                result.sh_flags:=swapendian(sh_flags);
+                result.sh_addr:=swapendian(sh_addr);
+                result.sh_offset:=swapendian(sh_offset);
+                result.sh_size:=swapendian(sh_size);
+                result.sh_link:=swapendian(sh_link);
+                result.sh_info:=swapendian(sh_info);
+                result.sh_addralign:=swapendian(sh_addralign);
+                result.sh_entsize:=swapendian(sh_entsize);
+              end;
+        end;
+
+
+      function MaybeSwapSecHeader(h : telf64sechdr) : telf64sechdr;
+        begin
+          result:=h;
+          if source_info.endian<>target_info.endian then
+            with h do
+              begin
+                result.sh_name:=swapendian(sh_name);
+                result.sh_type:=swapendian(sh_type);
+                result.sh_flags:=swapendian(sh_flags);
+                result.sh_addr:=swapendian(sh_addr);
+                result.sh_offset:=swapendian(sh_offset);
+                result.sh_size:=swapendian(sh_size);
+                result.sh_link:=swapendian(sh_link);
+                result.sh_info:=swapendian(sh_info);
+                result.sh_addralign:=swapendian(sh_addralign);
+                result.sh_entsize:=swapendian(sh_entsize);
+              end;
+        end;
+
+
+      function MaybeSwapElfSymbol(h : telf32symbol) : telf32symbol;
+        begin
+          result:=h;
+          if source_info.endian<>target_info.endian then
+            with h do
+              begin
+                result.st_name:=swapendian(st_name);
+                result.st_value:=swapendian(st_value);
+                result.st_size:=swapendian(st_size);
+                result.st_shndx:=swapendian(st_shndx);
+              end;
+        end;
+
+
+      function MaybeSwapElfSymbol(h : telf64symbol) : telf64symbol;
+        begin
+          result:=h;
+          if source_info.endian<>target_info.endian then
+            with h do
+              begin
+                result.st_name:=swapendian(st_name);
+                result.st_value:=swapendian(st_value);
+                result.st_size:=swapendian(st_size);
+                result.st_shndx:=swapendian(st_shndx);
+              end;
+        end;
+
+
+      function MaybeSwapElfReloc(h : telf32reloc) : telf32reloc;
+        begin
+          result:=h;
+          if source_info.endian<>target_info.endian then
+            with h do
+              begin
+                result.address:=swapendian(address);
+                result.info:=swapendian(info);
+              end;
+        end;
+
+
+      function MaybeSwapElfReloc(h : telf64reloc) : telf64reloc;
+        begin
+          result:=h;
+          if source_info.endian<>target_info.endian then
+            with h do
+              begin
+                result.address:=swapendian(address);
+                result.info:=swapendian(info);
+              end;
         end;
 
 
 {****************************************************************************
-                               TSection
+                                Helpers
 ****************************************************************************}
 
-    constructor telf32section.create(const Aname:string;Atype:TAsmSectionType;Aalign:longint;Aoptions:TAsmSectionOptions);
-      var
-        Ashflags,Ashtype,Aentsize : longint;
+    procedure encodesechdrflags(aoptions:TObjSectionOptions;out AshType:longint;out Ashflags:longint);
       begin
+        { Section Type }
+        AshType:=SHT_PROGBITS;
+        if oso_strings in aoptions then
+          AshType:=SHT_STRTAB
+        else if not(oso_data in aoptions) then
+          AshType:=SHT_NOBITS;
+        { Section Flags }
         Ashflags:=0;
-        Ashtype:=0;
-        Aentsize:=0;
-        case Atype of
-          sec_code :
-            begin
-              Ashflags:=SHF_ALLOC or SHF_EXECINSTR;
-              AshType:=SHT_PROGBITS;
-              AAlign:=max(sizeof(aint),AAlign);
-            end;
-          sec_data :
-            begin
-              Ashflags:=SHF_ALLOC or SHF_WRITE;
-              AshType:=SHT_PROGBITS;
-              AAlign:=max(sizeof(aint),AAlign);
-            end;
-          sec_bss :
-            begin
-              Ashflags:=SHF_ALLOC or SHF_WRITE;
-              AshType:=SHT_NOBITS;
-              AAlign:=max(sizeof(aint),AAlign);
-            end;
-          sec_stab :
-            begin
-              AshType:=SHT_PROGBITS;
-              AAlign:=max(sizeof(aint),AAlign);
-              Aentsize:=sizeof(telf32stab);
-            end;
-          sec_stabstr :
-            begin
-              AshType:=SHT_STRTAB;
-              AAlign:=1;
-            end;
-        end;
-        create_ext(Aname,Atype,Ashtype,Ashflags,0,0,Aalign,Aentsize);
+        if oso_load in aoptions then
+          Ashflags:=Ashflags or SHF_ALLOC;
+        if oso_executable in aoptions then
+          Ashflags:=Ashflags or SHF_EXECINSTR;
+        if oso_write in aoptions then
+          Ashflags:=Ashflags or SHF_WRITE;
       end;
 
 
-    constructor telf32section.create_ext(const Aname:string;Atype:TAsmSectionType;Ashtype,Ashflags,Ashlink,Ashinfo,Aalign,Aentsize:longint);
-      var
-        aoptions : TAsmSectionOptions;
+    procedure decodesechdrflags(AshType:longint;Ashflags:longint;out aoptions:TObjSectionOptions);
       begin
         aoptions:=[];
-        if (AshType=SHT_NOBITS) then
-          include(aoptions,aso_alloconly);
-        inherited create(Aname,Atype,Aalign,aoptions);
+        { Section Type }
+        if AshType<>SHT_NOBITS then
+          include(aoptions,oso_data);
+        if AshType=SHT_STRTAB then
+          include(aoptions,oso_strings);
+        { Section Flags }
+        if Ashflags and SHF_ALLOC<>0 then
+          include(aoptions,oso_load)
+        else
+          include(aoptions,oso_noload);
+        if Ashflags and SHF_WRITE<>0 then
+          include(aoptions,oso_write)
+        else
+          include(aoptions,oso_readonly);
+      end;
+
+
+{****************************************************************************
+                               TElfObjSection
+****************************************************************************}
+
+    constructor TElfObjSection.create(AList:TFPHashObjectList;const Aname:string;Aalign:shortint;Aoptions:TObjSectionOptions);
+      begin
+        inherited create(AList,Aname,Aalign,aoptions);
+        secshidx:=0;
+        shstridx:=0;
+        encodesechdrflags(aoptions,shtype,shflags);
+        shlink:=0;
+        shinfo:=0;
+        if name='.stab' then
+          shentsize:=sizeof(TObjStabEntry);
+      end;
+
+
+    constructor TElfObjSection.create_ext(AList:TFPHashObjectList;const Aname:string;Ashtype,Ashflags,Ashlink,Ashinfo:longint;Aalign:shortint;Aentsize:longint);
+      var
+        aoptions : TObjSectionOptions;
+      begin
+        decodesechdrflags(Ashtype,Ashflags,aoptions);
+        inherited create(AList,Aname,Aalign,aoptions);
         secshidx:=0;
         shstridx:=0;
         shtype:=AshType;
         shflags:=AshFlags;
         shlink:=Ashlink;
         shinfo:=Ashinfo;
-        entsize:=Aentsize;
-        relocsect:=nil;
-      end;
-
-
-    destructor telf32section.destroy;
-      begin
-        if assigned(relocsect) then
-          relocsect.free;
-        inherited destroy;
+        shentsize:=Aentsize;
       end;
 
 
 {****************************************************************************
-                            telf32objectdata
+                            TElfObjData
 ****************************************************************************}
 
-    constructor telf32objectdata.create(const n:string);
+    constructor TElfObjData.create(const n:string);
       var
-        s : string;
+        need_datarel : boolean;
       begin
         inherited create(n);
-        CAsmSection:=TElf32Section;
-        { reset }
-        Syms:=TDynamicArray.Create(symbolresize);
-        { default sections }
-        symtabsect:=telf32section.create_ext('.symtab',sec_custom,2,0,0,0,4,16);
-        strtabsect:=telf32section.create_ext('.strtab',sec_custom,3,0,0,0,1,0);
-        shstrtabsect:=telf32section.create_ext('.shstrtab',sec_custom,3,0,0,0,1,0);
-        { insert the empty and filename as first in strtab }
-        strtabsect.writestr(#0);
-        strtabsect.writestr(SplitFileName(current_module.mainsource^)+#0);
+        CObjSection:=TElfObjSection;
         { we need at least the following sections }
-        createsection(sec_code,'',0,[]);
-        createsection(sec_data,'',0,[]);
-        createsection(sec_bss,'',0,[]);
-        { create stabs sections if debugging }
-        if (cs_debuginfo in aktmoduleswitches) then
-         begin
-           stabssec:=createsection(sec_stab,'',0,[]);
-           stabstrsec:=createsection(sec_stabstr,'',0,[]);
-         end;
+        createsection(sec_code);
+        if (cs_create_pic in current_settings.moduleswitches) and
+           not(target_info.system in systems_darwin) then
+          begin
+            { We still need an empty data section }
+            system.exclude(current_settings.moduleswitches,cs_create_pic);
+            need_datarel:=true;
+          end
+        else
+          need_datarel:=false;
+        createsection(sec_data);
+        if need_datarel then
+          system.include(current_settings.moduleswitches,cs_create_pic);
+        createsection(sec_bss);
+        if need_datarel then
+          createsection(sec_data);
+        if tf_section_threadvars in target_info.flags then
+          createsection(sec_threadvar);
+        if (tf_needs_dwarf_cfi in target_info.flags) and
+           (af_supports_dwarf in target_asm.flags) then
+             createsection(sec_debug_frame);
       end;
 
 
-    destructor telf32objectdata.destroy;
-      begin
-        Syms.Free;
-        symtabsect.free;
-        strtabsect.free;
-        shstrtabsect.free;
-        inherited destroy;
-      end;
-
-
-    function telf32objectdata.sectionname(atype:tasmsectiontype;const aname:string):string;
+    function TElfObjData.sectionname(atype:TAsmSectiontype;const aname:string;aorder:TAsmSectionOrder):string;
       const
-        secnames : array[tasmsectiontype] of string[12] = ('',
+        secnames : array[TAsmSectiontype] of string[length('__DATA, __datacoal_nt,coalesced')] = ('','',
 {$ifdef userodata}
-          '.text','.data','.rodata','.bss',
+          '.text','.data','.data','.rodata','.bss','.threadvar',
 {$else userodata}
-          '.text','.data','.data','.bss',
+          '.text','.data','.data','.data','.bss','.threadvar',
 {$endif userodata}
-          'common',
-          '.note',
+          '.pdata',
+          '.text', { darwin stubs }
+          '__DATA,__nl_symbol_ptr',
+          '__DATA,__la_symbol_ptr',
+          '__DATA,__mod_init_func',
+          '__DATA,__mod_term_func',
           '.stab','.stabstr',
           '.idata$2','.idata$4','.idata$5','.idata$6','.idata$7','.edata',
           '.eh_frame',
-          '.debug_frame'
+          '.debug_frame','.debug_info','.debug_line','.debug_abbrev',
+          '.fpc',
+          '.toc',
+          '.init',
+          '.fini',
+          '.objc_class',
+          '.objc_meta_class',
+          '.objc_cat_cls_meth',
+          '.objc_cat_inst_meth',
+          '.objc_protocol',
+          '.objc_string_object',
+          '.objc_cls_meth',
+          '.objc_inst_meth',
+          '.objc_cls_refs',
+          '.objc_message_refs',
+          '.objc_symbols',
+          '.objc_category',
+          '.objc_class_vars',
+          '.objc_instance_vars',
+          '.objc_module_info',
+          '.objc_class_names',
+          '.objc_meth_var_types',
+          '.objc_meth_var_names',
+          '.objc_selector_strs',
+          '.objc_protocol_ext',
+          '.objc_class_ext',
+          '.objc_property',
+          '.objc_image_info',
+          '.objc_cstring_object',
+          '.objc_sel_fixup',
+          '__DATA,__objc_data',
+          '__DATA,__objc_const',
+          '.objc_superrefs',
+          '__DATA, __datacoal_nt,coalesced',
+          '.objc_classlist',
+          '.objc_nlclasslist',
+          '.objc_catlist',
+          '.obcj_nlcatlist',
+          '.objc_protolist'
         );
-      begin
-        if use_smartlink_section and
-           (atype<>sec_bss) and
-           (aname<>'') then
-          result:='.gnu.linkonce'+copy(secnames[atype],1,2)+'.'+aname
-        else
-          result:=secnames[atype];
-      end;
-
-
-    procedure telf32objectdata.writesymbol(p:tasmsymbol);
-      begin
-        if currsec=nil then
-          internalerror(200403291);
-        { already written ? }
-        if p.indexnr<>-1 then
-         exit;
-        { calculate symbol index }
-        if (p.currbind<>AB_LOCAL) then
-         begin
-           { insert the symbol in the local index, the indexarray
-             will take care of the numbering }
-           symbols.insert(p);
-         end
-        else
-         p.indexnr:=-2; { local }
-      end;
-
-
-    procedure telf32objectdata.writereloc(data,len:aint;p:tasmsymbol;relative:TAsmRelocationType);
+        secnames_pic : array[TAsmSectiontype] of string[length('__DATA, __datacoal_nt,coalesced')] = ('','',
+          '.text',
+          '.data.rel',
+          '.data.rel',
+          '.data.rel',
+          '.bss',
+          '.threadvar',
+          '.pdata',
+          '', { stubs }
+          '__DATA,__nl_symbol_ptr',
+          '__DATA,__la_symbol_ptr',
+          '__DATA,__mod_init_func',
+          '__DATA,__mod_term_func',
+          '.stab',
+          '.stabstr',
+          '.idata$2','.idata$4','.idata$5','.idata$6','.idata$7','.edata',
+          '.eh_frame',
+          '.debug_frame','.debug_info','.debug_line','.debug_abbrev',
+          '.fpc',
+          '.toc',
+          '.init',
+          '.fini',
+          '.objc_class',
+          '.objc_meta_class',
+          '.objc_cat_cls_meth',
+          '.objc_cat_inst_meth',
+          '.objc_protocol',
+          '.objc_string_object',
+          '.objc_cls_meth',
+          '.objc_inst_meth',
+          '.objc_cls_refs',
+          '.objc_message_refs',
+          '.objc_symbols',
+          '.objc_category',
+          '.objc_class_vars',
+          '.objc_instance_vars',
+          '.objc_module_info',
+          '.objc_class_names',
+          '.objc_meth_var_types',
+          '.objc_meth_var_names',
+          '.objc_selector_strs',
+          '.objc_protocol_ext',
+          '.objc_class_ext',
+          '.objc_property',
+          '.objc_image_info',
+          '.objc_cstring_object',
+          '.objc_sel_fixup',
+          '__DATA,__objc_data',
+          '__DATA,__objc_const',
+          '.objc_superrefs',
+          '__DATA, __datacoal_nt,coalesced',
+          '.objc_classlist',
+          '.objc_nlclasslist',
+          '.objc_catlist',
+          '.obcj_nlcatlist',
+          '.objc_protolist'
+        );
       var
-        symaddr : longint;
+        sep : string[3];
+        secname : string;
       begin
-        if currsec=nil then
+        { section type user gives the user full controll on the section name }
+        if atype=sec_user then
+          result:=aname
+        else
+          begin
+            if (cs_create_pic in current_settings.moduleswitches) and
+               not(target_info.system in systems_darwin) then
+              secname:=secnames_pic[atype]
+            else
+              secname:=secnames[atype];
+            if (atype=sec_fpc) and (Copy(aname,1,3)='res') then
+              begin
+                result:=secname+'.'+aname;
+                exit;
+              end;
+            if create_smartlink_sections and (aname<>'') then
+              begin
+                case aorder of
+                  secorder_begin :
+                    sep:='.b_';
+                  secorder_end :
+                    sep:='.z_';
+                  else
+                    sep:='.n_';
+                end;
+                result:=secname+sep+aname
+              end
+            else
+              result:=secname;
+          end;
+      end;
+
+
+    procedure TElfObjData.CreateDebugSections;
+      begin
+        if target_dbg.id=dbg_stabs then
+          begin
+            stabssec:=createsection(sec_stab);
+            stabstrsec:=createsection(sec_stabstr);
+          end;
+      end;
+
+
+    procedure TElfObjData.writereloc(data:aint;len:aword;p:TObjSymbol;reltype:TObjRelocationType);
+      var
+        symaddr : aint;
+      begin
+        if CurrObjSec=nil then
           internalerror(200403292);
 {$ifdef userodata}
-        if currsec.sectype in [sec_rodata,sec_bss] then
+        if CurrObjSec.sectype in [sec_rodata,sec_bss,sec_threadvar] then
           internalerror(200408252);
 {$endif userodata}
+        { Using RELOC_RVA to map 32-bit RELOC_ABSOLUTE to R_X86_64_32
+          (RELOC_ABSOLUTE maps to R_X86_64_32S) }
+        if (reltype=RELOC_ABSOLUTE) and (len<>sizeof(pint)) then
+          reltype:=RELOC_RVA;
         if assigned(p) then
          begin
            { real address of the symbol }
            symaddr:=p.address;
-           { Local symbols can be resolved already or need a section reloc }
-           if (p.currbind=AB_LOCAL) then
+           { Local ObjSymbols can be resolved already or need a section reloc }
+           if (p.bind=AB_LOCAL) and
+              (reltype in [RELOC_RELATIVE,RELOC_ABSOLUTE{$ifdef x86_64},RELOC_ABSOLUTE32,RELOC_RVA{$endif x86_64}]) then
              begin
-               { For a relative relocation in the same section the
+               { For a reltype relocation in the same section the
                  value can be calculated }
-               if (p.section=currsec) and
-                  (relative=RELOC_RELATIVE) then
-                 inc(data,symaddr-len-currsec.datasize)
+               if (p.objsection=CurrObjSec) and
+                  (reltype=RELOC_RELATIVE) then
+                 inc(data,symaddr-len-CurrObjSec.Size)
                else
                  begin
-                   currsec.addsectionreloc(currsec.datasize,p.section,relative);
+                   CurrObjSec.addsectionreloc(CurrObjSec.Size,p.objsection,reltype);
                    inc(data,symaddr);
                  end;
              end
            else
              begin
-               writesymbol(p);
-               currsec.addsymreloc(currsec.datasize,p,relative);
-               if relative=RELOC_RELATIVE then
+               CurrObjSec.addsymreloc(CurrObjSec.Size,p,reltype);
+{$ifndef x86_64}
+               if (reltype=RELOC_RELATIVE) or (reltype=RELOC_PLT32) then
                  dec(data,len);
+{$endif x86_64}
             end;
          end;
-        currsec.write(data,len);
-      end;
-
-
-    procedure telf32objectdata.writestabs(offset:aint;p:pchar;nidx,nother,line:longint;reloc : boolean);
-      var
-        stab : telf32stab;
-      begin
-        if reloc then
-         begin
-           if (offset=-1) then
-            begin
-              if currsec=nil then
-               offset:=0
-              else
-               offset:=currsec.datasize;
-            end;
-         end;
-        fillchar(stab,sizeof(telf32stab),0);
-        if assigned(p) and (p[0]<>#0) then
-         begin
-           stab.strpos:=stabstrsec.datasize;
-           stabstrsec.write(p^,strlen(p)+1);
-         end;
-        stab.ntype:=nidx;
-        stab.ndesc:=line;
-        stab.nother:=nother;
-        stab.nvalue:=offset;
-        stabssec.write(stab,sizeof(stab));
-        { when the offset is not 0 then write a relocation, take also the
-          hdrstab into account with the offset }
-        if reloc then
-         stabssec.addsectionreloc(stabssec.datasize-4,currsec,RELOC_ABSOLUTE);
-      end;
-
-
-    procedure telf32objectdata.writesymstabs(offset:aint;p:pchar;ps:tasmsymbol;nidx,nother,line:longint;reloc:boolean);
-      var
-        stab : telf32stab;
-      begin
-        fillchar(stab,sizeof(telf32stab),0);
-        if assigned(p) and (p[0]<>#0) then
-         begin
-           stab.strpos:=stabstrsec.datasize;
-           stabstrsec.write(p^,strlen(p)+1);
-         end;
-        stab.ntype:=nidx;
-        stab.ndesc:=line;
-        stab.nother:=nother;
-        stab.nvalue:=0;
-        stabssec.write(stab,sizeof(stab));
-        { when the offset is not 0 then write a relocation, take also the
-          hdrstab into account with the offset }
-        if reloc then
-         stabssec.addsymreloc(stabssec.datasize-4,ps,RELOC_ABSOLUTE);
-      end;
-
-
-    procedure telf32objectdata.beforealloc;
-      begin
-        { create stabs sections if debugging }
-        if (cs_debuginfo in aktmoduleswitches) then
-          begin
-            StabsSec.Alloc(sizeof(telf32stab));
-            StabStrSec.Alloc(length(SplitFileName(current_module.mainsource^))+2);
-          end;
-      end;
-
-
-    procedure telf32objectdata.beforewrite;
-      var
-        s : string;
-      begin
-        { create stabs sections if debugging }
-        if (cs_debuginfo in aktmoduleswitches) then
-         begin
-           writestabs(0,nil,0,0,0,false);
-           { write zero pchar and name together (PM) }
-           s:=#0+SplitFileName(current_module.mainsource^)+#0;
-           stabstrsec.write(s[1],length(s));
-         end;
+        CurrObjSec.write(data,len);
       end;
 
 
 {****************************************************************************
-                            telf32objectoutput
+                            TElfObjectOutput
 ****************************************************************************}
 
-    function telf32objectoutput.newobjectdata(const n:string):TAsmObjectData;
+    constructor TElfObjectOutput.create(AWriter:TObjectWriter);
       begin
-        result:=telf32objectdata.create(n);
+        inherited Create(AWriter);
+        CObjData:=TElfObjData;
       end;
 
 
-    procedure telf32objectoutput.createrelocsection(s:telf32section);
+    procedure TElfObjectOutput.createrelocsection(s:TElfObjSection;data:TObjData);
       var
-        rel  : telf32reloc;
-        r    : tasmrelocation;
-        relsym,reltyp : longint;
+        i    : longint;
+        rel  : telfreloc;
+        objreloc : TObjRelocation;
+        relsym,
+        reltyp   : longint;
+        relocsect : TObjSection;
+{$ifdef x86_64}	
+        tmp: aint;
+        asize: longint;
+{$endif x86_64}	
       begin
-        with elf32data do
+        with data do
          begin
 {$ifdef userodata}
            { rodata can't have relocations }
@@ -520,347 +809,410 @@ implementation
              end;
 {$endif userodata}
            { create the reloc section }
-           s.relocsect:=telf32section.create_ext('.rel'+s.name,sec_custom,9,0,symtabsect.secshidx,s.secshidx,4,8);
+{$ifdef i386}
+           relocsect:=TElfObjSection.create_ext(ObjSectionList,'.rel'+s.name,SHT_REL,0,symtabsect.secshidx,s.secshidx,4,sizeof(TElfReloc));
+{$else i386}
+           relocsect:=TElfObjSection.create_ext(ObjSectionList,'.rela'+s.name,SHT_RELA,0,symtabsect.secshidx,s.secshidx,4,sizeof(TElfReloc));
+{$endif i386}
            { add the relocations }
-           r:=TasmRelocation(s.relocations.first);
-           while assigned(r) do
-            begin
-              rel.address:=r.address;
-              if assigned(r.symbol) then
-               begin
-                 if (r.symbol.currbind=AB_LOCAL) then
-                  relsym:=r.symbol.section.secsymidx
+           for i:=0 to s.Objrelocations.count-1 do
+             begin
+               objreloc:=TObjRelocation(s.Objrelocations[i]);
+               fillchar(rel,sizeof(rel),0);
+               rel.address:=objreloc.dataoffset;
+
+               { when things settle down, we can create processor specific
+                 derived classes }
+               case objreloc.typ of
+{$ifdef i386}
+                 RELOC_RELATIVE :
+                   reltyp:=R_386_PC32;
+                 RELOC_ABSOLUTE :
+                   reltyp:=R_386_32;
+                 RELOC_GOT32 :
+                   reltyp:=R_386_GOT32;
+                 RELOC_GOTPC :
+                   reltyp:=R_386_GOTPC;
+                 RELOC_PLT32 :
+                   begin
+                     reltyp:=R_386_PLT32;
+                   end;
+{$endif i386}
+{$ifdef sparc}
+                 RELOC_ABSOLUTE :
+                   reltyp:=R_SPARC_32;
+{$endif sparc}
+{$ifdef x86_64}
+                 RELOC_RELATIVE :
+                   begin
+                     reltyp:=R_X86_64_PC32;
+                     { length of the relocated location is handled here }
+                     rel.addend:=-4;
+                   end;
+                 RELOC_ABSOLUTE :
+                   reltyp:=R_X86_64_64;
+                 RELOC_ABSOLUTE32 :
+                   reltyp:=R_X86_64_32S;
+                 RELOC_RVA :
+                   reltyp:=R_X86_64_32;
+                 RELOC_GOTPCREL :
+                   begin
+                     reltyp:=R_X86_64_GOTPCREL;
+                     { length of the relocated location is handled here }
+                     rel.addend:=-4;
+                   end;
+                 RELOC_PLT32 :
+                   begin
+                     reltyp:=R_X86_64_PLT32;
+                     { length of the relocated location is handled here }
+                     rel.addend:=-4;
+                   end;
+{$endif x86_64}
                  else
-                  begin
-                    if r.symbol.indexnr=-1 then
-                      internalerror(4321);
-                    { indexnr starts with 1, ELF starts with 0 }
-                    relsym:=r.symbol.indexnr+initsym-1;
-                  end;
-               end
-              else
-               if r.section<>nil then
-                relsym:=r.section.secsymidx
+                   internalerror(200602261);
+               end;
+
+{ This handles ELF 'rela'-styled relocations, which are currently used only for x86_64,
+  but can be used other targets, too. }
+{$ifdef x86_64}
+               s.Data.Seek(objreloc.dataoffset);
+               if objreloc.typ=RELOC_ABSOLUTE then
+                 begin
+                   asize:=8;
+                   s.Data.Read(tmp,8);
+                   rel.addend:=rel.addend+tmp;
+                 end
                else
-                relsym:=SHN_UNDEF;
-              case r.typ of
-                RELOC_RELATIVE :
-                  reltyp:=R_386_PC32;
-                RELOC_ABSOLUTE :
-                  reltyp:=R_386_32;
-              end;
-              rel.info:=(relsym shl 8) or reltyp;
-              { write reloc }
-              s.relocsect.write(rel,sizeof(rel));
-              r:=TAsmRelocation(r.next);
-            end;
+                 begin
+                   asize:=4;
+                   s.Data.Read(tmp,4);
+                   rel.addend:=rel.addend+longint(tmp);
+                 end;
+
+               { and zero the data member out }
+               tmp:=0;
+               s.Data.Seek(objreloc.dataoffset);
+               s.Data.Write(tmp,asize);
+{$endif}
+
+               { Symbol }
+               if assigned(objreloc.symbol) then
+                 begin
+                   if objreloc.symbol.symidx=-1 then
+                     begin
+                       writeln(objreloc.symbol.Name);
+                       internalerror(200603012);
+                     end;
+                   relsym:=objreloc.symbol.symidx;
+                 end
+               else
+                 begin
+                   if objreloc.objsection<>nil then
+                     relsym:=objreloc.objsection.secsymidx
+                   else
+                     relsym:=SHN_UNDEF;
+                 end;
+{$ifdef cpu64bitaddr}
+               rel.info:=(qword(relsym) shl 32) or reltyp;
+{$else cpu64bitaddr}
+               rel.info:=(relsym shl 8) or reltyp;
+{$endif cpu64bitaddr}
+               { write reloc }
+               relocsect.write(MaybeSwapElfReloc(rel),sizeof(rel));
+             end;
          end;
       end;
 
 
-    procedure telf32objectoutput.section_write_symbol(p:tnamedindexitem;arg:pointer);
+    procedure TElfObjectOutput.write_internal_symbol(astridx:longint;ainfo:byte;ashndx:word);
       var
-        elfsym : telf32symbol;
+        elfsym : telfsymbol;
       begin
         fillchar(elfsym,sizeof(elfsym),0);
-        elfsym.st_name:=telf32section(p).shstridx;
-        elfsym.st_info:=STT_SECTION;
-        elfsym.st_shndx:=telf32section(p).secshidx;
-        elf32data.symtabsect.write(elfsym,sizeof(elfsym));
-        { increase locals count }
-        inc(plongint(arg)^);
+        elfsym.st_name:=astridx;
+        elfsym.st_info:=ainfo;
+        elfsym.st_shndx:=ashndx;
+        inc(symidx);
+        inc(localsyms);
+        symtabsect.write(MaybeSwapElfSymbol(elfsym),sizeof(elfsym));
       end;
 
 
-    procedure telf32objectoutput.createsymtab;
-      var
-        elfsym : telf32symbol;
-        locals : longint;
-        sym : tasmsymbol;
+    procedure TElfObjectOutput.section_write_symbol(p:TObject;arg:pointer);
       begin
-        with elf32data do
-         begin
-           locals:=2;
-           { empty entry }
-           fillchar(elfsym,sizeof(elfsym),0);
-           symtabsect.write(elfsym,sizeof(elfsym));
-           { filename entry }
-           elfsym.st_name:=1;
-           elfsym.st_info:=STT_FILE;
-           elfsym.st_shndx:=SHN_ABS;
-           symtabsect.write(elfsym,sizeof(elfsym));
-           { section }
-           sects.foreach(@section_write_symbol,@locals);
-           { symbols }
-           sym:=Tasmsymbol(symbols.First);
-           while assigned(sym) do
+        TObjSection(p).secsymidx:=symidx;
+        write_internal_symbol(TElfObjSection(p).shstridx,STT_SECTION,TElfObjSection(p).secshidx);
+      end;
+
+
+    procedure TElfObjectOutput.createsymtab(data: TObjData);
+
+        procedure WriteSym(objsym:TObjSymbol);
+        var
+          elfsym : telfsymbol;
+        begin
+          fillchar(elfsym,sizeof(elfsym),0);
+          { symbolname, write the #0 separate to overcome 255+1 char not possible }
+          elfsym.st_name:=strtabsect.Size;
+          strtabsect.writestr(objsym.name);
+          strtabsect.writestr(#0);
+          elfsym.st_size:=objsym.size;
+          case objsym.bind of
+            AB_LOCAL :
+              begin
+                elfsym.st_value:=objsym.address;
+                elfsym.st_info:=STB_LOCAL shl 4;
+                inc(localsyms);
+              end;
+            AB_COMMON :
+              begin
+                elfsym.st_value:=$10;
+                elfsym.st_info:=STB_GLOBAL shl 4;
+              end;
+            AB_EXTERNAL :
+              elfsym.st_info:=STB_GLOBAL shl 4;
+            AB_WEAK_EXTERNAL :
+              elfsym.st_info:=STB_WEAK shl 4;
+            AB_GLOBAL :
+              begin
+                elfsym.st_value:=objsym.address;
+                elfsym.st_info:=STB_GLOBAL shl 4;
+              end;
+          end;
+          if (objsym.bind<>AB_EXTERNAL) {and
+              not(assigned(objsym.objsection) and
+              not(oso_data in objsym.objsection.secoptions))} then
             begin
-              fillchar(elfsym,sizeof(elfsym),0);
-              { symbolname, write the #0 separate to overcome 255+1 char not possible }
-              elfsym.st_name:=strtabsect.datasize;
-              strtabsect.writestr(sym.name);
-              strtabsect.writestr(#0);
-              case sym.currbind of
-                AB_LOCAL,
-                AB_GLOBAL :
-                 elfsym.st_value:=sym.address;
-                AB_COMMON :
-                 elfsym.st_value:=$10;
+              case objsym.typ of
+                AT_FUNCTION :
+                  elfsym.st_info:=elfsym.st_info or STT_FUNC;
+                AT_DATA :
+                  elfsym.st_info:=elfsym.st_info or STT_OBJECT;
               end;
-              elfsym.st_size:=sym.size;
-              case sym.currbind of
-                AB_LOCAL :
-                  begin
-                    elfsym.st_info:=STB_LOCAL shl 4;
-                    inc(locals);
-                  end;
-                AB_COMMON,
-                AB_EXTERNAL,
-                AB_GLOBAL :
-                  elfsym.st_info:=STB_GLOBAL shl 4;
-              end;
-              if sym.currbind<>AB_EXTERNAL then
-               begin
-                 case sym.typ of
-                   AT_FUNCTION :
-                     elfsym.st_info:=elfsym.st_info or STT_FUNC;
-                   AT_DATA :
-                     elfsym.st_info:=elfsym.st_info or STT_OBJECT;
-                 end;
-               end;
-              if sym.currbind=AB_COMMON then
-               elfsym.st_shndx:=SHN_COMMON
-              else
-               if assigned(sym.section) then
-                elfsym.st_shndx:=telf32section(sym.section).secshidx
-               else
-                elfsym.st_shndx:=SHN_UNDEF;
-              symtabsect.write(elfsym,sizeof(elfsym));
-              sym:=tasmsymbol(sym.indexnext);
             end;
+          if objsym.bind=AB_COMMON then
+            elfsym.st_shndx:=SHN_COMMON
+          else
+            begin
+              if assigned(objsym.objsection) then
+                elfsym.st_shndx:=TElfObjSection(objsym.objsection).secshidx
+              else
+                elfsym.st_shndx:=SHN_UNDEF;
+            end;
+          objsym.symidx:=symidx;
+          inc(symidx);
+          symtabsect.write(MaybeSwapElfSymbol(elfsym),sizeof(elfsym));
+        end;
+
+      var
+        i      : longint;
+        objsym : TObjSymbol;
+      begin
+        with data do
+         begin
+           symidx:=0;
+           localsyms:=0;
+           { empty entry }
+           write_internal_symbol(0,0,0);
+           { filename entry }
+           write_internal_symbol(1,STT_FILE,SHN_ABS);
+           { section }
+           ObjSectionList.ForEachCall(@section_write_symbol,nil);
+           { First the Local Symbols, this is required by ELF. The localsyms
+             count stored in shinfo is used to skip the local symbols
+             when traversing the symtab }
+           for i:=0 to ObjSymbolList.Count-1 do
+             begin
+               objsym:=TObjSymbol(ObjSymbolList[i]);
+               if (objsym.bind=AB_LOCAL) and (objsym.typ<>AT_LABEL) then
+                 WriteSym(objsym);
+             end;
+           { Global Symbols }
+           for i:=0 to ObjSymbolList.Count-1 do
+             begin
+               objsym:=TObjSymbol(ObjSymbolList[i]);
+               if (objsym.bind<>AB_LOCAL) then
+                 WriteSym(objsym);
+             end;
            { update the .symtab section header }
            symtabsect.shlink:=strtabsect.secshidx;
-           symtabsect.shinfo:=locals;
+           symtabsect.shinfo:=localsyms;
          end;
       end;
 
 
-    procedure telf32objectoutput.section_write_sh_string(p:tnamedindexitem;arg:pointer);
+    procedure TElfObjectOutput.section_write_sh_string(p:TObject;arg:pointer);
       begin
-        telf32section(p).shstridx:=elf32data.shstrtabsect.writestr(tasmsection(p).name+#0);
-        if assigned(telf32section(p).relocsect) then
-          telf32section(p).relocsect.shstridx:=elf32data.shstrtabsect.writestr(telf32section(p).relocsect.name+#0);
+        TElfObjSection(p).shstridx:=shstrtabsect.writestr(TObjSection(p).name+#0);
       end;
 
 
-    procedure telf32objectoutput.createshstrtab;
+    procedure TElfObjectOutput.createshstrtab(data: TObjData);
       begin
-        with elf32data do
+        with data do
          begin
-           with shstrtabsect do
-            begin
-              writestr(#0);
-              symtabsect.shstridx:=writestr('.symtab'#0);
-              strtabsect.shstridx:=writestr('.strtab'#0);
-              shstrtabsect.shstridx:=writestr('.shstrtab'#0);
-              sects.foreach(@section_write_sh_string,nil);
-            end;
+           shstrtabsect.writestr(#0);
+           ObjSectionList.ForEachCall(@section_write_sh_string,nil);
          end;
       end;
 
 
-    procedure telf32objectoutput.writesectionheader(s:telf32section);
+    procedure TElfObjectOutput.writesectionheader(s:TElfObjSection);
       var
-        sechdr : telf32sechdr;
+        sechdr : telfsechdr;
       begin
         fillchar(sechdr,sizeof(sechdr),0);
         sechdr.sh_name:=s.shstridx;
         sechdr.sh_type:=s.shtype;
         sechdr.sh_flags:=s.shflags;
         sechdr.sh_offset:=s.datapos;
-        sechdr.sh_size:=s.datasize;
+        sechdr.sh_size:=s.Size;
         sechdr.sh_link:=s.shlink;
         sechdr.sh_info:=s.shinfo;
-        sechdr.sh_addralign:=s.addralign;
-        sechdr.sh_entsize:=s.entsize;
-        writer.write(sechdr,sizeof(sechdr));
+        sechdr.sh_addralign:=s.secalign;
+        sechdr.sh_entsize:=s.shentsize;
+        writer.write(MaybeSwapSecHeader(sechdr),sizeof(sechdr));
       end;
 
 
-
-    procedure telf32objectoutput.writesectiondata(s:telf32section);
-      var
-        hp : pdynamicblock;
+    procedure TElfObjectOutput.writesectiondata(s:TElfObjSection);
       begin
         FWriter.writezeros(s.dataalignbytes);
-        s.alignsection;
-        hp:=s.data.firstblock;
-        while assigned(hp) do
+        if s.Datapos<>FWriter.ObjSize then
+          internalerror(200604031);
+        FWriter.writearray(s.data);
+      end;
+
+
+    procedure TElfObjectOutput.section_count_sections(p:TObject;arg:pointer);
+      begin
+        TElfObjSection(p).secshidx:=pword(arg)^;
+        inc(pword(arg)^);
+      end;
+
+
+    procedure TElfObjectOutput.section_create_relocsec(p:TObject;arg:pointer);
+      begin
+        if (TElfObjSection(p).ObjRelocations.count>0) then
+          createrelocsection(TElfObjSection(p),TObjData(arg));
+      end;
+
+
+    procedure TElfObjectOutput.section_set_datapos(p:TObject;arg:pointer);
+      begin
+        TObjSection(p).setdatapos(paword(arg)^);
+      end;
+
+
+    procedure TElfObjectOutput.section_write_data(p:TObject;arg:pointer);
+      begin
+        if (oso_data in TObjSection(p).secoptions) then
           begin
-            FWriter.write(hp^.data,hp^.used);
-            hp:=hp^.next;
+            if TObjSection(p).data=nil then
+              internalerror(200403073);
+            writesectiondata(TElfObjSection(p));
           end;
       end;
 
 
-    procedure telf32objectoutput.section_number_symbol(p:tnamedindexitem;arg:pointer);
+    procedure TElfObjectOutput.section_write_sechdr(p:TObject;arg:pointer);
       begin
-        tasmsection(p).secsymidx:=plongint(arg)^;
-        inc(plongint(arg)^);
+        writesectionheader(TElfObjSection(p));
       end;
 
 
-    procedure telf32objectoutput.section_count_sects(p:tnamedindexitem;arg:pointer);
-      begin
-        telf32section(p).secshidx:=plongint(arg)^;
-        inc(plongint(arg)^);
-        if telf32section(p).relocations.count>0 then
-          inc(plongint(arg)^);
-      end;
-
-
-    procedure telf32objectoutput.section_create_relocsec(p:tnamedindexitem;arg:pointer);
-      begin
-        if (telf32section(p).relocations.count>0) then
-          createrelocsection(telf32section(p));
-      end;
-
-
-    procedure telf32objectoutput.section_set_datapos(p:tnamedindexitem;arg:pointer);
-      begin
-        if (aso_alloconly in tasmsection(p).secoptions) then
-          tasmsection(p).datapos:=paint(arg)^
-        else
-          tasmsection(p).setdatapos(paint(arg)^);
-      end;
-
-
-    procedure telf32objectoutput.section_relocsec_set_datapos(p:tnamedindexitem;arg:pointer);
-      begin
-        if assigned(telf32section(p).relocsect) then
-          telf32section(p).relocsect.setdatapos(paint(arg)^);
-      end;
-
-
-    procedure telf32objectoutput.section_write_data(p:tnamedindexitem;arg:pointer);
-      begin
-        if (aso_alloconly in tasmsection(p).secoptions) then
-          exit;
-        if tasmsection(p).data=nil then
-          internalerror(200403073);
-        writesectiondata(telf32section(p));
-      end;
-
-
-    procedure telf32objectoutput.section_write_sechdr(p:tnamedindexitem;arg:pointer);
-      begin
-        writesectionheader(telf32section(p));
-        if assigned(telf32section(p).relocsect) then
-          writesectionheader(telf32section(p).relocsect);
-      end;
-
-
-    procedure telf32objectoutput.section_write_relocsec(p:tnamedindexitem;arg:pointer);
-      begin
-        if assigned(telf32section(p).relocsect) then
-          writesectiondata(telf32section(p).relocsect);
-      end;
-
-
-
-    function telf32objectoutput.writedata(data:TAsmObjectData):boolean;
+    function TElfObjectOutput.writedata(data:TObjData):boolean;
       var
-        header : telf32header;
-        datapos : aint;
+        header : telfheader;
         shoffset,
-        nsects : longint;
-        hstab  : telf32stab;
-        empty  : array[0..63] of byte;
+        datapos   : aint;
+        nsections : word;
       begin
         result:=false;
-        elf32data:=telf32objectdata(data);
-        with elf32data do
+        with data do
          begin
+           { default sections }
+           symtabsect:=TElfObjSection.create_ext(ObjSectionList,'.symtab',SHT_SYMTAB,0,0,0,4,sizeof(telfsymbol));
+           strtabsect:=TElfObjSection.create_ext(ObjSectionList,'.strtab',SHT_STRTAB,0,0,0,1,0);
+           shstrtabsect:=TElfObjSection.create_ext(ObjSectionList,'.shstrtab',SHT_STRTAB,0,0,0,1,0);
+           { "no executable stack" marker for Linux }
+           if (target_info.system in systems_linux) and
+              not(cs_executable_stack in current_settings.moduleswitches) then
+             TElfObjSection.create_ext(ObjSectionList,'.note.GNU-stack',SHT_PROGBITS,0,0,0,1,0);
+           { insert the empty and filename as first in strtab }
+           strtabsect.writestr(#0);
+           strtabsect.writestr(ExtractFileName(current_module.mainsource)+#0);
            { calc amount of sections we have }
-           initsym:=2;
-           nsects:=1;
-           fillchar(empty,sizeof(empty),0);
-           { each section requires a symbol for relocation }
-           sects.foreach(@section_number_symbol,@initsym);
+           nsections:=1;
            { also create the index in the section header table }
-           sects.foreach(@section_count_sects,@nsects);
-           { add default sections follows }
-           shstrtabsect.secshidx:=nsects;
-           inc(nsects);
-           symtabsect.secshidx:=nsects;
-           inc(nsects);
-           strtabsect.secshidx:=nsects;
-           inc(nsects);
-         { For the stab section we need an HdrSym which can now be
-           calculated more easily }
-           if assigned(stabssec) then
-            begin
-              hstab.strpos:=1;
-              hstab.ntype:=0;
-              hstab.nother:=0;
-              hstab.ndesc:=(stabssec.datasize div sizeof(telf32stab))-1{+1 according to gas output PM};
-              hstab.nvalue:=stabstrsec.datasize;
-              stabssec.Data.seek(0);
-              stabssec.Data.write(hstab,sizeof(hstab));
-            end;
-         { Create the relocation sections }
-           sects.foreach(@section_create_relocsec,nil);
-         { create .symtab and .strtab }
-           createsymtab;
-         { create .shstrtab }
-           createshstrtab;
-         { Calculate the filepositions }
+           ObjSectionList.ForEachCall(@section_count_sections,@nsections);
+           { create .symtab and .strtab }
+           createsymtab(data);
+           { Create the relocation sections, this needs valid secidx and symidx }
+           ObjSectionList.ForEachCall(@section_create_relocsec,data);
+           { recalc nsections to incude the reloc sections }
+           nsections:=1;
+           ObjSectionList.ForEachCall(@section_count_sections,@nsections);
+           { create .shstrtab }
+           createshstrtab(data);
+
+           { Calculate the filepositions }
            datapos:=$40; { elfheader + alignment }
-           { sections first }
-           sects.foreach(@section_set_datapos,@datapos);
-           { shstrtab }
-           shstrtabsect.setdatapos(datapos);
+           { section data }
+           ObjSectionList.ForEachCall(@section_set_datapos,@datapos);
            { section headers }
            shoffset:=datapos;
-           inc(datapos,nsects*sizeof(telf32sechdr));
-           { symtab }
-           symtabsect.setdatapos(datapos);
-           { strtab }
-           strtabsect.setdatapos(datapos);
-           { .rel sections }
-           sects.foreach(@section_relocsec_set_datapos,@datapos);
-         { Write ELF Header }
+           inc(datapos,(nsections+1)*sizeof(telfsechdr));
+
+           { Write ELF Header }
            fillchar(header,sizeof(header),0);
            header.magic0123:=$464c457f; { = #127'ELF' }
+{$ifdef cpu64bitaddr}
+           header.file_class:=2;
+{$else cpu64bitaddr}
            header.file_class:=1;
+{$endif cpu64bitaddr}
+           if target_info.endian=endian_big then
+             header.data_encoding:=2
+           else
            header.data_encoding:=1;
+
            header.file_version:=1;
            header.e_type:=1;
+{$ifdef sparc}
+           header.e_machine:=2;
+{$endif sparc}
+{$ifdef i386}
            header.e_machine:=3;
+{$endif i386}
+{$ifdef m68k}
+           header.e_machine:=4;
+{$endif m68k}
+{$ifdef powerpc}
+           header.e_machine:=20;
+{$endif powerpc}
+{$ifdef arm}
+           header.e_machine:=40;
+           if (current_settings.fputype=cpu_soft) then
+             header.e_flags:=$600;
+{$endif arm}
+{$ifdef x86_64}
+           header.e_machine:=62;
+{$endif x86_64}
            header.e_version:=1;
            header.e_shoff:=shoffset;
            header.e_shstrndx:=shstrtabsect.secshidx;
-           header.e_shnum:=nsects;
-           header.e_ehsize:=sizeof(telf32header);
-           header.e_shentsize:=sizeof(telf32sechdr);
-           writer.write(header,sizeof(header));
-           writer.write(empty,$40-sizeof(header)); { align }
-         { Sections }
-           sects.foreach(@section_write_data,nil);
-         { .shstrtab }
-           writesectiondata(shstrtabsect);
-         { section headers, start with an empty header for sh_undef }
-           writer.write(empty,sizeof(telf32sechdr));
-           sects.foreach(@section_write_sechdr,nil);
-           writesectionheader(shstrtabsect);
-           writesectionheader(symtabsect);
-           writesectionheader(strtabsect);
-         { .symtab }
-           writesectiondata(symtabsect);
-         { .strtab }
-           writesectiondata(strtabsect);
-         { .rel sections }
-           sects.foreach(@section_write_relocsec,nil);
+
+           header.e_shnum:=nsections;
+           header.e_ehsize:=sizeof(telfheader);
+           header.e_shentsize:=sizeof(telfsechdr);
+           writer.write(MaybeSwapHeader(header),sizeof(header));
+           writer.writezeros($40-sizeof(header)); { align }
+           { Sections }
+           ObjSectionList.ForEachCall(@section_write_data,nil);
+           { section headers, start with an empty header for sh_undef }
+           writer.writezeros(sizeof(telfsechdr));
+           ObjSectionList.ForEachCall(@section_write_sechdr,nil);
          end;
         result:=true;
       end;
@@ -870,10 +1222,10 @@ implementation
                                TELFAssembler
 ****************************************************************************}
 
-    constructor TELF32Assembler.Create(smart:boolean);
+    constructor TElfAssembler.Create(smart:boolean);
       begin
         inherited Create(smart);
-        objectoutput:=telf32objectoutput.create(smart);
+        CObjOutput:=TElfObjectOutput;
       end;
 
 
@@ -881,31 +1233,67 @@ implementation
                                   Initialize
 *****************************************************************************}
 
-    const
+{$ifdef i386}
+     const
        as_i386_elf32_info : tasminfo =
           (
             id     : as_i386_elf32;
             idtxt  : 'ELF';
             asmbin : '';
             asmcmd : '';
-            supported_target : system_any;  //target_i386_linux;
-//            flags : [af_outputbinary,af_smartlink_sections];
-            flags : [af_outputbinary];
+            supported_targets : [system_i386_linux,system_i386_beos,
+                                 system_i386_freebsd,system_i386_haiku,
+                                 system_i386_openbsd,system_i386_netbsd,
+                                 system_i386_Netware,system_i386_netwlibc,
+	                         system_i386_solaris,system_i386_embedded];
+            flags : [af_outputbinary,af_smartlink_sections,af_supports_dwarf];
             labelprefix : '.L';
             comment : '';
+            dollarsign: '$';
           );
+{$endif i386}
+{$ifdef x86_64}
+     const
+       as_x86_64_elf64_info : tasminfo =
+          (
+            id     : as_x86_64_elf64;
+            idtxt  : 'ELF';
+            asmbin : '';
+            asmcmd : '';
+            supported_targets : [system_x86_64_linux,system_x86_64_freebsd,
+                                 system_x86_64_openbsd,system_x86_64_netbsd];
+            flags : [af_outputbinary,af_smartlink_sections,af_supports_dwarf];
+            labelprefix : '.L';
+            comment : '';
+            dollarsign: '$';
+          );
+{$endif x86_64}
+{$ifdef sparc}
+     const
+       as_sparc_elf32_info : tasminfo =
+          (
+            id     : as_sparc_elf32;
+            idtxt  : 'ELF';
+            asmbin : '';
+            asmcmd : '';
+            supported_targets : [];
+//            flags : [af_outputbinary,af_smartlink_sections];
+            flags : [af_outputbinary,af_supports_dwarf];
+            labelprefix : '.L';
+            comment : '';
+            dollarsign: '$';
+          );
+{$endif sparc}
 
 
 initialization
-  RegisterAssembler(as_i386_elf32_info,TElf32Assembler);
+{$ifdef i386}
+  RegisterAssembler(as_i386_elf32_info,TElfAssembler);
+{$endif i386}
+{$ifdef sparc}
+  RegisterAssembler(as_sparc_elf32_info,TElfAssembler);
+{$endif sparc}
+{$ifdef x86_64}
+  RegisterAssembler(as_x86_64_elf64_info,TElfAssembler);
+{$endif x86_64}
 end.
-{
-  $Log: ogelf.pas,v $
-  Revision 1.25  2005/02/14 17:13:06  peter
-    * truncate log
-
-  Revision 1.24  2005/01/10 15:54:59  peter
-    * Cleanup of writing of relocations to symbols
-    * Only local symbols will now use a constant value or section relocation
-
-}

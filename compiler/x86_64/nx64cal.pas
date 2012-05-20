@@ -1,11 +1,10 @@
 {
-    $Id: nx64cal.pas,v 1.4 2005/03/14 20:18:46 peter Exp $
     Copyright (c) 2002 by Florian Klaempfl
 
     Implements the x86-64 specific part of call nodes
 
     This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published bymethodpointer
+    it under the terms of the GNU General Public License as published by
     the Free Software Foundation; either version 2 of the License, or
     (at your option) any later version.
 
@@ -27,11 +26,14 @@ unit nx64cal;
 interface
 
     uses
-      ncal,ncgcal;
+      symdef,
+      ncal,nx86cal;
 
     type
-       tx8664callnode = class(tcgcallnode)
+       tx8664callnode = class(tx86callnode)
+        protected
          procedure extra_call_code;override;
+         procedure set_result_location(realresdef: tstoreddef);override;
        end;
 
 
@@ -39,35 +41,42 @@ implementation
 
     uses
       globtype,
-      cpubase,
-      aasmtai,aasmcpu;
+      systems,
+      cpubase,cgbase,cgutils,cgobj,
+      aasmtai,aasmdata,aasmcpu;
 
     procedure tx8664callnode.extra_call_code;
       var
         mmregs : aint;
       begin
         { x86_64 requires %al to contain the no. SSE regs passed }
-        if cnf_uses_varargs in callnodeflags then
+        if (cnf_uses_varargs in callnodeflags) and (target_info.system<>system_x86_64_win64) then
           begin
             if assigned(varargsparas) then
               mmregs:=varargsparas.mmregsused
             else
               mmregs:=0;
-            exprasmlist.concat(taicpu.op_const_reg(A_MOV,S_Q,mmregs,NR_RAX))
+            current_asmdata.CurrAsmList.concat(taicpu.op_const_reg(A_MOV,S_Q,mmregs,NR_RAX))
           end;
       end;
 
 
+    procedure tx8664callnode.set_result_location(realresdef: tstoreddef);
+      begin
+        { avoid useless "movq %xmm0,%rax" and "movq %rax,%xmm0" instructions
+          (which moreover for some reason are not supported by the Darwin
+           x86-64 assembler) }
+        if assigned(retloc.location) and
+           not assigned(retloc.location^.next) and
+           (retloc.location^.loc in [LOC_MMREGISTER,LOC_CMMREGISTER]) then
+          begin
+            location_reset(location,LOC_MMREGISTER,retloc.location^.size);
+            location.register:=cg.getmmregister(current_asmdata.CurrAsmList,retloc.location^.size);
+          end
+        else
+          inherited
+      end;
+
 begin
    ccallnode:=tx8664callnode;
 end.
-{
-  $Log: nx64cal.pas,v $
-  Revision 1.4  2005/03/14 20:18:46  peter
-    * fix empty varargs codegeneration for x86_64
-
-  Revision 1.3  2005/02/14 17:13:10  peter
-    * truncate log
-
-}
-

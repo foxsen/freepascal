@@ -1,5 +1,4 @@
 {
-    $Id: mmx.pp,v 1.11 2005/02/14 17:13:22 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Florian Klaempfl
     member of the Free Pascal development team
@@ -71,11 +70,13 @@ unit mmx;
         if cpuid_support then
         begin
             asm
+                pushl %ebx
                 movl $0,%eax
                 cpuid
                 movl %ebx,_ebx
                 movl %ecx,_ecx
                 movl %edx,_edx
+                popl %ebx
             end;
             if ((_ebx=$68747541) and (_ecx=$444D4163) and (_edx=$69746E65)) then getdevel:=10;
             if ((_ebx=$756E6547) and (_ecx=$6C65746E) and (_edx=$49656E69)) then getdevel:=20;
@@ -93,9 +94,11 @@ unit mmx;
          if cpuid_support then
            begin
               asm
+                 pushl %ebx
                  movl $1,%eax
                  cpuid
                  movl %edx,_edx
+                 popl %ebx
               end;
               mmx_support:=(_edx and $800000)<>0;
            end
@@ -110,12 +113,15 @@ unit mmx;
          _edx : longint;
 
       begin
-         if cpuid_support then
+         { are there third party cpus supporting amd 3d instructions? }
+         if cpuid_support and (getdevel=10) then
            begin
               asm
+                 pushl %ebx
                  movl $0x80000001,%eax
                  cpuid
                  movl %edx,_edx
+                 popl %ebx
               end;
               amd_3d_support:=(_edx and $80000000)<>0;
            end
@@ -130,12 +136,15 @@ unit mmx;
          _edx : longint;
 
       begin
-         if cpuid_support then
+         { are there third party cpus supporting amd dsp instructions? }
+         if cpuid_support and (getdevel=10) then
            begin
               asm
+                 pushl %ebx
                  movl $0x80000001,%eax
                  cpuid
                  movl %edx,_edx
+                 popl %ebx
               end;
               amd_3d_dsp_support:=(_edx and $40000000)<>0;
            end
@@ -150,12 +159,15 @@ unit mmx;
          _edx : longint;
 
       begin
-         if cpuid_support then
+         { are there third party cpus supporting amd mmx instructions? }
+         if cpuid_support and (getdevel=10) then
            begin
               asm
+                 pushl %ebx
                  movl $0x80000001,%eax
                  cpuid
                  movl %edx,_edx
+                 popl %ebx
               end;
               amd_3d_mmx_support:=(_edx and $400000)<>0;
            end
@@ -173,9 +185,11 @@ unit mmx;
          if cpuid_support then
            begin
               asm
+                 pushl %ebx
                  movl $1,%eax
                  cpuid
                  movl %edx,_edx
+                 popl %ebx
               end;
               sse_support:=(_edx and $2000000)<>0;
            end
@@ -185,17 +199,17 @@ unit mmx;
       end;
 
     function sse2_support : boolean;
-
       var
          _edx : longint;
-
       begin
          if cpuid_support then
            begin
               asm
+                 pushl %ebx
                  movl $1,%eax
                  cpuid
                  movl %edx,_edx
+                 popl %ebx
               end;
               sse2_support:=(_edx and $4000000)<>0;
            end
@@ -204,17 +218,17 @@ unit mmx;
            sse2_support:=false;
       end;
 
-    procedure emms;assembler;
 
+    procedure emms;assembler;
       asm
          emms
       end;
 
-    procedure femms;assembler;
 
+    procedure femms;assembler;
       asm
-          .byte 0x0f, 0x0e
-{         femms instruction not supported with older as versions }
+        { femms instruction not supported with older as versions }
+        .byte 0x0f, 0x0e
       end;
 
 
@@ -245,9 +259,3 @@ begin
         exitproc:=@mmxexitproc;
      end;
 end.
-{
-  $Log: mmx.pp,v $
-  Revision 1.11  2005/02/14 17:13:22  peter
-    * truncate log
-
-}

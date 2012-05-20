@@ -1,5 +1,4 @@
 {
-    $Id: utility.pp,v 1.2 2005/02/14 17:13:30 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2004 Karoly Balogh for Genesi S.a.r.l. <www.genesi.lu>
 
@@ -16,7 +15,7 @@
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
  **********************************************************************}
-
+{$inline on}
 unit utility;
 
 interface
@@ -31,15 +30,23 @@ var
 {$include utild2.inc}
 {$include utilf.inc}
 
+function TAG_(value: pointer): longword; inline;
+function TAG_(value: pchar): longword; inline;
+
+
 implementation
+
+function TAG_(value: pointer): longword; inline;
+begin
+  TAG_:=longword(value);
+end;
+
+function TAG_(value: pchar): longword; inline;
+begin
+  TAG_:=longword(value);
+end;
+
 
 begin
   UtilityBase:=MOS_UtilityBase;
 end.
-
-{
-  $Log: utility.pp,v $
-  Revision 1.2  2005/02/14 17:13:30  peter
-    * truncate log
-
-}

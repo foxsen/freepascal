@@ -1,5 +1,4 @@
 {
-    $Id: ipcsys.inc,v 1.3 2005/02/14 17:13:30 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2001 by Free Pascal development team
 
@@ -27,81 +26,64 @@ begin
 end;
 
 
-function shmget(key: Tkey; size:cint; flag:cint):cint;
+function shmget(key: Tkey; size:size_t; flag:cint):cint;
 begin
-  shmget:=do_syscall (syscall_nr_SHMGET,TSysParam(key),TSysParam(size),TSysParam(flag),TSysParam(0));
+  shmget:=do_syscall (syscall_nr_SHMGET,TSysParam(key),TSysParam(size),TSysParam(flag));
 end;
 
 function shmat (shmid:cint; shmaddr:pointer; shmflg:cint): pointer;
-Var raddr : pointer;
-    error : ptrint;
 begin
-  error:=do_syscall(syscall_nr_SHMAT,TSysParam(shmid),TSysParam(shmflg),TSysParam(@raddr),TSysParam(shmaddr));
-  If Error<0 then
-    shmat:=pointer(error)
-  else
-    shmat:=raddr;
+  shmat:=pointer(do_syscall(syscall_nr_SHMAT,TSysParam(shmid),TSysParam(shmaddr),TSysParam(shmflg)));
 end;
 
 function shmdt (shmaddr:pointer): cint;
 begin
-  shmdt:=do_syscall(syscall_nr_SHMDT,TSysParam(0),TSysParam(0),TSysParam(0),TSysParam(shmaddr));
+  shmdt:=do_syscall(syscall_nr_SHMDT,TSysParam(shmaddr));
 end;
 
 function shmctl(shmid:cint; cmd:cint; buf: pshmid_ds): cint;
 begin
- shmctl:=do_syscall(syscall_nr_SHMCTL,TSysParam(shmid),TSysParam(cmd),TSysParam(0),TSysParam(buf));
+ shmctl:=do_syscall(syscall_nr_SHMCTL,TSysParam(shmid),TSysParam(cmd),TSysParam(buf));
 end;
 
 function msgget(key:Tkey; msgflg:cint):cint;
 begin
-  msgget:=do_syscall(syscall_nr_MSGGET,TSysParam(key),TSysParam(msgflg),TSysParam(0),TSysParam(0));
+  msgget:=do_syscall(syscall_nr_MSGGET,TSysParam(key),TSysParam(msgflg));
 end;
 
 function msgsnd(msqid:cint; msgp: pmsgbuf; msgsz: size_t; msgflg:cint):cint;
 begin
-  msgsnd:=do_syscall(syscall_nr_MSGSND,TSysParam(msqid),TSysParam(msgsz),TSysParam(msgflg),TSysParam(msgp));
+  msgsnd:=do_syscall(syscall_nr_MSGSND,TSysParam(msqid),TSysParam(msgp),TSysParam(msgsz),TSysParam(msgflg));
 end;
 
-function msgrcv(msqid:cint; msgp: PMSGBuf; msgsz: size_t; msgtyp:cint; msgflg:cint):cint;
-Type
-  TIPC_Kludge = Record
-    msgp   : pmsgbuf;
-    msgtyp : cint;
-  end;
-Var
-   tmp : TIPC_Kludge;
+function msgrcv(msqid:cint; msgp: PMSGBuf; msgsz: size_t; msgtyp:clong; msgflg:cint):cint;
 begin
-  tmp.msgp   := msgp;
-  tmp.msgtyp := msgtyp;
-  msgrcv:=do_syscall(syscall_nr_MSGRCV,TSysParam(msqid),TSysParam(msgsz),TSysParam(msgflg),TSysParam(@tmp));
+msgrcv:=do_syscall(syscall_nr_MSGRCV,TSysParam(msqid),TSysParam(msgp),TSysParam(msgsz),TSysParam(msgtyp),TSysParam(msgflg));
 end;
 
 Function msgctl(msqid:cint; cmd: cint; buf: PMSQid_ds): cint;
 begin
-  msgctl:=do_syscall(syscall_nr_MSGCTL,TSysParam(msqid),TSysParam(cmd),TSysParam(0),TSysParam(buf));
+  msgctl:=do_syscall(syscall_nr_MSGCTL,TSysParam(msqid),TSysParam(cmd),TSysParam(buf));
 end;
 
 Function semget(key:Tkey; nsems:cint; semflg:cint): cint;
 begin
-  semget:=do_syscall (syscall_nr_SEMGET,TSysParam(key),TSysParam(nsems),TSysParam(semflg),TSysParam(0));
+  semget:=do_syscall (syscall_nr_SEMGET,TSysParam(key),TSysParam(nsems),TSysParam(semflg));
 end;
 
 Function semop(semid:cint; sops: psembuf; nsops:cuint): cint;
 begin
-  semop:=do_syscall (syscall_nr_SEMOP,TSysParam(semid),TSysParam(nsops),TSysParam(0),TSysParam(sops));
+  semop:=do_syscall (syscall_nr_SEMOP,TSysParam(semid),TSysParam(sops),TSysParam(nsops));
 end;
 
 Function semctl(semid:cint; semnum:cint; cmd:cint; var arg: tsemun): cint;
 begin
-  semctl:=do_syscall(syscall_nr_SEMCTL,TSysParam(semid),TSysParam(semnum),TSysParam(cmd),TSysParam(@arg));
+  semctl:=do_syscall(syscall_nr_SEMCTL,TSysParam(semid),TSysParam(semnum),TSysParam(cmd),TSysParam(arg));
 end;
 
-{
-  $Log: ipcsys.inc,v $
-  Revision 1.3  2005/02/14 17:13:30  peter
-    * truncate log
-
-}
+Function semtimedop(semid:cint; sops: psembuf; nsops: cuint; timeOut: ptimespec): cint;
+begin
+  semtimedop:=do_syscall( syscall_nr_SEMTIMEDOP,TSysParam(semid),TSysParam(sops),TSysParam(nsops),TSysParam(timeOut));
+end;
 
 

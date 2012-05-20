@@ -1,5 +1,4 @@
 {
-    $Id: sighndh.inc,v 1.2 2005/02/14 17:13:30 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Jonas Maebe,
     member of the Free Pascal development team.
@@ -56,15 +55,18 @@ type
     cr2: cardinal;
   end;
 
-{
-  $Log: sighndh.inc,v $
-  Revision 1.2  2005/02/14 17:13:30  peter
-    * truncate log
+  tsigaltstack=record
+        ss_sp : pointer;
+        ss_flags : longint;
+        ss_size : longint;
+  end;
 
-  Revision 1.1  2005/01/30 18:01:15  peter
-    * signal cleanup for linux
-    * sigactionhandler instead of tsigaction for bsds
-    * sigcontext moved to cpu dir
-
-}
+  Pucontext=^Tucontext;
+  TUcontext=record
+    uc_flags : cardinal;
+    uc_link  : Pucontext;
+    uc_stack : tsigaltstack;
+    uc_mcontext : tsigcontext;
+    uc_sigmask : tsigset;
+  end;
 

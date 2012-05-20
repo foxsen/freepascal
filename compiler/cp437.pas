@@ -6,7 +6,7 @@ unit cp437;
   implementation
 
   uses
-     charset;
+     {$if FPC_FULLVERSION<20700}ccharset{$else}charset{$endif};
 
   const
      map : array[0..255] of tunicodecharmapping = (
@@ -270,7 +270,8 @@ unit cp437;
 
      unicodemap : tunicodemap = (
        cpname : 'cp437';
-       map : @map;
+       cp : 437;
+       map : @map[0];
        lastchar : 255;
        next : nil;
        internalmap : true

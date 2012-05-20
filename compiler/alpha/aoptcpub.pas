@@ -1,5 +1,4 @@
  {
-    $Id: aoptcpub.pas,v 1.4 2005/02/14 17:13:09 peter Exp $
     Copyright (c) 1998-2000 by Jonas Maebe, member of the Free Pascal
     Development Team
 
@@ -27,10 +26,7 @@ Unit aoptcpub; { Assembler OPTimizer CPU specific Base }
 { enable the following define if memory references can have both a base and }
 { index register in 1 operand                                               }
 
-{$define RefsHaveIndexReg}
-
 { enable the following define if memory references can have a scaled index }
-
 {$define RefsHaveScale}
 
 { enable the following define if memory references can have a segment }
@@ -114,10 +110,3 @@ Begin
 End;
 
 End.
-
-{
- $Log: aoptcpub.pas,v $
- Revision 1.4  2005/02/14 17:13:09  peter
-   * truncate log
-
-}

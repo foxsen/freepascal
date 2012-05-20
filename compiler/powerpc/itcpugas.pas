@@ -1,5 +1,4 @@
 {
-    $Id: itcpugas.pas,v 1.8 2005/02/18 23:05:47 jonas Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl
 
     This unit contains the PowerPC GAS instruction tables
@@ -41,7 +40,8 @@ interface
         'dcbf','dcbi','dcbst','dcbt','dcbtst','dcbz','divw','divw.','divwo','divwo.',
         'divwu','divwu.','divwuo','divwuo.','eciwx','ecowx','eieio','eqv',
         'eqv.','extsb','extsb.','extsh','extsh.','fabs','fabs.','fadd',
-        'fadd.','fadds','fadds.','fcmpo','fcmpu','fctiw','fctiw.','fctiwz',
+        'fadd.','fadds','fadds.','fcmpo','fcmpu','fctid','fctid.','fctidz',
+        'fctidz.','fctiw','fctiw.','fctiwz',
         'fctiwz.','fdiv','fdiv.','fdivs','fdivs.','fmadd','fmadd.','fmadds',
         'fmadds.','fmr','fmsub','fmsub.','fmsubs','fmsubs.','fmul','fmul.',
         'fmuls','fmuls.','fnabs','fnabs.','fneg','fneg.','fnmadd',
@@ -50,7 +50,7 @@ interface
         'fsel','fsel.','fsqrt','fsqrt.','fsqrts','fsqrts.','fsub','fsub.',
         'fsubs','fsubs.','icbi','isync','lbz','lbzu','lbzux','lbzx',
         'lfd','lfdu','lfdux','lfdx','lfs','lfsu','lfsux','lfsx','lha',
-        'lhau','lhaux','lhax','hbrx','lhz','lhzu','lhzux','lhzx','lmw',
+        'lhau','lhaux','lhax','lhbrx','lhz','lhzu','lhzux','lhzx','lmw',
         'lswi','lswx','lwarx','lwbrx','lwz','lwzu','lwzux','lwzx','mcrf',
         'mcrfs','mcrxr','mfcr','mffs','mffs.','mfmsr','mfspr','mfsr',
         'mfsrin','mftb','mtcrf','mtfsb0','mtfsb1','mtfsf','mtfsf.',
@@ -58,7 +58,7 @@ interface
         'mulhw.','mulhwu','mulhwu.','mulli','mullw','mullw.','mullwo',
         'mullwo.','nand','nand.','neg','neg.','nego','nego.','nor','nor.',
         'or','or.','orc','orc.','ori','oris', 'rfi', 'rlwimi', 'rlwimi.',
-        'rlwinm', 'rlwinm.','rlwnm','sc','slw', 'slw.', 'sraw', 'sraw.',
+        'rlwinm', 'rlwinm.','rlwnm','rlwnm.','sc','slw', 'slw.', 'sraw', 'sraw.',
         'srawi', 'srawi.','srw', 'srw.', 'stb', 'stbu', 'stbux','stbx','stfd',
         'stfdu', 'stfdux', 'stfdx', 'stfiwx', 'stfs', 'stfsu', 'stfsux', 'stfsx',
         'sth', 'sthbrx', 'sthu', 'sthux', 'sthx', 'stmw', 'stswi', 'stswx', 'stw',
@@ -74,8 +74,8 @@ interface
         'insrwi.', 'rotlwi', 'rotlwi.', 'rotlw', 'rotlw.', 'slwi', 'slwi.',
         'srwi', 'srwi.', 'clrlwi', 'clrlwi.', 'clrrwi', 'clrrwi.', 'clrslwi',
         'clrslwi.', 'blr', 'bctr', 'blrl', 'bctrl', 'crset', 'crclr', 'crmove',
-        'crnot', 'mt', 'mf','nop', 'li', 'lis', 'la', 'mr','mr.','not', 'mtcr', 'mtlr', 'mflr',
-        'mtctr', 'mfctr');
+        'crnot', 'mt', 'mf','nop', 'li', 'lis', 'la', 'mr','mr.','not', 'not.',
+        'mtcr', 'mtlr', 'mflr','mtctr', 'mfctr', 'mftbu', 'mfxer');
 
     function gas_regnum_search(const s:string):Tregister;
     function gas_regname(r:Tregister):string;
@@ -84,7 +84,7 @@ interface
 implementation
 
     uses
-      globtype,globals,
+      globtype,globals,aasmbase,
       cutils,verbose, systems;
 
     const
@@ -132,7 +132,14 @@ implementation
       begin
         p:=findreg_by_number(r);
         if p<>0 then
-          if (cs_create_smart in aktmoduleswitches) and
+          {The GNU assembler only accepts numbers and no full register names (at least in older versions). To
+           make the assembler code more readable, we define macros at the start of all assembler files we write
+           to redefine r1..r31 and f1..f31 to 1..31, and then use the full register names.
+
+           However, we do not do this for smart linked files since that would cause a lot of (mostly useless)
+           overhead. In theory, we could also not do it if "-a" is not used. The Mac OS X assembler (which is
+           based on GNU as) "natively" supports full register names.}
+          if create_smartlink_library and
              (target_info.system <> system_powerpc_darwin) then
             result:=gas_regname_short_table[p]
           else
@@ -142,13 +149,3 @@ implementation
       end;
 
 end.
-{
-  $Log: itcpugas.pas,v $
-  Revision 1.8  2005/02/18 23:05:47  jonas
-    - removed a non-existing instruction (lcrxe)
-    * fixed an instruction (maffs_ -> mffs)
-
-  Revision 1.7  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

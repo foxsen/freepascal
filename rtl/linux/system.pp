@@ -1,6 +1,5 @@
 {
-    $Id: system.pp,v 1.25 2005/04/24 21:19:22 peter Exp $
-    This file is part of the Free Pascal run time librar~y.
+    This file is part of the Free Pascal run time library.
     Copyright (c) 2000 by Marco van de Voort
     member of the Free Pascal development team.
 
@@ -17,32 +16,80 @@
 
 { These things are set in the makefile, }
 { But you can override them here.}
-
-
 { If you use an aout system, set the conditional AOUT}
 { $Define AOUT}
 
-Unit {$ifdef VER1_0}Syslinux{$else}System{$endif};
+Unit System;
 
-Interface
+{*****************************************************************************}
+                                    interface
+{*****************************************************************************}
 
 {$define FPC_IS_SYSTEM}
+{$define HAS_CMDLINE}
+{$define USE_NOTHREADMANAGER}
 
 {$i osdefs.inc}
 
 {$I sysunixh.inc}
 
-Implementation
+function get_cmdline:Pchar; 
+property cmdline:Pchar read get_cmdline;
 
+{$if defined(CPUARM) or defined(CPUM68K) or defined(CPUSPARC)}
+
+{$define fpc_softfpu_interface}
+{$i softfpu.pp}
+{$undef fpc_softfpu_interface}
+
+{$endif defined(CPUARM) or defined(CPUM68K) or defined(CPUSPARC)}
+
+{*****************************************************************************}
+                                 implementation
+{*****************************************************************************}
+
+{$if defined(CPUI386) and not defined(FPC_USE_LIBC)}
+var
+  sysenter_supported: LongInt = 0;
+{$endif}
+
+const calculated_cmdline:Pchar=nil;
+
+{$if defined(CPUARM) or defined(CPUM68K) or defined(CPUSPARC)}
+
+{$define fpc_softfpu_implementation}
+{$i softfpu.pp}
+{$undef fpc_softfpu_implementation}
+
+{ we get these functions and types from the softfpu code }
+{$define FPC_SYSTEM_HAS_float64}
+{$define FPC_SYSTEM_HAS_float32}
+{$define FPC_SYSTEM_HAS_flag}
+{$define FPC_SYSTEM_HAS_extractFloat64Frac0}
+{$define FPC_SYSTEM_HAS_extractFloat64Frac1}
+{$define FPC_SYSTEM_HAS_extractFloat64Exp}
+{$define FPC_SYSTEM_HAS_extractFloat64Sign}
+{$define FPC_SYSTEM_HAS_ExtractFloat32Frac}
+{$define FPC_SYSTEM_HAS_extractFloat32Exp}
+{$define FPC_SYSTEM_HAS_extractFloat32Sign}
+
+{$endif defined(CPUARM) or defined(CPUM68K) or defined(CPUSPARC)}
 
 {$I system.inc}
-
 
 {*****************************************************************************
                        Misc. System Dependent Functions
 *****************************************************************************}
 
+{$if defined(CPUARM) and defined(FPC_ABI_EABI)}
+procedure haltproc(e:longint);cdecl;external name '_haltproc_eabi';
+{$else}
 procedure haltproc(e:longint);cdecl;external name '_haltproc';
+{$endif}
+
+{$ifdef FPC_USE_LIBC}
+function  FpPrCtl(options : cInt; const args : ptruint) : cint; cdecl; external clib name 'prctl';
+{$endif}
 
 procedure System_exit;
 begin
@@ -56,7 +103,7 @@ Begin
 End;
 
 
-function BackPos(c:char; const s: shortstring): integer;
+{function BackPos(c:char; const s: shortstring): integer;
 var
  i: integer;
 Begin
@@ -66,7 +113,7 @@ Begin
     BackPos := 0
   else
     BackPos := i;
-end;
+end;}
 
 
  { variable where full path and filename and executable is stored }
@@ -82,8 +129,10 @@ function paramstr(l: longint) : string;
      begin
        paramstr := execpathstr;
      end
+   else if (l < argc) then
+     paramstr:=strpas(argv[l])
    else
-     paramstr:=strpas(argv[l]);
+     paramstr:='';
  end;
 
 Procedure Randomize;
@@ -91,52 +140,9 @@ Begin
   randseed:=longint(Fptime(nil));
 End;
 
-
 {*****************************************************************************
-                         SystemUnit Initialization
+                                    cmdline
 *****************************************************************************}
-
-function  reenable_signal(sig : longint) : boolean;
-var
-  e : TSigSet;
-  i,j : byte;
-begin
-  fillchar(e,sizeof(e),#0);
-  { set is 1 based PM }
-  dec(sig);
-  i:=sig mod 32;
-  j:=sig div 32;
-  e[j]:=1 shl i;
-  fpsigprocmask(SIG_UNBLOCK,@e,nil);
-  reenable_signal:=geterrno=0;
-end;
-
-
-// signal handler is arch dependant due to processorexception to language
-// exception translation
-
-{$i sighnd.inc}
-
-var
-  act: SigActionRec;
-
-Procedure InstallSignals;
-begin
-  { Initialize the sigaction structure }
-  { all flags and information set to zero }
-  FillChar(act, sizeof(SigActionRec),0);
-  { initialize handler                    }
-  act.sa_handler := SigActionHandler(@SignalToRunError);
-  act.sa_flags:=SA_SIGINFO
-{$ifdef cpux86_64}
-    or $4000000
-{$endif cpux86_64}
-    ;
-  FpSigAction(SIGFPE,@act,nil);
-  FpSigAction(SIGSEGV,@act,nil);
-  FpSigAction(SIGBUS,@act,nil);
-  FpSigAction(SIGILL,@act,nil);
-end;
 
 procedure SetupCmdLine;
 var
@@ -148,13 +154,15 @@ var
 
   procedure AddBuf;
   begin
-    reallocmem(cmdline,size+bufsize);
-    move(buf^,cmdline[size],bufsize);
+    reallocmem(calculated_cmdline,size+bufsize);
+    move(buf^,calculated_cmdline[size],bufsize);
     inc(size,bufsize);
     bufsize:=0;
   end;
 
 begin
+  if argc<=0 then
+    exit;
   GetMem(buf,ARG_MAX);
   size:=0;
   bufsize:=0;
@@ -171,6 +179,7 @@ begin
          found:=true;
          break;
        end;
+     found:=found or (len=0); // also quote if len=0, bug 19114
      if bufsize+len>=ARG_MAX-2 then
       AddBuf;
      if found then
@@ -178,8 +187,11 @@ begin
         buf[bufsize]:='"';
         inc(bufsize);
       end;
-     move(argv[i]^,buf[bufsize],len);
-     inc(bufsize,len);
+     if len>0 then
+       begin
+         move(argv[i]^,buf[bufsize],len);
+         inc(bufsize,len);
+       end;
      if found then
       begin
         buf[bufsize]:='"';
@@ -196,6 +208,68 @@ begin
   FreeMem(buf,ARG_MAX);
 end;
 
+function get_cmdline:Pchar;
+
+begin
+  if calculated_cmdline=nil then
+    setupcmdline;
+  get_cmdline:=calculated_cmdline;
+end;
+
+{*****************************************************************************
+                         SystemUnit Initialization
+*****************************************************************************}
+
+function  reenable_signal(sig : longint) : boolean;
+var
+  e : TSigSet;
+  i,j : byte;
+  olderrno: cint;
+begin
+  fillchar(e,sizeof(e),#0);
+  { set is 1 based PM }
+  dec(sig);
+  i:=sig mod (sizeof(cuLong) * 8);
+  j:=sig div (sizeof(cuLong) * 8);
+  e[j]:=1 shl i;
+  { this routine is called from a signal handler, so must not change errno }
+  olderrno:=geterrno;
+  fpsigprocmask(SIG_UNBLOCK,@e,nil);
+  reenable_signal:=geterrno=0;
+  seterrno(olderrno);
+end;
+
+// signal handler is arch dependant due to processorexception to language
+// exception translation
+
+{$i sighnd.inc}
+
+procedure InstallDefaultSignalHandler(signum: longint; out oldact: SigActionRec); public name '_FPC_INSTALLDEFAULTSIGHANDLER';
+var
+  act: SigActionRec;
+begin
+  { Initialize the sigaction structure }
+  { all flags and information set to zero }
+  FillChar(act, sizeof(SigActionRec),0);
+  { initialize handler                    }
+  act.sa_handler := SigActionHandler(@SignalToRunError);
+  act.sa_flags:=SA_SIGINFO;
+  FpSigAction(signum,@act,@oldact);
+end;
+
+var
+  oldsigfpe: SigActionRec; public name '_FPC_OLDSIGFPE';
+  oldsigsegv: SigActionRec; public name '_FPC_OLDSIGSEGV';
+  oldsigbus: SigActionRec; public name '_FPC_OLDSIGBUS';
+  oldsigill: SigActionRec; public name '_FPC_OLDSIGILL';
+
+Procedure InstallSignals;
+begin
+  InstallDefaultSignalHandler(SIGFPE,oldsigfpe);
+  InstallDefaultSignalHandler(SIGSEGV,oldsigsegv);
+  InstallDefaultSignalHandler(SIGBUS,oldsigbus);
+  InstallDefaultSignalHandler(SIGILL,oldsigill);
+end;
 
 procedure SysInitStdIO;
 begin
@@ -204,6 +278,14 @@ begin
   OpenStdIO(ErrOutput,fmOutput,StdErrorHandle);
   OpenStdIO(StdOut,fmOutput,StdOutputHandle);
   OpenStdIO(StdErr,fmOutput,StdErrorHandle);
+end;
+
+Procedure RestoreOldSignalHandlers;
+begin
+  FpSigAction(SIGFPE,@oldsigfpe,nil);
+  FpSigAction(SIGSEGV,@oldsigsegv,nil);
+  FpSigAction(SIGBUS,@oldsigbus,nil);
+  FpSigAction(SIGILL,@oldsigill,nil);
 end;
 
 
@@ -224,51 +306,74 @@ begin
  GetProcessID := SizeUInt (fpGetPID);
 end;
 
+{$ifdef FPC_USE_LIBC}
+{$ifdef HAS_UGETRLIMIT}
+    { there is no ugetrlimit libc call, just map it to the getrlimit call in these cases }
+function FpUGetRLimit(resource : cInt; rlim : PRLimit) : cInt; cdecl; external clib name 'getrlimit';
+{$endif}
+{$endif}
 
-Begin
+function CheckInitialStkLen(stklen : SizeUInt) : SizeUInt;
+var
+  limits : TRLimit;
+  success : boolean;
+begin
+  success := false;
+  fillchar(limits, sizeof(limits), 0);
+  {$ifdef has_ugetrlimit}
+  success := fpugetrlimit(RLIMIT_STACK, @limits)=0;
+  {$endif}
+  {$ifndef NO_SYSCALL_GETRLIMIT}
+  if (not success) then
+    success := fpgetrlimit(RLIMIT_STACK, @limits)=0;
+  {$endif}
+  if (success) and (limits.rlim_cur < stklen) then
+    result := limits.rlim_cur
+  else
+    result := stklen;
+end;
+
+var
+  initialstkptr : Pointer;external name '__stkptr';
+begin
+{$if defined(i386) and not defined(FPC_USE_LIBC)}
+  InitSyscallIntf;
+{$endif}
+
+{$ifndef FPUNONE}
+  SysResetFPU;
+  if not(IsLibrary) then
+    SysInitFPU;
+{$if defined(cpupowerpc)}
+  // some PPC kernels set the exception bits FE0/FE1 in the MSR to zero,
+  // disabling all FPU exceptions. Enable them again.
+  fpprctl(PR_SET_FPEXC, PR_FP_EXC_PRECISE);
+{$endif}
+{$endif}
   IsConsole := TRUE;
-  IsLibrary := FALSE;
-  StackLength := InitialStkLen;
-  StackBottom := Sptr - StackLength;
-  { Set up signals handlers }
+  StackLength := CheckInitialStkLen(initialStkLen);
+  StackBottom := initialstkptr - StackLength;
+  { Set up signals handlers (may be needed by init code to test cpu features) }
   InstallSignals;
+
+{$if defined(cpui386) or defined(cpuarm)}
+  fpc_cpucodeinit;
+{$endif cpui386}
+
   { Setup heap }
   InitHeap;
   SysInitExceptions;
-  { Arguments }
-  SetupCmdLine;
-  SysInitExecPath;
+  initunicodestringmanager;
   { Setup stdin, stdout and stderr }
   SysInitStdIO;
+  { Arguments }
+  SysInitExecPath;
   { Reset IO Error }
   InOutRes:=0;
   { threading }
   InitSystemThreads;
-{$ifdef HASVARIANT}
   initvariantmanager;
-{$endif HASVARIANT}
-{$ifdef HASWIDESTRING}
-  initwidestringmanager;
-{$endif HASWIDESTRING}
-End.
-
-{
-  $Log: system.pp,v $
-  Revision 1.25  2005/04/24 21:19:22  peter
-    * unblock signal in signalhandler, remove the sigprocmask call
-      from setjmp
-
-  Revision 1.24  2005/02/14 17:13:30  peter
-    * truncate log
-
-  Revision 1.23  2005/02/13 21:47:56  peter
-    * include file cleanup part 2
-
-  Revision 1.22  2005/02/06 11:20:52  peter
-    * threading in system unit
-    * removed systhrds unit
-
-  Revision 1.21  2005/02/01 20:22:49  florian
-    * improved widestring infrastructure manager
-
-}
+  { restore original signal handlers in case this is a library }
+  if IsLibrary then
+    RestoreOldSignalHandlers;
+end.

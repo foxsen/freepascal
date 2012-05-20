@@ -1,5 +1,4 @@
 {
-    $Id: wconsts.pas,v 1.3 2005/02/14 17:13:18 peter Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 2000 by B‚rczi G bor
 
@@ -11,6 +10,8 @@
 
  **********************************************************************}
 {$i globdir.inc}
+
+{$mode objfpc}
 unit wconsts;
 
   interface
@@ -41,9 +42,3 @@ const
   implementation
 
 end.
-{
-  $Log: wconsts.pas,v $
-  Revision 1.3  2005/02/14 17:13:18  peter
-    * truncate log
-
-}

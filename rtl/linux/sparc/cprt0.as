@@ -1,6 +1,3 @@
-/*
-  $Id: cprt0.as,v 1.5 2004/09/25 18:43:45 florian Exp $
-*/
         .section ".text"
         .align 4
         .global _start
@@ -11,7 +8,7 @@ _start:
      drop their arguments.  */
         mov     %g0, %fp
         sub     %sp, 6*4, %sp
-        
+
   	/* Extract the arguments and environment as encoded on the stack.  The
      	   argument info starts after one register window (16 words) past the SP.  */
 	       ld	[%sp+22*4], %o2
@@ -31,11 +28,16 @@ _start:
        	sethi	%hi(operatingsystem_parameter_envp),%o1
        	or	%o1,%lo(operatingsystem_parameter_envp),%o1
        	st	%o2, [%o1]
-        
+
+    /* Save initial stackpointer */
+	sethi	%hi(__stkptr),%o1
+	or	%o1,%lo(__stkptr),%o1
+	st	%sp, [%o1]
+
   /* reload the addresses for C startup code  */
         ld      [%sp+22*4], %o1
         add     %sp, 23*4, %o2
-        
+
 
   /* Load the addresses of the user entry points.  */
         sethi   %hi(PASCALMAIN), %o0
@@ -59,14 +61,11 @@ _start:
         unimp
 
         .size _start, .-_start
-        
+
 								.globl  _haltproc
         .type   _haltproc,@function
         _haltproc:
-       	mov	1, %g1			/* "exit" system call */
-       	sethi	%hi(operatingsystem_result),%o0
-       	or	%o0,%lo(operatingsystem_result),%o0
-       	ldsh	[%o0], %o0			/* give exit status to parent process*/
+       	mov	188, %g1			/* "exit" system call */
        	ta	0x10			/* dot the system call */
        	nop				/* delay slot */
        	/* Die very horribly if exit returns.  */
@@ -74,20 +73,8 @@ _start:
 
 .data
 
-        .comm   ___fpc_brk_addr,4        /* heap management */
+        .comm __stkptr,4
 
         .comm operatingsystem_parameter_envp,4
         .comm operatingsystem_parameter_argc,4
         .comm operatingsystem_parameter_argv,4
-
-/*
-  $Log: cprt0.as,v $
-  Revision 1.5  2004/09/25 18:43:45  florian
-    * fixed symbol names
-
-  Revision 1.4  2004/09/25 12:25:32  florian
-    * first implementation
-
-  Revision 1.3  2003/05/23 21:09:14  florian
-    + dummy implementation readded to satisfy makefile
-*/

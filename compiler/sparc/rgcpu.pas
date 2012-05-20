@@ -1,5 +1,4 @@
 {
-    $Id: rgcpu.pas,v 1.32 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl
 
     This unit implements the SPARC specific class for the register
@@ -27,7 +26,7 @@ unit rgcpu;
   interface
 
     uses
-      aasmbase,aasmcpu,aasmtai,
+      aasmbase,aasmcpu,aasmtai,aasmdata,
       cgbase,cgutils,
       cpubase,
       rgobj;
@@ -36,8 +35,8 @@ unit rgcpu;
       trgcpu=class(trgobj)
         procedure add_constraints(reg:tregister);override;
         function get_spill_subreg(r : tregister) : tsubregister;override;
-        procedure do_spill_read(list:Taasmoutput;pos:tai;const spilltemp:treference;tempreg:tregister);override;
-        procedure do_spill_written(list:Taasmoutput;pos:tai;const spilltemp:treference;tempreg:tregister);override;
+        procedure do_spill_read(list:TAsmList;pos:tai;const spilltemp:treference;tempreg:tregister);override;
+        procedure do_spill_written(list:TAsmList;pos:tai;const spilltemp:treference;tempreg:tregister);override;
       end;
 
 
@@ -45,6 +44,7 @@ implementation
 
     uses
       verbose,cutils,
+      globtype,
       cgobj;
 
     procedure trgcpu.add_constraints(reg:tregister);
@@ -87,84 +87,78 @@ implementation
       end;
 
 
-    procedure trgcpu.do_spill_read(list:Taasmoutput;pos:tai;const spilltemp:treference;tempreg:tregister);
+    procedure trgcpu.do_spill_read(list:TAsmList;pos:tai;const spilltemp:treference;tempreg:tregister);
       var
         helpins  : tai;
         tmpref   : treference;
-        helplist : taasmoutput;
+        helplist : TAsmList;
         hreg     : tregister;
       begin
         if abs(spilltemp.offset)>4095 then
           begin
-            helplist:=taasmoutput.create;
+            helplist:=TAsmList.create;
 
             if getregtype(tempreg)=R_INTREGISTER then
               hreg:=tempreg
             else
               hreg:=cg.getintregister(helplist,OS_ADDR);
 
-            reference_reset(tmpref);
+            reference_reset(tmpref,sizeof(pint));
             tmpref.offset:=spilltemp.offset;
-            tmpref.refaddr:=addr_hi;
+            tmpref.refaddr:=addr_high;
             helplist.concat(taicpu.op_ref_reg(A_SETHI,tmpref,hreg));
 
-            tmpref.refaddr:=addr_lo;
+            tmpref.refaddr:=addr_low;
             helplist.concat(taicpu.op_reg_ref_reg(A_OR,hreg,tmpref,hreg));
 
-            reference_reset_base(tmpref,hreg,0);
+            reference_reset_base(tmpref,hreg,0,sizeof(aint));
             tmpref.index:=spilltemp.base;
 
             helpins:=spilling_create_load(tmpref,tempreg);
             helplist.concat(helpins);
-            list.insertlistafter(pos,helplist)
+            list.insertlistafter(pos,helplist);
+            helplist.free;
           end
         else
           inherited do_spill_read(list,pos,spilltemp,tempreg);
       end;
 
 
-    procedure trgcpu.do_spill_written(list:Taasmoutput;pos:tai;const spilltemp:treference;tempreg:tregister);
+    procedure trgcpu.do_spill_written(list:TAsmList;pos:tai;const spilltemp:treference;tempreg:tregister);
       var
-        helpins  : tai;
         tmpref   : treference;
-        helplist : taasmoutput;
+        helplist : TAsmList;
         hreg     : tregister;
       begin
         if abs(spilltemp.offset)>4095 then
           begin
-            helplist:=taasmoutput.create;
+            helplist:=TAsmList.create;
 
             if getregtype(tempreg)=R_INTREGISTER then
-              hreg:=getregisterinline(helplist,R_SUBWHOLE)
+              hreg:=getregisterinline(helplist,[R_SUBWHOLE])
             else
               hreg:=cg.getintregister(helplist,OS_ADDR);
 
-            reference_reset(tmpref);
+            reference_reset(tmpref,sizeof(aint));
             tmpref.offset:=spilltemp.offset;
-            tmpref.refaddr:=addr_hi;
+            tmpref.refaddr:=addr_high;
             helplist.concat(taicpu.op_ref_reg(A_SETHI,tmpref,hreg));
 
-            tmpref.refaddr:=addr_lo;
+            tmpref.refaddr:=addr_low;
             helplist.concat(taicpu.op_reg_ref_reg(A_OR,hreg,tmpref,hreg));
 
-            reference_reset_base(tmpref,hreg,0);
+            reference_reset_base(tmpref,hreg,0,sizeof(aint));
             tmpref.index:=spilltemp.base;
 
-            helpins:=spilling_create_store(tempreg,tmpref);
-            helplist.concat(helpins);
+            helplist.concat(spilling_create_store(tempreg,tmpref));
             if getregtype(tempreg)=R_INTREGISTER then
               ungetregisterinline(helplist,hreg);
 
-            list.insertlistafter(pos,helplist)
+            list.insertlistafter(pos,helplist);
+            helplist.free;
           end
         else
           inherited do_spill_written(list,pos,spilltemp,tempreg);
     end;
 
 end.
-{
-  $Log: rgcpu.pas,v $
-  Revision 1.32  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

@@ -2,8 +2,6 @@
 { Submitted by "Sergey Kosarevsky" on  2003-01-09 }
 { e-mail: netsurfer@au.ru }
 
-{$static on}
-
 Type tObject=Object
         Function GetVMT:Pointer;Static;
      End;
@@ -24,4 +22,3 @@ Begin
       halt(1);
     end;
 End.
-

@@ -13,7 +13,6 @@
 
  **********************************************************************}
 {$I globdir.inc}
-{$ifdef TP}{$L-}{$endif}
 unit WEditor;
 
 interface
@@ -21,7 +20,7 @@ interface
 uses
   Dos,Objects,Drivers,Views,Dialogs,Menus,
   FVConsts,
-  WUtils;
+  WUtils,WViews;
 
 const
       cmFileNameChanged      = 51234;
@@ -59,11 +58,11 @@ const
       cmCollapseFold         = 51266;
       cmExpandFold           = 51267;
       cmDelToEndOfWord       = 51268;
+      cmInputLineLen         = 51269;
 
-      EditorTextBufSize = {$ifdef FPC}32768{$else} 4096{$endif};
+      EditorTextBufSize = 32768;
       MaxLineLength     = 255;
-      MaxLineCount      = {$ifdef FPC}2000000{$else}16380{$endif};
-
+      MaxLineCount      = 2000000;
 
       CodeTemplateCursorChar = '|'; { char to signal cursor pos in templates }
 
@@ -203,7 +202,10 @@ const
       TAB      = #9;
       FindStrSize = 79;
 
+
 type
+    Tcentre = (do_not_centre,do_centre);
+
     PCustomCodeEditor = ^TCustomCodeEditor;
     PEditorLineInfo = ^TEditorLineInfo;
     PFoldCollection = ^TFoldCollection;
@@ -346,7 +348,7 @@ type
 
     PCustomCodeEditorCore = ^TCustomCodeEditorCore;
     TCustomCodeEditorCore = object(TObject)
-    {$ifdef TP}public{$else}protected{$endif}
+    protected
       Bindings    : PEditorBindingCollection;
       LockFlag    : sw_integer;
       ChangedLine : sw_integer;
@@ -402,7 +404,7 @@ type
       function    LoadFromStream(Editor: PCustomCodeEditor; Stream: PFastBufStream): boolean; virtual;
       function    SaveToStream(Editor: PCustomCodeEditor; Stream: PStream): boolean; virtual;
       function    SaveAreaToStream(Editor: PCustomCodeEditor; Stream: PStream; StartP,EndP: TPoint): boolean; virtual;
-    {$ifdef TP}public{$else}protected{$endif}
+    protected
       { Text & info storage abstraction }
    {a}procedure   ISetLineFlagState(Binding: PEditorBinding; LineNo: sw_integer; Flag: longint; ASet: boolean); virtual;
    {a}procedure   IGetDisplayTextFormat(Binding: PEditorBinding; LineNo: sw_integer;var DT,DF:string); virtual;
@@ -506,7 +508,7 @@ type
       procedure   SetLineFlagExclusive(Flags: longint; LineNo: sw_integer);
       procedure   Update; virtual;
       procedure   ScrollTo(X, Y: sw_Integer);
-      procedure   TrackCursor(Center: boolean); virtual;
+      procedure   TrackCursor(centre:Tcentre); virtual;
       procedure   Lock; virtual;
       procedure   UnLock; virtual;
     public
@@ -600,7 +602,7 @@ type
    {a}procedure   CloseGroupedAction(AAction : byte); virtual;
    {a}function    GetUndoActionCount: sw_integer; virtual;
    {a}function    GetRedoActionCount: sw_integer; virtual;
-    {$ifdef TP}public{$else}protected{$endif}
+    protected
       LastLocalCmd: word;
       KeyState    : Integer;
       Bookmarks   : array[0..9] of TEditorBookmark;
@@ -706,16 +708,18 @@ type
     TCodeEditorDialog = function(Dialog: Integer; Info: Pointer): Word;
 
     TEditorInputLine = object(TInputLine)
-      Procedure   HandleEvent(var Event : TEvent);virtual;
+         Procedure   HandleEvent(var Event : TEvent);virtual;
     end;
     PEditorInputLine = ^TEditorInputLine;
 
+    TSearchHelperDialog = object(TDialog)
+             OkButton: PButton;
+             Procedure   HandleEvent(var Event : TEvent);virtual;
+    end;
+
+    PSearchHelperDialog = ^TSearchHelperDialog;
 
 const
-
-     cmCopyWin = 240;
-     cmPasteWin = 241;
-
      { used for ShiftDel and ShiftIns to avoid
        GetShiftState to be considered for extending
        selection (PM) }
@@ -723,7 +727,10 @@ const
 
      CodeCompleteMinLen : byte = 4; { minimum length of text to try to complete }
 
-     ToClipCmds         : TCommandSet = ([cmCut,cmCopy,cmCopyWin]);
+     ToClipCmds         : TCommandSet = ([cmCut,cmCopy,cmCopyWin,
+       { cmUnselect should because like cut, copy, copywin:
+         if there is a selection, it is active, else it isn't }
+       cmUnselect]);
      FromClipCmds       : TCommandSet = ([cmPaste]);
      NulClipCmds        : TCommandSet = ([cmClear]);
      UndoCmd            : TCommandSet = ([cmUndo]);
@@ -764,9 +771,13 @@ uses
   WinClip,
 {$endif WinClipSupported}
 {$ifdef TEST_REGEXP}
-  regexpr,
+  {$ifdef USE_OLD_REGEXP}
+    oldregexpr,
+  {$else not USE_OLD_REGEXP}
+    regexpr,
+  {$endif not USE_OLD_REGEXP}
 {$endif TEST_REGEXP}
-  WConsts,WViews,WCEdit;
+  WConsts,WCEdit;
 
 type
     RecordWord = sw_word;
@@ -967,6 +978,7 @@ begin
    RExpand:=S;
 end;
 
+{
 function upper(const s : string) : string;
 var
   i  : Sw_word;
@@ -978,8 +990,8 @@ begin
     upper[i]:=s[i];
   upper[0]:=s[0];
 end;
-
-type TPosOfs = {$ifdef TP}longint{$endif}{$ifdef FPC}int64{$endif};
+}
+type TPosOfs = int64;
 
 function PosToOfs(const X,Y: sw_integer): TPosOfs;
 begin
@@ -1034,13 +1046,8 @@ end;}
 *****************************************************************************}
 
 Const
-{$ifndef FPC}
-  MaxBufLength   = $7f00;
-  NotFoundValue  = -1;
-{$else}
   MaxBufLength   = $7fffff00;
   NotFoundValue  = -1;
-{$endif}
 
 Type
   Btable = Array[0..255] of Byte;
@@ -1168,8 +1175,8 @@ function BMBScan(var Block; Size: Sw_Word;const Str: String;const bt:BTable): Sw
 Var
   buffer : Array[0..MaxBufLength-1] of Byte Absolute block;
   s2     : String;
-  len,
-  numb   : Sw_word;
+  len    : Sw_Word;
+  numb   : Sw_Integer;
   found  : Boolean;
 begin
   len:=length(str);
@@ -1180,8 +1187,8 @@ begin
    end;
   s2[0]:=chr(len);       { sets the length to that of the search String }
   found:=False;
-  numb:=size-pred(len);
-  While (not found) and (numb>0) do
+  numb:=size-len;
+  While (not found) and (numb>=0) do
    begin
      { partial match }
      if buffer[numb] = ord(str[1]) then
@@ -1212,8 +1219,8 @@ function BMBIScan(var Block; Size: Sw_Word;const Str: String;const bt:BTable): S
 Var
   buffer : Array[0..MaxBufLength-1] of Char Absolute block;
   len,
-  numb,
-  x      : Sw_word;
+  x      : Sw_Word;
+  numb   : Sw_Integer;
   found  : Boolean;
   p      : pchar;
   c      : char;
@@ -1226,7 +1233,7 @@ begin
    end;
   found:=False;
   numb:=size-len;
-  While (not found) and (numb>0) do
+  While (not found) and (numb>=0) do
    begin
      { partial match }
      c:=buffer[numb];
@@ -1274,7 +1281,7 @@ end;
 
 function TCustomLine.GetText: string;
 begin
-  Abstract; GetText:='';
+  Abstract;GetText:='';
 end;
 
 procedure TCustomLine.SetText(const AText: string);
@@ -1408,7 +1415,7 @@ end;
 
 function TFold.GetLineCount: sw_integer;
 var Count: sw_integer;
-procedure AddIt(P: PFold); {$ifndef FPC}far;{$endif}
+procedure AddIt(P: PFold);
 begin
   Inc(Count,P^.GetLineCount);
 end;
@@ -1486,7 +1493,9 @@ end;
 
 destructor TEditorLineInfo.Done;
 begin
-  if Format<>nil then DisposeStr(Format); Format:=nil;
+  if Format<>nil then
+    DisposeStr(Format);
+  Format:=nil;
   SetFold(nil);
   inherited Done;
 end;
@@ -1523,8 +1532,7 @@ var B: PEditorBinding;
     Count,I,Idx: sw_integer;
     L: PCustomLine;
 begin
-  if Assigned(AEditor)=false then Exit;
-
+  assert(Aeditor<>nil);
   New(B, Init(AEditor));
   Bindings^.Insert(B);
   Idx:=Bindings^.IndexOf(B);
@@ -1544,6 +1552,7 @@ var B: PEditorBinding;
     Count,I: sw_integer;
     L: PCustomLine;
 begin
+  assert(Aeditor<>nil);
   B:=SearchBinding(AEditor);
   if Assigned(B) then
   begin
@@ -1578,7 +1587,7 @@ begin
 end;
 
 function TCustomCodeEditorCore.SearchBinding(AEditor: PCustomCodeEditor): PEditorBinding;
-function SearchEditor(P: PEditorBinding): boolean; {$ifndef FPC}far;{$endif}
+function SearchEditor(P: PEditorBinding): boolean;
 begin
   SearchEditor:=P^.Editor=AEditor;
 end;
@@ -1630,7 +1639,7 @@ end;
 
 
 function TCustomCodeEditorCore.IsClipboard: Boolean;
-function IsClip(P: PEditorBinding): boolean; {$ifndef FPC}far;{$endif}
+function IsClip(P: PEditorBinding): boolean;
 begin
   IsClip:=(P^.Editor=Clipboard);
 end;
@@ -1702,7 +1711,7 @@ end;
 
 
 procedure TCustomCodeEditorCore.BindingsChanged;
-procedure CallIt(P: PEditorBinding); {$ifndef FPC}far;{$endif}
+procedure CallIt(P: PEditorBinding);
 begin
   P^.Editor^.BindingsChanged;
 end;
@@ -1711,7 +1720,7 @@ begin
 end;
 
 procedure TCustomCodeEditorCore.DoLimitsChanged;
-procedure CallIt(P: PEditorBinding); {$ifndef FPC}far;{$endif}
+procedure CallIt(P: PEditorBinding);
 begin
   P^.Editor^.DoLimitsChanged;
 end;
@@ -1720,7 +1729,7 @@ begin
 end;
 
 procedure TCustomCodeEditorCore.DoContentsChanged;
-procedure CallIt(P: PEditorBinding); {$ifndef FPC}far;{$endif}
+procedure CallIt(P: PEditorBinding);
 begin
   P^.Editor^.ContentsChanged;
 end;
@@ -1729,7 +1738,7 @@ begin
 end;
 
 procedure TCustomCodeEditorCore.DoModifiedChanged;
-procedure CallIt(P: PEditorBinding); {$ifndef FPC}far;{$endif}
+procedure CallIt(P: PEditorBinding);
 begin
   P^.Editor^.ModifiedChanged;
 end;
@@ -1738,7 +1747,7 @@ begin
 end;
 
 procedure TCustomCodeEditorCore.DoTabSizeChanged;
-procedure CallIt(P: PEditorBinding); {$ifndef FPC}far;{$endif}
+procedure CallIt(P: PEditorBinding);
 begin
   P^.Editor^.TabSizeChanged;
 end;
@@ -1747,7 +1756,7 @@ begin
 end;
 
 procedure TCustomCodeEditorCore.UpdateUndoRedo(cm : word; action : byte);
-procedure CallIt(P: PEditorBinding); {$ifndef FPC}far;{$endif}
+procedure CallIt(P: PEditorBinding);
 begin
   if (P^.Editor^.State and sfActive)<>0 then
     begin
@@ -1766,7 +1775,7 @@ end;
 
 
 procedure TCustomCodeEditorCore.DoStoreUndoChanged;
-procedure CallIt(P: PEditorBinding); {$ifndef FPC}far;{$endif}
+procedure CallIt(P: PEditorBinding);
 begin
   P^.Editor^.StoreUndoChanged;
 end;
@@ -1774,7 +1783,7 @@ begin
   Bindings^.ForEach(@CallIt);
 end;
 procedure   TCustomCodeEditorCore.DoSyntaxStateChanged;
-procedure CallIt(P: PEditorBinding); {$ifndef FPC}far;{$endif}
+procedure CallIt(P: PEditorBinding);
 begin
   P^.Editor^.SyntaxStateChanged;
 end;
@@ -1785,7 +1794,7 @@ end;
 function TCustomCodeEditorCore.GetLastVisibleLine : sw_integer;
 var
   y : sw_integer;
-procedure CallIt(P: PEditorBinding); {$ifndef FPC}far;{$endif}
+procedure CallIt(P: PEditorBinding);
 begin
   if y < P^.Editor^.Delta.Y+P^.Editor^.Size.Y then
     y:=P^.Editor^.Delta.Y+P^.Editor^.Size.Y;
@@ -2033,7 +2042,7 @@ end;
 
 function TCustomCodeEditorCore.UpdateAttrs(FromLine: sw_integer; Attrs: byte): sw_integer;
 var MinLine: sw_integer;
-procedure CallIt(P: PEditorBinding); {$ifndef FPC}far;{$endif}
+procedure CallIt(P: PEditorBinding);
 var I: sw_integer;
 begin
   I:=DoUpdateAttrs(P^.Editor,FromLine,Attrs);
@@ -2047,7 +2056,7 @@ end;
 
 function TCustomCodeEditorCore.UpdateAttrsRange(FromLine, ToLine: sw_integer; Attrs: byte): sw_integer;
 var MinLine: sw_integer;
-procedure CallIt(P: PEditorBinding); {$ifndef FPC}far;{$endif}
+procedure CallIt(P: PEditorBinding);
 var I: sw_integer;
 begin
   I:=DoUpdateAttrsRange(P^.Editor,FromLine,ToLine,Attrs);
@@ -2398,9 +2407,9 @@ var
       end;
   end;
 
-var CurLine: Sw_integer;
+var CurLineNr: Sw_integer;
     Line,NextLine,PrevLine{,OldLine}: PCustomLine;
-    PrevLI,LI,NextLI: PEditorLineInfo;
+    PrevLI,LI,nextLI: PEditorLineInfo;
 begin
   if (not Editor^.IsFlagSet(efSyntaxHighlight)) or (FromLine>=GetLineCount) then
   begin
@@ -2422,16 +2431,16 @@ begin
 {$ifdef TEST_PARTIAL_SYNTAX}
   If Editor^.IsFlagSet(efSyntaxHighlight) and (LastSyntaxedLine<FromLine)
      and (FromLine<GetLineCount) then
-    CurLine:=LastSyntaxedLine
+    CurLineNr:=LastSyntaxedLine
   else
 {$endif TEST_PARTIAL_SYNTAX}
-    CurLine:=FromLine;
-  if CurLine>0 then
-    PrevLine:=GetLine(CurLine-1)
+    CurLineNr:=FromLine;
+  if CurLineNr>0 then
+    PrevLine:=GetLine(CurLineNr-1)
   else
     PrevLine:=nil;
   repeat
-    Line:=GetLine(CurLine);
+    Line:=GetLine(CurLineNr);
     if Assigned(PrevLine) then PrevLI:=PrevLine^.GetEditorInfo(Editor) else PrevLI:=nil;
     if Assigned(Line) then LI:=Line^.GetEditorInfo(Editor) else LI:=nil;
     InSingleLineComment:=false;
@@ -2464,7 +2473,7 @@ begin
         InDirective:=LI^.BeginsWithDirective;
         CurrentCommentType:=LI^.BeginCommentType;
       end;
-    LineText:=GetLineText(CurLine);
+    LineText:=GetLineText(CurLineNr);
     Format:=CharStr(chr(coTextColor),length(LineText));
     LastCC:=ccWhiteSpace;
     ClassStart:=1;
@@ -2477,16 +2486,16 @@ begin
        Inc(X);
        ProcessChar(' ');
      end;
-    SetLineFormat(Editor,CurLine,Format);
+    SetLineFormat(Editor,CurLineNr,Format);
     LI^.EndsWithAsm:=InAsm;
     LI^.EndsWithComment:=InComment;
     LI^.EndsInSingleLineComment:=InSingleLineComment;
     LI^.EndCommentType:=CurrentCommentType;
     LI^.EndsWithDirective:=InDirective;
-    Inc(CurLine);
-    if CurLine>=GetLineCount then
+    Inc(CurLineNr);
+    if CurLineNr>=GetLineCount then
      Break;
-    NextLine:=GetLine(CurLine);
+    NextLine:=GetLine(CurLineNr);
     if Assigned(NextLine) then NextLI:=NextLine^.GetEditorInfo(Editor) else NextLI:=nil;
     if ((Attrs and attrForceFull)=0) then
       if (*  Why should we go
@@ -2498,7 +2507,7 @@ begin
          (PrevLI^.EndsWithAsm=LI^.EndsWithAsm) and
          (PrevLI^.EndsWithDirective=LI^.EndsWithDirective) and *)
 {$ifdef TEST_PARTIAL_SYNTAX}
-         (CurLine>FromLine) and
+         (CurLineNr>FromLine) and
 {$endif TEST_PARTIAL_SYNTAX}
          (NextLI^.BeginsWithAsm=LI^.EndsWithAsm) and
          (NextLI^.BeginsWithComment=LI^.EndsWithComment) and
@@ -2507,27 +2516,27 @@ begin
          (NextLI^.Format<>nil) then
        Break;
 {$ifdef TEST_PARTIAL_SYNTAX}
-    if (CurLine<GetLineCount) and
-       (CurLine>FromLine) and
+    if (CurLineNr<GetLineCount) and
+       (CurLineNr>FromLine) and
        ((Attrs and attrForceFull)=0) and
-       (CurLine>GetLastVisibleLine) then
+       (CurLineNr>GetLastVisibleLine) then
       begin
         If SyntaxComplete then
           begin
             SyntaxComplete:=false;
             DoSyntaxStateChanged;
           end;
-        LastSyntaxedLine:=CurLine-1;
+        LastSyntaxedLine:=CurLineNr-1;
         break;
       end;
 {$endif TEST_PARTIAL_SYNTAX}
     PrevLine:=Line;
   until false;
-  DoUpdateAttrs:=CurLine;
+  DoUpdateAttrs:=CurLineNr;
 {$ifdef TEST_PARTIAL_SYNTAX}
-  If LastSyntaxedLine<CurLine-1 then
-    LastSyntaxedLine:=CurLine-1;
-  if CurLine=GetLineCount then
+  If LastSyntaxedLine<CurLineNr-1 then
+    LastSyntaxedLine:=CurLineNr-1;
+  if CurLineNr=GetLineCount then
     begin
       SyntaxComplete:=true;
       DoSyntaxStateChanged;
@@ -3045,7 +3054,7 @@ begin
       Inc(LineDelta);
       OK:=GetLineCount<MaxLineCount;
     end;
-    if OK=false then EditorDialog(edTooManyLines,nil);
+    if not OK then EditorDialog(edTooManyLines,nil);
     { mainly to force eaMove insertion }
     if not IsClipboard then
       SetCurPtr(EPos.X,EPos.Y);
@@ -3241,7 +3250,7 @@ begin
   AdjustSelectionPos(CurPos.X,CurPos.Y,DeltaX,DeltaY);
 end;
 
-procedure TCustomCodeEditor.TrackCursor(Center: boolean);
+procedure TCustomCodeEditor.TrackCursor(centre:Tcentre);
 var D,CP: TPoint;
 begin
   D:=Delta;
@@ -3250,7 +3259,7 @@ begin
    if CP.Y>Delta.Y+Size.Y-1 then D.Y:=CP.Y-Size.Y+1;
   if CP.X<Delta.X then D.X:=CP.X else
    if CP.X>Delta.X+Size.X-1 then D.X:=CP.X-Size.X+1;
-  if {((Delta.X<>D.X) or (Delta.Y<>D.Y)) and }Center then
+  if {((Delta.X<>D.X) or (Delta.Y<>D.Y)) and }centre=do_centre then
   begin
      { loose centering for debugger PM }
      while (CP.Y-D.Y)<(Size.Y div 3) do Dec(D.Y);
@@ -3526,13 +3535,13 @@ begin
           cmWindowEnd   : WindowEnd;
           cmNewLine     : begin
                             InsertNewLine;
-                            TrackCursor(false);
+                            TrackCursor(do_not_centre);
                           end;
           cmBreakLine   : BreakLine;
           cmBackSpace   : BackSpace;
           cmDelChar     : DelChar;
           cmDelWord     : DelWord;
-       cmDelToEndOfWord : DelToEndOfWord;
+          cmDelToEndOfWord : DelToEndOfWord;
           cmDelStart    : DelStart;
           cmDelEnd      : DelEnd;
           cmDelLine     : DelLine;
@@ -3577,6 +3586,9 @@ begin
           cmCut         : ClipCut;
           cmCopy        : ClipCopy;
           cmPaste       : ClipPaste;
+
+          cmSelectAll   : SelectAll(true);
+          cmUnselect    : SelectAll(false);
 {$ifdef WinClipSupported}
           cmCopyWin     : ClipCopyWin;
           cmPasteWin    : ClipPasteWin;
@@ -4677,7 +4689,7 @@ begin
   if JumpPos.X<>-1 then
   begin
     SetCurPtr(JumpPos.X,JumpPos.Y);
-    TrackCursor(true);
+    TrackCursor(do_centre);
   end;
 end;
 
@@ -5001,35 +5013,59 @@ end;
 
 procedure TCustomCodeEditor.DelStart;
 var S: string;
+    OI: Sw_integer;
+    HoldUndo : Boolean;
+    SCP : TPoint;
 begin
   if IsReadOnly then Exit;
   Lock;
+  HoldUndo:=GetStoreUndo;
+  SetStoreUndo(false);
+  SCP:=CurPos;
   S:=GetLineText(CurPos.Y);
   if (S<>'') and (CurPos.X<>0) then
   begin
-    SetLineText(CurPos.Y,copy(S,LinePosToCharIdx(CurPos.Y,CurPos.X),High(S)));
+    OI:=LinePosToCharIdx(CurPos.Y,CurPos.X);
+    SetLineText(CurPos.Y,copy(S,OI,High(S)));
     SetCurPtr(0,CurPos.Y);
+    SetStoreUndo(HoldUndo);
+    Addaction(eaDeleteText,SCP,CurPos,copy(S,1,OI-1),GetFlags);
+    SetStoreUndo(false);
+    AdjustSelectionPos(CurPos.X,CurPos.Y,-length(copy(S,1,OI-1)),0);
     UpdateAttrs(CurPos.Y,attrAll);
     DrawLines(CurPos.Y);
     SetModified(true);
   end;
+  SetStoreUndo(HoldUndo);
   Unlock;
 end;
 
 procedure TCustomCodeEditor.DelEnd;
 var S: string;
+    OI: Sw_integer;
+    HoldUndo : Boolean;
+    SCP : TPoint;
 begin
   if IsReadOnly then Exit;
   Lock;
+  HoldUndo:=GetStoreUndo;
+  SetStoreUndo(false);
+  SCP:=CurPos;
   S:=GetLineText(CurPos.Y);
   if (S<>'') and (CurPos.X<>length(S)) then
   begin
-    SetLineText(CurPos.Y,copy(S,1,LinePosToCharIdx(CurPos.Y,CurPos.X)-1));
+    OI:=LinePosToCharIdx(CurPos.Y,CurPos.X);
+    SetLineText(CurPos.Y,copy(S,1,OI-1));
     SetCurPtr(CurPos.X,CurPos.Y);
+    SetStoreUndo(HoldUndo);
+    Addaction(eaDeleteText,SCP,CurPos,copy(S,OI,High(S)),GetFlags);
+    SetStoreUndo(false);
+    AdjustSelectionPos(CurPos.X+1,CurPos.Y,-length(copy(S,OI,High(S)))+1,0);
     UpdateAttrs(CurPos.Y,attrAll);
     DrawLines(CurPos.Y);
     SetModified(true);
   end;
+  SetStoreUndo(HoldUndo);
   Unlock;
 end;
 
@@ -5680,18 +5716,49 @@ begin
 end;
 
 {$ifdef WinClipSupported}
+
+const
+   linelimit = 200;
+
 function TCustomCodeEditor.ClipPasteWin: Boolean;
-var OK: boolean;
-    l,i : longint;
+var
+    StorePos : TPoint;
+    first : boolean;
+
+procedure InsertStringWrap(const s: string; var i : Longint);
+var
+    BPos,EPos: TPoint;
+begin
+  if first then
+    begin
+      { we need to cut the line in two
+      if not at end of line PM }
+      InsertNewLine;
+      SetCurPtr(StorePos.X,StorePos.Y);
+      InsertText(s);
+      first:=false;
+    end
+  else
+    begin
+      Inc(i);
+      InsertLine(i,s);
+      BPos.X:=0;BPos.Y:=i;
+      EPOS.X:=Length(s);EPos.Y:=i;
+      AddAction(eaInsertLine,BPos,EPos,GetDisplayText(i),GetFlags);
+    end;
+end;
+
+var
+    OK: boolean;
+    l,i,len,len10 : longint;
     p,p10,p2,p13 : pchar;
     s : string;
-    BPos,EPos,StorePos : TPoint;
-    first : boolean;
 begin
   Lock;
   OK:=WinClipboardSupported;
   if OK then
     begin
+
       first:=true;
       StorePos:=CurPos;
       i:=CurPos.Y;
@@ -5706,48 +5773,39 @@ begin
             PushInfo(msg_readingwinclipboard);
           AddGroupedAction(eaPasteWin);
           p2:=p;
-          p13:=strpos(p,#13);
-          p10:=strpos(p,#10);
-          while assigned(p10) do
-            begin
-              if p13+1=p10 then
-                p13[0]:=#0
-              else
-                p10[0]:=#0;
-              s:=strpas(p2);
-              if first then
-                begin
-                  { we need to cut the line in two
-                    if not at end of line PM }
-                  InsertNewLine;
-                  SetCurPtr(StorePos.X,StorePos.Y);
-                  InsertText(s);
-                  first:=false;
-                end
-              else
-                begin
-                  Inc(i);
-                  InsertLine(i,s);
-                  BPos.X:=0;BPos.Y:=i;
-                  EPOS.X:=Length(s);EPos.Y:=i;
-                  AddAction(eaInsertLine,BPos,EPos,GetDisplayText(i),GetFlags);
-                end;
-              if p13+1=p10 then
-                p13[0]:=#13
-              else
-                p10[0]:=#10;
-              p2:=@p10[1];
-              p13:=strpos(p2,#13);
-              p10:=strpos(p2,#10);
-            end;
-          if strlen(p2)>0 then
-            begin
-              s:=strpas(p2);
-              if not first then
-                SetCurPtr(0,i+1);
-              InsertText(s);
-            end;
-          SetCurPtr(StorePos.X,StorePos.Y);
+          len:=strlen(p2);
+          // issue lines ((#13)#10 terminated) of maximally "linelimit" chars.
+          // does not take initial X position into account
+          repeat
+            p13:=strpos(p2,#13);
+            p10:=strpos(p2,#10);
+            if len> linelimit then
+              len:=linelimit;
+            if assigned(p10) then
+              begin
+               len10:=p10-p2;
+               if len10<len then
+                 begin
+                   if p13+1=p10 then
+                     dec(len10);
+                   len:=len10;
+                 end
+               else
+                 p10:=nil;  // signal no cleanup
+              end;
+            setlength(s,len);
+            if len>0 then
+              move(p2^,s[1],len);
+            // cleanup
+            if assigned(p10) then
+              p2:=p10+1
+            else
+              inc(p2,len);
+            insertstringwrap(s,i);
+            len:=strlen(p2);
+          until len=0;
+
+          SetCurPtr(StorePos.X,StorePos.Y);  // y+i to get after paste?
           SetModified(true);
           UpdateAttrs(StorePos.Y,attrAll);
           CloseGroupedAction(eaPasteWin);
@@ -5822,35 +5880,41 @@ end;
 {$endif WinClipSupported}
 
 function TCustomCodeEditor.ClipCopy: Boolean;
-var OK,ShowInfo: boolean;
+
+var ShowInfo,CanPaste: boolean;
+
 begin
   Lock;
   {AddGroupedAction(eaCopy);
    can we undo a copy ??
    maybe as an Undo Paste in Clipboard !! }
-  OK:=Clipboard<>nil;
-  if OK then
-    ShowInfo:=SelEnd.Y-SelStart.Y>50
-  else
-    ShowInfo:=false;
-  if ShowInfo then
-    PushInfo(msg_copyingclipboard);
-  if OK then OK:=Clipboard^.InsertFrom(@Self);
-  if ShowInfo then
-    PopInfo;
-  ClipCopy:=OK;
+  clipcopy:=false;
+  showinfo:=false;
+  if (clipboard<>nil) and (clipboard<>@self) then
+    begin
+      ShowInfo:=SelEnd.Y-SelStart.Y>50;
+      if ShowInfo then
+        PushInfo(msg_copyingclipboard);
+      clipcopy:=Clipboard^.InsertFrom(@Self);
+      if ShowInfo then
+        PopInfo;
+      {Enable paste command.}
+      CanPaste:=((Clipboard^.SelStart.X<>Clipboard^.SelEnd.X) or
+                (Clipboard^.SelStart.Y<>Clipboard^.SelEnd.Y));
+      SetCmdState(FromClipCmds,CanPaste);
+    end;
   UnLock;
 end;
 
 procedure TCustomCodeEditor.ClipCut;
 var
-  ShowInfo : boolean;
+  ShowInfo,CanPaste : boolean;
 begin
   if IsReadOnly then Exit;
   Lock;
   AddGroupedAction(eaCut);
   DontConsiderShiftState:=true;
-  if Clipboard<>nil then
+  if (clipboard<>nil) and (clipboard<>@self) then
    begin
      ShowInfo:=SelEnd.Y-SelStart.Y>50;
      if ShowInfo then
@@ -5863,6 +5927,9 @@ begin
       end;
      if ShowInfo then
        PopInfo;
+     CanPaste:=((Clipboard^.SelStart.X<>Clipboard^.SelEnd.X) or
+               (Clipboard^.SelStart.Y<>Clipboard^.SelEnd.Y));
+     SetCmdState(FromClipCmds,CanPaste);
    end;
   CloseGroupedAction(eaCut);
   UnLock;
@@ -5885,7 +5952,6 @@ begin
      InsertFrom(Clipboard);
      if ShowInfo then
        PopInfo;
-     SetModified(true);
    end;
   CloseGroupedAction(eaPaste);
   UnLock;
@@ -5910,11 +5976,15 @@ begin
   begin
     LineNo:='1';
     Lines:=GetLineCount;
+    {Linecount can be 0, but in that case there still is a cursor blinking in top
+     of the window, which will become line 1 as soon as sometype hits a key.}
+    if lines=0 then
+      lines:=1;
     if EditorDialog(edGotoLine, @GotoRec) <> cmCancel then
     begin
       Lock;
       SetCurPtr(0,StrToInt(LineNo)-1);
-      TrackCursor(true);
+      TrackCursor(do_centre);
       UnLock;
     end;
   end;
@@ -6031,6 +6101,7 @@ var S: string;
     Re: word;
     IFindStr : string;
     BT : BTable;
+    Overwriting : boolean;
 
   function ContainsText(const SubS:string;var S: string; Start: Sw_integer): Sw_integer;
   var
@@ -6129,8 +6200,16 @@ begin
      AreaEnd:=SelEnd;
    end;
 
-  X:=CurPos.X-DX;
-  Y:=CurPos.Y;;
+  { set a y value being inside the areal }
+  Y:=Min(CurPos.Y,Count-1);
+
+  if sForward then
+    X:=CurPos.X-1
+  else
+    { if you change this, pleas check that repeated backward searching for single chars still works
+      and that data is still found if searching starts outside the current line }
+    X:=Min(CurPos.X,length(GetDisplayText(Y)));
+
   if SearchRunCount=1 then
     if (FindFlags and ffmOrigin)=ffEntireScope then
       if SForward then
@@ -6153,7 +6232,7 @@ begin
    end
   else
    begin
-     IFindStr:=Upper(FindStr);
+     IFindStr:=upcase(FindStr);
      if SForward then
       BMFMakeTable(IFindStr,bt)
      else
@@ -6162,150 +6241,168 @@ begin
 
   inc(X,DX);
   CanExit:=false;
-  if (DoReplace=false) or ((Confirm=false) and (Owner<>nil)) then
+  if not DoReplace or (not Confirm and (Owner<>nil)) then
     Owner^.Lock;
   if InArea(X,Y) then
-  repeat
-    CurDY:=DY;
-    S:=GetDisplayText(Y);
+    repeat
+      CurDY:=DY;
+      S:=GetDisplayText(Y);
+      if X>length(S)-1 then
+        X:=length(S)-1;
 {$ifdef TEST_REGEXP}
-    if UseRegExp then
-       begin
-         getmem(findstrpchar,length(Copy(S,X+1,high(S)))+1);
-         strpcopy(findstrpchar,Copy(S,X+1,high(S)));
-         { If start of line is required do check other positions PM }
-         if (FindStr[1]='^') and (X<>0) then
-           Found:=false
-         else
-           Found:=RegExprPos(RegExpEngine,findstrpchar,regexpindex,regexplen);
-         strdispose(findstrpchar);
-         P:=regexpindex+X+1;
-       end
-    else
-{$endif TEST_REGEXP}
-      begin
-        P:=ContainsText(FindStr,S,X+1);
-        Found:=P<>0;
-      end;
-    if Found then
-      begin
-        A.X:=P-1;
-        A.Y:=Y;
-        B.Y:=Y;
-{$ifdef TEST_REGEXP}
-        if UseRegExp then
-          B.X:=A.X+regexplen
-        else
-{$endif TEST_REGEXP}
-          B.X:=A.X+length(FindStr);
-      end;
-    Found:=Found and InArea(A.X,A.Y);
-
-    if Found and ((FindFlags and ffWholeWordsOnly)<>0) then
-     begin
-       LeftOK:=(A.X<=0) or (not( (S[A.X] in AlphaChars) or (S[A.X] in NumberChars) ));
-       RightOK:=(B.X>=length(S)) or (not( (S[B.X+1] in AlphaChars) or (S[B.X+1] in NumberChars) ));
-       Found:=LeftOK and RightOK;
-       if Found=false then
+      if UseRegExp then
          begin
-           CurDY:=0;
-           X:=B.X+1;
-         end;
-     end;
+           getmem(findstrpchar,length(Copy(S,X+1,high(S)))+1);
+           strpcopy(findstrpchar,Copy(S,X+1,high(S)));
+           { If start of line is required do check other positions PM }
+           if (FindStr[1]='^') and (X<>0) then
+             Found:=false
+           else
+             Found:=RegExprPos(RegExpEngine,findstrpchar,regexpindex,regexplen);
+           strdispose(findstrpchar);
+           P:=regexpindex+X+1;
+         end
+      else
+{$endif TEST_REGEXP}
+        begin
+          P:=ContainsText(FindStr,S,X+1);
+          Found:=P<>0;
+        end;
+      if Found then
+        begin
+          A.X:=P-1;
+          A.Y:=Y;
+          B.Y:=Y;
+{$ifdef TEST_REGEXP}
+          if UseRegExp then
+            B.X:=A.X+regexplen
+          else
+{$endif TEST_REGEXP}
+            B.X:=A.X+length(FindStr);
+        end;
+      Found:=Found and InArea(A.X,A.Y);
 
-    if Found then
-      Inc(FoundCount);
+      if Found and ((FindFlags and ffWholeWordsOnly)<>0) then
+       begin
+         LeftOK:=(A.X<=0) or (not( (S[A.X] in AlphaChars+NumberChars) ));
+         RightOK:=(B.X>=length(S)) or (not( (S[B.X+1] in AlphaChars+NumberChars) ));
+         Found:=LeftOK and RightOK;
+         if not Found then
+           begin
+             CurDY:=0;
+             If SForward then
+               begin
+                 X:=B.X+1;
+                 if X>length(S) then
+                   CurDY:=DY;
+               end
+             else
+               begin
+                 X:=A.X-1;
+                 if X<0 then
+                   CurDY:=DY;
+               end;
+           end;
+       end;
 
-    if Found then
-      begin
-        Lock;
-        if SForward then
-         SetCurPtr(B.X,B.Y)
-        else
-         SetCurPtr(A.X,A.Y);
-        TrackCursor(true);
-        SetHighlight(A,B);
-        UnLock;
-        CurDY:=0;
-        if (DoReplace=false) then
-          begin
-            CanExit:=true;
-            If SForward then
-              begin
-                X:=B.X;
-                Y:=B.Y;
-              end
-            else
-              begin
-                X:=A.X;
-                Y:=A.Y;
-              end;
-          end
-        else
-          begin
-            if Confirm=false then CanReplace:=true else
-              begin
-                Re:=EditorDialog(edReplacePrompt,@CurPos);
-                case Re of
-                  cmYes :
-                    CanReplace:=true;
-                  cmNo :
-                    CanReplace:=false;
-                  else {cmCancel}
-                    begin
+      if Found then
+        begin
+          Inc(FoundCount);
+          Lock;
+          if SForward then
+           SetCurPtr(B.X,B.Y)
+          else
+           SetCurPtr(A.X,A.Y);
+          TrackCursor(do_centre);
+          SetHighlight(A,B);
+          UnLock;
+          CurDY:=0;
+          if not DoReplace then
+            begin
+              CanExit:=true;
+              If SForward then
+                begin
+                  X:=B.X;
+                  Y:=B.Y;
+                end
+              else
+                begin
+                  X:=A.X;
+                  Y:=A.Y;
+                end;
+            end
+          else
+            begin
+              if not confirm then
+                CanReplace:=true
+              else
+                begin
+                  Re:=EditorDialog(edReplacePrompt,@CurPos);
+                  case Re of
+                    cmYes :
+                      CanReplace:=true;
+                    cmNo :
                       CanReplace:=false;
-                      CanExit:=true;
+                    else {cmCancel}
+                      begin
+                        CanReplace:=false;
+                        CanExit:=true;
+                      end;
+                  end;
+                end;
+              if CanReplace then
+                begin
+                  Lock;
+                  { don't use SetInsertMode here because it changes the cursor shape }
+                  overwriting:=(GetFlags and efInsertMode)=0;
+                  SetFlags(GetFlags or efInsertMode);
+                  SetSelection(A,B);
+                  DelSelect;
+                  InsertText(ReplaceStr);
+                  if SForward then
+                    begin
+                      X:=CurPos.X;
+                      Y:=CurPos.Y;
+                    end
+                  else
+                    begin
+                      X:=A.X;
+                      Y:=A.Y;
+                    end;
+                  if overwriting then
+                    SetFlags(GetFlags and (not efInsertMode));
+                  UnLock;
+                end
+              else
+                begin
+                  If SForward then
+                    begin
+                      X:=B.X;
+                      Y:=B.Y;
+                    end
+                  else
+                    begin
+                      X:=A.X;
+                      Y:=A.Y;
                     end;
                 end;
-              end;
-            if CanReplace then
-              begin
-                Lock;
-                SetSelection(A,B);
-                DelSelect;
-                InsertText(ReplaceStr);
-                if SForward then
-                  begin
-                    X:=CurPos.X;
-                    Y:=CurPos.Y;
-                  end
-                else
-                  begin
-                    X:=A.X;
-                    Y:=A.Y;
-                  end;
-                UnLock;
-              end
-            else
-              begin
-                If SForward then
-                  begin
-                    X:=B.X;
-                    Y:=B.Y;
-                  end
-                else
-                  begin
-                    X:=A.X;
-                    Y:=A.Y;
-                  end;
-              end;
-            if (DoReplaceAll=false) then
-              CanExit:=true;
-          end;
-      end;
+              if (DoReplaceAll=false) then
+                CanExit:=true;
+            end;
+        end;
 
-    if (CanExit=false) and (CurDY<>0) then
-      begin
-        inc(Y,CurDY);
-        if SForward then
-          X:=0
-        else
-          X:=254;
-        CanExit:=(Y>=Count) or (Y<0);
-      end;
-    if not CanExit then
-      CanExit:=not InArea(X,Y);
-  until CanExit;
+      if (CanExit=false) and (CurDY<>0) then
+        begin
+          inc(Y,CurDY);
+          if SForward then
+            X:=0
+          else
+            X:=254;
+          CanExit:=((Y>=Count) and sForward) or (Y<0);
+        end;
+      if not CanExit then
+        CanExit:=(not InArea(X,Y)) and sForward;
+    until CanExit;
   if (FoundCount=0) or (DoReplace) then
     SetHighlight(CurPos,CurPos);
   if (DoReplace=false) or ((Confirm=false) and (Owner<>nil)) then
@@ -6369,36 +6466,49 @@ begin
   OldSStart:=SelStart;}
   CurPos.X:=X;
   CurPos.Y:=Y;
-  TrackCursor(false);
+  TrackCursor(do_not_centre);
   if not IsLineVisible(CurPos.Y) then
   begin
     F:=GetLineFold(CurPos.Y);
     if Assigned(F) then
       F^.Collapse(false);
   end;
-  if (NoSelect=false) and (ShouldExtend) then
-  begin
-    CheckSels;
-    Extended:=false;
-    if PointOfs(OldPos)=PointOfs(SelStart) then
-      begin SetSelection(CurPos,SelEnd); Extended:=true; end;
-    CheckSels;
-    if Extended=false then
-     if PointOfs(OldPos)=PointOfs(SelEnd) then
-       begin
-         if ValidBlock=false then
-           SetSelection(CurPos,CurPos);
-         SetSelection(SelStart,CurPos); Extended:=true;
-       end;
-    CheckSels;
-    if (Extended=false) then
-       if PointOfs(OldPos)<=PointOfs(CurPos)
-     then begin SetSelection(OldPos,CurPos); Extended:=true; end
-     else begin SetSelection(CurPos,OldPos); Extended:=true; end;
-    DrawView;
-  end else
-   if not IsFlagSet(efPersistentBlocks) then
-      begin HideSelect; DrawView; end;
+  if not NoSelect and ShouldExtend then
+    begin
+      CheckSels;
+      Extended:=false;
+      if PointOfs(OldPos)=PointOfs(SelStart) then
+        begin
+          SetSelection(CurPos,SelEnd);
+          Extended:=true;
+        end;
+      CheckSels;
+      if Extended=false then
+       if PointOfs(OldPos)=PointOfs(SelEnd) then
+         begin
+           if not ValidBlock then
+             SetSelection(CurPos,CurPos);
+           SetSelection(SelStart,CurPos); Extended:=true;
+         end;
+      CheckSels;
+      if not Extended then
+         if PointOfs(OldPos)<=PointOfs(CurPos) then
+           begin
+             SetSelection(OldPos,CurPos);
+             Extended:=true;
+           end
+         else
+           begin
+             SetSelection(CurPos,OldPos);
+             Extended:=true;
+           end;
+      DrawView;
+    end
+  else if not IsFlagSet(efPersistentBlocks) then
+      begin
+        HideSelect;
+        DrawView;
+      end;
 {  if PointOfs(SelStart)=PointOfs(SelEnd) then
      SetSelection(CurPos,CurPos);}
   if (GetFlags and (efHighlightColumn+efHighlightRow))<>0 then
@@ -6735,6 +6845,7 @@ end;
 destructor TEditorAction.done;
 begin
   DisposeStr(Text);
+  inherited done;
 end;
 
 
@@ -6829,15 +6940,36 @@ begin
        End
      else
        Inherited HandleEvent(Event);
+  s:=getstr(data);
+  Message(Owner,evBroadCast,cminputlinelen,pointer(length(s)));
 end;
+
+procedure TSearchHelperDialog.HandleEvent(var Event : TEvent);
+begin
+ case Event.What of
+     evBroadcast :
+           case Event.Command of
+                   cminputlinelen : begin
+                                      if PtrInt(Event.InfoPtr)=0 then
+                                        okbutton^.DisableCommands([cmok])
+                                      else
+                                        okbutton^.EnableCommands([cmok]);
+                                      clearevent(event);
+                                    end;
+             end;
+       end;
+  inherited HandleEvent(Event);
+end;
+
 
 function CreateFindDialog: PDialog;
 var R,R1,R2: TRect;
-    D: PDialog;
+    D: PSearchHelperDialog;
     IL1: PEditorInputLine;
     Control : PView;
     CB1: PCheckBoxes;
     RB1,RB2,RB3: PRadioButtons;
+    but : PButton;
 begin
   R.Assign(0,0,56,15);
   New(D, Init(R, dialog_find));
@@ -6896,7 +7028,8 @@ begin
     Insert(New(PLabel, Init(R1, label_find_origin, RB3)));
 
     GetExtent(R); R.Grow(-13,-1); R.A.Y:=R.B.Y-2; R.B.X:=R.A.X+10;
-    Insert(New(PButton, Init(R, btn_OK, cmOK, bfDefault)));
+    Okbutton:=New(PButton, Init(R, btn_OK, cmOK, bfDefault));
+    Insert(OkButton);
     R.Move(19,0);
     Insert(New(PButton, Init(R, btn_Cancel, cmCancel, bfNormal)));
   end;
@@ -7139,10 +7272,6 @@ begin
           end;
         if DriveNumber<>0 then
           ChDir(StoreDir2);
-{$ifndef FPC}
-        if (Length(StoreDir)>1) and (StoreDir[2]=':') then
-          ChDir(Copy(StoreDir,1,2));
-{$endif not FPC}
         if StoreDir<>'' then
           ChDir(TrimEndSlash(StoreDir));
 
@@ -7188,12 +7317,3 @@ begin
 end;
 
 END.
-{
-  $Log: weditor.pas,v $
-  Revision 1.52  2005/02/14 17:13:18  peter
-    * truncate log
-
-  Revision 1.51  2005/01/07 18:29:48  florian
-    * fixed endian dependend code
-
-}

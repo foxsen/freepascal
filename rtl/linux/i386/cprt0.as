@@ -1,5 +1,4 @@
 #
-#   $Id: cprt0.as,v 1.4 2004/07/03 21:50:31 daniel Exp $
 #   This file is part of the Free Pascal run time library.
 #   Copyright (c) 1999-2000 by Michael Van Canneyt and Peter Vreman
 #   members of the Free Pascal development team.
@@ -67,6 +66,9 @@ _start:
         popl    %eax
         popl    %eax
 
+        /* Save initial stackpointer */
+        movl    %esp,__stkptr
+
         xorl    %ebp,%ebp
         call    PASCALMAIN              /* start the program */
 
@@ -75,30 +77,33 @@ _start:
 _haltproc:
 _haltproc2:             # GAS <= 2.15 bug: generates larger jump if a label is exported
         movzwl  operatingsystem_result,%ebx
-	pushl   %ebx
-	call    exit
+        pushl   %ebx
+        call    exit
         xorl    %eax,%eax
         incl    %eax                    /* eax=1, exit call */
-	popl    %ebx
+        popl    %ebx
         int     $0x80
         jmp     _haltproc2
 
 .data
 
 .bss
-        .type   ___fpc_brk_addr,@object
-        .comm   ___fpc_brk_addr,4        /* heap management */
+        .type   __stkptr,@object
+        .size   __stkptr,4
+        .global __stkptr
+__stkptr:
+        .skip   4
 
-        .comm operatingsystem_parameter_envp,4
-        .comm operatingsystem_parameter_argc,4
-        .comm operatingsystem_parameter_argv,4
+        .type operatingsystem_parameters,@object
+        .size operatingsystem_parameters,12
+operatingsystem_parameters:
+        .skip 3*4
 
-#
-# $Log: cprt0.as,v $
-# Revision 1.4  2004/07/03 21:50:31  daniel
-#   * Modified bootstrap code so separate prt0.as/prt0_10.as files are no
-#     longer necessary
-#
-# Revision 1.3  2002/09/07 16:01:20  peter
-#   * old logs removed and tabs fixed
-#
+        .global operatingsystem_parameter_envp
+        .global operatingsystem_parameter_argc
+        .global operatingsystem_parameter_argv
+        .set operatingsystem_parameter_envp,operatingsystem_parameters+0
+        .set operatingsystem_parameter_argc,operatingsystem_parameters+4
+        .set operatingsystem_parameter_argv,operatingsystem_parameters+8
+
+.section .note.GNU-stack,"",%progbits

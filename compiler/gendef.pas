@@ -1,5 +1,4 @@
 {
-    $Id: gendef.pas,v 1.16 2005/04/23 14:15:58 hajny Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl
 
     Generation of a .def file for needed for Os2/Win32
@@ -26,22 +25,22 @@ unit gendef;
 
 interface
 uses
-  cclasses;
+  globtype,cclasses;
 
 type
   tdeffile=class
     fname : string;
     constructor create(const fn:string);
     destructor  destroy;override;
-    procedure addexport(const s:string);
-    procedure addimport(const s:string);
+    procedure addexport(const s:TSymStr);
+    procedure addimport(const s:TSymStr);
     procedure writefile;
     function empty : boolean;
   private
     is_empty : boolean;
     WrittenOnDisk : boolean;
     exportlist,
-    importlist   : tstringlist;
+    importlist   : TCmdStrList;
   end;
 
 var
@@ -51,7 +50,8 @@ var
 implementation
 
 uses
-  systems,cutils,globtype,globals;
+  SysUtils,
+  systems,cutils,globals;
 
 {******************************************************************************
                                TDefFile
@@ -62,30 +62,30 @@ begin
   fname:=fn;
   WrittenOnDisk:=false;
   is_empty:=true;
-  importlist:=TStringList.Create;
-  exportlist:=TStringList.Create;
+  importlist:=TCmdStrList.Create;
+  exportlist:=TCmdStrList.Create;
 end;
 
 
 destructor tdeffile.destroy;
 begin
   if WrittenOnDisk and
-     not(cs_link_extern in aktglobalswitches) then
-   RemoveFile(FName);
+     not(cs_link_nolink in current_settings.globalswitches) then
+    DeleteFile(FName);
   importlist.Free;
   exportlist.Free;
 end;
 
 
 
-procedure tdeffile.addexport(const s:string);
+procedure tdeffile.addexport(const s:TSymStr);
 begin
   exportlist.insert(s);
   is_empty:=false;
 end;
 
 
-procedure tdeffile.addimport(const s:string);
+procedure tdeffile.addimport(const s:TSymStr);
 begin
   importlist.insert(s);
   is_empty:=false;
@@ -106,16 +106,15 @@ begin
     Exit;
 { open file }
   assign(t,fname);
-  {$I+}
+  {$push}{$I-}
    rewrite(t);
-  {$I-}
+  {$pop}
   if ioresult<>0 then
    exit;
-{$ifdef i386}
   case target_info.system of
     system_i386_Os2, system_i386_emx:
       begin
-        write(t,'NAME '+inputfile);
+        write(t,'NAME '+ChangeFileExt(inputfilename,''));
         if usewindowapi then
           write(t,' WINDOWAPI');
         writeln(t,'');
@@ -125,15 +124,19 @@ begin
         writeln(t,'STACKSIZE'#9+tostr(stacksize));
         writeln(t,'HEAPSIZE'#9+tostr(heapsize));
       end;
-  system_i386_win32, system_i386_wdosx :
-    begin
-      if description<>'' then
-        writeln(t,'DESCRIPTION '+''''+description+'''');
-      if dllversion<>'' then
-        writeln(t,'VERSION '+dllversion);
-    end;
+    system_i386_win32,
+    system_x86_64_win64,
+    system_ia64_win64,
+    system_arm_wince,
+    system_i386_wince,
+    system_i386_wdosx :
+      begin
+        if description<>'' then
+          writeln(t,'DESCRIPTION '+''''+description+'''');
+        if dllversion<>'' then
+          writeln(t,'VERSION '+dllversion);
+      end;
   end;
-{$endif}
 
 {write imports}
   if not importlist.empty then
@@ -158,12 +161,3 @@ begin
 end;
 
 end.
-{
-  $Log: gendef.pas,v $
-  Revision 1.16  2005/04/23 14:15:58  hajny
-    * DeleteFile replaced with RemoveFile to avoid duplicate
-
-  Revision 1.15  2005/02/14 17:13:06  peter
-    * truncate log
-
-}

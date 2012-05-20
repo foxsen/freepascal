@@ -1,5 +1,4 @@
 {
-    $Id: tthread.inc,v 1.3 2005/02/25 21:41:09 florian Exp $
     This file is part of the Free Component Library (FCL)
     Copyright (c) 1999-2000 by the Free Pascal development team
 
@@ -47,7 +46,7 @@ begin
 end;
 
 
-constructor TThread.Create(CreateSuspended: Boolean);
+constructor TThread.Create(CreateSuspended: Boolean; const StackSize: SizeUInt = DefaultStackSize);
 
 begin
  {IsMultiThread := TRUE; }
@@ -85,13 +84,3 @@ begin
 end;
 
 
-{
-  $Log: tthread.inc,v $
-  Revision 1.3  2005/02/25 21:41:09  florian
-    * generic tthread.synchronize
-    * delphi compatible wakemainthread
-
-  Revision 1.2  2005/02/14 17:13:22  peter
-    * truncate log
-
-}

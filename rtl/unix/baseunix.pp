@@ -1,5 +1,4 @@
 {
-    $Id: baseunix.pp,v 1.4 2005/03/03 20:58:38 florian Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2001 by Carl Eric Codere development team
 
@@ -16,7 +15,8 @@
 Unit BaseUnix;
 
 Interface
-
+{$modeswitch out}
+{$inline on}
 Uses UnixType;
 
 {$i osdefs.inc}       { Compile time defines }
@@ -34,22 +34,38 @@ Uses UnixType;
 
 {$ifdef FPC_USE_LIBC}
   const clib = 'c';
+  {$define FPC_IN_BASEUNIX}
   {$i oscdeclh.inc}
 {$ELSE}
   {$i bunxh.inc}                { Functions}
 {$ENDIF}
 
-{$ifndef ver1_0}
   function fpgeterrno:longint; external name 'FPC_SYS_GETERRNO';
   procedure fpseterrno(err:longint); external name 'FPC_SYS_SETERRNO';
   property errno : cint read fpgeterrno write fpseterrno;
-{$else}
-  function fpgeterrno:longint;
-  procedure fpseterrno(err:longint);
-{$endif}
 
 {$i bunxovlh.inc}
 
+{$i genfunch.inc}
+
+{ Fairly portable constants. I'm not going to waste time to duplicate and alias
+them anywhere}
+
+Const
+  MAP_FAILED    = pointer(-1);  { mmap() has failed }
+  MAP_SHARED    =  $1;          { Share changes }
+  MAP_PRIVATE   =  $2;          { Changes are private }
+  MAP_TYPE      =  $f;          { Mask for type of mapping }
+  MAP_FIXED     = $10;          { Interpret addr exactly }
+
+// MAP_ANON(YMOUS) is OS dependant but used in the RTL and in ostypes.inc
+// Under BSD without -YMOUS, so alias it:
+  MAP_ANON	= MAP_ANONYMOUS;
+
+  PROT_READ     =  $1;          { page can be read }
+  PROT_WRITE    =  $2;          { page can be written }
+  PROT_EXEC     =  $4;          { page can be executed }
+  PROT_NONE     =  $0;          { page can not be accessed }
 
 implementation
 
@@ -57,32 +73,16 @@ implementation
 Uses Sysctl;
 {$endif}
 
-{$ifdef ver1_0}
-// workaround for 1.0.10 bugs.
-
-function intgeterrno:longint; external name 'FPC_SYS_GETERRNO';
-procedure intseterrno(err:longint); external name 'FPC_SYS_SETERRNO';
-
-function fpgeterrno:longint;
-begin
-  fpgeterrno:=intgeterrno;
-end;
-
-procedure fpseterrno(err:longint);
-begin
-  intseterrno(err);
-end;
-
-{$endif}
-
 {$i genfuncs.inc}       // generic calls. (like getenv)
 {$I gensigset.inc}     // general sigset funcs implementation.
 {$I genfdset.inc}      // general fdset funcs.
 
-{$ifndef FPC_USE_LIBC}
+{$ifdef FPC_USE_LIBC}
+  {$i oscdecl.inc}        // implementation of wrappers in oscdeclh.inc
+{$else}
   {$i syscallh.inc}       // do_syscall declarations themselves
   {$i sysnr.inc}          // syscall numbers.
-  {$i bsyscall.inc}  			// cpu specific syscalls
+  {$i bsyscall.inc}       // cpu specific syscalls
   {$i bunxsysc.inc}       // syscalls in system unit.
   {$i settimeo.inc}
 {$endif}
@@ -91,18 +91,3 @@ end;
 {$i bunxovl.inc}        { redefs and overloads implementation }
 
 end.
-{
-  $Log: baseunix.pp,v $
-  Revision 1.4  2005/03/03 20:58:38  florian
-    + routines in baseunix can be overriden by processor specifics in bsyscall.inc
-
-  Revision 1.3  2005/02/14 17:13:31  peter
-    * truncate log
-
-  Revision 1.2  2005/02/13 21:47:56  peter
-    * include file cleanup part 2
-
-  Revision 1.1  2005/02/13 20:01:38  peter
-    * include file cleanup
-
-}

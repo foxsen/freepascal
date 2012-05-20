@@ -1,5 +1,4 @@
 {
-    $Id: i_watcom.pas,v 1.8 2005/03/20 22:36:45 olle Exp $
     Copyright (c) 1998-2002 by Peter Vreman
 
     This unit implements support information structures for Watcom
@@ -57,17 +56,18 @@ unit i_watcom;
             staticClibext : '.a';
             staticClibprefix : '';
             sharedClibprefix : '';
-            p_ext_support : false;
+            importlibprefix : 'imp';
+            importlibext : '.a';
             Cprefix      : '_';
             newline      : #13#10;
             dirsep       : '\';
-            files_case_relevent : false;
             assem        : as_i386_wasm;
             assemextern  : as_gas;
             link         : nil;
             linkextern   : nil;
             ar           : ar_gnu_ar;
             res          : res_none;
+            dbg          : dbg_stabs;
             script       : script_dos;
             endian       : endian_little;
             alignment    :
@@ -87,8 +87,7 @@ unit i_watcom;
               );
             first_parm_offset : 8;
             stacksize    : 16384;
-            DllScanSupported : false;
-            use_function_relative_addresses : true
+            abi          : abi_default;
           );
 
   implementation
@@ -100,13 +99,3 @@ initialization
   {$endif watcom}
 {$endif cpu86}
 end.
-{
-  $Log: i_watcom.pas,v $
-  Revision 1.8  2005/03/20 22:36:45  olle
-    * Cleaned up handling of source file extension.
-    + Added support for .p extension for macos and darwin
-
-  Revision 1.7  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

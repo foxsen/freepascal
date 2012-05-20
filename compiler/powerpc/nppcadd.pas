@@ -1,5 +1,4 @@
 {
-    $Id: nppcadd.pas,v 1.57 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 2000-2002 by Florian Klaempfl and Jonas Maebe
 
     Code generation for add nodes on the PowerPC
@@ -27,20 +26,15 @@ unit nppcadd;
 interface
 
     uses
-       node,nadd,ncgadd,cpubase;
+       node,nadd,ncgadd,ngppcadd,cpubase;
 
     type
-       tppcaddnode = class(tcgaddnode)
-          function pass_1: tnode; override;
-          procedure pass_2;override;
+       tppcaddnode = class(tgenppcaddnode)
+          procedure pass_generate_code;override;
+         protected
+          function use_generic_mul32to64: boolean; override;
          private
-          procedure pass_left_and_right;
-          procedure load_left_right(cmpop, load_constants: boolean);
-          function  getresflags : tresflags;
-          procedure emit_compare(unsigned : boolean);
-          procedure second_addfloat;override;
-          procedure second_addboolean;override;
-          procedure second_addsmallset;override;
+          procedure emit_compare(unsigned : boolean); override;
 {$ifdef SUPPORT_MMX}
           procedure second_addmmx;override;
 {$endif SUPPORT_MMX}
@@ -53,129 +47,25 @@ interface
       globtype,systems,
       cutils,verbose,globals,
       symconst,symdef,paramgr,
-      aasmbase,aasmtai,aasmcpu,defutil,htypechk,
+      aasmbase,aasmtai,aasmdata,aasmcpu,defutil,htypechk,
       cgbase,cpuinfo,pass_1,pass_2,regvars,
-      cpupara,cgcpu,cgutils,
+      cpupara,cgcpu,cgutils,procinfo,
       ncon,nset,
-      ncgutil,tgobj,rgobj,rgcpu,cgobj,cg64f32;
+      ncgutil,tgobj,rgobj,rgcpu,cgobj,hlcgobj,cg64f32;
 
 
 {*****************************************************************************
                                   Pass 1
 *****************************************************************************}
 
-    function tppcaddnode.pass_1: tnode;
-      begin
-        resulttypepass(left);
-        if (nodetype in [equaln,unequaln]) and
-           (left.resulttype.def.deftype = orddef) and
-           is_64bit(left.resulttype.def) then
-          begin
-            result := nil;
-            firstpass(left);
-            firstpass(right);
-            expectloc := LOC_FLAGS;
-            calcregisters(self,2,0,0);
-            exit;
-          end;
-        result := inherited pass_1;
-      end;
-
+   function tppcaddnode.use_generic_mul32to64: boolean;
+     begin
+       result := false;
+     end;
 
 {*****************************************************************************
                                   Helpers
 *****************************************************************************}
-
-    procedure tppcaddnode.pass_left_and_right;
-      begin
-        { calculate the operator which is more difficult }
-        firstcomplex(self);
-
-        { in case of constant put it to the left }
-        if (left.nodetype=ordconstn) then
-         swapleftright;
-
-        secondpass(left);
-        secondpass(right);
-      end;
-
-
-    procedure tppcaddnode.load_left_right(cmpop, load_constants: boolean);
-
-      procedure load_node(var n: tnode);
-        begin
-          case n.location.loc of
-            LOC_REGISTER:
-              if not cmpop then
-                begin
-                  location.register := n.location.register;
-                  if is_64bit(n.resulttype.def) then
-                    location.register64.reghi := n.location.register64.reghi;
-                end;
-            LOC_REFERENCE,LOC_CREFERENCE:
-              begin
-                location_force_reg(exprasmlist,n.location,def_cgsize(n.resulttype.def),false);
-                if not cmpop then
-                  begin
-                    location.register := n.location.register;
-                    if is_64bit(n.resulttype.def) then
-                      location.register64.reghi := n.location.register64.reghi;
-                  end;
-              end;
-            LOC_CONSTANT:
-              begin
-                if load_constants then
-                  begin
-                    location_force_reg(exprasmlist,n.location,def_cgsize(n.resulttype.def),false);
-                    if not cmpop then
-                      location.register := n.location.register;
-                      if is_64bit(n.resulttype.def) then
-                        location.register64.reghi := n.location.register64.reghi;
-                  end;
-              end;
-          end;
-        end;
-
-      begin
-        load_node(left);
-        load_node(right);
-        if not(cmpop) and
-           (location.register = NR_NO) then
-         begin
-           location.register := cg.getintregister(exprasmlist,OS_INT);
-           if is_64bit(resulttype.def) then
-             location.register64.reghi := cg.getintregister(exprasmlist,OS_INT);
-         end;
-      end;
-
-
-    function tppcaddnode.getresflags : tresflags;
-      begin
-        if (left.resulttype.def.deftype <> floatdef) then
-          result.cr := RS_CR0
-        else
-          result.cr := RS_CR1;
-        case nodetype of
-          equaln : result.flag:=F_EQ;
-          unequaln : result.flag:=F_NE;
-        else
-          if nf_swaped in flags then
-            case nodetype of
-              ltn : result.flag:=F_GT;
-              lten : result.flag:=F_GE;
-              gtn : result.flag:=F_LT;
-              gten : result.flag:=F_LE;
-            end
-          else
-            case nodetype of
-              ltn : result.flag:=F_LT;
-              lten : result.flag:=F_LE;
-              gtn : result.flag:=F_GT;
-              gten : result.flag:=F_GE;
-            end;
-        end
-      end;
-
 
     procedure tppcaddnode.emit_compare(unsigned: boolean);
       var
@@ -213,8 +103,8 @@ interface
             else
               begin
                 useconst := false;
-                tmpreg := cg.getintregister(exprasmlist,OS_INT);
-                cg.a_load_const_reg(exprasmlist,OS_INT,
+                tmpreg := cg.getintregister(current_asmdata.CurrAsmList,OS_INT);
+                cg.a_load_const_reg(current_asmdata.CurrAsmList,OS_INT,
                     right.location.value,tmpreg);
                end
           end
@@ -236,408 +126,15 @@ interface
         if (right.location.loc = LOC_CONSTANT) then
           begin
             if useconst then
-              exprasmlist.concat(taicpu.op_reg_const(op,left.location.register,longint(right.location.value)))
+              current_asmdata.CurrAsmList.concat(taicpu.op_reg_const(op,left.location.register,longint(right.location.value)))
             else
-              exprasmlist.concat(taicpu.op_reg_reg(op,left.location.register,tmpreg));
+              current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(op,left.location.register,tmpreg));
           end
         else
-          exprasmlist.concat(taicpu.op_reg_reg(op,
+          current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(op,
             left.location.register,right.location.register));
       end;
 
-
-{*****************************************************************************
-                                AddBoolean
-*****************************************************************************}
-
-    procedure tppcaddnode.second_addboolean;
-      var
-        cgop      : TOpCg;
-        cgsize  : TCgSize;
-        cmpop,
-        isjump  : boolean;
-        otl,ofl : tasmlabel;
-      begin
-        { calculate the operator which is more difficult }
-        firstcomplex(self);
-
-        cmpop:=false;
-        if (torddef(left.resulttype.def).typ=bool8bit) or
-           (torddef(right.resulttype.def).typ=bool8bit) then
-         cgsize:=OS_8
-        else
-          if (torddef(left.resulttype.def).typ=bool16bit) or
-             (torddef(right.resulttype.def).typ=bool16bit) then
-           cgsize:=OS_16
-        else
-           cgsize:=OS_32;
-
-        if (cs_full_boolean_eval in aktlocalswitches) or
-           (nodetype in [unequaln,ltn,lten,gtn,gten,equaln,xorn]) then
-          begin
-            if left.nodetype in [ordconstn,realconstn] then
-             swapleftright;
-
-            isjump:=(left.expectloc=LOC_JUMP);
-            if isjump then
-              begin
-                 otl:=truelabel;
-                 objectlibrary.getlabel(truelabel);
-                 ofl:=falselabel;
-                 objectlibrary.getlabel(falselabel);
-              end;
-            secondpass(left);
-            if left.location.loc in [LOC_FLAGS,LOC_JUMP] then
-             location_force_reg(exprasmlist,left.location,cgsize,false);
-            if isjump then
-             begin
-               truelabel:=otl;
-               falselabel:=ofl;
-             end
-            else if left.location.loc=LOC_JUMP then
-              internalerror(2003122901);
-
-            isjump:=(right.expectloc=LOC_JUMP);
-            if isjump then
-              begin
-                 otl:=truelabel;
-                 objectlibrary.getlabel(truelabel);
-                 ofl:=falselabel;
-                 objectlibrary.getlabel(falselabel);
-              end;
-            secondpass(right);
-            if right.location.loc in [LOC_FLAGS,LOC_JUMP] then
-             location_force_reg(exprasmlist,right.location,cgsize,false);
-            if isjump then
-             begin
-               truelabel:=otl;
-               falselabel:=ofl;
-             end
-            else if right.location.loc=LOC_JUMP then
-              internalerror(200312292);
-
-            cmpop := nodetype in [ltn,lten,gtn,gten,equaln,unequaln];
-
-            { set result location }
-            if not cmpop then
-              location_reset(location,LOC_REGISTER,def_cgsize(resulttype.def))
-             else
-              location_reset(location,LOC_FLAGS,OS_NO);
-
-            load_left_right(cmpop,false);
-
-            if (left.location.loc = LOC_CONSTANT) then
-              swapleftright;
-
-            { compare the }
-            case nodetype of
-              ltn,lten,gtn,gten,
-              equaln,unequaln :
-                begin
-                  if (right.location.loc <> LOC_CONSTANT) then
-                    exprasmlist.concat(taicpu.op_reg_reg(A_CMPLW,
-                      left.location.register,right.location.register))
-                  else
-                    exprasmlist.concat(taicpu.op_reg_const(A_CMPLWI,
-                      left.location.register,longint(right.location.value)));
-                  location.resflags := getresflags;
-                end;
-              else
-                begin
-                  case nodetype of
-                    xorn :
-                      cgop:=OP_XOR;
-                    orn :
-                      cgop:=OP_OR;
-                    andn :
-                      cgop:=OP_AND;
-                    else
-                      internalerror(200203247);
-                  end;
-
-                  if right.location.loc <> LOC_CONSTANT then
-                    cg.a_op_reg_reg_reg(exprasmlist,cgop,OS_INT,
-                      left.location.register,right.location.register,
-                      location.register)
-                  else
-                    cg.a_op_const_reg_reg(exprasmlist,cgop,OS_INT,
-                      right.location.value,left.location.register,
-                      location.register);
-                end;
-            end;
-         end
-        else
-         begin
-           // just to make sure we free the right registers
-           cmpop := true;
-           case nodetype of
-             andn,
-             orn :
-               begin
-                 location_reset(location,LOC_JUMP,OS_NO);
-                 case nodetype of
-                   andn :
-                     begin
-                        otl:=truelabel;
-                        objectlibrary.getlabel(truelabel);
-                        secondpass(left);
-                        maketojumpbool(exprasmlist,left,lr_load_regvars);
-                        cg.a_label(exprasmlist,truelabel);
-                        truelabel:=otl;
-                     end;
-                   orn :
-                     begin
-                        ofl:=falselabel;
-                        objectlibrary.getlabel(falselabel);
-                        secondpass(left);
-                        maketojumpbool(exprasmlist,left,lr_load_regvars);
-                        cg.a_label(exprasmlist,falselabel);
-                        falselabel:=ofl;
-                     end;
-                   else
-                     internalerror(200403181);
-                 end;
-                 secondpass(right);
-                 maketojumpbool(exprasmlist,right,lr_load_regvars);
-               end;
-           end;
-         end;
-      end;
-
-
-{*****************************************************************************
-                                AddFloat
-*****************************************************************************}
-
-    procedure tppcaddnode.second_addfloat;
-      var
-        op    : TAsmOp;
-        cmpop : boolean;
-      begin
-        pass_left_and_right;
-
-        cmpop:=false;
-        case nodetype of
-          addn :
-            op:=A_FADD;
-          muln :
-            op:=A_FMUL;
-          subn :
-            op:=A_FSUB;
-          slashn :
-            op:=A_FDIV;
-          ltn,lten,gtn,gten,
-          equaln,unequaln :
-            begin
-              op:=A_FCMPO;
-              cmpop:=true;
-            end;
-          else
-            internalerror(200403182);
-        end;
-
-        // get the operands in the correct order, there are no special cases
-        // here, everything is register-based
-        if nf_swaped in flags then
-          swapleftright;
-
-        // put both operands in a register
-        location_force_fpureg(exprasmlist,right.location,true);
-        location_force_fpureg(exprasmlist,left.location,true);
-
-        // initialize de result
-        if not cmpop then
-          begin
-            location_reset(location,LOC_FPUREGISTER,def_cgsize(resulttype.def));
-            if left.location.loc = LOC_FPUREGISTER then
-              location.register := left.location.register
-            else if right.location.loc = LOC_FPUREGISTER then
-              location.register := right.location.register
-            else
-              location.register := cg.getfpuregister(exprasmlist,location.size);
-          end
-        else
-         begin
-           location_reset(location,LOC_FLAGS,OS_NO);
-           location.resflags := getresflags;
-         end;
-
-        // emit the actual operation
-        if not cmpop then
-          begin
-            exprasmlist.concat(taicpu.op_reg_reg_reg(op,
-              location.register,left.location.register,
-              right.location.register))
-          end
-        else
-          begin
-            exprasmlist.concat(taicpu.op_reg_reg_reg(op,
-              newreg(R_SPECIALREGISTER,location.resflags.cr,R_SUBNONE),left.location.register,right.location.register))
-          end;
-      end;
-
-{*****************************************************************************
-                                AddSmallSet
-*****************************************************************************}
-
-    procedure tppcaddnode.second_addsmallset;
-      var
-        cgop   : TOpCg;
-        tmpreg : tregister;
-        opdone,
-        cmpop  : boolean;
-      begin
-        pass_left_and_right;
-
-        { when a setdef is passed, it has to be a smallset }
-        if ((left.resulttype.def.deftype=setdef) and
-            (tsetdef(left.resulttype.def).settype<>smallset)) or
-           ((right.resulttype.def.deftype=setdef) and
-            (tsetdef(right.resulttype.def).settype<>smallset)) then
-         internalerror(200203301);
-
-        opdone := false;
-        cmpop:=nodetype in [equaln,unequaln,lten,gten];
-
-        { set result location }
-        if not cmpop then
-          location_reset(location,LOC_REGISTER,def_cgsize(resulttype.def))
-         else
-          location_reset(location,LOC_FLAGS,OS_NO);
-
-        load_left_right(cmpop,false);
-
-        if not(cmpop) and
-           (location.register = NR_NO) then
-          location.register := cg.getintregister(exprasmlist,OS_INT);
-
-        case nodetype of
-          addn :
-            begin
-              if (nf_swaped in flags) and (left.nodetype=setelementn) then
-                swapleftright;
-              { are we adding set elements ? }
-              if right.nodetype=setelementn then
-                begin
-                  { no range support for smallsets! }
-                  if assigned(tsetelementnode(right).right) then
-                   internalerror(43244);
-                  if (right.location.loc = LOC_CONSTANT) then
-                    cg.a_op_const_reg_reg(exprasmlist,OP_OR,OS_INT,
-                      aint(aword(1) shl aword(right.location.value)),
-                      left.location.register,location.register)
-                  else
-                    begin
-                      tmpreg := cg.getintregister(exprasmlist,OS_INT);
-                      cg.a_load_const_reg(exprasmlist,OS_INT,1,tmpreg);
-                      cg.a_op_reg_reg(exprasmlist,OP_SHL,OS_INT,
-                        right.location.register,tmpreg);
-                      if left.location.loc <> LOC_CONSTANT then
-                        cg.a_op_reg_reg_reg(exprasmlist,OP_OR,OS_INT,tmpreg,
-                          left.location.register,location.register)
-                      else
-                        cg.a_op_const_reg_reg(exprasmlist,OP_OR,OS_INT,
-                          left.location.value,tmpreg,location.register);
-                    end;
-                  opdone := true;
-                end
-              else
-                cgop := OP_OR;
-            end;
-          symdifn :
-            cgop:=OP_XOR;
-          muln :
-            cgop:=OP_AND;
-          subn :
-            begin
-              cgop:=OP_AND;
-              if (not(nf_swaped in flags)) then
-                if (right.location.loc=LOC_CONSTANT) then
-                  right.location.value := not(right.location.value)
-                else
-                  opdone := true
-              else if (left.location.loc=LOC_CONSTANT) then
-                left.location.value := not(left.location.value)
-              else
-                 begin
-                   swapleftright;
-                   opdone := true;
-                 end;
-              if opdone then
-                begin
-                  if left.location.loc = LOC_CONSTANT then
-                    begin
-                      tmpreg := cg.getintregister(exprasmlist,OS_INT);
-                      cg.a_load_const_reg(exprasmlist,OS_INT,
-                        left.location.value,tmpreg);
-                      exprasmlist.concat(taicpu.op_reg_reg_reg(A_ANDC,
-                        location.register,tmpreg,right.location.register));
-                    end
-                  else
-                    exprasmlist.concat(taicpu.op_reg_reg_reg(A_ANDC,
-                      location.register,left.location.register,
-                      right.location.register));
-                end;
-            end;
-          equaln,
-          unequaln :
-            begin
-              emit_compare(true);
-              opdone := true;
-            end;
-          lten,gten:
-            begin
-              If (not(nf_swaped in flags) and
-                  (nodetype = lten)) or
-                 ((nf_swaped in flags) and
-                  (nodetype = gten)) then
-                swapleftright;
-              // now we have to check whether left >= right
-              tmpreg := cg.getintregister(exprasmlist,OS_INT);
-              if left.location.loc = LOC_CONSTANT then
-                begin
-                  cg.a_op_const_reg_reg(exprasmlist,OP_AND,OS_INT,
-                    not(left.location.value),right.location.register,tmpreg);
-                  exprasmlist.concat(taicpu.op_reg_const(A_CMPWI,tmpreg,0));
-                  // the two instructions above should be folded together by
-                  // the peepholeoptimizer
-                end
-              else
-                begin
-                  if right.location.loc = LOC_CONSTANT then
-                    begin
-                      cg.a_load_const_reg(exprasmlist,OS_INT,
-                        right.location.value,tmpreg);
-                      exprasmlist.concat(taicpu.op_reg_reg_reg(A_ANDC_,tmpreg,
-                        tmpreg,left.location.register));
-                    end
-                  else
-                    exprasmlist.concat(taicpu.op_reg_reg_reg(A_ANDC_,tmpreg,
-                      right.location.register,left.location.register));
-                end;
-              location.resflags.cr := RS_CR0;
-              location.resflags.flag := F_EQ;
-              opdone := true;
-            end;
-          else
-            internalerror(2002072701);
-        end;
-
-        if not opdone then
-          begin
-            // these are all commutative operations
-            if (left.location.loc = LOC_CONSTANT) then
-              swapleftright;
-            if (right.location.loc = LOC_CONSTANT) then
-              cg.a_op_const_reg_reg(exprasmlist,cgop,OS_INT,
-                right.location.value,left.location.register,
-                location.register)
-            else
-              cg.a_op_reg_reg_reg(exprasmlist,cgop,OS_INT,
-                right.location.register,left.location.register,
-                location.register);
-          end;
-      end;
 
 {*****************************************************************************
                                 Add64bit
@@ -688,17 +185,17 @@ interface
           oldnodetype: tnodetype;
         begin
 {$ifdef OLDREGVARS}
-           load_all_regvars(exprasmlist);
+           load_all_regvars(current_asmdata.CurrAsmList);
 {$endif OLDREGVARS}
            { the jump the sequence is a little bit hairy }
            case nodetype of
               ltn,gtn:
                 begin
-                   cg.a_jmp_flags(exprasmlist,getresflags,truelabel);
+                   cg.a_jmp_flags(current_asmdata.CurrAsmList,getresflags,current_procinfo.CurrTrueLabel);
                    { cheat a little bit for the negative test }
-                   toggleflag(nf_swaped);
-                   cg.a_jmp_flags(exprasmlist,getresflags,falselabel);
-                   toggleflag(nf_swaped);
+                   toggleflag(nf_swapped);
+                   cg.a_jmp_flags(current_asmdata.CurrAsmList,getresflags,current_procinfo.CurrFalseLabel);
+                   toggleflag(nf_swapped);
                 end;
               lten,gten:
                 begin
@@ -707,24 +204,24 @@ interface
                      nodetype:=ltn
                    else
                      nodetype:=gtn;
-                   cg.a_jmp_flags(exprasmlist,getresflags,truelabel);
+                   cg.a_jmp_flags(current_asmdata.CurrAsmList,getresflags,current_procinfo.CurrTrueLabel);
                    { cheat for the negative test }
                    if nodetype=ltn then
                      nodetype:=gtn
                    else
                      nodetype:=ltn;
-                   cg.a_jmp_flags(exprasmlist,getresflags,falselabel);
+                   cg.a_jmp_flags(current_asmdata.CurrAsmList,getresflags,current_procinfo.CurrFalseLabel);
                    nodetype:=oldnodetype;
                 end;
               equaln:
                 begin
                   nodetype := unequaln;
-                  cg.a_jmp_flags(exprasmlist,getresflags,falselabel);
+                  cg.a_jmp_flags(current_asmdata.CurrAsmList,getresflags,current_procinfo.CurrFalseLabel);
                   nodetype := equaln;
                 end;
               unequaln:
                 begin
-                  cg.a_jmp_flags(exprasmlist,getresflags,truelabel);
+                  cg.a_jmp_flags(current_asmdata.CurrAsmList,getresflags,current_procinfo.CurrTrueLabel);
                 end;
            end;
         end;
@@ -739,20 +236,20 @@ interface
                 begin
                    { the comparison of the low dword always has }
                    { to be always unsigned!                     }
-                   cg.a_jmp_flags(exprasmlist,getresflags,truelabel);
-                   cg.a_jmp_always(exprasmlist,falselabel);
+                   cg.a_jmp_flags(current_asmdata.CurrAsmList,getresflags,current_procinfo.CurrTrueLabel);
+                   cg.a_jmp_always(current_asmdata.CurrAsmList,current_procinfo.CurrFalseLabel);
                 end;
               equaln:
                 begin
                    nodetype := unequaln;
-                   cg.a_jmp_flags(exprasmlist,getresflags,falselabel);
-                   cg.a_jmp_always(exprasmlist,truelabel);
+                   cg.a_jmp_flags(current_asmdata.CurrAsmList,getresflags,current_procinfo.CurrFalseLabel);
+                   cg.a_jmp_always(current_asmdata.CurrAsmList,current_procinfo.CurrTrueLabel);
                    nodetype := equaln;
                 end;
               unequaln:
                 begin
-                   cg.a_jmp_flags(exprasmlist,getresflags,truelabel);
-                   cg.a_jmp_always(exprasmlist,falselabel);
+                   cg.a_jmp_flags(current_asmdata.CurrAsmList,getresflags,current_procinfo.CurrTrueLabel);
+                   cg.a_jmp_always(current_asmdata.CurrAsmList,current_procinfo.CurrFalseLabel);
                 end;
            end;
         end;
@@ -767,10 +264,10 @@ interface
         pass_left_and_right;
 
         cmpop:=false;
-        unsigned:=((left.resulttype.def.deftype=orddef) and
-                   (torddef(left.resulttype.def).typ=u64bit)) or
-                  ((right.resulttype.def.deftype=orddef) and
-                   (torddef(right.resulttype.def).typ=u64bit));
+        unsigned:=((left.resultdef.typ=orddef) and
+                   (torddef(left.resultdef).ordtype=u64bit)) or
+                  ((right.resultdef.typ=orddef) and
+                   (torddef(right.resultdef).ordtype=u64bit));
         case nodetype of
           addn :
             begin
@@ -779,6 +276,8 @@ interface
           subn :
             begin
               op:=OP_SUB;
+              if (nf_swapped in flags) then
+                swapleftright;
             end;
           ltn,lten,
           gtn,gten,
@@ -796,20 +295,25 @@ interface
           muln:
             begin
               { should be handled in pass_1 (JM) }
-              internalerror(200109051);
+              if not(torddef(left.resultdef).ordtype in [U32bit,s32bit]) or
+                 (torddef(left.resultdef).typ <> torddef(right.resultdef).typ) then
+                internalerror(200109051);
+              { handled separately }
+              op := OP_NONE;
             end;
           else
             internalerror(2002072705);
         end;
 
         if not cmpop then
-          location_reset(location,LOC_REGISTER,def_cgsize(resulttype.def));
+          location_reset(location,LOC_REGISTER,def_cgsize(resultdef));
 
-        load_left_right(cmpop,(cs_check_overflow in aktlocalswitches) and
-            (nodetype in [addn,subn]));
+        load_left_right(cmpop,((cs_check_overflow in current_settings.localswitches) and
+            (nodetype in [addn,subn])) or (nodetype = muln));
 
-        if not(cs_check_overflow in aktlocalswitches) or
-           not(nodetype in [addn,subn]) then
+        if (nodetype <> muln) and
+           (not(cs_check_overflow in current_settings.localswitches) or
+            not(nodetype in [addn,subn])) then
           begin
             case nodetype of
               ltn,lten,
@@ -838,11 +342,11 @@ interface
                       else
                         begin
                           if (aint(right.location.value64) <> 0) then
-                            tempreg64.reglo := cg.getintregister(exprasmlist,OS_32)
+                            tempreg64.reglo := cg.getintregister(current_asmdata.CurrAsmList,OS_32)
                           else
                             tempreg64.reglo := left.location.register64.reglo;
                           if ((right.location.value64 shr 32) <> 0) then
-                            tempreg64.reghi := cg.getintregister(exprasmlist,OS_32)
+                            tempreg64.reghi := cg.getintregister(current_asmdata.CurrAsmList,OS_32)
                           else
                             tempreg64.reghi := left.location.register64.reghi;
                         end;
@@ -852,138 +356,112 @@ interface
                         { positive values < 65535 using XOR.        }
                         if (longint(right.location.value64) >= -32767) and
                            (longint(right.location.value64) < 0) then
-                          cg.a_op_const_reg_reg(exprasmlist,OP_SUB,OS_INT,
+                          cg.a_op_const_reg_reg(current_asmdata.CurrAsmList,OP_SUB,OS_INT,
                             aint(right.location.value64),
                             left.location.register64.reglo,tempreg64.reglo)
                         else
-                          cg.a_op_const_reg_reg(exprasmlist,OP_XOR,OS_INT,
+                          cg.a_op_const_reg_reg(current_asmdata.CurrAsmList,OP_XOR,OS_INT,
                             aint(right.location.value64),
                             left.location.register64.reglo,tempreg64.reglo);
 
                       if ((right.location.value64 shr 32) <> 0) then
                         if (longint(right.location.value64 shr 32) >= -32767) and
                            (longint(right.location.value64 shr 32) < 0) then
-                          cg.a_op_const_reg_reg(exprasmlist,OP_SUB,OS_INT,
+                          cg.a_op_const_reg_reg(current_asmdata.CurrAsmList,OP_SUB,OS_INT,
                             aint(right.location.value64 shr 32),
                             left.location.register64.reghi,tempreg64.reghi)
                         else
-                          cg.a_op_const_reg_reg(exprasmlist,OP_XOR,OS_INT,
+                          cg.a_op_const_reg_reg(current_asmdata.CurrAsmList,OP_XOR,OS_INT,
                             aint(right.location.value64 shr 32),
                             left.location.register64.reghi,tempreg64.reghi);
                     end
                   else
                     begin
-                       tempreg64.reglo := cg.getintregister(exprasmlist,OS_INT);
-                       tempreg64.reghi := cg.getintregister(exprasmlist,OS_INT);
-                       cg64.a_op64_reg_reg_reg(exprasmlist,OP_XOR,location.size,
+                       tempreg64.reglo := cg.getintregister(current_asmdata.CurrAsmList,OS_INT);
+                       tempreg64.reghi := cg.getintregister(current_asmdata.CurrAsmList,OS_INT);
+                       cg64.a_op64_reg_reg_reg(current_asmdata.CurrAsmList,OP_XOR,location.size,
                          left.location.register64,right.location.register64,
                          tempreg64);
                     end;
 
-                  cg.a_reg_alloc(exprasmlist,NR_R0);
-                  exprasmlist.concat(taicpu.op_reg_reg_reg(A_OR_,NR_R0,
+                  cg.a_reg_alloc(current_asmdata.CurrAsmList,NR_R0);
+                  current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_reg(A_OR_,NR_R0,
                     tempreg64.reglo,tempreg64.reghi));
-                  cg.a_reg_dealloc(exprasmlist,NR_R0);
+                  cg.a_reg_dealloc(current_asmdata.CurrAsmList,NR_R0);
 
                   location_reset(location,LOC_FLAGS,OS_NO);
                   location.resflags := getresflags;
                 end;
               xorn,orn,andn,addn:
                 begin
-                  if (location.register64.reglo = NR_NO) then
-                    begin
-                      location.register64.reglo := cg.getintregister(exprasmlist,OS_INT);
-                      location.register64.reghi := cg.getintregister(exprasmlist,OS_INT);
-                    end;
+                  location.register64.reglo := cg.getintregister(current_asmdata.CurrAsmList,OS_INT);
+                  location.register64.reghi := cg.getintregister(current_asmdata.CurrAsmList,OS_INT);
 
                   if (left.location.loc = LOC_CONSTANT) then
                     swapleftright;
                   if (right.location.loc = LOC_CONSTANT) then
-                    cg64.a_op64_const_reg_reg(exprasmlist,op,location.size,right.location.value64,
+                    cg64.a_op64_const_reg_reg(current_asmdata.CurrAsmList,op,location.size,right.location.value64,
                       left.location.register64,location.register64)
                   else
-                    cg64.a_op64_reg_reg_reg(exprasmlist,op,location.size,right.location.register64,
+                    cg64.a_op64_reg_reg_reg(current_asmdata.CurrAsmList,op,location.size,right.location.register64,
                       left.location.register64,location.register64);
                 end;
               subn:
                 begin
-                  if (nf_swaped in flags) then
-                    swapleftright;
-
+                  location.register64.reglo := cg.getintregister(current_asmdata.CurrAsmList,OS_INT);
+                  location.register64.reghi := cg.getintregister(current_asmdata.CurrAsmList,OS_INT);
                   if left.location.loc <> LOC_CONSTANT then
                     begin
-                      if (location.register64.reglo = NR_NO) then
-                        begin
-                         location.register64.reglo := cg.getintregister(exprasmlist,OS_INT);
-                         location.register64.reghi := cg.getintregister(exprasmlist,OS_INT);
-                      end;
                       if right.location.loc <> LOC_CONSTANT then
                         // reg64 - reg64
-                        cg64.a_op64_reg_reg_reg(exprasmlist,OP_SUB,location.size,
+                        cg64.a_op64_reg_reg_reg(current_asmdata.CurrAsmList,OP_SUB,location.size,
                           right.location.register64,left.location.register64,
                           location.register64)
                       else
                         // reg64 - const64
-                        cg64.a_op64_const_reg_reg(exprasmlist,OP_SUB,location.size,
+                        cg64.a_op64_const_reg_reg(current_asmdata.CurrAsmList,OP_SUB,location.size,
                           right.location.value64,left.location.register64,
                           location.register64)
                     end
                   else if ((left.location.value64 shr 32) = 0) then
                     begin
-                      if (location.register64.reglo = NR_NO) then
-                        begin
-                         location.register64.reglo := cg.getintregister(exprasmlist,OS_INT);
-                         location.register64.reghi := cg.getintregister(exprasmlist,OS_INT);
-                      end;
                       if (int64(left.location.value64) >= low(smallint)) and
                          (int64(left.location.value64) <= high(smallint)) then
                         begin
                           // consts16 - reg64
-                          exprasmlist.concat(taicpu.op_reg_reg_const(A_SUBFIC,
+                          current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_const(A_SUBFIC,
                             location.register64.reglo,right.location.register64.reglo,
                             left.location.value));
                         end
                       else
                         begin
                           // const32 - reg64
-                          location_force_reg(exprasmlist,left.location,
-                            OS_32,true);
-                          exprasmlist.concat(taicpu.op_reg_reg_reg(A_SUBC,
+                          hlcg.location_force_reg(current_asmdata.CurrAsmList,left.location,
+                            left.resultdef,u32inttype,true);
+                          current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_reg(A_SUBC,
                             location.register64.reglo,left.location.register64.reglo,
                             right.location.register64.reglo));
                         end;
-                      exprasmlist.concat(taicpu.op_reg_reg(A_SUBFZE,
+                      current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_SUBFZE,
                         location.register64.reghi,right.location.register64.reghi));
                     end
                   else if (aint(left.location.value64) = 0) then
                     begin
                       // (const32 shl 32) - reg64
-                      if (location.register64.reglo = NR_NO) then
-                        begin
-                         location.register64.reglo := cg.getintregister(exprasmlist,OS_INT);
-                         location.register64.reghi := cg.getintregister(exprasmlist,OS_INT);
-                      end;
-                      exprasmlist.concat(taicpu.op_reg_reg_const(A_SUBFIC,
+                      current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_const(A_SUBFIC,
                         location.register64.reglo,right.location.register64.reglo,0));
                       left.location.value64 := left.location.value64 shr 32;
-                      location_force_reg(exprasmlist,left.location,OS_32,true);
-                      exprasmlist.concat(taicpu.op_reg_reg_reg(A_SUBFE,
+                      hlcg.location_force_reg(current_asmdata.CurrAsmList,left.location,left.resultdef,u32inttype,true);
+                      current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_reg(A_SUBFE,
                         location.register64.reghi,right.location.register64.reghi,
                         left.location.register));
                     end
                   else
                     begin
                       // const64 - reg64
-                      location_force_reg(exprasmlist,left.location,
-                        def_cgsize(left.resulttype.def),false);
-                      if (left.location.loc = LOC_REGISTER) then
-                        location.register64 := left.location.register64
-                      else if (location.register64.reglo = NR_NO) then
-                        begin
-                         location.register64.reglo := cg.getintregister(exprasmlist,OS_INT);
-                         location.register64.reghi := cg.getintregister(exprasmlist,OS_INT);
-                        end;
-                      cg64.a_op64_reg_reg_reg(exprasmlist,OP_SUB,location.size,
+                      hlcg.location_force_reg(current_asmdata.CurrAsmList,left.location,
+                        left.resultdef,left.resultdef,false);
+                      cg64.a_op64_reg_reg_reg(current_asmdata.CurrAsmList,OP_SUB,location.size,
                         right.location.register64,left.location.register64,
                         location.register64);
                      end;
@@ -994,7 +472,7 @@ interface
           end
         else
           begin
-            if is_signed(resulttype.def) then
+            if is_signed(resultdef) then
               begin
                 case nodetype of
                   addn:
@@ -1006,6 +484,11 @@ interface
                     begin
                       op1 := A_SUBC;
                       op2 := A_SUBFEO;
+                    end;
+                  muln:
+                    begin
+                      op1 := A_MULLW;
+                      op2 := A_MULHW
                     end;
                   else
                     internalerror(2002072806);
@@ -1024,18 +507,33 @@ interface
                       op1 := A_SUBC;
                       op2 := A_SUBFE;
                     end;
+                  muln:
+                    begin
+                      op1 := A_MULLW;
+                      op2 := A_MULHWU
+                    end;
                 end;
               end;
-            exprasmlist.concat(taicpu.op_reg_reg_reg(op1,location.register64.reglo,
+            current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_reg(op1,location.register64.reglo,
               left.location.register64.reglo,right.location.register64.reglo));
-            exprasmlist.concat(taicpu.op_reg_reg_reg(op2,location.register64.reghi,
-              right.location.register64.reghi,left.location.register64.reghi));
-            if not(is_signed(resulttype.def)) then
-              if nodetype = addn then
-                exprasmlist.concat(taicpu.op_reg_reg(A_CMPLW,location.register64.reghi,left.location.register64.reghi))
-              else
-                exprasmlist.concat(taicpu.op_reg_reg(A_CMPLW,left.location.register64.reghi,location.register64.reghi));
-            cg.g_overflowcheck(exprasmlist,location,resulttype.def);
+
+            if (nodetype <> muln) then
+              begin
+                current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_reg(op2,location.register64.reghi,
+                   right.location.register64.reghi,left.location.register64.reghi));
+                if not(is_signed(resultdef)) then
+                  if nodetype = addn then
+                    current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_CMPLW,location.register64.reghi,left.location.register64.reghi))
+                  else
+                    current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_CMPLW,left.location.register64.reghi,location.register64.reghi));
+                cg.g_overflowcheck(current_asmdata.CurrAsmList,location,resultdef);
+              end
+            else
+              begin
+               { 32 * 32 -> 64 cannot overflow }
+                current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_reg(op2,location.register64.reghi,
+                   left.location.register64.reglo,right.location.register64.reglo));
+              end
           end;
 
         { set result location }
@@ -1048,196 +546,10 @@ interface
 
 
 {*****************************************************************************
-                                AddMMX
-*****************************************************************************}
-
-{$ifdef SUPPORT_MMX}
-    procedure ti386addnode.second_addmmx;
-      var
-        op         : TAsmOp;
-        cmpop      : boolean;
-        mmxbase    : tmmxtype;
-        hregister  : tregister;
-      begin
-        pass_left_and_right;
-
-        cmpop:=false;
-        mmxbase:=mmx_type(left.resulttype.def);
-        case nodetype of
-          addn :
-            begin
-              if (cs_mmx_saturation in aktlocalswitches) then
-                begin
-                   case mmxbase of
-                      mmxs8bit:
-                        op:=A_PADDSB;
-                      mmxu8bit:
-                        op:=A_PADDUSB;
-                      mmxs16bit,mmxfixed16:
-                        op:=A_PADDSB;
-                      mmxu16bit:
-                        op:=A_PADDUSW;
-                   end;
-                end
-              else
-                begin
-                   case mmxbase of
-                      mmxs8bit,mmxu8bit:
-                        op:=A_PADDB;
-                      mmxs16bit,mmxu16bit,mmxfixed16:
-                        op:=A_PADDW;
-                      mmxs32bit,mmxu32bit:
-                        op:=A_PADDD;
-                   end;
-                end;
-            end;
-          muln :
-            begin
-               case mmxbase of
-                  mmxs16bit,mmxu16bit:
-                    op:=A_PMULLW;
-                  mmxfixed16:
-                    op:=A_PMULHW;
-               end;
-            end;
-          subn :
-            begin
-              if (cs_mmx_saturation in aktlocalswitches) then
-                begin
-                   case mmxbase of
-                      mmxs8bit:
-                        op:=A_PSUBSB;
-                      mmxu8bit:
-                        op:=A_PSUBUSB;
-                      mmxs16bit,mmxfixed16:
-                        op:=A_PSUBSB;
-                      mmxu16bit:
-                        op:=A_PSUBUSW;
-                   end;
-                end
-              else
-                begin
-                   case mmxbase of
-                      mmxs8bit,mmxu8bit:
-                        op:=A_PSUBB;
-                      mmxs16bit,mmxu16bit,mmxfixed16:
-                        op:=A_PSUBW;
-                      mmxs32bit,mmxu32bit:
-                        op:=A_PSUBD;
-                   end;
-                end;
-            end;
-          xorn:
-            op:=A_PXOR;
-          orn:
-            op:=A_POR;
-          andn:
-            op:=A_PAND;
-          else
-            internalerror(200403183);
-        end;
-
-        { left and right no register?  }
-        { then one must be demanded    }
-        if (left.location.loc<>LOC_MMXREGISTER) then
-         begin
-           if (right.location.loc=LOC_MMXREGISTER) then
-            begin
-              location_swap(left.location,right.location);
-              toggleflag(nf_swaped);
-            end
-           else
-            begin
-              { register variable ? }
-              if (left.location.loc=LOC_CMMXREGISTER) then
-               begin
-                 hregister:=rg.getregistermm(exprasmlist);
-                 emit_reg_reg(A_MOVQ,S_NO,left.location.register,hregister);
-               end
-              else
-               begin
-                 if not(left.location.loc in [LOC_REFERENCE,LOC_CREFERENCE]) then
-                  internalerror(200203245);
-
-                 location_release(exprasmlist,left.location);
-
-                 hregister:=rg.getregistermm(exprasmlist);
-                 emit_ref_reg(A_MOVQ,S_NO,left.location.reference,hregister);
-               end;
-
-              location_reset(left.location,LOC_MMXREGISTER,OS_NO);
-              left.location.register:=hregister;
-            end;
-         end;
-
-        { at this point, left.location.loc should be LOC_MMXREGISTER }
-        if right.location.loc<>LOC_MMXREGISTER then
-         begin
-           if (nodetype=subn) and (nf_swaped in flags) then
-            begin
-              if right.location.loc=LOC_CMMXREGISTER then
-               begin
-                 emit_reg_reg(A_MOVQ,S_NO,right.location.register,R_MM7);
-                 emit_reg_reg(op,S_NO,left.location.register,R_MM7);
-                 emit_reg_reg(A_MOVQ,S_NO,R_MM7,left.location.register);
-               end
-              else
-               begin
-                 if not(left.location.loc in [LOC_REFERENCE,LOC_CREFERENCE]) then
-                  internalerror(200203247);
-                 emit_ref_reg(A_MOVQ,S_NO,right.location.reference,R_MM7);
-                 emit_reg_reg(op,S_NO,left.location.register,R_MM7);
-                 emit_reg_reg(A_MOVQ,S_NO,R_MM7,left.location.register);
-                 location_release(exprasmlist,right.location);
-               end;
-            end
-           else
-            begin
-              if (right.location.loc=LOC_CMMXREGISTER) then
-               begin
-                 emit_reg_reg(op,S_NO,right.location.register,left.location.register);
-               end
-              else
-               begin
-                 if not(right.location.loc in [LOC_REFERENCE,LOC_CREFERENCE]) then
-                  internalerror(200203246);
-                 emit_ref_reg(op,S_NO,right.location.reference,left.location.register);
-                 location_release(exprasmlist,right.location);
-               end;
-            end;
-          end
-        else
-          begin
-            { right.location=LOC_MMXREGISTER }
-            if (nodetype=subn) and (nf_swaped in flags) then
-             begin
-               emit_reg_reg(op,S_NO,left.location.register,right.location.register);
-               location_swap(left.location,right.location);
-               toggleflag(nf_swaped);
-             end
-            else
-             begin
-               emit_reg_reg(op,S_NO,right.location.register,left.location.register);
-             end;
-          end;
-
-        location_freetemp(exprasmlist,right.location);
-        location_release(exprasmlist,right.location);
-        if cmpop then
-         begin
-           location_freetemp(exprasmlist,left.location);
-           location_release(exprasmlist,left.location);
-         end;
-        set_result_location(cmpop,true);
-      end;
-{$endif SUPPORT_MMX}
-
-
-{*****************************************************************************
                                 pass_2
 *****************************************************************************}
 
-    procedure tppcaddnode.pass_2;
+    procedure tppcaddnode.pass_generate_code;
     { is also being used for xor, and "mul", "sub, or and comparative }
     { operators                                                }
       var
@@ -1246,25 +558,26 @@ interface
          tmpreg     : tregister;
          hl         : tasmlabel;
          cmpop      : boolean;
-
          { true, if unsigned types are compared }
          unsigned : boolean;
+         checkoverflow : boolean;
 
       begin
          { to make it more readable, string and set (not smallset!) have their
            own procedures }
-         case left.resulttype.def.deftype of
+         case left.resultdef.typ of
            orddef :
              begin
                { handling boolean expressions }
-               if is_boolean(left.resulttype.def) and
-                  is_boolean(right.resulttype.def) then
+               if is_boolean(left.resultdef) and
+                  is_boolean(right.resultdef) then
                  begin
                    second_addboolean;
                    exit;
                  end
                { 64bit operations }
-               else if is_64bit(left.resulttype.def) then
+               else if is_64bit(resultdef) or
+                       is_64bit(left.resultdef) then
                  begin
                    second_add64bit;
                    exit;
@@ -1278,15 +591,15 @@ interface
            setdef :
              begin
                { normalsets are already handled in pass1 }
-               if (tsetdef(left.resulttype.def).settype<>smallset) then
-                internalerror(200109041);
+               if not is_smallset(left.resultdef) then
+                internalerror(200109042);
                second_addsmallset;
                exit;
              end;
            arraydef :
              begin
 {$ifdef SUPPORT_MMX}
-               if is_mmx_able_array(left.resulttype.def) then
+               if is_mmx_able_array(left.resultdef) then
                 begin
                   second_addmmx;
                   exit;
@@ -1302,8 +615,8 @@ interface
 
          { defaults }
          cmpop:=nodetype in [ltn,lten,gtn,gten,equaln,unequaln];
-         unsigned:=not(is_signed(left.resulttype.def)) or
-                   not(is_signed(right.resulttype.def));
+         unsigned:=not(is_signed(left.resultdef)) or
+                   not(is_signed(right.resultdef));
 
          pass_left_and_right;
 
@@ -1316,20 +629,22 @@ interface
 
          { set result location }
          if not cmpop then
-           location_reset(location,LOC_REGISTER,def_cgsize(resulttype.def))
+           location_reset(location,LOC_REGISTER,def_cgsize(resultdef))
           else
            location_reset(location,LOC_FLAGS,OS_NO);
 
-         load_left_right(cmpop, (cs_check_overflow in aktlocalswitches) and
-            (nodetype in [addn,subn,muln]));
+         checkoverflow:=
+           (nodetype in [addn,subn,muln]) and
+           (cs_check_overflow in current_settings.localswitches) and
+           (left.resultdef.typ<>pointerdef) and
+           (right.resultdef.typ<>pointerdef);
 
-         if (location.register = NR_NO) and
-            not(cmpop) then
-           location.register := cg.getintregister(exprasmlist,OS_INT);
+         load_left_right(cmpop, checkoverflow);
 
-         if not(cs_check_overflow in aktlocalswitches) or
-            (cmpop) or
-            (nodetype in [orn,andn,xorn]) then
+         if not(cmpop) then
+           location.register := cg.getintregister(current_asmdata.CurrAsmList,OS_INT);
+
+         if not(checkoverflow) then
            begin
              case nodetype of
                addn, muln, xorn, orn, andn:
@@ -1352,41 +667,41 @@ interface
                    if (left.location.loc = LOC_CONSTANT) then
                      swapleftright;
                    if (right.location.loc <> LOC_CONSTANT) then
-                     cg.a_op_reg_reg_reg(exprasmlist,cgop,OS_INT,
+                     cg.a_op_reg_reg_reg(current_asmdata.CurrAsmList,cgop,OS_INT,
                        left.location.register,right.location.register,
                        location.register)
                    else
-                     cg.a_op_const_reg_reg(exprasmlist,cgop,OS_INT,
+                     cg.a_op_const_reg_reg(current_asmdata.CurrAsmList,cgop,OS_INT,
                        right.location.value,left.location.register,
                      location.register);
                  end;
                subn:
                  begin
-                   if (nf_swaped in flags) then
+                   if (nf_swapped in flags) then
                      swapleftright;
                    if left.location.loc <> LOC_CONSTANT then
                      if right.location.loc <> LOC_CONSTANT then
-                       cg.a_op_reg_reg_reg(exprasmlist,OP_SUB,OS_INT,
+                       cg.a_op_reg_reg_reg(current_asmdata.CurrAsmList,OP_SUB,OS_INT,
                          right.location.register,left.location.register,
                          location.register)
                      else
-                       cg.a_op_const_reg_reg(exprasmlist,OP_SUB,OS_INT,
+                       cg.a_op_const_reg_reg(current_asmdata.CurrAsmList,OP_SUB,OS_INT,
                          right.location.value,left.location.register,
                          location.register)
                    else
                      if (longint(left.location.value) >= low(smallint)) and
                         (longint(left.location.value) <= high(smallint)) then
                        begin
-                         exprasmlist.concat(taicpu.op_reg_reg_const(A_SUBFIC,
+                         current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_const(A_SUBFIC,
                            location.register,right.location.register,
                            longint(left.location.value)));
                        end
                      else
                        begin
-                         tmpreg := cg.getintregister(exprasmlist,OS_INT);
-                         cg.a_load_const_reg(exprasmlist,OS_INT,
+                         tmpreg := cg.getintregister(current_asmdata.CurrAsmList,OS_INT);
+                         cg.a_load_const_reg(current_asmdata.CurrAsmList,OS_INT,
                            left.location.value,tmpreg);
-                         cg.a_op_reg_reg_reg(exprasmlist,OP_SUB,OS_INT,
+                         cg.a_op_reg_reg_reg(current_asmdata.CurrAsmList,OP_SUB,OS_INT,
                            right.location.register,tmpreg,location.register);
                        end;
                  end;
@@ -1399,7 +714,7 @@ interface
          else
            // overflow checking is on and we have an addn, subn or muln
            begin
-             if is_signed(resulttype.def) then
+             if is_signed(resultdef) then
                begin
                  case nodetype of
                    addn:
@@ -1407,7 +722,7 @@ interface
                    subn:
                      begin
                        op := A_SUBO;
-                       if (nf_swaped in flags) then
+                       if (nf_swapped in flags) then
                          swapleftright;
                      end;
                    muln:
@@ -1415,42 +730,44 @@ interface
                    else
                      internalerror(2002072601);
                  end;
-                 exprasmlist.concat(taicpu.op_reg_reg_reg(op,location.register,
+                 current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_reg(op,location.register,
                    left.location.register,right.location.register));
-                 cg.g_overflowcheck(exprasmlist,location,resulttype.def);
+                 cg.g_overflowcheck(current_asmdata.CurrAsmList,location,resultdef);
               end
              else
               begin
                 case nodetype of
                   addn:
                     begin
-                      exprasmlist.concat(taicpu.op_reg_reg_reg(A_ADD,location.register,
+                      current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_reg(A_ADD,location.register,
                         left.location.register,right.location.register));
-                      exprasmlist.concat(taicpu.op_reg_reg(A_CMPLW,location.register,left.location.register));
-                      cg.g_overflowcheck(exprasmlist,location,resulttype.def);
+                      current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_CMPLW,location.register,left.location.register));
+                      cg.g_overflowcheck(current_asmdata.CurrAsmList,location,resultdef);
                     end;
                   subn:
                     begin
-                      exprasmlist.concat(taicpu.op_reg_reg_reg(A_SUB,location.register,
+                      if nf_swapped in flags then
+                        swapleftright;
+                      current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_reg(A_SUB,location.register,
                         left.location.register,right.location.register));
-                      exprasmlist.concat(taicpu.op_reg_reg(A_CMPLW,left.location.register,location.register));
-                      cg.g_overflowcheck(exprasmlist,location,resulttype.def);
+                      current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg(A_CMPLW,left.location.register,location.register));
+                      cg.g_overflowcheck(current_asmdata.CurrAsmList,location,resultdef);
                     end;
                   muln:
                     begin
                       { calculate the upper 32 bits of the product, = 0 if no overflow }
-                      cg.a_reg_alloc(exprasmlist,NR_R0);
-                      exprasmlist.concat(taicpu.op_reg_reg_reg(A_MULHWU_,NR_R0,
+                      cg.a_reg_alloc(current_asmdata.CurrAsmList,NR_R0);
+                      current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_reg(A_MULHWU_,NR_R0,
                         left.location.register,right.location.register));
-                      cg.a_reg_dealloc(exprasmlist,NR_R0);
+                      cg.a_reg_dealloc(current_asmdata.CurrAsmList,NR_R0);
                       { calculate the real result }
-                      exprasmlist.concat(taicpu.op_reg_reg_reg(A_MULLW,location.register,
+                      current_asmdata.CurrAsmList.concat(taicpu.op_reg_reg_reg(A_MULLW,location.register,
                         left.location.register,right.location.register));
                       { g_overflowcheck generates a OC_AE instead of OC_EQ :/ }
-                      objectlibrary.getlabel(hl);
-                      tcgppc(cg).a_jmp_cond(exprasmlist,OC_EQ,hl);
-                      cg.a_call_name(exprasmlist,'FPC_OVERFLOW');
-                      cg.a_label(exprasmlist,hl);
+                      current_asmdata.getjumplabel(hl);
+                      tcgppc(cg).a_jmp_cond(current_asmdata.CurrAsmList,OC_EQ,hl);
+                      cg.a_call_name(current_asmdata.CurrAsmList,'FPC_OVERFLOW',false);
+                      cg.a_label(current_asmdata.CurrAsmList,hl);
                     end;
                 end;
               end;
@@ -1460,12 +777,3 @@ interface
 begin
    caddnode:=tppcaddnode;
 end.
-{
-  $Log: nppcadd.pas,v $
-  Revision 1.57  2005/02/14 17:13:10  peter
-    * truncate log
-
-  Revision 1.56  2005/02/13 18:55:19  florian
-    + overflow checking for the arm
-
-}

@@ -1,5 +1,4 @@
 {
-    $Id: systhrd.inc,v 1.2 2005/02/14 17:13:30 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2002 by Peter Vreman,
     member of the Free Pascal development team.
@@ -32,7 +31,6 @@
                              Threadvar support
 *****************************************************************************}
 
-{$ifdef HASTHREADVAR}
 
 const
    threadvarblocksize : dword = 0;     // total size of allocated threadvars
@@ -107,7 +105,6 @@ begin
   end;
 end;
 
-{$endif HASTHREADVAR}
 
 
 {*****************************************************************************
@@ -124,27 +121,15 @@ type
 
 
 
-procedure DoneThread;
-
-  begin
-     { release thread vars }
-{$ifdef HASTHREADVAR}
-     SysReleaseThreadVars;
-{$endif}
-  end;
-
-
 function ThreadMain(param : pointer) : dword; cdecl;
 
   var
      ti : tthreadinfo;
 
   begin
-{$ifdef HASTHREADVAR}
      { Allocate local thread vars, this must be the first thing,
        because the exception management and io depends on threadvars }
      SysAllocateThreadVars;
-{$endif HASTHREADVAR}
 {$ifdef DEBUG_MT}
      ConsolePrintf(#13'New thread %x started, initialising ...'#13#10,_GetThreadID);
 {$endif DEBUG_MT}
@@ -158,7 +143,7 @@ function ThreadMain(param : pointer) : dword; cdecl;
      DoneThread;
   end;
 
-function SysBeginThread(sa : Pointer;stacksize : dword;
+function SysBeginThread(sa : Pointer;stacksize : SizeUInt;
                          ThreadFunction : tthreadfunc;p : pointer;
                          creationFlags : dword; var ThreadId : DWord) : DWord;
 
@@ -168,13 +153,11 @@ function SysBeginThread(sa : Pointer;stacksize : dword;
 {$ifdef DEBUG_MT}
      ConsolePrintf(#13'Creating new thread'#13#10);
 {$endif DEBUG_MT}
-{$ifdef HASTHREADVAR}
      if not IsMultiThread then
      begin
        InitThreadVars(@SysRelocateThreadvar);
        IsMultithread:=true;
      end;
-{$endif}
      { the only way to pass data to the newly created thread }
      { in a MT safe way, is to use the heap                  }
      new(ti);
@@ -407,47 +390,64 @@ begin
   _SaveThreadDataAreaPtr     (newPtr);
 end;
 
-
-
-{*****************************************************************************
-                           Heap Mutex Protection
-*****************************************************************************}
-
-var
-  HeapMutex : TRTLCriticalSection;
-
-procedure NWHeapMutexInit;
+function intBasicEventCreate(EventAttributes : Pointer;
+AManualReset,InitialState : Boolean;const Name : ansistring):pEventState;
 begin
-  InitCriticalSection(heapmutex);
+  {$WARNING TODO! intBasicEventCreate}
 end;
 
-procedure NWHeapMutexDone;
+procedure intbasiceventdestroy(state:peventstate);
 begin
-  DoneCriticalSection(heapmutex);
+  {$WARNING TODO! intbasiceventdestroy}
 end;
 
-procedure NWHeapMutexLock;
+procedure intbasiceventResetEvent(state:peventstate);
 begin
-  EnterCriticalSection(heapmutex);
+  {$WARNING TODO! intbasiceventResetEvent}
 end;
 
-procedure NWHeapMutexUnlock;
+procedure intbasiceventSetEvent(state:peventstate);
 begin
-  LeaveCriticalSection(heapmutex);
+  {$WARNING TODO! intbasiceventSetEvent}
 end;
 
-const
-  NWMemoryMutexManager : TMemoryMutexManager = (
-           MutexInit : @NWHeapMutexInit;
-           MutexDone : @NWHeapMutexDone;
-           MutexLock : @NWHeapMutexLock;
-           MutexUnlock : @NWHeapMutexUnlock;
-  );
-
-procedure InitHeapMutexes;
+function intbasiceventWaitFor(Timeout : Cardinal;state:peventstate) : longint;
 begin
-  SetMemoryMutexManager(NWMemoryMutexManager);
+  {$WARNING TODO! intbasiceventWaitFor}
 end;
+
+function intRTLEventCreate: PRTLEvent;
+begin
+  {$WARNING TODO! intRTLEventCreate}
+end;
+
+procedure intRTLEventDestroy(AEvent: PRTLEvent);
+begin
+  {$WARNING TODO! intRTLEventDestroy}
+end;
+
+procedure intRTLEventSetEvent(AEvent: PRTLEvent);
+begin
+  {$WARNING TODO! intRTLEventSetEvent}
+end;
+
+procedure intRTLEventResetEvent(AEvent: PRTLEvent);
+begin
+  {$WARNING TODO! intRTLEventResetEvent}
+end;
+
+procedure intRTLEventWaitFor(AEvent: PRTLEvent);
+begin
+{$WARNING TODO! intRTLEventWaitFor}
+end;
+
+procedure intRTLEventWaitForTimeout(AEvent: PRTLEvent;timeout : longint);
+begin
+  {$WARNING TODO! intRTLEventWaitForTimeout}
+end;
+
+
+
 
 Var
   NWThreadManager : TThreadManager;
@@ -473,37 +473,27 @@ begin
     DoneCriticalSection    :=@SysDoneCriticalSection;
     EnterCriticalSection   :=@SysEnterCriticalSection;
     LeaveCriticalSection   :=@SysLeaveCriticalSection;
-{$ifdef HASTHREADVAR}
     InitThreadVar          :=@SysInitThreadVar;
     RelocateThreadVar      :=@SysRelocateThreadVar;
     AllocateThreadVars     :=@SysAllocateThreadVars;
     ReleaseThreadVars      :=@SysReleaseThreadVars;
-{$endif HASTHREADVAR}
-    BasicEventCreate       :=@NoBasicEventCreate;
-    basiceventdestroy      :=@Nobasiceventdestroy;
-    basiceventResetEvent   :=@NobasiceventResetEvent;
-    basiceventSetEvent     :=@NobasiceventSetEvent;
-    basiceventWaitFor      :=@NobasiceventWaitFor;
+    BasicEventCreate       :=@intBasicEventCreate;
+    basiceventdestroy      :=@intbasiceventdestroy;
+    basiceventResetEvent   :=@intbasiceventResetEvent;
+    basiceventSetEvent     :=@intbasiceventSetEvent;
+    basiceventWaitFor      :=@intbasiceventWaitFor;
+    RTLEventCreate         :=@intRTLEventCreate;
+    RTLEventDestroy        :=@intRTLEventDestroy;
+    RTLEventSetEvent       :=@intRTLEventSetEvent;
+    RTLEventResetEvent     :=@intRTLEventResetEvent;
+    RTLEventWaitFor        :=@intRTLEventWaitFor;
+    RTLEventWaitForTimeout :=@intRTLEventWaitForTimeout;
     end;
   SetThreadManager(NWThreadManager);
-  InitHeapMutexes;
   NWSysSetThreadFunctions (@SysCloseAllRemainingSemaphores,
                            @SysReleaseThreadVars,
                            @SysSetThreadDataAreaPtr);
 end;
 
 
-{
-  $Log: systhrd.inc,v $
-  Revision 1.2  2005/02/14 17:13:30  peter
-    * truncate log
-
-  Revision 1.1  2005/02/06 16:57:18  peter
-    * threads for go32v2,os,emx,netware
-
-  Revision 1.1  2005/02/06 13:06:20  peter
-    * moved file and dir functions to sysfile/sysdir
-    * win32 thread in systemunit
-
-}
 

@@ -1,5 +1,4 @@
 {
-    $Id: wutils.pas,v 1.21 2005/02/14 17:13:19 peter Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 1998 by Berczi Gabor
 
@@ -15,15 +14,10 @@ unit WUtils;
 
 interface
 
-{$ifndef FPC}
-  {$define TPUNIXLF}
-{$endif}
-
-
 uses
-{$ifdef win32}
+{$ifdef Windows}
   windows,
-{$endif win32}
+{$endif Windows}
 {$ifdef netwlibc}
   libc,
 {$else}
@@ -33,12 +27,8 @@ uses
 {$endif}
 
 {$ifdef Unix}
-  {$ifdef VER1_0}
-    linux,
-  {$else}
-    baseunix,
-    unix,
-  {$endif}
+  baseunix,
+  unix,
 {$endif Unix}
   Dos,Objects;
 
@@ -50,7 +40,12 @@ const
   TempFirstChar = {$ifndef Unix}'~'{$else}'_'{$endif};
   TempExt       = '.tmp';
   TempNameLen   = 8;
-  EOL : String[2] = {$ifdef Unix}#10;{$else}#13#10;{$endif}
+
+  { Get DirSep and EOL from System unit, instead of redefining 
+    here with tons of $ifdefs (KB) }
+  DirSep : char = System.DirectorySeparator;
+  EOL : String[2] = System.LineEnding;
+
 
 type
   PByteArray = ^TByteArray;
@@ -77,9 +72,9 @@ type
     constructor Init;
     function    GetPos: Longint; virtual;
     function    GetSize: Longint; virtual;
-    procedure   Read(var Buf; Count: Word); virtual;
+    procedure   Read(var Buf; Count: longint); virtual;
     procedure   Seek(Pos: Longint); virtual;
-    procedure   Write(var Buf; Count: Word); virtual;
+    procedure   Write(var Buf; Count: longint); virtual;
   end;
 
   PSubStream = ^TSubStream;
@@ -87,9 +82,9 @@ type
     constructor Init(AStream: PStream; AStartPos, ASize: longint);
     function    GetPos: Longint; virtual;
     function    GetSize: Longint; virtual;
-    procedure   Read(var Buf; Count: Word); virtual;
+    procedure   Read(var Buf; Count: longint); virtual;
     procedure   Seek(Pos: Longint); virtual;
-    procedure   Write(var Buf; Count: Word); virtual;
+    procedure   Write(var Buf; Count: longint); virtual;
   private
     StartPos: longint;
     S       : PStream;
@@ -119,12 +114,11 @@ type
     function  AtInt(Index: sw_integer): ptrint;
   end;
 
-{$ifdef TPUNIXLF}
-  procedure readln(var t:text;var s:string);
-{$endif}
-
 procedure ReadlnFromStream(Stream: PStream; var s:string;var linecomplete,hasCR : boolean);
 function eofstream(s: pstream): boolean;
+procedure ReadlnFromFile(var f : file; var S:string;
+           var linecomplete,hasCR : boolean;
+           BreakOnSpacesOnly : boolean);
 
 function Min(A,B: longint): longint;
 function Max(A,B: longint): longint;
@@ -145,9 +139,6 @@ function StrToInt(const S: string): longint;
 function StrToCard(const S: string): cardinal;
 function FloatToStr(D: Double; Decimals: byte): string;
 function FloatToStrL(D: Double; Decimals: byte; MinLen: byte): string;
-function HexToInt(S: string): longint;
-function HexToCard(S: string): cardinal;
-function IntToHex(L: longint; MinLen: integer): string;
 function GetStr(P: PString): string;
 function GetPChar(P: PChar): string;
 function BoolToStr(B: boolean; const TrueS, FalseS: string): string;
@@ -186,22 +177,26 @@ function Now: longint;
 function FormatDateTimeL(L: longint; const Format: string): string;
 function FormatDateTime(const D: DateTime; const Format: string): string;
 
-{$ifdef TP}
-function StrPas(C: PChar): string;
-{$endif}
 function MemToStr(var B; Count: byte): string;
 procedure StrToMem(S: string; var B);
-
-procedure GiveUpTimeSlice;
 
 const LastStrToIntResult : integer = 0;
       LastHexToIntResult : integer = 0;
       LastStrToCardResult : integer = 0;
       LastHexToCardResult : integer = 0;
-      DirSep             : char    = {$ifdef Unix}'/'{$else}'\'{$endif};
       UseOldBufStreamMethod : boolean = false;
 
 procedure RegisterWUtils;
+
+Procedure DebugMessage(AFileName, AText : string; ALine, APos : sw_word); // calls DebugMessage
+
+Procedure WUtilsDebugMessage(AFileName, AText : string; ALine, APos : string; nrLine, nrPos : sw_word);
+
+type
+  TDebugMessage = procedure(AFileName, AText : string; ALine, APos : String; nrLine, nrPos : sw_word);
+
+Const
+  DebugMessageS : TDebugMessage = @WUtilsDebugMessage;
 
 implementation
 
@@ -225,37 +220,6 @@ const
      Load:    @TUnsortedStringCollection.Load;
      Store:   @TUnsortedStringCollection.Store
   );
-{$endif}
-
-{$ifdef TPUNIXLF}
-  procedure readln(var t:text;var s:string);
-  var
-    c : char;
-    i : longint;
-  begin
-    if TextRec(t).UserData[1]=2 then
-      system.readln(t,s)
-    else
-     begin
-      c:=#0;
-      i:=0;
-      while (not eof(t)) and (c<>#10) and (i<High(S)) do
-       begin
-         read(t,c);
-         if c<>#10 then
-          begin
-            inc(i);
-            s[i]:=c;
-          end;
-       end;
-      if (i>0) and (s[i]=#13) then
-       begin
-         dec(i);
-         TextRec(t).UserData[1]:=2;
-       end;
-      s[0]:=chr(i);
-     end;
-  end;
 {$endif}
 
 function eofstream(s: pstream): boolean;
@@ -308,23 +272,77 @@ procedure ReadlnFromStream(Stream: PStream; var S:string;var linecomplete,hasCR 
     s[0]:=chr(i);
   end;
 
-{$ifdef TP}
-{ TP's own StrPas() is buggy, because it causes GPF with strings longer than
-  255 chars }
-function StrPas(C: PChar): string;
-var S: string;
-    I: longint;
-begin
-  if Assigned(C)=false then
-    S:=''
-  else
-    begin
-      I:=StrLen(C); if I>High(S) then I:=High(S);
-      S[0]:=chr(I); Move(C^,S[1],I);
-    end;
-  StrPas:=S;
-end;
-{$endif}
+procedure ReadlnFromFile(var f : file; var S:string;
+           var linecomplete,hasCR : boolean;
+           BreakOnSpacesOnly : boolean);
+  var
+    c : char;
+    i,pos,
+    lastspacepos,LastSpaceFilePos : longint;
+{$ifdef DEBUG}
+    filename: string;
+{$endif DEBUG}
+  begin
+    LastSpacePos:=0;
+    linecomplete:=false;
+    c:=#0;
+    i:=0;
+    { this created problems for lines longer than 255 characters
+      now those lines are cutted into pieces without warning PM }
+    { changed implicit 255 to High(S), so it will be automatically extended
+      when longstrings eventually become default - Gabor }
+    while (not eof(f)) and (c<>#10) and (i<High(S)) do
+     begin
+       system.blockread(f,c,sizeof(c));
+       if c<>#10 then
+        begin
+          inc(i);
+          s[i]:=c;
+        end;
+       if BreakOnSpacesOnly and (c=' ') then
+         begin
+           LastSpacePos:=i;
+           LastSpaceFilePos:=system.filepos(f);
+         end;
+     end;
+    { if there was a CR LF then remove the CR Dos newline style }
+    if (i>0) and (s[i]=#13) then
+      begin
+        dec(i);
+      end;
+    if (c=#13) and (not eof(f)) then
+      system.blockread(f,c,sizeof(c));
+    if (i=High(S)) and not eof(f) then
+      begin
+        pos:=system.filepos(f);
+        system.blockread(f,c,sizeof(c));
+        if (c=#13) and not eof(f) then
+          system.blockread(f,c,sizeof(c));
+        if c<>#10 then
+          system.seek(f,pos);
+        if (c<>' ') and (c<>#10) and BreakOnSpacesOnly and
+           (LastSpacePos>1) then
+          begin
+{$ifdef DEBUG}
+            s[0]:=chr(i);
+            filename:=strpas(@(filerec(f).Name));
+            DebugMessage(filename,'s='+s,1,1);
+{$endif DEBUG}
+            i:=LastSpacePos;
+{$ifdef DEBUG}
+            s[0]:=chr(i);
+            DebugMessage(filename,'reduced to '+s,1,1);
+{$endif DEBUG}
+            system.seek(f,LastSpaceFilePos);
+          end;
+      end;
+
+    if (c=#10) or eof(f) then
+      linecomplete:=true;
+    if (c=#10) then
+      hasCR:=true;
+    s[0]:=chr(i);
+  end;
 
 function MemToStr(var B; Count: byte): string;
 var S: string;
@@ -350,9 +368,6 @@ begin
 end;
 
 function CharStr(C: char; Count: integer): string;
-{$ifndef FPC}
-var S: string;
-{$endif}
 begin
   if Count<=0 then
     begin
@@ -361,14 +376,8 @@ begin
     end
   else if Count>255 then
     Count:=255;
-{$ifdef FPC}
   CharStr[0]:=chr(Count);
   FillChar(CharStr[1],Count,C);
-{$else}
-  S[0]:=chr(Count);
-  FillChar(S[1],Count,C);
-  CharStr:=S;
-{$endif}
 end;
 
 function UpcaseStr(const S: string): string;
@@ -471,66 +480,6 @@ begin
   StrToCard:=L;
 end;
 
-function HexToInt(S: string): longint;
-var L,I: longint;
-    C: char;
-const HexNums: string[16] = '0123456789ABCDEF';
-begin
-  S:=Trim(S); L:=0; I:=1; LastHexToIntResult:=0;
-  while (I<=length(S)) and (LastHexToIntResult=0) do
-  begin
-    C:=Upcase(S[I]);
-    if C in['0'..'9','A'..'F'] then
-    begin
-      L:=L*16+(Pos(C,HexNums)-1);
-    end else LastHexToIntResult:=I;
-    Inc(I);
-  end;
-  HexToInt:=L;
-end;
-
-function HexToCard(S: string): cardinal;
-var L,I: cardinal;
-    C: char;
-const HexNums: string[16] = '0123456789ABCDEF';
-begin
-  S:=Trim(S); L:=0; I:=1; LastHexToCardResult:=0;
-  while (I<=length(S)) and (LastHexToCardResult=0) do
-  begin
-    C:=Upcase(S[I]);
-    if C in['0'..'9','A'..'F'] then
-    begin
-      L:=L*16+(Pos(C,HexNums)-1);
-    end else LastHexToCardResult:=I;
-    Inc(I);
-  end;
-  HexToCard:=L;
-end;
-
-function IntToHex(L: longint; MinLen: integer): string;
-const HexNums : string[16] = '0123456789ABCDEF';
-var S: string;
-    R: real;
-function DivF(Mit,Mivel: real): longint;
-begin
-  DivF:=trunc(Mit/Mivel);
-end;
-function ModF(Mit,Mivel: real): longint;
-begin
-  ModF:=trunc(Mit-DivF(Mit,Mivel)*Mivel);
-end;
-begin
-  S:='';
-  R:=L; if R<0 then begin R:=R+2147483647+2147483647+2; end;
-  repeat
-    Insert(HexNums[ModF(R,16)+1],S,1);
-    R:=DivF(R,16);
-  until R=0;
-  while length(S)<MinLen do
-    Insert('0',S,1);
-  IntToHex:=S;
-end;
-
 function FloatToStr(D: Double; Decimals: byte): string;
 var S: string;
     L: byte;
@@ -629,7 +578,7 @@ begin
 end;
 
 function GetShortName(const n:string):string;
-{$ifdef win32}
+{$ifdef Windows}
 var
   hs,hs2 : string;
   i : longint;
@@ -640,7 +589,7 @@ var
 {$endif}
 begin
   GetShortName:=n;
-{$ifdef win32}
+{$ifdef Windows}
   hs:=n+#0;
   i:=Windows.GetShortPathName(@hs[1],@hs2[1],high(hs2));
   if (i>0) and (i<=high(hs2)) then
@@ -657,7 +606,7 @@ begin
 end;
 
 function GetLongName(const n:string):string;
-{$ifdef win32}
+{$ifdef Windows}
 var
   hs : string;
   hs2 : Array [0..255] of char;
@@ -670,7 +619,7 @@ var
 {$endif}
 begin
   GetLongName:=n;
-{$ifdef win32}
+{$ifdef Windows}
   hs:=n+#0;
   i:=Windows.GetFullPathName(@hs[1],256,hs2,j);
   if (i>0) and (i<=high(hs)) then
@@ -727,7 +676,7 @@ begin
 end;
 
 procedure TUnsortedStringCollection.Assign(ALines: PUnsortedStringCollection);
-procedure AddIt(P: PString); {$ifndef FPC}far;{$endif}
+procedure AddIt(P: PString);
 begin
   Insert(NewStr(GetStr(P)));
 end;
@@ -810,7 +759,7 @@ begin
   GetSize:=Position;
 end;
 
-procedure TNulStream.Read(var Buf; Count: Word);
+procedure TNulStream.Read(var Buf; Count: longint);
 begin
   Error(stReadError,0);
 end;
@@ -821,7 +770,7 @@ begin
     Position:=Pos;
 end;
 
-procedure TNulStream.Write(var Buf; Count: Word);
+procedure TNulStream.Write(var Buf; Count: longint);
 begin
   Inc(Position,Count);
 end;
@@ -846,9 +795,9 @@ begin
   GetSize:=StreamSize;
 end;
 
-procedure TSubStream.Read(var Buf; Count: Word);
+procedure TSubStream.Read(var Buf; Count: longint);
 var Pos: longint;
-    RCount: word;
+    RCount: longint;
 begin
   Pos:=GetPos;
   if Pos+Count>StreamSize then RCount:=StreamSize-Pos else RCount:=Count;
@@ -864,7 +813,7 @@ begin
   S^.Seek(StartPos+RPos);
 end;
 
-procedure TSubStream.Write(var Buf; Count: Word);
+procedure TSubStream.Write(var Buf; Count: longint);
 begin
   S^.Write(Buf,Count);
 end;
@@ -1228,9 +1177,7 @@ var
 begin
   Dos.FindFirst(FileName,Archive+ReadOnly,Dir);
   ExistsFile:=(Dos.DosError=0);
-{$ifdef FPC}
   Dos.FindClose(Dir);
-{$endif def FPC}
 end;
 
 { returns zero for empty and non existant files }
@@ -1244,23 +1191,19 @@ begin
     SizeOfFile:=Dir.Size
   else
     SizeOfFile:=0;
-{$ifdef FPC}
   Dos.FindClose(Dir);
-{$endif def FPC}
 end;
 
 function ExistsDir(const DirName: string): boolean;
 var
   Dir : SearchRec;
 begin
-  Dos.FindFirst(TrimEndSlash(DirName),Directory,Dir);
+  Dos.FindFirst(TrimEndSlash(DirName),anyfile,Dir);
   { if a file is found it is also reported
     at least for some Dos version
     so we need to check the attributes PM }
   ExistsDir:=(Dos.DosError=0) and ((Dir.attr and Directory) <> 0);
-{$ifdef FPC}
   Dos.FindClose(Dir);
-{$endif def FPC}
 end;
 
 function CompleteDir(const Path: string): string;
@@ -1290,6 +1233,9 @@ var Dir: string;
 begin
   Dir:=GetEnv('TEMP');
   if Dir='' then Dir:=GetEnv('TMP');
+{$if defined(morphos) or defined(amiga)}
+  if Dir='' then Dir:='T:';
+{$endif}
   if (Dir<>'') then if not ExistsDir(Dir) then Dir:='';
   if Dir='' then Dir:=GetCurDir;
   repeat
@@ -1321,52 +1267,6 @@ begin
   CopyFile:=OK;
 end;
 
-procedure GiveUpTimeSlice;
-{$ifdef GO32V2}{$define DOS}{$endif}
-{$ifdef TP}{$define DOS}{$endif}
-{$ifdef DOS}
-var r: registers;
-begin
-  Intr ($28, R); (* This is supported everywhere. *)
-  r.ax:=$1680;
-  intr($2f,r);
-end;
-{$endif}
-{$ifdef Unix}
-  var
-    req,rem : timespec;
-begin
-  req.tv_sec:=0;
-  req.tv_nsec:=10000000;{ 10 ms }
-  {$ifdef ver1_0}nanosleep(req,rem){$else}fpnanosleep(@req,@rem){$endif};
-end;
-{$endif}
-{$IFDEF OS2}
-begin
- DosSleep (5);
-end;
-{$ENDIF}
-{$ifdef Win32}
-begin
-  { if the return value of this call is non zero then
-    it means that a ReadFileEx or WriteFileEx have completed
-    unused for now ! }
-  { wait for 10 ms }
-  if SleepEx(10,true)=WAIT_IO_COMPLETION then
-    begin
-      { here we should handle the completion of the routines
-        if we use them }
-    end;
-end;
-{$endif}
-{$undef DOS}
-{$ifdef netwlibc} {$define netware} {$endif}
-{$ifdef netware}
-begin
-  Delay (10);
-end;
-{$endif}
-
 procedure RegisterWUtils;
 begin
 {$ifndef NOOBJREG}
@@ -1374,12 +1274,17 @@ begin
 {$endif}
 end;
 
+Procedure DebugMessage(AFileName, AText : string; ALine, APos : sw_word); // calls DebugMessage
+begin
+  DebugMessageS(Afilename,AText,'','',aline,apos);
+end;
+
+Procedure WUtilsDebugMessage(AFileName, AText : string; ALine, APos : string;nrLine, nrPos : sw_word);
+begin
+  writeln(stderr,AFileName,' (',ALine,',',APos,') ',AText);
+  flush(stderr);
+end;
+
 BEGIN
   Randomize;
 END.
-{
-  $Log: wutils.pas,v $
-  Revision 1.21  2005/02/14 17:13:19  peter
-    * truncate log
-
-}

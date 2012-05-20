@@ -1,5 +1,4 @@
 {
-    $Id: bunxh.inc,v 1.16 2005/02/14 17:13:31 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2002 by Marco van de Voort
 
@@ -21,10 +20,13 @@ Type TGrpArr = Array [0..0] of TGid;            { C style array workarounds}
 
 // if you are looking for macro definitions or non C template overloaded versions, they are moved to bunxovlh.inc
 
-    Function  FpSigProcMask(how : cInt; nset : pSigSet; oset : pSigSet): cInt; external name 'FPC_SYSC_SIGPROCMASK';
-    Function  FpSigProcMask(how : cInt; Const nset : TSigSet; var oset : TSigSet): cInt; external name 'FPC_SYSC_SIGPROCMASK';
-    Function  FpSigPending (var nset : TSigSet): cInt;
-    Function  FpSigSuspend (Const sigmask : TSigSet): cInt;
+    Function  FpSigProcMask  (how : cInt; nset : pSigSet; oset : pSigSet): cInt; external name 'FPC_SYSC_SIGPROCMASK';
+    Function  FpSigProcMask  (how : cInt; constref nset : TSigSet; var oset : TSigSet): cInt; external name 'FPC_SYSC_SIGPROCMASK';
+    Function  FpSigPending   (var nset : TSigSet): cInt;
+    Function  FpSigSuspend   (Const sigmask : TSigSet): cInt;
+{$ifndef FPC_SYS_SIGTIMEDWAIT_UNAVAILABLE}
+    Function  FpSigTimedWait (Const sigset : TSigSet; info : Psiginfo; timeout:Ptimespec): cInt;
+{$endif ndef FPC_SYS_SIGTIMEDWAIT_UNAVAILABLE}
 
     Function  FpUmask      (cmask : TMode): TMode;
     Function  FpLink       (existing : pChar; newone : pChar): cInt;
@@ -52,6 +54,7 @@ Type TGrpArr = Array [0..0] of TGid;            { C style array workarounds}
     Function  FpGetgroups (gidsetsize : cInt; var grouplist : tgrparr): cInt;
     Function  FpGetpgrp : TPid;
     Function  FpSetsid  : TPid;
+    Function  FpGetsid (pid:TPid)  : TPid;
     Function  FpFcntl      (fildes : cInt; cmd : cInt): cInt;
     Function  FpFcntl      (fildes : cInt; cmd : cInt; arg : cInt): cInt;
     Function  FpFcntl      (fildes : cInt; cmd : cInt; var arg : flock): cInt;
@@ -80,16 +83,21 @@ Type TGrpArr = Array [0..0] of TGid;            { C style array workarounds}
     Function  FpClose      (fd : cInt): cInt;  external name 'FPC_SYSC_CLOSE';
 
     Function  FpRead       (fd : cInt; buf: pChar; nbytes : TSize): TSsize; external name 'FPC_SYSC_READ';
-    Function  FpWrite      (fd : cInt; buf:pChar; nbytes : TSize): TSsize; external name 'FPC_SYSC_WRITE';
+    Function  FpPRead      (fd : cInt; buf: pChar; nbytes : TSize; offset:Toff): TSsize;
+    function  FpReadV	   (fd: cint; const iov : piovec; iovcnt : cint):TSSize;
+    Function  FpWrite      (fd : cInt; buf:pChar; nbytes : TSize): TSsize;  external name 'FPC_SYSC_WRITE';
+    Function  FpPWrite     (fd : cInt; buf:pChar; nbytes : TSize; offset:Toff): TSSize;
+    function  FpWriteV	   (fd: cint; const iov : piovec; iovcnt : cint):TSSize;
+
     Function  FpLseek      (fd : cInt; offset : TOff; whence : cInt): TOff; external name 'FPC_SYSC_LSEEK';
     Function  FpTime       (var tloc : TTime): TTime; external name 'FPC_SYSC_TIME';
     Function  FpFtruncate  (fd : cInt; flength : TOff): cInt;  external name 'FPC_SYSC_FTRUNCATE';
     Function  FPSigaction  (sig: cInt; act : pSigActionRec; oact : pSigActionRec): cint;  external name 'FPC_SYSC_SIGACTION';
     Function  FPSelect     (N:cint;readfds,writefds,exceptfds:pfdSet;TimeOut:PTimeVal):cint;
-    Function  FpIOCtl      (Handle:cint;Ndx: culong;Data: Pointer):cint; external name  'FPC_SYSC_IOCTL';
+    Function  FpPoll       (fds: ppollfd; nfds: cuint; timeout: clong): cint;
+    Function  FpIOCtl      (Handle:cint;Ndx: TIOCtlRequest; Data: Pointer):cint; external name  'FPC_SYSC_IOCTL';
     Function  FpNanoSleep  (req : ptimespec;rem : ptimespec):cint; external name 'FPC_SYSC_NANOSLEEP';
     Function  fpLstat(path:pchar;Info:pstat):cint;
-    Function  fpLstat(Filename: ansistring;Info:pstat):cint;
     Function  fpSymlink(oldname,newname:pchar):cint;
     Function  fpReadLink(name,linkname:pchar;maxlen:size_t):cint; external name  'FPC_SYSC_READLINK';
 
@@ -102,12 +110,6 @@ Type TGrpArr = Array [0..0] of TGid;            { C style array workarounds}
     Function  FpGetEnv     (name : pChar): pChar;
     function  fpsettimeofday(tp:ptimeval;tzp:ptimezone):cint;
 
-{
-  $Log: bunxh.inc,v $
-  Revision 1.16  2005/02/14 17:13:31  peter
-    * truncate log
+    function FpGetRLimit(resource:cint;rlim:PRLimit):cint; external name 'FPC_SYSC_GETRLIMIT';
+    function FpSetRLimit(Resource:cint;rlim:PRLimit):cint; external name 'FPC_SYSC_SETRLIMIT';
 
-  Revision 1.15  2005/02/13 20:01:38  peter
-    * include file cleanup
-
-}

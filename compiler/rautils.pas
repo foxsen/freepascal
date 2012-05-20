@@ -1,5 +1,4 @@
 {
-    $Id: rautils.pas,v 1.104 2005/02/14 17:13:07 peter Exp $
     Copyright (c) 1998-2002 by Carl Eric Codere and Peter Vreman
 
     This unit implements some support routines for assembler parsing
@@ -28,12 +27,19 @@ Interface
 
 Uses
   cutils,cclasses,
-  globtype,aasmbase,aasmtai,cpubase,cpuinfo,cgbase,cgutils,
+  globtype,aasmbase,aasmtai,aasmdata,cpubase,cpuinfo,cgbase,cgutils,
   symconst,symbase,symtype,symdef,symsym;
 
 Const
   RPNMax = 10;             { I think you only need 4, but just to be safe }
   OpMax  = 25;
+
+{$if max_operands = 2}
+  {$define MAX_OPER_2}
+{$endif}
+{$if max_operands = 3}
+  {$define MAX_OPER_3}
+{$endif}
 
 {---------------------------------------------------------------------
                        Local Label Management
@@ -41,15 +47,15 @@ Const
 
 Type
   { Each local label has this structure associated with it }
-  TLocalLabel = class(TNamedIndexItem)
+  TLocalLabel = class(TFPHashObject)
     Emitted : boolean;
-    constructor Create(const n:string);
+    constructor Create(AList:TFPHashObjectList;const n:string);
     function  Gettasmlabel:tasmlabel;
   private
     lab : tasmlabel;
   end;
 
-  TLocalLabelList = class(TDictionary)
+  TLocalLabelList = class(TFPHashObjectList)
     procedure CheckEmitted;
   end;
 
@@ -66,7 +72,7 @@ Function SearchLabel(const s: string; var hl: tasmlabel;emit:boolean): boolean;
 
 type
   TOprType=(OPR_NONE,OPR_CONSTANT,OPR_SYMBOL,OPR_LOCAL,
-            OPR_REFERENCE,OPR_REGISTER,OPR_REGLIST,OPR_COND,OPR_REGSET,OPR_SHIFTEROP);
+            OPR_REFERENCE,OPR_REGISTER,OPR_REGLIST,OPR_COND,OPR_REGSET,OPR_SHIFTEROP,OPR_MODEFLAGS);
 
   TOprRec = record
     case typ:TOprType of
@@ -82,17 +88,23 @@ type
 {$ifdef powerpc}
       OPR_COND      : (cond : tasmcond);
 {$endif powerpc}
+{$ifdef POWERPC64}
+      OPR_COND      : (cond : tasmcond);
+{$endif POWERPC64}
 {$ifdef arm}
-      OPR_REGSET    : (regset : tcpuregisterset);
+      OPR_REGSET    : (regset : tcpuregisterset; regtype: tregistertype; subreg: tsubregister);
       OPR_SHIFTEROP : (shifterop : tshifterop);
+      OPR_COND      : (cc : tasmcond);
+      OPR_MODEFLAGS : (flags : tcpumodeflags);
 {$endif arm}
   end;
 
   TOperand = class
+    opr    : TOprRec;
+    typesize : byte;
     hastype,          { if the operand has typecasted variable }
     hasvar : boolean; { if the operand is loaded with a variable }
     size   : TCGSize;
-    opr    : TOprRec;
     constructor create;virtual;
     destructor  destroy;override;
     Procedure SetSize(_size:longint;force:boolean);virtual;
@@ -101,26 +113,24 @@ type
     Function  SetupSelf:boolean;
     Function  SetupOldEBP:boolean;
     Function  SetupVar(const s:string;GetOffset : boolean): Boolean;
+    Function  CheckOperand: boolean; virtual;
     Procedure InitRef;
   end;
   TCOperand = class of TOperand;
 
   TInstruction = class
+    operands  : array[1..max_operands] of toperand;
     opcode    : tasmop;
     condition : tasmcond;
     ops       : byte;
     labeled   : boolean;
-    operands  : array[1..max_operands] of toperand;
     constructor create(optype : tcoperand);virtual;
     destructor  destroy;override;
     { converts the instruction to an instruction how it's used by the assembler writer
-      and concats it to the passed list, the newly created item is returned }
-    function ConcatInstruction(p:TAAsmoutput) : tai;virtual;
+      and concats it to the passed list. The newly created item is returned if the
+      instruction was valid, otherwise nil is returned }
+    function ConcatInstruction(p:TAsmList) : tai;virtual;
     Procedure Swapoperands;
-  end;
-
-  tstr2opentry = class(Tnamedindexitem)
-    op: TAsmOp;
   end;
 
   {---------------------------------------------------------------------}
@@ -183,8 +193,8 @@ Function EscapeToPascal(const s:string): string;
                      Symbol helper routines
 ---------------------------------------------------------------------}
 
-procedure AsmSearchSym(const s:string;var srsym:tsym;var srsymtable:tsymtable);
-Function GetRecordOffsetSize(s:string;Var Offset: aint;var Size:aint):boolean;
+procedure AsmSearchSym(const s:string;var srsym:tsym;var srsymtable:TSymtable);
+Function GetRecordOffsetSize(s:string;Var Offset: aint;var Size:aint; var mangledname: string; needvmtofs: boolean):boolean;
 Function SearchType(const hs:string;var size:aint): Boolean;
 Function SearchRecordType(const s:string): boolean;
 Function SearchIConstant(const s:string; var l:aint): boolean;
@@ -194,24 +204,21 @@ Function SearchIConstant(const s:string; var l:aint): boolean;
                   Instruction generation routines
 ---------------------------------------------------------------------}
 
-  Procedure ConcatPasString(p : TAAsmoutput;s:string);
-  Procedure ConcatDirect(p : TAAsmoutput;s:string);
-  Procedure ConcatLabel(p: TAAsmoutput;var l : tasmlabel);
-  Procedure ConcatConstant(p : TAAsmoutput;value: aint; constsize:byte);
-  Procedure ConcatConstSymbol(p : TAAsmoutput;const sym:string;symtyp:tasmsymtype;l:aint);
-  Procedure ConcatRealConstant(p : TAAsmoutput;value: bestreal; real_typ : tfloattype);
-  Procedure ConcatString(p : TAAsmoutput;s:string);
-  procedure ConcatAlign(p:TAAsmoutput;l:aint);
-  Procedure ConcatPublic(p:TAAsmoutput;const s : string);
-  Procedure ConcatLocal(p:TAAsmoutput;const s : string);
-  Procedure ConcatGlobalBss(const s : string;size : aint);
-  Procedure ConcatLocalBss(const s : string;size : aint);
+  Procedure ConcatPasString(p : TAsmList;s:string);
+  Procedure ConcatLabel(p: TAsmList;var l : tasmlabel);
+  Procedure ConcatConstant(p : TAsmList;value: aint; constsize:byte);
+  Procedure ConcatConstSymbol(p : TAsmList;const sym:string;symtyp:tasmsymtype;l:aint);
+  Procedure ConcatRealConstant(p : TAsmList;value: bestreal; real_typ : tfloattype);
+  Procedure ConcatString(p : TAsmList;s:string);
+  procedure ConcatAlign(p:TAsmList;l:aint);
+  Procedure ConcatPublic(p:TAsmList;const s : string);
+  Procedure ConcatLocal(p:TAsmList;const s : string);
 
 
 Implementation
 
 uses
-  strings,
+  SysUtils,
   defutil,systems,verbose,globals,
   symtable,paramgr,
   aasmcpu,
@@ -379,12 +386,14 @@ begin
   Case _Operator OF
     '(' :
       Priority:=0;
-    '+', '-' :
-      Priority:=1;
-    '*', '/','%','<','>' :
-      Priority:=2;
-    '|','&','^','~' :
+    '|','^','~' :             // the lowest priority: OR, XOR, NOT
       Priority:=0;
+    '&' :                     // bigger priority: AND
+      Priority:=1;
+    '+', '-' :                // bigger priority: +, -
+      Priority:=2;
+    '*', '/','%','<','>' :   // the highest priority: *, /, MOD, SHL, SHR
+      Priority:=3;
     else
       Message(asmr_e_expr_illegal);
   end;
@@ -441,7 +450,7 @@ begin
                    end;
                   { if start of expression then surely a prefix }
                   { or if previous char was also an operator    }
-                  if (I = 1) or (not (Expr[I-1] in ['0'..'9','(',')'])) then
+                  if (I = 1) or (not (Expr[I-1] in ['0'..'9',')'])) then
                     OpPush(Expr[I],true)
                   else
                     Begin
@@ -677,10 +686,10 @@ begin
   SetupResult:=false;
   { replace by correct offset. }
   with current_procinfo.procdef do
-    if (not is_void(rettype.def)) then
+    if (not is_void(returndef)) then
       begin
-        if (m_tp7 in aktmodeswitches) and
-          (not paramanager.ret_in_param(rettype.def,proccalloption)) then
+        if (m_tp7 in current_settings.modeswitches) and
+          (not paramanager.ret_in_param(returndef,proccalloption)) then
           begin
             message(asmr_e_cannot_use_RESULT_here);
             exit;
@@ -695,7 +704,7 @@ end;
 Function TOperand.SetupSelf:boolean;
 Begin
   SetupSelf:=false;
-  if assigned(current_procinfo.procdef._class) then
+  if assigned(current_structdef) then
     SetupSelf:=setupvar('self',false)
   else
     Message(asmr_e_cannot_use_SELF_outside_a_method);
@@ -714,20 +723,20 @@ end;
 
 Function TOperand.SetupVar(const s:string;GetOffset : boolean): Boolean;
 
-  function symtable_has_localvarsyms(st:tsymtable):boolean;
+  function symtable_has_localvarsyms(st:TSymtable):boolean;
   var
     sym : tsym;
+    i   : longint;
   begin
     result:=false;
-    sym:=tsym(st.symindex.first);
-    while assigned(sym) do
+    for i:=0 to st.SymList.Count-1 do
       begin
+        sym:=tsym(st.SymList[i]);
         if sym.typ=localvarsym then
           begin
             result:=true;
             exit;
           end;
-        sym:=tsym(sym.indexnext);
       end;
   end;
 
@@ -757,11 +766,11 @@ Function TOperand.SetupVar(const s:string;GetOffset : boolean): Boolean;
 { if not found returns FALSE.                               }
 var
   sym : tsym;
-  srsymtable : tsymtable;
+  srsymtable : TSymtable;
   harrdef : tarraydef;
   indexreg : tregister;
   l : aint;
-  plist : psymlistitem;
+  plist : ppropaccesslistitem;
 Begin
   SetupVar:=false;
   asmsearchsym(s,sym,srsymtable);
@@ -791,29 +800,35 @@ Begin
   case sym.typ of
     fieldvarsym :
       begin
-        setconst(tfieldvarsym(sym).fieldoffset);
+        if not tabstractrecordsymtable(sym.owner).is_packed then
+          setconst(tfieldvarsym(sym).fieldoffset)
+        else if tfieldvarsym(sym).fieldoffset mod 8 = 0 then
+          setconst(tfieldvarsym(sym).fieldoffset div 8)
+        else
+          Message(asmr_e_packed_element);
         hasvar:=true;
         SetupVar:=true;
       end;
-    globalvarsym,
+    staticvarsym,
     localvarsym,
     paravarsym :
       begin
         { we always assume in asm statements that     }
         { that the variable is valid.                 }
-        tabstractvarsym(sym).varstate:=vs_used;
+        tabstractvarsym(sym).varstate:=vs_readwritten;
         inc(tabstractvarsym(sym).refs);
         { variable can't be placed in a register }
         tabstractvarsym(sym).varregable:=vr_none;
-        case sym.owner.symtabletype of
-          globalsymtable,
-          staticsymtable :
+        { and anything may happen with its address }
+        tabstractvarsym(sym).addr_taken:=true;
+        case sym.typ of
+          staticvarsym :
             begin
               initref;
-              opr.ref.symbol:=objectlibrary.newasmsymbol(tglobalvarsym(sym).mangledname,AB_EXTERNAL,AT_DATA);
+              opr.ref.symbol:=current_asmdata.RefAsmSymbol(tstaticvarsym(sym).mangledname);
             end;
-          parasymtable,
-          localsymtable :
+          paravarsym,
+          localvarsym :
             begin
               if opr.typ=OPR_REFERENCE then
                 begin
@@ -830,7 +845,7 @@ Begin
                 indexreg:=NR_NO;
               opr.typ:=OPR_LOCAL;
               if assigned(current_procinfo.parent) and
-                 (current_procinfo.procdef.proccalloption<>pocall_inline) and
+                 not(po_inline in current_procinfo.procdef.procoptions) and
                  (sym.owner<>current_procinfo.procdef.localst) and
                  (sym.owner<>current_procinfo.procdef.parast) and
                  (current_procinfo.procdef.localst.symtablelevel>normal_function_level) and
@@ -841,53 +856,31 @@ Begin
               opr.localindexreg:=indexreg;
               opr.localscale:=0;
               opr.localgetoffset:=GetOffset;
-              if paramanager.push_addr_param(tabstractvarsym(sym).varspez,tabstractvarsym(sym).vartype.def,current_procinfo.procdef.proccalloption) then
-                SetSize(sizeof(aint),false);
+              if paramanager.push_addr_param(tabstractvarsym(sym).varspez,tabstractvarsym(sym).vardef,current_procinfo.procdef.proccalloption) then
+                SetSize(sizeof(pint),false);
             end;
         end;
-        case tabstractvarsym(sym).vartype.def.deftype of
+        case tabstractvarsym(sym).vardef.typ of
           orddef,
           enumdef,
           pointerdef,
-          arraydef,
           floatdef :
             SetSize(tabstractvarsym(sym).getsize,false);
-          { makes no sense when using sse instructions (FK)
           arraydef :
             begin
               { for arrays try to get the element size, take care of
                 multiple indexes }
-              harrdef:=tarraydef(tabstractvarsym(sym).vartype.def);
-              while assigned(harrdef.elementtype.def) and
-                    (harrdef.elementtype.def.deftype=arraydef) do
-               harrdef:=tarraydef(harrdef.elementtype.def);
-              SetSize(harrdef.elesize,false);
-            end;
-          }
-        end;
-        hasvar:=true;
-        SetupVar:=true;
-        Exit;
-      end;
-    typedconstsym :
-      begin
-        initref;
-        opr.ref.symbol:=objectlibrary.newasmsymbol(ttypedconstsym(sym).mangledname,AB_EXTERNAL,AT_DATA);
-        case ttypedconstsym(sym).typedconsttype.def.deftype of
-          orddef,
-          enumdef,
-          pointerdef,
-          floatdef :
-            SetSize(ttypedconstsym(sym).getsize,false);
-          arraydef :
-            begin
-              { for arrays try to get the element size, take care of
-                multiple indexes }
-              harrdef:=tarraydef(ttypedconstsym(sym).typedconsttype.def);
-              while assigned(harrdef.elementtype.def) and
-                    (harrdef.elementtype.def.deftype=arraydef) do
-               harrdef:=tarraydef(harrdef.elementtype.def);
-              SetSize(harrdef.elesize,false);
+              harrdef:=tarraydef(tabstractvarsym(sym).vardef);
+              while assigned(harrdef.elementdef) and
+                    (harrdef.elementdef.typ=arraydef) do
+               harrdef:=tarraydef(harrdef.elementdef);
+              if not is_packed_array(harrdef) then
+                SetSize(harrdef.elesize,false)
+               else
+                 begin
+                   if (harrdef.elepackedbitsize mod 8) = 0 then
+                     SetSize(harrdef.elepackedbitsize div 8,false)
+                 end;
             end;
         end;
         hasvar:=true;
@@ -898,14 +891,14 @@ Begin
       begin
         if tconstsym(sym).consttyp=constord then
          begin
-           setconst(tconstsym(sym).value.valueord);
+           setconst(tconstsym(sym).value.valueord.svalue);
            SetupVar:=true;
            Exit;
          end;
       end;
     typesym :
       begin
-        if ttypesym(sym).restype.def.deftype in [recorddef,objectdef] then
+        if ttypesym(sym).typedef.typ in [recorddef,objectdef] then
          begin
            setconst(0);
            SetupVar:=TRUE;
@@ -916,11 +909,11 @@ Begin
       begin
         if opr.typ<>OPR_NONE then
           Message(asmr_e_invalid_operand_type);
-        if Tprocsym(sym).procdef_count>1 then
+        if Tprocsym(sym).ProcdefList.Count>1 then
           Message(asmr_w_calling_overload_func);
         l:=opr.ref.offset;
         opr.typ:=OPR_SYMBOL;
-        opr.symbol:=objectlibrary.newasmsymbol(tprocsym(sym).first_procdef.mangledname,AB_EXTERNAL,AT_FUNCTION);
+        opr.symbol:=current_asmdata.RefAsmSymbol(tprocdef(tprocsym(sym).ProcdefList[0]).mangledname);
         opr.symofs:=l;
         hasvar:=true;
         SetupVar:=TRUE;
@@ -945,6 +938,8 @@ procedure TOperand.InitRef;
 {*********************************************************************}
 var
   l : aint;
+  hsymofs : aint;
+  hsymbol : tasmsymbol;
   reg : tregister;
 Begin
   case opr.typ of
@@ -969,6 +964,15 @@ Begin
         Fillchar(opr.ref,sizeof(treference),0);
         opr.Ref.base:=reg;
       end;
+    OPR_SYMBOL :
+      begin
+        hsymbol:=opr.symbol;
+        hsymofs:=opr.symofs;
+        opr.typ:=OPR_REFERENCE;
+        Fillchar(opr.ref,sizeof(treference),0);
+        opr.ref.symbol:=hsymbol;
+        opr.ref.offset:=hsymofs;
+      end;
     else
       begin
         Message(asmr_e_invalid_operand_type);
@@ -977,6 +981,15 @@ Begin
         Fillchar(opr.ref,sizeof(treference),0);
       end;
   end;
+end;
+
+Function TOperand.CheckOperand: boolean;
+{*********************************************************************}
+{  Description: This routine checks if the operand is of              }
+{  valid, and returns false if it isn't. Does nothing by default.     }
+{*********************************************************************}
+begin
+  result:=true;
 end;
 
 
@@ -1012,28 +1025,48 @@ end;
     Var
       p : toperand;
     Begin
-      case Ops of
-       2 :
-        begin
-          p:=Operands[1];
-          Operands[1]:=Operands[2];
-          Operands[2]:=p;
-        end;
-       3 :
-        begin
-          p:=Operands[1];
-          Operands[1]:=Operands[3];
-          Operands[3]:=p;
-        end;
+      case ops of
+        0,1:
+          ;
+        2 : begin
+              { 0,1 -> 1,0 }
+              p:=Operands[1];
+              Operands[1]:=Operands[2];
+              Operands[2]:=p;
+            end;
+{$ifndef MAX_OPER_2}
+        3 : begin
+              { 0,1,2 -> 2,1,0 }
+              p:=Operands[1];
+              Operands[1]:=Operands[3];
+              Operands[3]:=p;
+            end;
+{$ifndef MAX_OPER_3}
+        4 : begin
+              { 0,1,2,3 -> 3,2,1,0 }
+              p:=Operands[1];
+              Operands[1]:=Operands[4];
+              Operands[4]:=p;
+              p:=Operands[2];
+              Operands[2]:=Operands[3];
+              Operands[3]:=p;
+            end;
+{$endif}
+{$endif}
+        else
+          internalerror(201108142);
       end;
     end;
 
 
-  function TInstruction.ConcatInstruction(p:TAAsmoutput) : tai;
+  function TInstruction.ConcatInstruction(p:TAsmList) : tai;
     var
       ai   : taicpu;
       i : longint;
     begin
+      for i:=1 to Ops do
+        operands[i].CheckOperand;
+
       ai:=taicpu.op_none(opcode);
       ai.Ops:=Ops;
       ai.Allocate_oper(Ops);
@@ -1054,10 +1087,17 @@ end;
                 ai.loadref(i-1,ref);
 {$ifdef ARM}
               OPR_REGSET:
-                ai.loadregset(i-1,regset);
+                ai.loadregset(i-1,regtype,subreg,regset);
               OPR_SHIFTEROP:
                 ai.loadshifterop(i-1,shifterop);
+              OPR_COND:
+                ai.loadconditioncode(i-1,cc);
+              OPR_MODEFLAGS:
+                ai.loadmodeflags(i-1,flags);
 {$endif ARM}
+              { ignore wrong operand }
+              OPR_NONE:
+                ;
               else
                 internalerror(200501051);
             end;
@@ -1076,9 +1116,9 @@ end;
                                  TLocalLabel
 ***************************************************************************}
 
-constructor TLocalLabel.create(const n:string);
+constructor TLocalLabel.create(AList:TFPHashObjectList;const n:string);
 begin
-  inherited CreateName(n);
+  inherited Create(AList,n);
   lab:=nil;
   emitted:=false;
 end;
@@ -1088,7 +1128,7 @@ function TLocalLabel.Gettasmlabel:tasmlabel;
 begin
   if not assigned(lab) then
    begin
-     objectlibrary.getlabel(lab);
+     current_asmdata.getjumplabel(lab);
      { this label is forced to be used so it's always written }
      lab.increfs;
    end;
@@ -1100,15 +1140,17 @@ end;
                              TLocalLabelList
 ***************************************************************************}
 
-procedure LocalLabelEmitted(p:tnamedindexitem;arg:pointer);
-begin
-  if not TLocalLabel(p).emitted  then
-   Message1(asmr_e_unknown_label_identifier,p.name);
-end;
-
 procedure TLocalLabelList.CheckEmitted;
+var
+  i : longint;
+  lab : TLocalLabel;
 begin
-  ForEach_Static(@LocalLabelEmitted,nil)
+  for i:=0 to LocalLabelList.Count-1 do
+    begin
+      lab:=TLocalLabel(LocalLabelList[i]);
+      if not lab.emitted then
+        Message1(asmr_e_unknown_label_identifier,lab.name);
+    end;
 end;
 
 
@@ -1118,12 +1160,9 @@ var
 Begin
   CreateLocalLabel:=true;
 { Check if it already is defined }
-  lab:=TLocalLabel(LocalLabellist.Search(s));
+  lab:=TLocalLabel(LocalLabellist.Find(s));
   if not assigned(lab) then
-   begin
-     lab:=TLocalLabel.Create(s);
-     LocalLabellist.Insert(lab);
-   end;
+    lab:=TLocalLabel.Create(LocalLabellist,s);
 { set emitted flag and check for dup syms }
   if emit then
    begin
@@ -1142,34 +1181,37 @@ end;
                       Symbol table helper routines
 ****************************************************************************}
 
-procedure AsmSearchSym(const s:string;var srsym:tsym;var srsymtable:tsymtable);
+procedure AsmSearchSym(const s:string;var srsym:tsym;var srsymtable:TSymtable);
 var
   i : integer;
 begin
   i:=pos('.',s);
   { allow unit.identifier }
   if i>0 then
-   begin
-     searchsym(Copy(s,1,i-1),srsym,srsymtable);
-     if assigned(srsym) then
-      begin
-        if (srsym.typ=unitsym) and
-           (srsym.owner.symtabletype in [staticsymtable,globalsymtable]) and
-           srsym.owner.iscurrentunit then
-         srsym:=searchsymonlyin(tunitsym(srsym).unitsymtable,Copy(s,i+1,255))
-        else
-         srsym:=nil;
-      end;
-   end
+    begin
+      searchsym(Copy(s,1,i-1),srsym,srsymtable);
+      if assigned(srsym) then
+       begin
+         if (srsym.typ=unitsym) and
+            (srsym.owner.symtabletype in [staticsymtable,globalsymtable]) and
+            srsym.owner.iscurrentunit then
+           searchsym_in_module(tunitsym(srsym).module,Copy(s,i+1,255),srsym,srsymtable)
+         else
+           begin
+             srsym:=nil;
+             srsymtable:=nil;
+           end;
+       end;
+    end
   else
-   searchsym(s,srsym,srsymtable);
+    searchsym(s,srsym,srsymtable);
 end;
 
 
 Function SearchType(const hs:string;var size:aint): Boolean;
 var
   srsym : tsym;
-  srsymtable : tsymtable;
+  srsymtable : TSymtable;
 begin
   result:=false;
   size:=0;
@@ -1177,7 +1219,7 @@ begin
   if assigned(srsym) and
      (srsym.typ=typesym) then
     begin
-      size:=ttypesym(srsym).restype.def.size;
+      size:=ttypesym(srsym).typedef.size;
       result:=true;
     end;
 end;
@@ -1187,7 +1229,7 @@ end;
 Function SearchRecordType(const s:string): boolean;
 var
   srsym : tsym;
-  srsymtable : tsymtable;
+  srsymtable : TSymtable;
 Begin
   SearchRecordType:=false;
 { Check the constants in symtable }
@@ -1197,11 +1239,19 @@ Begin
      case srsym.typ of
        typesym :
          begin
-           if ttypesym(srsym).restype.def.deftype in [recorddef,objectdef] then
+           if ttypesym(srsym).typedef.typ in [recorddef,objectdef] then
             begin
               SearchRecordType:=true;
               exit;
             end;
+         end;
+       fieldvarsym :
+         begin
+           if (tfieldvarsym(srsym).vardef.typ in [recorddef,objectdef]) then
+             begin
+               SearchRecordType:=true;
+               exit;
+             end;
          end;
      end;
    end;
@@ -1219,7 +1269,7 @@ Function SearchIConstant(const s:string; var l:aint): boolean;
 {**********************************************************************}
 var
   srsym : tsym;
-  srsymtable : tsymtable;
+  srsymtable : TSymtable;
 Begin
   SearchIConstant:=false;
 { check for TRUE or FALSE reserved words first }
@@ -1244,7 +1294,7 @@ Begin
          begin
            if tconstsym(srsym).consttyp=constord then
             Begin
-              l:=tconstsym(srsym).value.valueord;
+              l:=tconstsym(srsym).value.valueord.svalue;
               SearchIConstant:=TRUE;
               exit;
             end;
@@ -1260,29 +1310,31 @@ Begin
 end;
 
 
-Function GetRecordOffsetSize(s:string;Var Offset: aint;var Size:aint):boolean;
+Function GetRecordOffsetSize(s:string;Var Offset: aint;var Size:aint; var mangledname: string; needvmtofs: boolean):boolean;
 { search and returns the offset and size of records/objects of the base }
 { with field name setup in field.                              }
 { returns FALSE if not found.                                  }
 { used when base is a variable or a typed constant name.       }
 var
-  st   : tsymtable;
+  st   : TSymtable;
   harrdef : tarraydef;
   sym  : tsym;
-  srsymtable : tsymtable;
+  srsymtable : TSymtable;
   i    : longint;
   base : string;
+  procdef: tprocdef;
 Begin
   GetRecordOffsetSize:=FALSE;
   Offset:=0;
   Size:=0;
+  mangledname:='';
   i:=pos('.',s);
   if i=0 then
    i:=255;
   base:=Copy(s,1,i-1);
   delete(s,1,i);
   if base='SELF' then
-   st:=current_procinfo.procdef._class.symtable
+   st:=current_structdef.symtable
   else
    begin
      asmsearchsym(base,sym,srsymtable);
@@ -1290,14 +1342,12 @@ Begin
      { we can start with a var,type,typedconst }
      if assigned(sym) then
        case sym.typ of
-         globalvarsym,
+         staticvarsym,
          localvarsym,
          paravarsym :
-           st:=Tabstractvarsym(sym).vartype.def.getsymtable(gs_record);
+           st:=Tabstractvarsym(sym).vardef.GetSymtable(gs_record);
          typesym :
-           st:=Ttypesym(sym).restype.def.getsymtable(gs_record);
-         typedconstsym :
-           st:=Ttypedconstsym(sym).typedconsttype.def.getsymtable(gs_record);
+           st:=Ttypesym(sym).typedef.GetSymtable(gs_record);
        end
      else
        s:='';
@@ -1311,10 +1361,7 @@ Begin
       i:=255;
      base:=Copy(s,1,i-1);
      delete(s,1,i);
-     if st.symtabletype=objectsymtable then
-       sym:=search_class_member(tobjectdef(st.defowner),base)
-     else
-       sym:=tsym(st.search(base));
+     sym:=search_struct_member(tabstractrecorddef(st.defowner),base);
      if not assigned(sym) then
       begin
         GetRecordOffsetSize:=false;
@@ -1325,28 +1372,76 @@ Begin
        fieldvarsym :
          with Tfieldvarsym(sym) do
            begin
-             inc(Offset,fieldoffset);
+             if not tabstractrecordsymtable(sym.owner).is_packed then
+               inc(Offset,fieldoffset)
+             else if tfieldvarsym(sym).fieldoffset mod 8 = 0 then
+               inc(Offset,fieldoffset div 8)
+             else
+               Message(asmr_e_packed_element);
              size:=getsize;
-             with vartype do
-               case def.deftype of
-                 arraydef :
-                   begin
-                     { for arrays try to get the element size, take care of
-                       multiple indexes }
-                     harrdef:=tarraydef(def);
-                     while assigned(harrdef.elementtype.def) and
-                           (harrdef.elementtype.def.deftype=arraydef) do
-                      harrdef:=tarraydef(harrdef.elementtype.def);
-                     size:=harrdef.elesize;
-                   end;
-                 recorddef :
-                   st:=trecorddef(def).symtable;
-                 objectdef :
-                   st:=tobjectdef(def).symtable;
-               end;
+             case vardef.typ of
+               arraydef :
+                 begin
+                   { for arrays try to get the element size, take care of
+                     multiple indexes }
+                   harrdef:=tarraydef(vardef);
+                   while assigned(harrdef.elementdef) and
+                         (harrdef.elementdef.typ=arraydef) do
+                    harrdef:=tarraydef(harrdef.elementdef);
+                   if not is_packed_array(harrdef) then
+                     size:=harrdef.elesize
+                   else
+                     begin
+                       if (harrdef.elepackedbitsize mod 8) <> 0 then
+                         Message(asmr_e_packed_element);
+                       size := (harrdef.elepackedbitsize + 7) div 8;
+                     end;
+                 end;
+               recorddef :
+                 st:=trecorddef(vardef).symtable;
+               objectdef :
+                 st:=tobjectdef(vardef).symtable;
+             end;
            end;
+       procsym:
+         begin
+           st:=nil;
+           if Tprocsym(sym).ProcdefList.Count>1 then
+             Message(asmr_w_calling_overload_func);
+           procdef:=tprocdef(tprocsym(sym).ProcdefList[0]);
+           if (not needvmtofs) then
+             begin
+               mangledname:=procdef.mangledname;
+             end
+           else
+             begin
+               { can only get the vmtoffset of virtual methods }
+               if not(po_virtualmethod in procdef.procoptions) or
+                   is_objectpascal_helper(procdef.struct) then
+                 Message1(asmr_e_no_vmtoffset_possible,FullTypeName(procdef,nil))
+               else
+                 begin
+                   { size = sizeof(target_system_pointer) }
+                   size:=sizeof(pint);
+                   offset:=tobjectdef(procdef.struct).vmtmethodoffset(procdef.extnumber)
+                 end;
+             end;
+           { if something comes after the procsym, it's invalid assembler syntax }
+           GetRecordOffsetSize:=(s='');
+           exit;
+         end;
      end;
    end;
+   { Support Field.Type as typecasting }
+   if (st=nil) and (s<>'') then
+     begin
+       asmsearchsym(s,sym,srsymtable);
+       if assigned(sym) and (sym.typ=typesym) then
+         begin
+           size:=ttypesym(sym).typedef.size;
+           s:=''
+         end;
+     end;
    GetRecordOffsetSize:=(s='');
 end;
 
@@ -1354,7 +1449,7 @@ end;
 Function SearchLabel(const s: string; var hl: tasmlabel;emit:boolean): boolean;
 var
   sym : tsym;
-  srsymtable : tsymtable;
+  srsymtable : TSymtable;
   hs  : string;
 Begin
   hl:=nil;
@@ -1367,11 +1462,22 @@ Begin
   case sym.typ of
     labelsym :
       begin
-        hl:=tlabelsym(sym).lab;
+        if symtablestack.top.symtablelevel<>srsymtable.symtablelevel then
+          begin
+            Tlabelsym(sym).nonlocal:=true;
+            if emit then
+              exclude(current_procinfo.procdef.procoptions,po_inline);
+          end;
+        if not(assigned(tlabelsym(sym).asmblocklabel)) then
+          if Tlabelsym(sym).nonlocal then
+            current_asmdata.getglobaljumplabel(tlabelsym(sym).asmblocklabel)
+          else
+            current_asmdata.getjumplabel(tlabelsym(sym).asmblocklabel);
+        hl:=tlabelsym(sym).asmblocklabel;
         if emit then
-         tlabelsym(sym).defined:=true
+          tlabelsym(sym).defined:=true
         else
-         tlabelsym(sym).used:=true;
+          tlabelsym(sym).used:=true;
         SearchLabel:=true;
       end;
   end;
@@ -1383,7 +1489,7 @@ end;
  {*************************************************************************}
 
 
-   Procedure ConcatString(p : TAAsmoutput;s:string);
+   Procedure ConcatString(p : TAsmList;s:string);
   {*********************************************************************}
   { PROCEDURE ConcatString(s:string);                                   }
   {  Description: This routine adds the character chain pointed to in   }
@@ -1393,10 +1499,10 @@ end;
    pc: PChar;
   Begin
      getmem(pc,length(s)+1);
-     p.concat(Tai_string.Create_length_pchar(strpcopy(pc,s),length(s)));
+     p.concat(Tai_string.Create_pchar(strpcopy(pc,s),length(s)));
   end;
 
-  Procedure ConcatPasString(p : TAAsmoutput;s:string);
+  Procedure ConcatPasString(p : TAsmList;s:string);
   {*********************************************************************}
   { PROCEDURE ConcatPasString(s:string);                                }
   {  Description: This routine adds the character chain pointed to in   }
@@ -1407,25 +1513,8 @@ end;
      p.concat(Tai_string.Create(s));
   end;
 
-  Procedure ConcatDirect(p : TAAsmoutput;s:string);
-  {*********************************************************************}
-  { PROCEDURE ConcatDirect(s:string)                                    }
-  {  Description: This routine output the string directly to the asm    }
-  {  output, it is only sed when writing special labels in AT&T mode,   }
-  {  and should not be used without due consideration, since it may     }
-  {  cause problems.                                                    }
-  {*********************************************************************}
-  Var
-   pc: PChar;
-  Begin
-     getmem(pc,length(s)+1);
-     p.concat(Tai_direct.Create(strpcopy(pc,s)));
-  end;
 
-
-
-
-Procedure ConcatConstant(p: TAAsmoutput; value: aint; constsize:byte);
+Procedure ConcatConstant(p: TAsmList; value: aint; constsize:byte);
 {*********************************************************************}
 { PROCEDURE ConcatConstant(value: aint; maxvalue: aint);        }
 {  Description: This routine adds the value constant to the current   }
@@ -1473,13 +1562,13 @@ Begin
 end;
 
 
-  Procedure ConcatConstSymbol(p : TAAsmoutput;const sym:string;symtyp:tasmsymtype;l:aint);
+  Procedure ConcatConstSymbol(p : TAsmList;const sym:string;symtyp:tasmsymtype;l:aint);
   begin
-    p.concat(Tai_const.Createname(sym,symtyp,l));
+    p.concat(Tai_const.Createname(sym,l));
   end;
 
 
-  Procedure ConcatRealConstant(p : TAAsmoutput;value: bestreal; real_typ : tfloattype);
+  Procedure ConcatRealConstant(p : TAsmList;value: bestreal; real_typ : tfloattype);
   {***********************************************************************}
   { PROCEDURE ConcatRealConstant(value: bestreal; real_typ : tfloattype); }
   {  Description: This routine adds the value constant to the current     }
@@ -1496,17 +1585,18 @@ end;
           s32real : p.concat(Tai_real_32bit.Create(value));
           s64real :
 {$ifdef ARM}
-           if aktfputype in [fpu_fpa,fpu_fpa10,fpu_fpa11] then
+           if is_double_hilo_swapped then
              p.concat(Tai_real_64bit.Create_hiloswapped(value))
            else
 {$endif ARM}
              p.concat(Tai_real_64bit.Create(value));
-          s80real : p.concat(Tai_real_80bit.Create(value));
+          s80real : p.concat(Tai_real_80bit.Create(value,s80floattype.size));
+          sc80real : p.concat(Tai_real_80bit.Create(value,sc80floattype.size));
           s64comp : p.concat(Tai_comp_64bit.Create(trunc(value)));
        end;
     end;
 
-   Procedure ConcatLabel(p: TAAsmoutput;var l : tasmlabel);
+   Procedure ConcatLabel(p: TAsmList;var l : tasmlabel);
   {*********************************************************************}
   { PROCEDURE ConcatLabel                                               }
   {  Description: This routine either emits a label or a labeled        }
@@ -1516,7 +1606,7 @@ end;
      p.concat(Tai_label.Create(l));
    end;
 
-   procedure ConcatAlign(p:TAAsmoutput;l:aint);
+   procedure ConcatAlign(p:TAsmList;l:aint);
   {*********************************************************************}
   { PROCEDURE ConcatPublic                                              }
   {  Description: This routine emits an global   definition to the      }
@@ -1526,63 +1616,25 @@ end;
      p.concat(Tai_align.Create(l));
    end;
 
-   procedure ConcatPublic(p:TAAsmoutput;const s : string);
+   procedure ConcatPublic(p:TAsmList;const s : string);
   {*********************************************************************}
   { PROCEDURE ConcatPublic                                              }
   {  Description: This routine emits an global   definition to the      }
   {  linked list of instructions.(used by AT&T styled asm)              }
   {*********************************************************************}
    begin
-       p.concat(Tai_symbol.Createname_global(s,AT_FUNCTION,0));
+       p.concat(Tai_symbol.Createname_global(s,AT_LABEL,0));
    end;
 
-   procedure ConcatLocal(p:TAAsmoutput;const s : string);
+   procedure ConcatLocal(p:TAsmList;const s : string);
   {*********************************************************************}
   { PROCEDURE ConcatLocal                                               }
   {  Description: This routine emits an local    definition to the      }
   {  linked list of instructions.                                       }
   {*********************************************************************}
    begin
-       p.concat(Tai_symbol.Createname(s,AT_FUNCTION,0));
+       p.concat(Tai_symbol.Createname(s,AT_LABEL,0));
    end;
 
-  Procedure ConcatGlobalBss(const s : string;size : aint);
-  {*********************************************************************}
-  { PROCEDURE ConcatGlobalBss                                           }
-  {  Description: This routine emits an global  datablock   to the      }
-  {  linked list of instructions.                                       }
-  {*********************************************************************}
-   begin
-       bssSegment.concat(Tai_datablock.Create_global(s,size));
-   end;
-
-  Procedure ConcatLocalBss(const s : string;size : aint);
-  {*********************************************************************}
-  { PROCEDURE ConcatLocalBss                                            }
-  {  Description: This routine emits a local datablcok      to the      }
-  {  linked list of instructions.                                       }
-  {*********************************************************************}
-   begin
-       bssSegment.concat(Tai_datablock.Create(s,size));
-   end;
 
 end.
-{
-  $Log: rautils.pas,v $
-  Revision 1.104  2005/02/14 17:13:07  peter
-    * truncate log
-
-  Revision 1.103  2005/01/31 17:07:50  peter
-    * fix [regpara] in intel assembler
-
-  Revision 1.102  2005/01/20 17:05:53  peter
-    * use val() for decoding integers
-
-  Revision 1.101  2005/01/19 22:19:41  peter
-    * unit mapping rewrite
-    * new derefmap added
-
-  Revision 1.100  2005/01/05 15:22:39  florian
-    * added support of shifter ops in arm inline assembler
-
-}

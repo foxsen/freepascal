@@ -1,6 +1,5 @@
 unit matrix;
 {
-    $Id: matrix.pp,v 1.4 2005/02/14 17:13:22 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2004 by Daniel Mantione
 
@@ -28,15 +27,12 @@ unit matrix;
 
 {*****************************************************************************}
 
-{$ifdef VER1_0}
-{1.0 has too much macro bugs :( }
-interface implementation end.
-{$else}
-
 interface
 
 {*****************************************************************************}
+{$mode fpc}
 
+{$ifndef FPUNONE}
 {$MACRO on}
 
 type    Tvector2_single_data=array[0..1] of single;
@@ -826,11 +822,7 @@ implementation
 {$INFO Compile mmatimp.inc for Tmatrix4_extended}
 {$i mmatimp.inc}
 
+{$else}
+implementation
+{$endif FPUNONE}
 end.
-{$endif VER1_0}
-{
-  $Log: matrix.pp,v $
-  Revision 1.4  2005/02/14 17:13:22  peter
-    * truncate log
-
-}

@@ -1,5 +1,4 @@
 {
-    $Id: dos.pp,v 1.46 2005/03/15 16:53:52 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Michael Van Canneyt and Peter Vreman,
     members of the Free Pascal development team
@@ -15,6 +14,8 @@
 Unit Dos;
 Interface
 
+uses baseunix;
+
 Const
   FileNameLen = 255;
 
@@ -25,12 +26,13 @@ Type
 {$endif FPC_REQUIRES_PROPER_ALIGNMENT}
     Record
   {Fill : array[1..21] of byte;  Fill replaced with below}
+    SearchPos  : TOff;        {directory position}
     SearchNum  : LongInt;     {to track which search this is}
-    SearchPos  : LongInt;     {directory position}
     DirPtr     : Pointer;     {directory pointer for reading directory}
     SearchType : Byte;        {0=normal, 1=open will close, 2=only 1 file}
     SearchAttr : Byte;        {attribute we are searching for}
-    Fill       : Array[1..07] of Byte; {future use}
+    Mode       : Word;
+    Fill       : Array[1..1] of Byte; {future use}
   {End of fill}
     Attr       : Byte;        {attribute of found file}
     Time       : LongInt;     {last modify date of found file}
@@ -50,12 +52,15 @@ Procedure UnixDateToDt(SecsPast: LongInt; Var Dt: DateTime);
 Function  DTToUnixDate(DT: DateTime): LongInt;
 
 {Disk}
-Procedure AddDisk(const path:string);
+Function AddDisk(const path:string) : byte;
 
 Implementation
 
 Uses
-  Strings,Unix,BaseUnix,{$ifdef FPC_USE_LIBC}initc{$ELSE}Syscall{$ENDIF};
+  UnixUtil, // tzSeconds
+  Strings,
+  Unix,
+  {$ifdef FPC_USE_LIBC}initc{$ELSE}Syscall{$ENDIF};
 
 {$DEFINE HAS_GETMSCOUNT}
 
@@ -292,7 +297,7 @@ var
 {  tz : TimeZone;}
 begin
   FPGetTimeOfDay (@tv, nil {,tz});
-  GetMsCount := tv.tv_Sec * 1000 + tv.tv_uSec div 1000;
+  GetMsCount := int64(tv.tv_Sec) * 1000 + tv.tv_uSec div 1000;
 end;
 
 
@@ -358,7 +363,7 @@ End;
 
 {
   The Diskfree and Disksize functions need a file on the specified drive, since this
-  is required for the statfs system call.
+  is required for the fpstatfs system call.
   These filenames are set in drivestr[0..26], and have been preset to :
    0 - '.'      (default drive - hence current dir is ok.)
    1 - '/fd0/.'  (floppy drive 1 - should be adapted to local system )
@@ -380,15 +385,16 @@ const
 var
   DriveStr : array[4..26] of pchar;
 
-Procedure AddDisk(const path:string);
+Function AddDisk(const path:string) : byte;
 begin
   if not (DriveStr[Drives]=nil) then
-   FreeMem(DriveStr[Drives],StrLen(DriveStr[Drives])+1);
+   FreeMem(DriveStr[Drives]);
   GetMem(DriveStr[Drives],length(Path)+1);
   StrPCopy(DriveStr[Drives],path);
+  AddDisk:=Drives;
   inc(Drives);
   if Drives>26 then
-   Drives:=4;
+    Drives:=4;
 end;
 
 
@@ -397,8 +403,8 @@ Function DiskFree(Drive: Byte): int64;
 var
   fs : tstatfs;
 Begin
-  if ((Drive<4) and (not (fixdrivestr[Drive]=nil)) and (StatFS(fixdrivestr[drive],fs)<>-1)) or
-     ((not (drivestr[Drive]=nil)) and (StatFS(drivestr[drive],fs)<>-1)) then
+  if ((Drive<4) and (not (fixdrivestr[Drive]=nil)) and (fpStatFS(fixdrivestr[drive],@fs)<>-1)) or
+     ((not (drivestr[Drive]=nil)) and (fpStatFS(drivestr[drive],@fs)<>-1)) then
    Diskfree:=int64(fs.bavail)*int64(fs.bsize)
   else
    Diskfree:=-1;
@@ -410,13 +416,26 @@ Function DiskSize(Drive: Byte): int64;
 var
   fs : tstatfs;
 Begin
-  if ((Drive<4) and (not (fixdrivestr[Drive]=nil)) and (StatFS(fixdrivestr[drive],fs)<>-1)) or
-     ((not (drivestr[Drive]=nil)) and (StatFS(drivestr[drive],fs)<>-1)) then
+  if ((Drive<4) and (not (fixdrivestr[Drive]=nil)) and (fpStatFS(fixdrivestr[drive],@fs)<>-1)) or
+     ((not (drivestr[Drive]=nil)) and (fpStatFS(drivestr[drive],@fs)<>-1)) then
    DiskSize:=int64(fs.blocks)*int64(fs.bsize)
   else
    DiskSize:=-1;
 End;
 
+
+
+Procedure FreeDriveStr;
+var
+  i: longint;
+begin
+  for i:=low(drivestr) to high(drivestr) do
+    if assigned(drivestr[i]) then
+      begin
+        freemem(drivestr[i]);
+        drivestr[i]:=nil;
+      end;
+end;
 
 {******************************************************************************
                        --- Findfirst FindNext ---
@@ -569,6 +588,7 @@ begin
      f.Name:=Copy(s,f.NamePos+1,255);
      f.Attr:=Info.FMode;
      f.Size:=Info.FSize;
+     f.mode:=st.st_mode;
      UnixDateToDT(Info.FMTime, DT);
      PackTime(DT,f.Time);
      FindGetFileInfo:=true;
@@ -643,7 +663,7 @@ Begin
            Move(f.SearchSpec[1], DirName[0], f.NamePos);
            DirName[f.NamePos] := #0;
          End;
-        f.DirPtr := fpopendir(@(DirName));
+        f.DirPtr := fpopendir(@DirName[0]);
         If f.DirPtr <> nil Then
          begin
            ArrayPos:=FindLastUsed;
@@ -668,7 +688,7 @@ Begin
      if p=nil then
       FName:=''
      else
-      FName:=Strpas(@p^.d_name);
+      FName:=Strpas(@p^.d_name[0]);
      If FName='' Then
       Finished:=True
      Else
@@ -762,7 +782,7 @@ Var
   LinAttr : longint;
 Begin
   DosError:=0;
-  if FPStat(@textrec(f).name,info)<0 then
+  if FPStat(@textrec(f).name[0],info)<0 then
    begin
      Attr:=0;
      DosError:=3;
@@ -774,7 +794,7 @@ Begin
    Attr:=$10
   else
    Attr:=$0;
-  if fpAccess(@textrec(f).name,W_OK)<0 then
+  if fpAccess(@textrec(f).name[0],W_OK)<0 then
    Attr:=Attr or $1;
   if filerec(f).name[0]='.' then
    Attr:=Attr or $2;
@@ -811,7 +831,7 @@ Begin
       UnPackTime(Time,DT);
       modtime:=DTToUnixDate(DT);
     end;
-  if fputime(@filerec(f).name,@utim)<0 then
+  if fputime(@filerec(f).name[0],@utim)<0 then
     begin
       Time:=0;
       doserror:=3;
@@ -888,17 +908,6 @@ End;
                             --- Initialization ---
 ******************************************************************************}
 
+Finalization
+  FreeDriveStr;
 End.
-
-{
-  $Log: dos.pp,v $
-  Revision 1.46  2005/03/15 16:53:52  peter
-    * return doserror=2 if path is empty in exec()
-
-  Revision 1.45  2005/02/14 17:13:31  peter
-    * truncate log
-
-  Revision 1.44  2005/02/13 20:01:38  peter
-    * include file cleanup
-
-}

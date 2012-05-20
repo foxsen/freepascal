@@ -1,5 +1,4 @@
 {
-    $Id: i_atari.pas,v 1.7 2005/03/20 22:36:45 olle Exp $
     Copyright (c) 1998-2002 by Peter Vreman
 
     This unit implements support information structures for atari
@@ -22,6 +21,8 @@
 { This unit implements support information structures for atari. }
 unit i_atari;
 
+{$i fpcdefs.inc}
+
   interface
 
     uses
@@ -38,8 +39,6 @@ unit i_atari;
             short_name   : 'ATARI';
             unit_env     : '';
             extradefines : '';
-            sharedlibext : '.dll';
-            staticlibext : '.a';
             exeext       : '.tpp';
             defext       : '';
             scriptext    : '';
@@ -50,8 +49,16 @@ unit i_atari;
             objext       : '.o';
             resext       : '.res';
             resobjext    : '.or';
+            sharedlibext : '.dll';
+            staticlibext : '.a';
             staticlibprefix : '';
             sharedlibprefix : '';
+            sharedClibext : '.dll';
+            staticClibext : '.a';
+            staticClibprefix : 'lib';
+            sharedClibprefix : '';
+            importlibprefix : 'libimp';
+            importlibext : '.a';
             p_ext_support : false;
             Cprefix      : '_';
             newline      : #10;
@@ -63,6 +70,7 @@ unit i_atari;
             linkextern   : ld_m68k_atari;
             ar           : ar_m68k_ar;
             res          : res_none;
+            dbg          : dbg_stabs;
             script       : script_unix;
             endian       : endian_big;
             stackalignment : 2;
@@ -81,13 +89,3 @@ initialization
   {$endif atari}
 {$endif cpu68}
 end.
-{
-  $Log: i_atari.pas,v $
-  Revision 1.7  2005/03/20 22:36:45  olle
-    * Cleaned up handling of source file extension.
-    + Added support for .p extension for macos and darwin
-
-  Revision 1.6  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

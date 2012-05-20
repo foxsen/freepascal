@@ -1,5 +1,4 @@
 {
-    $Id: ptypes.inc,v 1.14 2005/03/16 22:26:12 florian Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2001 by Free Pascal development team
 
@@ -21,7 +20,9 @@
 {***********************************************************************}
 
 { Introduced defines
-    - 64bitfs   (should be on if libc switches to a 64-bit system.
+    - fs32bit, should be on if libc only supports sizeof(off_t)=4
+               we assume one typically compiles C applications with 
+               #define _FILE_OFFSET_BITS 64
 
 All three tested systems (PPC,Alpha,2x i386) gave the same POSIX limits,
 and all three 32-bit systems returned completely identical types too
@@ -34,11 +35,7 @@ introduction)
 
 Type
 
-{$ifndef VER_1_0}               // maybe wrong (kernel vs libc)
     dev_t    = cuint64;         { used for device numbers      }
-{$else}
-    dev_t    = int64;
-{$endif}
     TDev     = dev_t;
     pDev     = ^dev_t;
 
@@ -46,15 +43,19 @@ Type
     TkDev    = KDev_t;          // kernel and glibc. This is kernel.
     pkDev    = ^kdev_t;
 
-    gid_t    = cuint32;         { used for group IDs           }
-    TGid     = gid_t;
-    pGid     = ^gid_t;
-
     ino_t    = clong;           { used for file serial numbers }
     TIno     = ino_t;
     pIno     = ^ino_t;
 
-    mode_t   = cuint32;         { used for file attributes     }
+    ino64_t  = cuint64;
+    TIno64   = ino64_t;
+    pIno64   = ^ino64_t;
+
+{$ifdef cpu64}
+    mode_t   = cint;         { used for file attributes     }
+{$else cpu64}
+    mode_t   = cuint32;      { used for file attributes     }
+{$endif cpu64}
     TMode    = mode_t;
     pMode    = ^mode_t;
 
@@ -62,19 +63,19 @@ Type
     TnLink   = nlink_t;
     pnLink   = ^nlink_t;
 
-{$ifdef cpu64}
+{$if not defined(fs32bit)}
     off_t    = cint64;          { used for file sizes          }
 {$else}
-   {$ifdef 64BitFS}
-    off_t    = cint64;
-   {$else}
     off_t    = cint;
-   {$endif}
 {$endif}
     TOff     = off_t;
     pOff     = ^off_t;
 
-    pid_t    = cint32;          { used as process identifier   }
+    off64_t  = cint64;
+    TOff64   = off64_t;
+    pOff64   = ^off64_t;
+
+    pid_t    = cint;          { used as process identifier   }
     TPid     = pid_t;
     pPid     = ^pid_t;
 
@@ -97,48 +98,91 @@ Type
     pSSize    = ^ssize_t;
     TClock    = clock_t;
     pClock    = ^clock_t;
-    TTime     = time_t;
+    // TTime    = time_t;    // Not allowed in system unit, -> unixtype
+
     pTime     = ^time_t;
     ptime_t   = ^time_t;
 
-    wchar_t   = widechar;
+    wchar_t   = cint32;
     pwchar_t  = ^wchar_t;
 
+{$ifdef cpu64}
     uid_t    = cuint32;         { used for user ID type        }
+    gid_t    = cuint32;         { used for group IDs           }
+    ipc_pid_t = cint;
+{$else cpu64}
+    uid_t    = cuint32;         { used for user ID type        }
+    gid_t    = cuint32;         { used for group IDs           }
+    ipc_pid_t = cushort;      // still 16-bit
+{$endif cpu64}
     TUid     = uid_t;
     pUid     = ^uid_t;
+    TGid     = gid_t;
+    pGid     = ^gid_t;
+    
+    TIOCtlRequest = cInt;
+
 
     socklen_t= cuint32;
     TSockLen = socklen_t;
     pSockLen = ^socklen_t;
 
-  timeval     = packed record
-                 tv_sec,
+  timeval     = record
+                 tv_sec:time_t;
                  tv_usec:clong;
                 end;
   ptimeval    = ^timeval;
   TTimeVal    = timeval;
 
-  timespec    = packed record
+  timespec    = record
                  tv_sec   : time_t;
                  tv_nsec  : clong;
                 end;
   ptimespec   = ^timespec;
   TTimeSpec   = timespec;
 
-  TStatfs = packed record
+  {$ifdef cpu64}
+  TStatfs = record
+    fstype,            { File system type }
+    bsize   : clong;    { Optimal block trensfer size }
+    blocks,            { Data blocks in system }
+    bfree,             { free blocks in system }
+    bavail,            { Available free blocks to non-root users }
+    files,             { File nodes in system }
+    ffree   : culong;             { Free file nodes in system }
+    fsid    : array[0..1] of cint;          { File system ID }
+    namelen : clong; { Maximum name length in system }
+    frsize  : clong;
+    spare   : array [0..4] of clong; { For later use }
+  end;
+  {$else}
+  TStatfs = record
     fstype,            { File system type }
     bsize   : cint;    { Optimal block trensfer size }
     blocks,            { Data blocks in system }
     bfree,             { free blocks in system }
     bavail,            { Available free blocks to non-root users }
     files,             { File nodes in system }
-    ffree   : clong;             { Free file nodes in system }
+    ffree   : culong;  { Free file nodes in system }
     fsid    : array[0..1] of cint;          { File system ID }
-    namelen : clong; { Maximum name length in system }
-    spare   : array [0..5] of clong; { For later use }
+    namelen,           { Maximum name length in system }
+    frsize  : cint;
+    spare   : array [0..4] of cint; { For later use }
   end;
+  {$endif}
   PStatFS=^TStatFS;
+
+  mbstate_value_t = record
+    case byte of
+      0: (__wch: wint_t);
+      1: (__wchb: array[0..3] of char);
+  end;
+  
+  mbstate_t = record
+    __count: cint;
+    __value: mbstate_value_t;
+  end;
+  pmbstate_t = ^mbstate_t;
 
   pthread_t = culong;
 
@@ -188,15 +232,16 @@ Type
 
   pthread_key_t = cuint;
 
-  pthread_rwlock_t = record
-    __rw_readers: cint;
-    __rw_writer: pointer;
-    __rw_read_waiting: pointer;
-    __rw_write_waiting: pointer;
-    __rw_kind: cint;
-    __rw_pshared: cint;
-  end;
+const
+  pthreadrwlocksize =  {$ifdef CPU64} 56{$else}32{$endif};
 
+type 
+
+  pthread_rwlock_t = record // should be 56 for 64-bit, 32 bytes for 32-bit mantis #21552
+			case boolean of
+			 false : (_data : array[0..pthreadrwlocksize-1] of char);
+		         true  : (align : clong);
+  end;
   pthread_rwlockattr_t = record
     __lockkind: cint;
     __pshared: cint;
@@ -241,13 +286,4 @@ CONST
   Prio_PGrp    = 1;
   Prio_User    = 2;
 
-{
-   $Log: ptypes.inc,v $
-   Revision 1.14  2005/03/16 22:26:12  florian
-     + ansi<->wide implemented using iconv
-
-   Revision 1.13  2005/02/14 17:13:30  peter
-     * truncate log
-
-}
 

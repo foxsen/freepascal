@@ -1,5 +1,4 @@
 {
-    $Id: fp.pas,v 1.29 2005/04/25 08:19:10 marco Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 1998-2000 by Berczi Gabor
 
@@ -15,26 +14,35 @@
  **********************************************************************}
 program FP;
 
+{$ifdef Windows}
+{ some windows versions, namely at least XP x64 don't like if the IDE stack
+  is too big }
+{$maxstacksize 3000000}
 {$ifdef IncRes}
-{$ifdef win32}
 {$R fpw32t.rc}
 {$R fpw32ico.rc}
-{$endif win32}
 {$endif IncRes}
+{$endif Windows}
 
 {$I globdir.inc}
 (**********************************************************************)
 (* CONDITIONAL DEFINES                                                *)
 (*  - NODEBUG    No Debugging support                                 *)
-(*  - TP         Turbo Pascal mode                                    *)
 (*  - i386       Target is an i386 IDE                                *)
 (**********************************************************************)
 
 uses
+{$ifdef Windows}
+  windows,
+{$endif Windows}
 {$ifndef NODEBUG}
-{$ifdef win32}
-  fpcygwin,
-{$endif win32}
+{$ifdef Windows}
+  {$ifdef USE_MINGW_GDB}
+    fpmingw,
+  {$else}
+    fpcygwin, 
+  {$endif}
+{$endif Windows}
 {$endif NODEBUG}
 {$ifdef IDEHeapTrc}
   PPheap,
@@ -45,9 +53,7 @@ uses
 {$ifdef go32v2}
   dpmiexcp,
 {$endif go32v2}
-{$ifdef fpc}
   keyboard,video,mouse,
-{$endif fpc}
 {$ifdef HasSignal}
   fpcatch,
 {$endif HasSignal}
@@ -65,7 +71,7 @@ uses
 {$endif COLORSEL}
   ASCIITab,
   WUtils,WViews,WHTMLScn,WHelp,
-  FPIDE,FPCalc,FPCompil,FPString,
+  FPIDE,FPCalc,FPCompil,
   FPIni,FPViews,FPConst,FPVars,FPUtils,FPHelp,FPSwitch,FPUsrScr,
   FPTools,
 {$ifndef NODEBUG}
@@ -74,10 +80,9 @@ uses
   FPTemplt,FPRedir,FPDesk,
   FPCodTmp,FPCodCmp,
 
-  systems;
+  systems,globtype,globals;
 
 
-{$ifdef fpc}
 Const
   DummyMouseDriver : TMouseDriver = (
     useDefaultQueue : true;
@@ -94,7 +99,26 @@ Const
     PollMouseEvent  : nil;
     PutMouseEvent   : nil;
   );
-{$endif fpc}
+
+{$ifdef useresstrings}
+resourcestring
+{$else}
+const
+{$endif}
+      { caught signals or abnormal exits }
+            { Debugger messages and status hints }
+      error_programexitedwitherror = #3'Program generated a RTE %d'#13+
+                                     #3'at address $%s.'#13+
+                                     #3'Save your sources and restart the IDE.';
+      error_programexitedwithsignal = #3'Program generated a signal %d.'#13+
+                                      #3'Save your sources and restart the IDE.';
+
+      continue_despite_error = #3'The IDE generated an internal error'#13+
+                            #3'Do you really want to continue?'#13+
+                            #3'The IDE could be in an unstable state.';
+
+      leaving_after_error = #3'The IDE generated an internal error'#13+
+                            #3'and will now be closed.';
 
 {$ifdef DEBUG}
 const
@@ -170,21 +194,17 @@ begin
              if Length(Param)=1 then
                begin
                  UseMouse:=false;
-{$ifdef fpc}
                  DoneMouse;
                  SetMouseDriver(DummyMouseDriver);
-{$endif fpc}
                  ButtonCount:=0;
                end;
-{$ifdef fpc}
-          'F' :
+{          'F' :
              if Length(Param)=1 then
-               NoExtendedFrame:=true;
+               NoExtendedFrame:=true;}
 {$ifdef Unix}
           'T' :  DebuggeeTTY:=Copy(Param,2,High(Param));
 {$endif Unix}
          { 'M' : TryToMaximizeScreen:=true;}
-{$endif fpc}
 {$ifdef DEBUG}
           'Z' : UseOldBufStreamMethod:=true;
           'X' : CloseImmediately:=true;
@@ -193,11 +213,11 @@ begin
       end
     else
       if not BeforeINI then
-        TryToOpenFile(nil,Param,0,0,{false}true);
+        TryToOpenFileMulti(nil,Param,0,0,{false}true);
   end;
 end;
 
-Procedure MyStreamError(Var S: TStream); {$ifndef FPC}far;{$endif}
+Procedure MyStreamError(Var S: TStream);
 var ErrS: string;
 begin
   case S.Status of
@@ -207,7 +227,7 @@ begin
   end;
   if ErrS<>'' then
   begin
-    if Assigned(Application) then
+    if (application<>nil) and (ideapp.displaymode=dmIDE) then
       ErrorBox('Stream error: '+#13+ErrS,nil)
     else
 
@@ -285,6 +305,25 @@ begin
 {$ENDIF}
 end;
 
+
+procedure InitCompilerSwitches;
+  begin
+    default_settings.globalswitches:=[cs_check_unit_name];
+    default_settings.moduleswitches:=[cs_extsyntax,cs_implicit_exceptions];
+    default_settings.localswitches:=[cs_typed_const_writable];
+  end;
+
+
+{The square bullet needs an MS-DOS code page. On Unix it is for sure the code
+ page is not available before video is initialized. (And only in certain
+ circumstances after that, so, use a plain ascii character as bullet on Unix.)}
+
+{$if defined(unix) or defined(amiga) or defined(morphos)}
+const bullet='*';
+{$else}
+const bullet='þ';
+{$endif}
+
 BEGIN
 {$IFDEF HasSignal}
   EnableCatchSignals;
@@ -295,14 +334,16 @@ BEGIN
   HistorySize:=16384;
 
   { Startup info }
-  writeln('þ Free Pascal IDE Version '+VersionStr+' ['+{$i %date%}+']');
-  writeln('þ Compiler Version '+Version_String);
+  writeln(bullet+' Free Pascal IDE Version '+VersionStr+' ['+{$i %date%}+']');
+  writeln(bullet+' Compiler Version '+Full_Version_String);
 {$ifndef NODEBUG}
-  writeln('þ GBD Version '+GDBVersion);
- {$ifdef win32}
-   writeln('þ Cygwin "',GetCygwinFullName,'" version ',GetCygwinVersionString);
+  writeln(bullet+' GDB Version '+GDBVersion);
+ {$ifdef Windows}
+  {$ifndef USE_MINGW_GDB}
+   writeln(bullet+' Cygwin "',GetCygwinFullName,'" version ',GetCygwinVersionString);
    CheckCygwinVersion;
- {$endif win32}
+  {$endif}
+ {$endif Windows}
 {$endif NODEBUG}
 
   ProcessParams(true);
@@ -317,6 +358,10 @@ BEGIN
   StreamError:=@MyStreamError;
 
   ShowReadme:=ShowReadme or (LocateFile(INIFileName)='');
+  if LocateFile(INIFileName)<>'' then
+    writeln(bullet+' Using configuration files from: ',DirOf(LocateFile(INIFileName)));
+
+  InitCompilerSwitches;
 
 {$ifdef VESA}
   InitVESAScreenModes;
@@ -347,6 +392,9 @@ BEGIN
   InitDesktopFile;
   LoadDesktop;
 
+  {Menubar might be changed because of loading INI file.}
+  IDEapp.reload_menubar;
+
   { Handle Standard Units }
   if UseAllUnitsInCodeComplete then
     AddAvailableUnitsToCodeComplete(false);
@@ -375,6 +423,7 @@ BEGIN
   StoreExitProc:=ExitProc;
   ExitProc:=@InterceptExit;
 
+
   repeat
 {$IFDEF HasSignal}
      SetJmpRes:=setjmp(StopJmp);
@@ -396,10 +445,10 @@ BEGIN
             { If ExitProc=@InterceptExit then
               ExitProc:=StoreExitProc;}
             Str(SeenExitCode,ErrS);
-            if Assigned(Application) then
+            if (application<>nil) and (ideapp.displaymode=dmIDE) then
               begin
                 P.l1:=SeenExitCode;
-                ErrS:=hexstr(longint(SeenErrorAddr),8);
+                ErrS:=hexstr(PtrUInt(SeenErrorAddr),sizeof(PtrUInt)*2);
                 P.s:=@ErrS;
                 if OKCancelBox(error_programexitedwitherror,@P)=cmCancel then
                   UserWantsToGoOn:=true;
@@ -411,7 +460,7 @@ BEGIN
           begin
             Str(SetJmpRes,ErrS);
           { Longjmp was called by fpcatch }
-            if Assigned(Application) then
+            if (application<>nil) and (ideapp.displaymode=dmIDE) then
               begin
                 P.l1:=SetJmpRes;
                 if OKCancelBox(error_programexitedwithsignal,@P)=cmCancel then
@@ -420,7 +469,14 @@ BEGIN
             else
               writeln('Signal error: ',ErrS);
           end;
+        if ideapp.displaymode=dmUser then
+          begin
+            writeln('Fatal exception occured while in user screen mode. File save message boxes');
+            writeln('cannot be displayed. We are sorry, but need to terminate now.');
+            halt(255);
+          end;
       end;
+
     if (AutoSaveOptions and asEditorFiles)=0 then
       CanExit:=IDEApp.AskSaveAll
     else
@@ -474,31 +530,23 @@ BEGIN
   DoneBreakpoints;
   DoneWatches;
 {$endif}
-{$ifdef fpc}
 {$ifdef unix}
   Video.ClearScreen;
 {$endif unix}
-  Video.DoneVideo;
-  Keyboard.DoneKeyboard;
-{$endif fpc}
+{  Video.DoneVideo;
+  Keyboard.DoneKeyboard;}
 {$ifdef VESA}
   DoneVESAScreenModes;
 {$endif}
-{$ifdef unix}
+{$if defined(unix)}
   Keyboard.RestoreStartMode;
-{$endif unix}
+{$endif defined(unix)}
+{$if defined(windows)}
+  SetConsoleMode(GetStdHandle(cardinal(Std_Input_Handle)),StartupConsoleMode);
+{$endif defined(windows)}
   StreamError:=nil;
 {$ifdef DEBUG}
   if CloseImmediately then
     writeln('Used time is ',getrealtime-StartTime:0:2);
 {$endif DEBUG}
 END.
-{
-  $Log: fp.pas,v $
-  Revision 1.29  2005/04/25 08:19:10  marco
-   * checkmem removed
-
-  Revision 1.28  2005/02/14 17:13:18  peter
-    * truncate log
-
-}

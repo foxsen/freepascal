@@ -1,9 +1,8 @@
 {
- $Id: system.pas,v 1.86 2005/05/12 20:29:04 michael Exp $
  ****************************************************************************
 
     This file is part of the Free Pascal run time library.
-    Copyright (c) 1999-2002 by Free Pascal development team
+    Copyright (c) 1999-2005 by Free Pascal development team
 
     Free Pascal - OS/2 runtime library
 
@@ -16,7 +15,7 @@
 
 ****************************************************************************}
 
-unit {$ifdef VER1_0}sysos2{$else}System{$endif};
+unit system;
 
 interface
 
@@ -27,74 +26,30 @@ interface
   {.$define DEBUGARGUMENTS}
 {$endif SYSTEMDEBUG}
 
-{ $DEFINE OS2EXCEPTIONS}
+{$DEFINE OS2EXCEPTIONS}
+{$define DISABLE_NO_THREAD_MANAGER}
 
 {$I systemh.inc}
 
-{$IFDEF OS2EXCEPTIONS}
-(* Types and constants for exception handler support *)
-type
-{x}   PEXCEPTION_FRAME = ^TEXCEPTION_FRAME;
-{x}   TEXCEPTION_FRAME = record
-{x}     next : PEXCEPTION_FRAME;
-{x}     handler : pointer;
-{x}   end;
-
-{$ENDIF OS2EXCEPTIONS}
 
 const
   LineEnding = #13#10;
 { LFNSupport is defined separately below!!! }
   DirectorySeparator = '\';
   DriveSeparator = ':';
+  ExtensionSeparator = '.';
   PathSeparator = ';';
-{ FileNameCaseSensitive is defined separately below!!! }
+  AllowDirectorySeparators : set of char = ['\','/'];
+  AllowDriveSeparators : set of char = [':'];
+{ FileNameCaseSensitive and FileNameCasePreserving are defined separately below!!! }
   MaxExitCode = 65535;
   MaxPathLen = 256;
-  
+  AllFilesMask = '*';
+
 type    Tos=(osDOS,osOS2,osDPMI);
 
-const   os_mode: Tos = osOS2;
-        first_meg: pointer = nil;
-
-{$IFDEF OS2EXCEPTIONS}
-{x}  System_exception_frame : PEXCEPTION_FRAME =nil;
-{$ENDIF OS2EXCEPTIONS}
-
-type    TByteArray = array [0..$ffff] of byte;
-        PByteArray = ^TByteArray;
-
-        TSysThreadIB = record
-            TID,
-            Priority,
-            Version: cardinal;
-            MCCount,
-            MCForceFlag: word;
-        end;
-        PSysThreadIB = ^TSysThreadIB;
-
-        TThreadInfoBlock = record
-            PExChain,
-            Stack,
-            StackLimit: pointer;
-            TIB2: PSysThreadIB;
-            Version,
-            Ordinal: cardinal;
-        end;
-        PThreadInfoBlock = ^TThreadInfoBlock;
-        PPThreadInfoBlock = ^PThreadInfoBlock;
-
-        TProcessInfoBlock = record
-            PID,
-            ParentPid,
-            Handle: cardinal;
-            Cmd,
-            Env: PByteArray;
-            Status,
-            ProcType: cardinal;
-        end;
-        PProcessInfoBlock = ^TProcessInfoBlock;
-        PPProcessInfoBlock = ^PProcessInfoBlock;
+const   OS_Mode: Tos = osOS2;
+        First_Meg: pointer = nil;
 
 const   UnusedHandle=-1;
         StdInputHandle=0;
@@ -103,6 +58,7 @@ const   UnusedHandle=-1;
 
         LFNSupport: boolean = true;
         FileNameCaseSensitive: boolean = false;
+        FileNameCasePreserving: boolean = true;
         CtrlZMarksEOF: boolean = true; (* #26 is considered as end of file *)
 
         sLineBreak = LineEnding;
@@ -128,24 +84,483 @@ var
 (* 4 .. detached (background) OS/2 process *)
   ApplicationType: cardinal;
 
+const
+ HeapAllocFlags: cardinal = $53; (* Compatible to VP/2 *)
+ (* mfPag_Commit or mfObj_Tile or mfPag_Write or mfPag_Read *)
+
+function ReadUseHighMem: boolean;
+
+procedure WriteUseHighMem (B: boolean);
+
 (* Is allocation of memory above 512 MB address limit allowed? Initialized *)
 (* during initialization of system unit according to capabilities of the   *)
 (* underlying OS/2 version, can be overridden by user - heap is allocated  *)
 (* for all threads, so the setting isn't declared as a threadvar and       *)
 (* should be only changed at the beginning of the main thread if needed.   *)
-  UseHighMem: boolean;
+property
+  UseHighMem: boolean read ReadUseHighMem write WriteUseHighMem;
+(* UseHighMem is provided for compatibility with 2.0.x. *)
 
+const
+(* Are file sizes > 2 GB (64-bit) supported on the current system? *)
+  FSApi64: boolean = false;
 
 
 procedure SetDefaultOS2FileType (FType: ShortString);
 
 procedure SetDefaultOS2Creator (Creator: ShortString);
 
+type
+  TDosOpenL = function (FileName: PChar; var Handle: THandle;
+                        var Action: cardinal; InitSize: int64;
+                        Attrib, OpenFlags, FileMode: cardinal;
+                                                 EA: pointer): cardinal; cdecl;
+
+  TDosSetFilePtrL = function (Handle: THandle; Pos: int64; Method: cardinal;
+                                        var PosActual: int64): cardinal; cdecl;
+
+  TDosSetFileSizeL = function (Handle: THandle; Size: int64): cardinal; cdecl;
+
+
+function DummyDosOpenL (FileName: PChar; var Handle: THandle;
+                        var Action: cardinal; InitSize: int64;
+                        Attrib, OpenFlags, FileMode: cardinal;
+                                                 EA: pointer): cardinal; cdecl;
+
+function DummyDosSetFilePtrL (Handle: THandle; Pos: int64; Method: cardinal;
+                                        var PosActual: int64): cardinal; cdecl;
+
+function DummyDosSetFileSizeL (Handle: THandle; Size: int64): cardinal; cdecl;
+
+
+const
+  Sys_DosOpenL: TDosOpenL = @DummyDosOpenL;
+  Sys_DosSetFilePtrL: TDosSetFilePtrL = @DummyDosSetFilePtrL;
+  Sys_DosSetFileSizeL: TDosSetFileSizeL = @DummyDosSetFileSizeL;
 
 
 implementation
 
+
+{*****************************************************************************
+
+                        System unit initialization.
+
+****************************************************************************}
+
 {$I system.inc}
+
+{*****************************************************************************
+
+                           Exception handling.
+
+****************************************************************************}
+
+{$IFDEF OS2EXCEPTIONS}
+var
+  { value of the stack segment
+    to check if the call stack can be written on exceptions }
+  _SS : Cardinal;
+
+function Is_Prefetch (P: pointer): boolean;
+  var
+    A: array [0..15] of byte;
+    DoAgain: boolean;
+    InstrLo, InstrHi, OpCode: byte;
+    I: longint;
+    MemSize, MemAttrs: cardinal;
+  begin
+    Is_Prefetch := false;
+
+    MemSize := SizeOf (A);
+    if (DosQueryMem (P, MemSize, MemAttrs) = 0) and
+            (MemAttrs and (mfPag_Free or mfPag_Commit) <> 0)
+                                               and (MemSize >= SizeOf (A)) then
+     Move (P^, A [0], SizeOf (A))
+    else
+     Exit;
+    I := 0;
+    DoAgain := true;
+    while DoAgain and (I < 15) do
+      begin
+        OpCode := A [I];
+        InstrLo := OpCode and $f;
+        InstrHi := OpCode and $f0;
+        case InstrHi of
+          { prefix? }
+          $20, $30:
+            DoAgain := (InstrLo and 7) = 6;
+          $60:
+            DoAgain := (InstrLo and $c) = 4;
+          $f0:
+            DoAgain := InstrLo in [0, 2, 3];
+          $0:
+            begin
+              Is_Prefetch := (InstrLo = $f) and (A [I + 1] in [$D, $18]);
+              Exit;
+            end;
+          else
+            DoAgain := false;
+        end;
+        Inc (I);
+      end;
+  end;
+
+const
+  MaxExceptionLevel = 16;
+  ExceptLevel: byte = 0;
+
+var
+  ExceptEIP: array [0..MaxExceptionLevel - 1] of longint;
+  ExceptError: array [0..MaxExceptionLevel - 1] of byte;
+  ResetFPU: array [0..MaxExceptionLevel - 1] of boolean;
+
+{$ifdef SYSTEMEXCEPTIONDEBUG}
+procedure DebugHandleErrorAddrFrame (Error: longint; Addr, Frame: pointer);
+begin
+ if IsConsole then
+  begin
+   Write (StdErr, ' HandleErrorAddrFrame (error = ', Error);
+   Write (StdErr, ', addr = ', hexstr (PtrUInt (Addr), 8));
+   WriteLn (StdErr, ', frame = ', hexstr (PtrUInt (Frame), 8), ')');
+  end;
+ HandleErrorAddrFrame (Error, Addr, Frame);
+end;
+{$endif SYSTEMEXCEPTIONDEBUG}
+
+procedure JumpToHandleErrorFrame;
+var
+ EIP, EBP, Error: longint;
+begin
+ (* save ebp *)
+ asm
+  movl (%ebp),%eax
+  movl %eax,ebp
+ end;
+ if (ExceptLevel > 0) then
+  Dec (ExceptLevel);
+ EIP := ExceptEIP [ExceptLevel];
+ Error := ExceptError [ExceptLevel];
+{$ifdef SYSTEMEXCEPTIONDEBUG}
+ if IsConsole then
+  WriteLn (StdErr, 'In JumpToHandleErrorFrame error = ', Error);
+{$endif SYSTEMEXCEPTIONDEBUG}
+ if ResetFPU [ExceptLevel] then
+  SysResetFPU;
+ { build a fake stack }
+ asm
+{$ifdef REGCALL}
+  movl   ebp,%ecx
+  movl   eip,%edx
+  movl   error,%eax
+  pushl  eip
+  movl   ebp,%ebp // Change frame pointer
+{$else}
+  movl   ebp,%eax
+  pushl  %eax
+  movl   eip,%eax
+  pushl  %eax
+  movl   error,%eax
+  pushl  %eax
+  movl   eip,%eax
+  pushl  %eax
+  movl   ebp,%ebp // Change frame pointer
+{$endif}
+
+{$ifdef SYSTEMEXCEPTIONDEBUG}
+  jmpl   DebugHandleErrorAddrFrame
+{$else not SYSTEMEXCEPTIONDEBUG}
+  jmpl   HandleErrorAddrFrame
+{$endif SYSTEMEXCEPTIONDEBUG}
+ end;
+end;
+
+
+function System_Exception_Handler (Report: PExceptionReportRecord;
+                                   RegRec: PExceptionRegistrationRecord;
+                                   Context: PContextRecord;
+                                   DispContext: pointer): cardinal; cdecl;
+var
+ Res: cardinal;
+ Err: byte;
+ Must_Reset_FPU: boolean;
+{$IFDEF SYSTEMEXCEPTIONDEBUG}
+ CurSS: cardinal;
+ B: byte;
+{$ENDIF SYSTEMEXCEPTIONDEBUG}
+begin
+{$ifdef SYSTEMEXCEPTIONDEBUG}
+ if IsConsole then
+  begin
+    asm
+      xorl %eax,%eax
+      movw %ss,%ax
+      movl %eax,CurSS
+    end;
+    WriteLn (StdErr, 'In System_Exception_Handler, error = ',
+                                            HexStr (Report^.Exception_Num, 8));
+    WriteLn (StdErr, 'Context SS = ', HexStr (Context^.Reg_SS, 8),
+                                         ', current SS = ', HexStr (CurSS, 8));
+  end;
+{$endif SYSTEMEXCEPTIONDEBUG}
+ Res := Xcpt_Continue_Search;
+ if Context^.Reg_SS = _SS then
+  begin
+   Err := 0;
+   Must_Reset_FPU := true;
+{$ifdef SYSTEMEXCEPTIONDEBUG}
+   if IsConsole then
+    Writeln (StdErr, 'Exception  ', HexStr (Report^.Exception_Num, 8));
+{$endif SYSTEMEXCEPTIONDEBUG}
+   case Report^.Exception_Num of
+    Xcpt_Integer_Divide_By_Zero,
+    Xcpt_Float_Divide_By_Zero:
+      Err := 200;
+    Xcpt_Array_Bounds_Exceeded:
+     begin
+      Err := 201;
+      Must_Reset_FPU := false;
+     end;
+    Xcpt_Unable_To_Grow_Stack:
+     begin
+      Err := 202;
+      Must_Reset_FPU := false;
+     end;
+    Xcpt_Float_Overflow:
+     Err := 205;
+    Xcpt_Float_Denormal_Operand,
+    Xcpt_Float_Underflow:
+     Err := 206;
+    {Context^.FloatSave.StatusWord := Context^.FloatSave.StatusWord and $ffffff00;}
+    Xcpt_Float_Inexact_Result,
+    Xcpt_Float_Invalid_Operation,
+    Xcpt_Float_Stack_Check:
+     Err := 207;
+    Xcpt_Integer_Overflow:
+     begin
+      Err := 215;
+      Must_Reset_FPU := false;
+     end;
+    Xcpt_Illegal_Instruction:
+          { if we're testing sse support, simply set the flag and continue }
+     if SSE_Check then
+      begin
+       OS_Supports_SSE := false;
+          { skip the offending movaps %xmm7, %xmm6 instruction }
+       Inc (Context^.Reg_EIP, 3);
+       Report^.Exception_Num := 0;
+       Res := Xcpt_Continue_Execution;
+      end
+     else
+      Err := 216;
+    Xcpt_Access_Violation:
+     { Athlon prefetch bug? }
+     if Is_Prefetch (pointer (Context^.Reg_EIP)) then
+      begin
+       { if yes, then retry }
+       Report^.Exception_Num := 0;
+       Res := Xcpt_Continue_Execution;
+      end
+     else
+      Err := 216;
+    Xcpt_Signal:
+     case Report^.Parameters [0] of
+      Xcpt_Signal_KillProc:
+       Err := 217;
+      Xcpt_Signal_Break,
+      Xcpt_Signal_Intr:
+       if Assigned (CtrlBreakHandler) then
+        if CtrlBreakHandler (Report^.Parameters [0] = Xcpt_Signal_Break) then
+         begin
+{$IFDEF SYSTEMEXCEPTIONDEBUG}
+          WriteLn (StdErr, 'CtrlBreakHandler returned true');
+{$ENDIF SYSTEMEXCEPTIONDEBUG}
+          Report^.Exception_Num := 0;
+          Res := Xcpt_Continue_Execution;
+          DosAcknowledgeSignalException (Report^.Parameters [0]);
+         end
+        else
+         Err := 217;
+     end;
+    Xcpt_Privileged_Instruction:
+     begin
+      Err := 218;
+      Must_Reset_FPU := false;
+     end;
+    else
+     begin
+      if ((Report^.Exception_Num and Xcpt_Severity_Code)
+                                                   = Xcpt_Fatal_Exception) then
+       Err := 217
+      else
+       Err := 255;
+     end;
+   end;
+
+   if (Err <> 0) and (ExceptLevel < MaxExceptionLevel) 
+(* TH: The following line is necessary to avoid an endless loop *)
+                 and (Report^.Exception_Num < Xcpt_Process_Terminate)
+                                                                    then
+    begin
+     ExceptEIP [ExceptLevel] := Context^.Reg_EIP;
+     ExceptError [ExceptLevel] := Err;
+     ResetFPU [ExceptLevel] := Must_Reset_FPU;
+     Inc (ExceptLevel);
+
+     Context^.Reg_EIP := cardinal (@JumpToHandleErrorFrame);
+     Report^.Exception_Num := 0;
+
+     Res := Xcpt_Continue_Execution;
+{$ifdef SYSTEMEXCEPTIONDEBUG}
+     if IsConsole then
+      begin
+       WriteLn (StdErr, 'Exception Continue Exception set at ',
+                                          HexStr (ExceptEIP [ExceptLevel], 8));
+       WriteLn (StdErr, 'EIP changed to ',
+             HexStr (longint (@JumpToHandleErrorFrame), 8), ', error = ', Err);
+      end;
+{$endif SYSTEMEXCEPTIONDEBUG}
+    end;
+  end
+ else
+  if (Report^.Exception_Num = Xcpt_Signal) and
+    (Report^.Parameters [0] and (Xcpt_Signal_Intr or Xcpt_Signal_Break) <> 0)
+                                           and Assigned (CtrlBreakHandler) then
+{$IFDEF SYSTEMEXCEPTIONDEBUG}
+   begin
+    WriteLn (StdErr, 'XCPT_SIGNAL caught, CtrlBreakHandler assigned, Param = ',
+                                                       Report^.Parameters [0]);
+{$ENDIF SYSTEMEXCEPTIONDEBUG}
+   if CtrlBreakHandler (Report^.Parameters [0] = Xcpt_Signal_Break) then
+    begin
+{$IFDEF SYSTEMEXCEPTIONDEBUG}
+     WriteLn (StdErr, 'CtrlBreakHandler returned true');
+{$ENDIF SYSTEMEXCEPTIONDEBUG}
+     Report^.Exception_Num := 0;
+     Res := Xcpt_Continue_Execution;
+     DosAcknowledgeSignalException (Report^.Parameters [0]);
+    end
+   else
+    Err := 217;
+{$IFDEF SYSTEMEXCEPTIONDEBUG}
+   end
+  else
+   if IsConsole then
+    begin
+     WriteLn (StdErr, 'Ctx flags = ', HexStr (Context^.ContextFlags, 8));
+     if Context^.ContextFlags and Context_Floating_Point <> 0 then
+      begin
+       for B := 1 to 6 do
+        Write (StdErr, 'Ctx Env [', B, '] = ', HexStr (Context^.Env [B], 8),
+                                                                         ', ');
+        WriteLn (StdErr, 'Ctx Env [7] = ', HexStr (Context^.Env [7], 8));
+       for B := 0 to 6 do
+        Write (StdErr, 'FPU stack [', B, '] = ', Context^.FPUStack [B], ', ');
+       WriteLn (StdErr, 'FPU stack [7] = ', Context^.FPUStack [7]);
+      end;
+     if Context^.ContextFlags and Context_Segments <> 0 then
+      WriteLn (StdErr, 'GS = ', HexStr (Context^.Reg_GS, 8),
+                     ', FS = ', HexStr (Context^.Reg_FS, 8),
+                     ', ES = ', HexStr (Context^.Reg_ES, 8),
+                     ', DS = ', HexStr (Context^.Reg_DS, 8));
+     if Context^.ContextFlags and Context_Integer <> 0 then
+      begin
+       WriteLn (StdErr, 'EDI = ', HexStr (Context^.Reg_EDI, 8),
+                      ', ESI = ', HexStr (Context^.Reg_ESI, 8));
+       WriteLn (StdErr, 'EAX = ', HexStr (Context^.Reg_EAX, 8),
+                      ', EBX = ', HexStr (Context^.Reg_EBX, 8),
+                      ', ECX = ', HexStr (Context^.Reg_ECX, 8),
+                      ', EDX = ', HexStr (Context^.Reg_EDX, 8));
+      end;
+     if Context^.ContextFlags and Context_Control <> 0 then
+      begin
+       WriteLn (StdErr, 'EBP = ', HexStr (Context^.Reg_EBP, 8),
+                      ', SS = ', HexStr (Context^.Reg_SS, 8),
+                      ', ESP = ', HexStr (Context^.Reg_ESP, 8));
+       WriteLn (StdErr, 'CS = ', HexStr (Context^.Reg_CS, 8),
+                      ', EIP = ', HexStr (Context^.Reg_EIP, 8),
+                      ', EFlags = ', HexStr (Context^.Flags, 8));
+      end;
+    end;
+{$endif SYSTEMEXCEPTIONDEBUG}
+ System_Exception_Handler := Res;
+end;
+
+
+var
+  ExcptReg: PExceptionRegistrationRecord; public name '_excptregptr';
+
+{$ifdef SYSTEMEXCEPTIONDEBUG}
+var
+ OldExceptAddr,
+ NewExceptAddr: PtrUInt;
+{$endif SYSTEMEXCEPTIONDEBUG}
+
+procedure Install_Exception_Handler;
+var
+ T: cardinal;
+begin
+{$ifdef SYSTEMEXCEPTIONDEBUG}
+(* ThreadInfoBlock is located at FS:[0], the first      *)
+(* entry is pointer to head of exception handler chain. *)
+ asm
+  movl $0,%eax
+  movl %fs:(%eax),%eax
+  movl %eax, OldExceptAddr
+ end;
+{$endif SYSTEMEXCEPTIONDEBUG}
+ with ExcptReg^ do
+  begin
+   Prev_Structure := nil;
+   ExceptionHandler := TExceptionHandler (@System_Exception_Handler);
+  end;
+ (* Disable pop-up windows for errors and exceptions *)
+ DosError (deDisableExceptions);
+ DosSetExceptionHandler (ExcptReg^);
+ if IsConsole then
+  begin
+   DosSetSignalExceptionFocus (1, T);
+   DosAcknowledgeSignalException (Xcpt_Signal_Intr);
+   DosAcknowledgeSignalException (Xcpt_Signal_Break);
+  end;
+{$ifdef SYSTEMEXCEPTIONDEBUG}
+ asm
+  movl $0,%eax
+  movl %fs:(%eax),%eax
+  movl %eax, NewExceptAddr
+ end;
+{$endif SYSTEMEXCEPTIONDEBUG}
+end;
+
+procedure Remove_Exception_Handlers;
+begin
+  DosUnsetExceptionHandler (ExcptReg^);
+end;
+{$ENDIF OS2EXCEPTIONS}
+
+procedure system_exit;
+begin
+(*  if IsLibrary then
+    ExitDLL(ExitCode);
+*)
+(*
+  if not IsConsole then
+   begin
+     Close(stderr);
+     Close(stdout);
+     Close(erroutput);
+     Close(Input);
+     Close(Output);
+   end;
+*)
+{$IFDEF OS2EXCEPTIONS}
+  Remove_Exception_Handlers;
+{$ENDIF OS2EXCEPTIONS}
+  DosExit (1{process}, exitcode);
+end;
+
+{$ASMMODE ATT}
+
 
 
 {****************************************************************************
@@ -154,25 +569,11 @@ implementation
 
 ****************************************************************************}
 
-
-procedure system_exit;
-begin
-  DosExit (1{process}, exitcode);
-end;
-
-{$ASMMODE ATT}
-
 function paramcount:longint;assembler;
 asm
     movl argc,%eax
     decl %eax
 end {['EAX']};
-
-function args:pointer;assembler;
-asm
-  movl argv,%eax
-end {['EAX']};
-
 
 function paramstr(l:longint):string;
 
@@ -181,7 +582,7 @@ var p:^Pchar;
 begin
   if (l>=0) and (l<=paramcount) then
   begin
-    p:=args;
+    p:=argv;
     paramstr:=strpas(p[l]);
   end
     else paramstr:='';
@@ -196,32 +597,13 @@ begin
   randseed:=dt.hour+(dt.minute shl 8)+(dt.second shl 16)+(dt.sec100 shl 32);
 end;
 
-{$ASMMODE ATT}
 
-
-{*****************************************************************************
-
-                        System unit initialization.
-
-****************************************************************************}
 
 {****************************************************************************
                     Error Message writing using messageboxes
 ****************************************************************************}
 
-type
-  TWinMessageBox = function (Parent, Owner: cardinal;
-         BoxText, BoxTitle: PChar; Identity, Style: cardinal): cardinal; cdecl;
-  TWinInitialize = function (Options: cardinal): cardinal; cdecl;
-  TWinCreateMsgQueue = function (Handle: cardinal; cmsg: longint): cardinal;
-                                                                         cdecl;
-
 const
-  ErrorBufferLength = 1024;
-  mb_OK = $0000;
-  mb_Error = $0040;
-  mb_Moveable = $4000;
-  MBStyle = mb_OK or mb_Error or mb_Moveable;
   WinInitialize: TWinInitialize = nil;
   WinCreateMsgQueue: TWinCreateMsgQueue = nil;
   WinMessageBox: TWinMessageBox = nil;
@@ -418,11 +800,7 @@ asm
 end;
 
 
-{$ifdef HASTHREADVAR}
 threadvar
-{$else HASTHREADVAR}
-var
-{$endif HASTHREADVAR}
   DefaultCreator: ShortString;
   DefaultFileType: ShortString;
 
@@ -473,6 +851,12 @@ begin
   envp[env_count]:=nil;
 end;
 
+
+var
+(* Initialized by system unit initialization *)
+  PIB: PProcessInfoBlock;
+
+
 procedure InitArguments;
 var
   arglen,
@@ -491,48 +875,50 @@ var
          oldargvlen:=argvlen;
          argvlen:=(idx+8) and (not 7);
          sysreallocmem(argv,argvlen*sizeof(pointer));
-         fillchar(argv[oldargvlen],(argvlen-oldargvlen)*sizeof(pointer),0);
+{         fillchar(argv[oldargvlen],(argvlen-oldargvlen)*sizeof(pointer),0);}
        end;
       { use realloc to reuse already existing memory }
       { always allocate, even if length is zero, since }
       { the arg. is still present!                     }
-{      sysreallocmem(argv[idx],len+1);}
       ArgV [Idx] := SysAllocMem (Succ (Len));
     end;
 
 begin
-  count:=0;
-  argv:=nil;
-  argvlen:=0;
+  CmdLine := SysAllocMem (MaxPathLen);
 
-  // Get argv[0]
-  pc:=cmdline;
-  Arglen:=0;
-  repeat
-    Inc(Arglen);
-  until (pc[Arglen] = #0);
-  allocarg(count,arglen);
-  move(pc^,argv[count]^,arglen);
+  ArgV := SysAllocMem (8 * SizeOf (pointer));
 
-  { ReSetup cmdline variable }
-  repeat
-    Inc(Arglen);
-  until (pc[Arglen]=#0);
-  Inc(Arglen);
-  pc:=GetMem(ArgLen);
-  move(cmdline^, pc^, arglen);
-  Arglen:=0;
-  repeat
-    Inc(Arglen);
-  until (pc[Arglen]=#0);
-  pc[Arglen]:=' '; // combine argv[0] and command line
-  CmdLine:=pc;
+  ArgLen := StrLen (PChar (PIB^.Cmd));
+  Inc (ArgLen);
+
+  if DosQueryModuleName (PIB^.Handle, MaxPathLen, CmdLine) = 0 then
+   ArgVLen := Succ (StrLen (CmdLine))
+  else
+(* Error occurred - use program name from command line as fallback. *)
+   begin
+    Move (PIB^.Cmd^, CmdLine, ArgLen);
+    ArgVLen := ArgLen;
+   end;
+
+{ Get ArgV [0] }
+  ArgV [0] := SysAllocMem (ArgVLen);
+  Move (CmdLine^, ArgV [0]^, ArgVLen);
+  Count := 1;
+
+(* PC points to leading space after program name on command line *)
+  PC := PChar (PIB^.Cmd) + ArgLen;
+
+(* ArgLen contains size of command line arguments including leading space. *)
+  ArgLen := Succ (StrLen (PC));
+
+  SysReallocMem (CmdLine, ArgVLen + ArgLen);
+
+  Move (PC^, CmdLine [ArgVLen], Succ (ArgLen));
+
+(* ArgV has space for 8 parameters from the first allocation. *)
+  ArgVLen := 8;
 
   { process arguments }
-  pc:=cmdline;
-{$IfDef DEBUGARGUMENTS}
-  Writeln(stderr,'GetCommandLine is #',pc,'#');
-{$EndIf }
   while pc^<>#0 do
    begin
      { skip leading spaces }
@@ -685,19 +1071,59 @@ begin
                                                  else GetFileHandleCount := L2;
 end;
 
+function CheckInitialStkLen (StkLen: SizeUInt): SizeUInt;
+begin
+  CheckInitialStkLen := StkLen;
+end;
+
 var TIB: PThreadInfoBlock;
-    PIB: PProcessInfoBlock;
     RC: cardinal;
     ErrStr: string;
     P: pointer;
+    DosCallsHandle: THandle;
 
+const
+    DosCallsName: array [0..8] of char = 'DOSCALLS'#0;
+
+{$IFDEF OS2UNICODE}
+ {$I sysucode.inc}
+{$ENDIF OS2UNICODE}
+
+{*var}
+{* ST: pointer;}
+{*}
 begin
-    IsLibrary := FALSE;
-
-    (* Initialize the amount of file handles *)
-    FileHandleCount := GetFileHandleCount;
+{$IFDEF OS2EXCEPTIONS}
+(*    asm
+      { allocate space for exception registration record }
+     pushl $0
+     pushl $0}
+{*     pushl %fs:(0)}
+        { movl  %esp,%fs:(0)
+          but don't insert it as it doesn't
+          point to anything yet
+          this will be used in signals unit }
+     movl %esp,%eax
+     movl %eax,ExcptReg
+     pushl %ebp
+     movl %esp,%eax
+{*     movl %eax,st*}
+     movl %eax,StackTop
+    end;
+{*    StackTop:=st;}
+*)    asm
+     xorl %eax,%eax
+     movw %ss,%ax
+     movl %eax,_SS
+     call SysResetFPU
+    end;
+{$ENDIF OS2EXCEPTIONS}
     DosGetInfoBlocks (@TIB, @PIB);
     StackBottom := TIB^.Stack;
+{ $IFNDEF OS2EXCEPTIONS}
+    StackTop := TIB^.StackLimit;
+{ $ENDIF OS2EXCEPTIONS}
+    StackLength := CheckInitialStkLen (InitialStkLen);
 
     {Set type of application}
     ApplicationType := PIB^.ProcType;
@@ -706,6 +1132,13 @@ begin
     IsConsole := ApplicationType <> 3;
 
     ExitProc := nil;
+
+{$IFDEF OS2EXCEPTIONS}
+    Install_Exception_Handler;
+{$ENDIF OS2EXCEPTIONS}
+
+    (* Initialize the amount of file handles *)
+    FileHandleCount := GetFileHandleCount;
 
     {Initialize the heap.}
     (* Logic is following:
@@ -727,8 +1160,33 @@ begin
        from the high memory region before changing value of this variable. *)
     InitHeap;
 
+    if DosQueryModuleHandle (@DosCallsName [0], DosCallsHandle) = 0 then
+      begin
+        if DosQueryProcAddr (DosCallsHandle, OrdDosOpenL, nil, P) = 0 then
+          begin
+            Sys_DosOpenL := TDosOpenL (P);
+            if DosQueryProcAddr (DosCallsHandle, OrdDosSetFilePtrL, nil, P) = 0
+                                                                           then
+              begin
+                Sys_DosSetFilePtrL := TDosSetFilePtrL (P);
+                if DosQueryProcAddr (DosCallsHandle, OrdDosSetFileSizeL, nil,
+                                                                    P) = 0 then
+                  begin
+                    Sys_DosSetFileSizeL := TDosSetFileSizeL (P);
+                    FSApi64 := true;
+                  end;
+              end;
+          end;
+      end;
+
     { ... and exceptions }
     SysInitExceptions;
+    fpc_cpucodeinit;
+
+    InitUnicodeStringManager;
+{$ifdef OS2UCODE}
+    InitOS2WideStrings;
+{$endif OS2UCODE}
 
     { ... and I/O }
     SysInitStdIO;
@@ -740,65 +1198,20 @@ begin
     Environment := pointer (PIB^.Env);
     InitEnvironment;
 
-    CmdLine := pointer (PIB^.Cmd);
     InitArguments;
+
     DefaultCreator := '';
     DefaultFileType := '';
 
     InitSystemThreads;
-{$ifdef HASVARIANT}
-    initvariantmanager;
-{$endif HASVARIANT}
+    InitVariantManager;
 
 {$IFDEF EXTDUMPGROW}
 {    Int_HeapSize := high (cardinal);}
 {$ENDIF EXTDUMPGROW}
-    RC := DosAllocMem (P, 4096, $403);
-    if RC = 87 then
-(* Using of high memory address space (> 512 MB) *)
-(* is not supported on this system.              *)
-     UseHighMem := false
-    else
-     begin
-      UseHighMem := true;
-      if RC <> 0 then
-       begin
-        Str (RC, ErrStr);
-        ErrStr := 'Error during heap initialization (DosAllocMem - ' + ErrStr + ')!!'#13#10;
-        DosWrite (2, @ErrStr [1], Length (ErrStr), RC);
-        HandleError (204);
-       end
-      else
-       DosFreeMem (P);
-     end;
+{$ifdef SYSTEMEXCEPTIONDEBUG}
+ if IsConsole then
+  WriteLn (StdErr, 'Old exception ', HexStr (OldExceptAddr, 8),
+   ', new exception ', HexStr (NewExceptAddr, 8), ', _SS = ', HexStr (_SS, 8));
+{$endif SYSTEMEXCEPTIONDEBUG}
 end.
-{
-  $Log: system.pas,v $
-  Revision 1.86  2005/05/12 20:29:04  michael
-  + Added maxpathlen constant (maximum length of filename path)
-
-  Revision 1.85  2005/05/03 22:17:26  hajny
-    * SysAllocMem used for ArgV [Idx] allocation again
-
-  Revision 1.84  2005/05/01 13:01:03  peter
-  use fillchar after reallocmem, fix taken from win32
-
-  Revision 1.83  2005/04/03 21:10:59  hajny
-    * EOF_CTRLZ conditional define replaced with CtrlZMarksEOF, #26 handling made more consistent (fix for bug 2453)
-
-  Revision 1.82  2005/03/27 20:50:35  hajny
-    * correction of previous mistyping
-
-  Revision 1.81  2005/03/27 20:40:54  hajny
-    * fix for allocarg
-
-  Revision 1.80  2005/03/01 21:59:14  hajny
-    * compilation fix
-
-  Revision 1.79  2005/02/14 17:13:31  peter
-    * truncate log
-
-  Revision 1.78  2005/02/06 16:57:18  peter
-    * threads for go32v2,os,emx,netware
-
-}

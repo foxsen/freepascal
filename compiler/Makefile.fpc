@@ -4,7 +4,7 @@
 
 [package]
 name=compiler
-version=2.0.0
+version=2.7.1
 
 [target]
 programs=pp
@@ -14,7 +14,7 @@ dirs=utils
 targetdir=.
 unittargetdir=$(CPU_UNITDIR)/units/$(FULL_TARGET)
 unitdir=$(COMPILERSOURCEDIR)
-includedir=$(PPC_TARGET)
+includedir=$(CPC_TARGET)
 
 [require]
 packages=rtl
@@ -32,14 +32,20 @@ fpcdir=..
 unexport FPC_VERSION FPC_COMPILERINFO
 
 # Which platforms are ready for inclusion in the cycle
-CYCLETARGETS=i386 powerpc sparc arm x86_64
+CYCLETARGETS=i386 powerpc sparc arm x86_64 powerpc64 m68k armeb mipsel mips avr
 
-# Allow ALPHA, POWERPC, M68K, I386 defines for target cpu
+# All supported targets used for clean
+ALLTARGETS=$(CYCLETARGETS) jvm
+
+# Allow ALPHA, POWERPC, POWERPC64, M68K, I386, jvm defines for target cpu
 ifdef ALPHA
 PPC_TARGET=alpha
 endif
 ifdef POWERPC
 PPC_TARGET=powerpc
+endif
+ifdef POWERPC64
+PPC_TARGET=powerpc64
 endif
 ifdef SPARC
 PPC_TARGET=sparc
@@ -56,11 +62,32 @@ endif
 ifdef ARM
 PPC_TARGET=arm
 endif
+ifdef ARMEB
+PPC_TARGET=armeb
+endif
+ifdef MIPS
+PPC_TARGET=mips
+endif
+ifdef MIPSEL
+PPC_TARGET=mipsel
+endif
+ifdef AVR
+PPC_TARGET=avr
+endif
+ifdef JVM
+PPC_TARGET=jvm
+endif
 
 # Default is to generate a compiler for the same
 # platform as CPU_TARGET (a native compiler)
 ifndef PPC_TARGET
 PPC_TARGET=$(CPU_TARGET)
+endif
+
+ifeq ($(PPC_TARGET),armeb)
+CPC_TARGET=arm
+else
+CPC_TARGET=$(PPC_TARGET)
 endif
 
 # Default is to generate a compiler for the same
@@ -70,13 +97,13 @@ PPC_OS=$(OS_TARGET)
 endif
 
 # Where to place the unit files.
-CPU_UNITDIR=$(PPC_TARGET)
+CPU_UNITDIR=$(CPC_TARGET)
 
 # RTL
 UTILSDIR=../utils
 
 # Directories containing compiler sources
-COMPILERSOURCEDIR=$(PPC_TARGET) systems
+COMPILERSOURCEDIR=$(CPC_TARGET) systems
 
 # Utils used by compiler development/installation
 COMPILERUTILSDIR=utils
@@ -103,50 +130,75 @@ override OPT=
 MSGFILES=$(wildcard msg/error*.msg)
 
 # ppcSUFFIX
-ifeq ($(PPC_TARGET),i386)
+ifeq ($(CPC_TARGET),i386)
 CPUSUF=386
 endif
-ifeq ($(PPC_TARGET),alpha)
+ifeq ($(CPC_TARGET),alpha)
 CPUSUF=axp
 endif
-ifeq ($(PPC_TARGET),m68k)
+ifeq ($(CPC_TARGET),m68k)
 CPUSUF=68k
 endif
-ifeq ($(PPC_TARGET),powerpc)
+ifeq ($(CPC_TARGET),powerpc)
 CPUSUF=ppc
 endif
-ifeq ($(PPC_TARGET),sparc)
+ifeq ($(CPC_TARGET),powerpc64)
+CPUSUF=ppc64
+endif
+ifeq ($(CPC_TARGET),sparc)
 CPUSUF=sparc
 endif
-ifeq ($(PPC_TARGET),x86_64)
+ifeq ($(CPC_TARGET),x86_64)
 CPUSUF=x64
 endif
-ifeq ($(PPC_TARGET),arm)
+ifeq ($(CPC_TARGET),arm)
 CPUSUF=arm
+endif
+ifeq ($(CPC_TARGET),mips)
+CPUSUF=mips
+endif
+ifeq ($(CPC_TARGET),mipsel)
+CPUSUF=mipsel
+endif
+ifeq ($(CPC_TARGET),avr)
+CPUSUF=avr
+endif
+ifeq ($(CPC_TARGET),jvm)
+CPUSUF=jvm
 endif
 
 # Do not define the default -d$(CPU_TARGET) because that
-# will conflict with our -d$(PPC_TARGET)
+# will conflict with our -d$(CPC_TARGET)
 NOCPUDEF=1
 
 # Default message file
 MSGFILE=msg/error$(FPCLANG).msg
 
-# Define Unix also for Linux
-ifeq ($(OS_TARGET),linux)
-ifneq ($(findstring 1.0.,$(FPC_VERSION)),)
-override LOCALOPT+=-dUNIX
+
+SVNVERSION:=$(wildcard $(addsuffix /svnversion$(SRCEXEEXT),$(SEARCHPATH)))
+# Check if revision.inc is present
+REVINC:=$(wildcard revision.inc)
+ifneq ($(REVINC),)
+# File revision.inc is present
+#Use it to compile version.pas unit
+override LOCALOPT+=-dREVINC
+# Automatically update revision.inc if
+# svnversion executable is available
+ifeq ($(REVSTR),)
+ifneq ($(SVNVERSION),)
+REVSTR:=$(shell $(SVNVERSION) -c .)
+export REVSTR
+else
+ifeq ($(REVINC),force)
+REVSTR:=exported
+export REVSTR
+endif
+endif
 endif
 endif
 
-ifeq ($(OS_TARGET),freebsd)
-ifneq ($(findstring 1.0.,$(FPC_VERSION)),)
-override LOCALOPT+=-dUNIX
-endif
-endif
-
-# set correct defines (-d$(CPU_TARGET) is automaticly added in makefile.fpc)
-override LOCALOPT+=-d$(PPC_TARGET) -dGDB -dBROWSERLOG
+# set correct defines (-d$(CPU_TARGET) is automatically added in makefile.fpc)
+override LOCALOPT+=-d$(CPC_TARGET) -dGDB -dBROWSERLOG
 
 # i386 specific
 ifeq ($(PPC_TARGET),i386)
@@ -160,7 +212,12 @@ endif
 
 # PowerPC specific
 ifeq ($(PPC_TARGET),powerpc)
-override LOCALOPT+=
+override LOCALOPT+=-Fuppcgen
+endif
+
+# PowerPC64 specific
+ifeq ($(PPC_TARGET),powerpc64)
+override LOCALOPT+=-Fuppcgen
 endif
 
 # m68k specific
@@ -182,7 +239,42 @@ endif
 
 # ARM specific
 ifeq ($(PPC_TARGET),arm)
-override LOCALOPT+=-dNOOPT
+override LOCALOPT+=
+endif
+
+# mipsel specific
+ifeq ($(PPC_TARGET),mipsel)
+override LOCALOPT+=-Fumips
+endif
+
+# jvm specific
+ifeq ($(PPC_TARGET),jvm)
+override LOCALOPT+=-Fujvm -dNOOPT
+endif
+
+OPTWPOCOLLECT=-OWdevirtcalls,optvmts -FW$(BASEDIR)/pp1.wpo
+OPTWPOPERFORM=-Owdevirtcalls,optvmts -Fw$(BASEDIR)/pp1.wpo
+# symbol liveness WPO requires nm, smart linking and no stripping (the latter
+# is forced by the Makefile when necessary)
+ifneq ($(findstring $(OS_TARGET),darwin linux freebsd solaris),)
+ifdef LINKSMART
+ifdef CREATESMART
+OPTWPOCOLLECT+=-OWsymbolliveness -Xs-
+OPTWPOPERFORM+=-Owsymbolliveness
+endif
+endif
+endif
+
+# Don't compile a native compiler & utilities for JVM and embedded
+# targets
+ifeq ($(CPU_TARGET),jvm)
+NoNativeBinaries=1
+endif
+ifeq ($(OS_TARGET),embedded)
+NoNativeBinaries=1
+endif
+ifeq ($(OS_TARGET),gba)
+NoNativeBinaries=1
 endif
 
 [rules]
@@ -190,19 +282,26 @@ endif
 # Setup Targets
 #####################################################################
 
-ifeq ($(OS_TARGET),win32)
+ifneq ($(findstring $(OS_TARGET),win32 win64 aix),)
+USE_CMP_FOR_DIFF=1
+endif
+
+ifdef USE_CMP_FOR_DIFF
 ifdef CMP
 override DIFF:=$(CMP) -i218
 endif
 endif
 
+# Use -Sew option by default
+# Allow disabling by setting ALLOW_WARNINGS=1
+ifeq ($(findstring 2.4.,$(FPC_VERSION)),)
+ifndef ALLOW_WARNINGS
+override LOCALOPT+=-Sew
+endif
+endif
+
 # Add Local options
 override COMPILER+=$(LOCALOPT)
-
-# Disable optimizer when compiled with 1.0.x
-ifneq ($(findstring 1.0.,$(FPC_VERSION)),)
-override COMPILER:=$(patsubst -O%,,$(COMPILER))
-endif
 
 
 #####################################################################
@@ -229,10 +328,16 @@ EXENAME=ppc$(CPUSUF)$(EXEEXT)
 endif
 PPEXENAME=pp$(EXEEXT)
 TEMPNAME=ppc$(SRCEXEEXT)
+ifneq ($(CPUSUF),jvm)
 PPCROSSNAME=ppcross$(CPUSUF)$(SRCEXEEXT)
+else
+PPCROSSNAME=ppc$(CPUSUF)$(SRCEXEEXT)
+endif
 TEMPNAME1=ppc1$(EXEEXT)
 TEMPNAME2=ppc2$(EXEEXT)
 TEMPNAME3=ppc3$(EXEEXT)
+TEMPWPONAME1=ppcwpo1$(EXEEXT)
+TEMPWPONAME2=ppcwpo2$(EXEEXT)
 MAKEDEP=ppdep$(EXEEXT)
 MSG2INC=./msg2inc$(EXEEXT)
 ifdef CROSSINSTALL
@@ -245,17 +350,25 @@ endif
 # CPU targets
 #####################################################################
 
-PPC_TARGETS=alpha i386 m68k powerpc sparc arm x86_64
+PPC_TARGETS=i386 m68k powerpc sparc arm armeb x86_64 powerpc64 alpha vis ia64 mips mipsel avr jvm
+INSTALL_TARGETS=$(addsuffix _exe_install,$(sort $(CYCLETARGETS) $(PPC_TARGETS)))
 
-.PHONY: $(PPC_TARGETS)
+.PHONY: $(PPC_TARGETS) $(INSTALL_TARGETS)
 
 $(PPC_TARGETS):
         $(MAKE) PPC_TARGET=$@ CPU_UNITDIR=$@ all
+
+$(INSTALL_TARGETS):
+        $(MAKE) all exeinstall PPC_TARGET=$(subst _exe_install,,$@) CPU_UNITDIR=$(subst _exe_install,,$@)
+
+alltargets: $(ALLTARGETS)
 
 
 #####################################################################
 # Default makefile
 #####################################################################
+
+.NOTPARALLEL:
 
 .PHONY: all compiler echotime ppuclean execlean clean distclean
 
@@ -289,29 +402,29 @@ ppuclean:
         -$(DEL) $(addsuffix /*$(PPUEXT),$(COMPILERSOURCEDIR))
 
 tempclean:
-        -$(DEL) $(PPCROSSNAME) $(TEMPNAME) $(TEMPNAME1) $(TEMPNAME2) $(TEMPNAME3) $(MSG2INC)
+        -$(DEL) $(PPCROSSNAME) $(TEMPNAME) $(TEMPNAME1) $(TEMPNAME2) $(TEMPNAME3) $(MSG2INC) pp1.wpo pp2.wpo
 
 execlean :
-        -$(DEL) ppc386$(EXEEXT) ppcaxp$(EXEEXT) ppc68k$(EXEEXT) ppcx64$(EXEEXT) ppcppc$(EXEEXT) ppcsparc$(EXEEXT) $(EXENAME)
+        -$(DEL) ppc386$(EXEEXT) ppc68k$(EXEEXT) ppcx64$(EXEEXT) ppcppc$(EXEEXT) ppcsparc$(EXEEXT) ppcppc64$(EXEEXT) ppcarm$(EXEEXT) ppcmips$(EXEEXT) ppcmipsel$(EXEEXT) ppcjvm$(EXEEXT) $(EXENAME) $(TEMPWPONAME1) $(TEMPWPONAME2)
 
-$(addsuffix _clean,$(CYCLETARGETS)):
+$(addsuffix _clean,$(ALLTARGETS)):
         -$(DELTREE) $(addprefix $(subst _clean,,$@),/units)
         -$(DEL) $(addprefix $(subst _clean,,$@)/,*$(OEXT) *$(PPUEXT) *$(RSTEXT) *$(ASMEXT) *$(STATICLIBEXT) *$(SHAREDLIBEXT) *$(PPLEXT))
-        -$(DEL) $(addprefix $(subst _clean,,$@)/,ppc386$(EXEEXT) ppcaxp$(EXEEXT) ppc68k$(EXEEXT) ppcx64$(EXEEXT) ppcppc$(EXEEXT) ppcppc$(EXEEXT) $(EXENAME))
+        -$(DEL) $(addprefix $(subst _clean,,$@)/,ppc386$(EXEEXT) ppc68k$(EXEEXT) ppcx64$(EXEEXT) ppcppc$(EXEEXT) ppcsparc$(EXEEXT) ppcppc64$(EXEEXT) ppcarm$(EXEEXT) ppcmips$(EXEEXT) ppcmipsel$(EXEEXT) ppcjvm$(EXEEXT)  $(EXENAME))
 
-cycleclean: cleanall $(addsuffix _clean,$(PPC_TARGET))
+cycleclean: cleanall $(addsuffix _clean,$(CPC_TARGET))
         -$(DEL) $(EXENAME)
 
-clean: tempclean execlean cleanall $(addsuffix _clean,$(PPC_TARGET)) $(addsuffix _clean,$(TARGET_DIRS))
+clean: tempclean execlean cleanall $(addsuffix _clean,$(CPC_TARGET)) $(addsuffix _clean,$(TARGET_DIRS))
 
-distclean: tempclean execlean cleanall $(addsuffix _clean,$(CYCLETARGETS)) $(addsuffix _distclean,$(TARGET_DIRS))
+distclean: tempclean execlean cleanall $(addsuffix _clean,$(ALLTARGETS)) $(addsuffix _distclean,$(TARGET_DIRS))
 
 
 #####################################################################
 # Make targets
 #####################################################################
 
-$(MSG2INC): $(COMPILERUTILSDIR)/msg2inc.pp
+$(MSG2INC): $(COMPILER_TARGETDIR) $(COMPILER_UNITTARGETDIR) $(COMPILERUTILSDIR)/msg2inc.pp
         $(COMPILER) -FE. $(COMPILERUTILSDIR)/msg2inc.pp
 
 # The msgtxt.inc only depends on the error?.msg file, not on msg2inc,
@@ -322,10 +435,74 @@ msgtxt.inc: $(MSGFILE)
 
 msg: msgtxt.inc
 
+insdatx86 : $(COMPILER_UNITTARGETDIR) x86/x86ins.dat
+	$(COMPILER) -FE$(COMPILERUTILSDIR) $(COMPILERUTILSDIR)/mkx86ins.pp
+        cd x86 && ..$(PATHSEP)utils$(PATHSEP)mkx86ins$(SRCEXEEXT) && mv -f *.inc ../i386
+        cd x86 && ..$(PATHSEP)utils$(PATHSEP)mkx86ins$(SRCEXEEXT) x86_64 && mv -f *.inc ../x86_64
+	$(COMPILER) -FE$(COMPILERUTILSDIR) $(COMPILERUTILSDIR)/mkx86reg.pp
+        cd x86 && ..$(PATHSEP)utils$(PATHSEP)mkx86reg$(SRCEXEEXT)
+        mv -f x86/r386*.inc i386
+        cd x86 && ..$(PATHSEP)utils$(PATHSEP)mkx86reg$(SRCEXEEXT) x86_64
+        mv -f x86/r8664*.inc x86_64
+
+insdatarm : arm/armins.dat
+	    $(COMPILER) -FE$(COMPILERUTILSDIR) $(COMPILERUTILSDIR)/mkarmins.pp
+        cd arm && ..$(PATHSEP)utils$(PATHSEP)mkarmins$(SRCEXEEXT)
+
+insdat: insdatx86 insdatarm
+
+regdatarm : arm/armreg.dat
+	    $(COMPILER) -FE$(COMPILERUTILSDIR) $(COMPILERUTILSDIR)/mkarmreg.pp
+        cd arm && ..$(PATHSEP)utils$(PATHSEP)mkarmreg$(SRCEXEEXT)
+
+regdatia64 : ia64/ia64reg.dat
+            $(COMPILER) -FE$(COMPILERUTILSDIR) $(COMPILERUTILSDIR)/mkia64reg.pp
+        cd ia64 && ..$(PATHSEP)utils$(PATHSEP)mkia64reg$(SRCEXEEXT)
+
+regdatsp : sparc/spreg.dat
+            $(COMPILER) -FE$(COMPILERUTILSDIR) $(COMPILERUTILSDIR)/mkspreg.pp
+        cd sparc && ..$(PATHSEP)utils$(PATHSEP)mkspreg$(SRCEXEEXT)
+
+# revision.inc rule
+revision.inc :
+ifneq ($(REVSTR),)
+ifdef USEZIPWRAPPER
+ifneq ($(ECHOREDIR),echo)
+        $(ECHOREDIR) "'$(REVSTR)'" > revision.inc
+else
+        $(ECHOREDIR) '$(REVSTR)' > revision.inc
+endif
+else
+        $(ECHOREDIR) "'$(REVSTR)'" > revision.inc
+endif
+else
+	$(MAKE) revision.inc REVINC=force
+endif
+
+.PHONY : revision
+
+revision :
+	$(DEL) revision.inc
+	$(MAKE) revision.inc
+
 # Make only the compiler
+# ECHOREDIR sometimes does not remove double quotes
 $(EXENAME) : $(wildcard *.pas) $(wildcard *.inc) msg \
              $(wildcard systems/*.pas) $(wilcard systems/*.inc) \
-             $(wildcard $(PPC_TARGET)/*.pas) $(wildcard $(PPC_TARGET)/*.inc)
+             $(wildcard $(CPC_TARGET)/*.pas) $(wildcard $(CPC_TARGET)/*.inc) \
+             $(COMPILER_UNITTARGETDIR) $(COMPILER_TARGETDIR)
+ifneq ($(REVSTR),)
+ifdef USEZIPWRAPPER
+ifneq ($(ECHOREDIR),echo)
+        $(ECHOREDIR) "'$(REVSTR)'" > revision.inc
+else
+        $(ECHOREDIR) '$(REVSTR)' > revision.inc
+endif
+else
+        $(ECHOREDIR) "'$(REVSTR)'" > revision.inc
+endif
+        $(COMPILER) version.pas
+endif
         $(COMPILER) pp.pas
         $(EXECPPAS)
         $(MOVE) $(COMPILER_TARGETDIR)/$(PPEXENAME) $(EXENAME)
@@ -356,10 +533,36 @@ ifeq ($(OS_SOURCE),$(OS_TARGET))
 # Normal cycle
 #
 
+ifndef NOWPOCYCLE
+ifdef RELEASE
+DOWPOCYCLE=1
+# Two WPO cycles in case of RELEASE=1
+wpocycle:
+# don't use cycle_clean, it will delete the compiler utilities again
+        $(RM) $(EXENAME)
+        $(MAKE) 'FPC=$(BASEDIR)/$(TEMPNAME3)' 'OPT=$(LOCALOPT) $(OPTWPOCOLLECT)' compiler
+        $(RM) $(EXENAME)
+        $(MAKE) 'FPC=$(BASEDIR)/$(TEMPNAME3)' 'OPT=$(RTLOPT) $(OPTWPOPERFORM)' rtlclean rtl
+        $(MAKE) 'FPC=$(BASEDIR)/$(TEMPNAME3)' 'OPT=$(LOCALOPT) $(OPTWPOPERFORM) $(subst pp1.wpo,pp2.wpo,$(OPTWPOCOLLECT))' $(addsuffix _clean,$(ALLTARGETS)) compiler
+        $(MOVE) $(EXENAME) $(TEMPWPONAME1)
+        $(MAKE) 'FPC=$(BASEDIR)/$(TEMPWPONAME1)' 'OPT=$(RTLOPT) $(subst pp1.wpo,pp2.wpo,$(OPTWPOPERFORM))' rtlclean rtl
+        $(MAKE) 'FPC=$(BASEDIR)/$(TEMPWPONAME1)' 'OPT=$(LOCALOPT) $(subst pp1.wpo,pp2.wpo,$(OPTWPOPERFORM))' $(addsuffix _clean,$(ALLTARGETS)) compiler
+        $(COPY) $(EXENAME) $(TEMPWPONAME2)
+endif
+endif
+
+ifndef DOWPOCYCLE
+wpocycle:
+endif
+
 # Used to avoid unnecessary steps
 ifdef DIFF
 ifdef OLDFPC
+ifneq ($(OS_TARGET),darwin)
 DIFFRESULT:=$(shell $(DIFF) $(OLDFPC) $(FPC))
+else
+DIFFRESULT:=$(shell cp $(OLDFPC) $(OLDFPC).tmp; cp $(FPC) $(FPC).tmp; strip -no_uuid $(OLDFPC).tmp; strip -no_uuid $(FPC).tmp; $(DIFF) $(OLDFPC).tmp $(FPC).tmp; rm $(OLDFPC).tmp $(FPC).tmp)
+endif
 else
 DIFFRESULT=Not equal
 endif
@@ -398,6 +601,7 @@ cycle:
         $(MAKE) 'FPC=$(BASEDIR)/$(TEMPNAME3)' 'OLDFPC=$(BASEDIR)/$(TEMPNAME2)' next
         $(DIFF) $(TEMPNAME3) $(EXENAME)
         $(MAKE) $(addsuffix _all,$(TARGET_DIRS)) 'FPC=$(BASEDIR)/$(EXENAME)'
+        $(MAKE) wpocycle
         $(MAKE) echotime
 
 else
@@ -408,15 +612,21 @@ else
 
 cycle:
 # ppc (source native)
-        $(MAKE) OS_TARGET=$(OS_SOURCE) CROSSBINDIR="" BINUTILSPREFIX="" CROSSCYCLEBOOTSTRAP=1 rtlclean rtl
-        $(MAKE) OS_TARGET=$(OS_SOURCE) EXENAME=$(TEMPNAME) CROSSBINDIR="" BINUTILSPREFIX="" CROSSCYCLEBOOTSTRAP=1 cycleclean compiler
+        $(MAKE) OS_TARGET=$(OS_SOURCE) CROSSBINDIR= BINUTILSPREFIX= CROSSCYCLEBOOTSTRAP=1 rtlclean rtl
+        $(MAKE) OS_TARGET=$(OS_SOURCE) EXENAME=$(TEMPNAME) CROSSBINDIR= BINUTILSPREFIX= CROSSCYCLEBOOTSTRAP=1 cycleclean compiler
 # ppcross<ARCH> (source native)
-        $(MAKE) 'FPC=$(BASEDIR)/$(TEMPNAME)' OS_TARGET=$(OS_SOURCE) CROSSBINDIR="" BINUTILSPREFIX="" CROSSCYCLEBOOTSTRAP=1 rtlclean rtl
-        $(MAKE) 'FPC=$(BASEDIR)/$(TEMPNAME)' OS_TARGET=$(OS_SOURCE) EXENAME=$(PPCROSSNAME) CROSSBINDIR="" BINUTILSPREFIX="" CROSSCYCLEBOOTSTRAP=1 cycleclean compiler
+        $(MAKE) 'FPC=$(BASEDIR)/$(TEMPNAME)' OS_TARGET=$(OS_SOURCE) CROSSBINDIR= BINUTILSPREFIX= CROSSCYCLEBOOTSTRAP=1 rtlclean rtl
+        $(MAKE) 'FPC=$(BASEDIR)/$(TEMPNAME)' OS_TARGET=$(OS_SOURCE) EXENAME=$(PPCROSSNAME) CROSSBINDIR= BINUTILSPREFIX= CROSSCYCLEBOOTSTRAP=1 cycleclean compiler
 # ppc<ARCH> (target native)
 ifndef CROSSINSTALL
         $(MAKE) 'FPC=$(BASEDIR)/$(PPCROSSNAME)' rtlclean rtl
+# building a native compiler for embedded targets is not possible
+ifneq ($(OS_TARGET),embedded)
+# building a native compiler for the arm-gba target is not possible
+ifneq ($(OS_TARGET),gba)
         $(MAKE) 'FPC=$(BASEDIR)/$(PPCROSSNAME)' cycleclean compiler
+endif
+endif
 endif
 
 endif
@@ -431,17 +641,22 @@ else
 # ppc3/ppcXXX = native (skipped for cross installation)
 #
 
+cycle: override FPC=
 cycle:
 # ppc (source native)
-        $(MAKE) OS_TARGET=$(OS_SOURCE) CPU_TARGET=$(CPU_SOURCE) CROSSBINDIR="" BINUTILSPREFIX="" CROSSCYCLEBOOTSTRAP=1 rtlclean rtl
-        $(MAKE) OS_TARGET=$(OS_SOURCE) CPU_TARGET=$(CPU_SOURCE) EXENAME=$(TEMPNAME) CROSSBINDIR="" BINUTILSPREFIX="" CROSSCYCLEBOOTSTRAP=1 cycleclean compiler
+# Clear detected compiler binary, because it can be existing crosscompiler binary, but we need native compiler here
+        $(MAKE) OS_TARGET=$(OS_SOURCE) CPU_TARGET=$(CPU_SOURCE) CROSSBINDIR= BINUTILSPREFIX= CROSSCYCLEBOOTSTRAP=1 rtlclean rtl
+        $(MAKE) OS_TARGET=$(OS_SOURCE) CPU_TARGET=$(CPU_SOURCE) EXENAME=$(TEMPNAME) CROSSBINDIR= BINUTILSPREFIX= CROSSCYCLEBOOTSTRAP=1 cycleclean compiler
 # ppcross<ARCH> (source native)
-        $(MAKE) 'FPC=$(BASEDIR)/$(TEMPNAME)' OS_TARGET=$(OS_SOURCE) CPU_TARGET=$(CPU_SOURCE) CROSSBINDIR="" BINUTILSPREFIX="" CROSSCYCLEBOOTSTRAP=1 rtlclean rtl
-        $(MAKE) 'FPC=$(BASEDIR)/$(TEMPNAME)' OS_TARGET=$(OS_SOURCE) CPU_TARGET=$(CPU_SOURCE) PPC_TARGET=$(CPU_TARGET) EXENAME=$(PPCROSSNAME) CROSSBINDIR="" BINUTILSPREFIX="" CROSSCYCLEBOOTSTRAP=1 cycleclean compiler
+        $(MAKE) 'FPC=$(BASEDIR)/$(TEMPNAME)' OS_TARGET=$(OS_SOURCE) CPU_TARGET=$(CPU_SOURCE) CROSSBINDIR= BINUTILSPREFIX= CROSSCYCLEBOOTSTRAP=1 rtlclean rtl
+        $(MAKE) 'FPC=$(BASEDIR)/$(TEMPNAME)' OS_TARGET=$(OS_SOURCE) CPU_TARGET=$(CPU_SOURCE) PPC_TARGET=$(CPU_TARGET) EXENAME=$(PPCROSSNAME) CROSSBINDIR= BINUTILSPREFIX= CROSSCYCLEBOOTSTRAP=1 cycleclean compiler
 # ppc<ARCH> (target native)
 ifndef CROSSINSTALL
-        $(MAKE) 'FPC=$(BASEDIR)/$(PPCROSSNAME)' rtlclean rtl
-        $(MAKE) 'FPC=$(BASEDIR)/$(PPCROSSNAME)' cycleclean compiler
+        $(MAKE) 'FPC=$(BASEDIR)/$(PPCROSSNAME)' 'OPT=$(RTLOPT) $(CROSSOPT)' rtlclean rtl
+# building a native compiler for JVM and embedded targets is not possible
+ifndef NoNativeBinaries
+        $(MAKE) 'FPC=$(BASEDIR)/$(PPCROSSNAME)' 'OPT=$(LOCALOPT) $(CROSSOPT)' cycleclean compiler
+endif
 endif
 
 endif
@@ -450,7 +665,7 @@ cycledep:
         $(MAKE) cycle USEDEPEND=1
 
 extcycle:
-        $(MAKE) cycle OPT='-n -OG2p3 -gl -CRriot -dEXTDEBUG'
+        $(MAKE) cycle OPT='-n -OG2p3 -glttt -CRriot -dEXTDEBUG'
 
 cvstest:
         $(MAKE) cycle 'LOCALOPT=-n -Se' 'RTLOPT=-n -Se'
@@ -483,7 +698,7 @@ htmldocs:
 # Installation
 #####################################################################
 
-.PHONY: quickinstall install installsym
+.PHONY: quickinstall exeinstall install installsym
 
 MSGINSTALLDIR=$(INSTALL_BASEDIR)/msg
 override PPEXEFILE:=$(wildcard $(EXENAME))
@@ -494,18 +709,29 @@ else
 PPCCPULOCATION=$(INSTALL_BINDIR)
 endif
 
+ifndef NoNativeBinaries
+quickinstall: quickinstall_withutils
+else
+quickinstall: exeinstall
+endif
+
 # This will only install the ppcXXX executable, not the message files etc.
-quickinstall: $(addsuffix _install,$(TARGET_DIRS))
+quickinstall_withutils: $(addsuffix _install,$(TARGET_DIRS)) exeinstall
+
 # Install ppcXXX executable, for a cross installation we install
 # the ppcrossXXX as ppcXXX. The target native build ppcXXX is not used
 # for this installation type
+exeinstall:
 ifneq ($(INSTALLEXEFILE),)
 ifdef UPXPROG
         -$(UPXPROG) $(INSTALLEXEFILE)
 endif
         $(MKDIR) $(PPCCPULOCATION)
-        $(INSTALLEXE) $(INSTALLEXEFILE) $(PPCCPULOCATION)/$(EXENAME)
+        $(INSTALLEXE) $(INSTALLEXEFILE) $(PPCCPULOCATION)/$(INSTALLEXEFILE)
 endif
+
+fullinstall:
+        $(MAKE) $(addsuffix _exe_install,$(filter-out $(PPC_TARGET),$(CYCLETARGETS)))
 
 install: quickinstall
 ifndef CROSSINSTALL
@@ -541,6 +767,47 @@ rtlclean:
 rtlinstall:
         $(MAKE) -C $(PACKAGEDIR_RTL) install
 
+#####################################################################
+# PPU testing targets
+#####################################################################
+
+PPUDIR=$(COMPILER_UNITTARGETDIR)
+ALLPPUDIR=$(CPU_TARGET)/units/*
+PPULIST=$(wildcard $(PPUDIR)/*.ppu)
+PPULOGLIST=$(subst .ppu,.log-ppu,$(PPULIST))
+
+RTLPPUDIR=../rtl/units/$(FULL_TARGET)
+RTLPPULIST=$(wildcard $(RTLPPUDIR)/*.ppu)
+RTLPPULOGLIST=$(subst .ppu,.log-ppu,$(RTLPPULIST))
+
+.PHONY : ppulogs cleanppulogs rtlppulogs cleanrtlppulogs testppudump
+
+ppulogs : $(PPULOGLIST)
+
+rtlppulogs : $(RTLPPULOGLIST)
+
+vpath %.ppu $(PPUDIR) $(RTLPPUDIR) $(ALLPPUDIR)
+vpath %.log-ppu $(PPUDIR) $(RTLPPUDIR) $(ALLPPUDIR)
+
+%.log-ppu : %.ppu ./utils/ppudump$(EXEEXT)
+	.$(PATHSEP)utils$(PATHSEP)ppudump -VA -M $< > $@
+
+
+./utils/ppudump$(EXEEXT):
+	$(MAKE) -C $(COMPILERUTILSDIR) ppudump$(EXEEXT)
+
+ppuinfo :
+	echo PPU list is "$(PPULIST)"
+	echo PPULOG list is "$(PPULOGLIST)"
+
+cleanppulogs :
+	-$(RMPROG) $(PPULOGLIST)
+
+cleanrtlppulogs :
+	-$(RMPROG) $(RTLPPULOGLIST)
+
+testppudump :
+	$(MAKE) cleanrtlppulogs cleanppulogs ppulogs rtlppulogs
 
 #####################################################################
 # local user configurable file

@@ -1,5 +1,4 @@
 {
-    $Id: cregist.inc,v 1.3 2005/02/14 17:13:31 peter Exp $
     This file is part of the Free Component Library (FCL)
     Copyright (c) 1999-2000 by the Free Pascal development team
 
@@ -41,18 +40,22 @@ begin
 end;
 
 
+procedure RegisterClassAlias(AClass: TPersistentClass; const Alias: string);
+  var
+    I : integer;
+  begin
+    i := ClassAliasList.IndexOf(Alias);
+    if I = -1 then
+      ClassAliasList.AddObject( Alias, TObject(AClass) );
+  end;
+
+
 procedure RegisterClasses(AClasses: array of TPersistentClass);
 var
 I : Integer;
 begin
 for I := low(aClasses) to high(aClasses) do
        RegisterClass(aClasses[I]);
-end;
-
-
-procedure RegisterClassAlias(AClass: TPersistentClass; const Alias: string);
-
-begin
 end;
 
 
@@ -118,16 +121,19 @@ end;
 
 function ActivateClassGroup(AClass: TPersistentClass): TPersistentClass;
 begin
+  Result:=nil;
 end;
 
 
 function ClassGroupOf(AClass: TPersistentClass): TPersistentClass;
 begin
+  Result:=nil;
 end;
 
 
 function ClassGroupOf(Instance: TPersistent): TPersistentClass;
 begin
+  Result:=nil;
 end;
 
 
@@ -220,12 +226,3 @@ begin
 end;
 
 
-{
-  $Log: cregist.inc,v $
-  Revision 1.3  2005/02/14 17:13:31  peter
-    * truncate log
-
-  Revision 1.2  2005/02/02 19:39:59  florian
-    * empty class grouping functions
-
-}

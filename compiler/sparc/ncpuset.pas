@@ -1,5 +1,4 @@
 {
-    $Id: ncpuset.pas,v 1.5 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 1998-2004 by Florian Klaempfl
 
     Generate sparc assembler for in set/case nodes
@@ -43,12 +42,12 @@ unit ncpuset;
   implementation
 
     uses
-      globals,
+      globals,constexp,
       systems,
       cpubase,
-      aasmbase,aasmtai,aasmcpu,
+      aasmbase,aasmtai,aasmdata,aasmcpu,
       cgbase,cgutils,cgobj,
-      procinfo;
+      defutil,procinfo;
 
     procedure tcpucasenode.optimizevalues(var max_linear_list:aint;var max_dist:aword);
       begin
@@ -69,62 +68,57 @@ unit ncpuset;
         last : TConstExprInt;
         indexreg,jmpreg,basereg : tregister;
         href : treference;
-        jumpsegment : TAAsmOutput;
+        opcgsize : tcgsize;
 
-        procedure genitem(t : pcaselabel);
+        procedure genitem(list:TAsmList;t : pcaselabel);
           var
             i : aint;
           begin
             if assigned(t^.less) then
-              genitem(t^.less);
+              genitem(list,t^.less);
             { fill possible hole }
-            for i:=last+1 to t^._low-1 do
-              jumpSegment.concat(Tai_const.Create_sym(elselabel));
-            for i:=t^._low to t^._high do
-              jumpSegment.concat(Tai_const.Create_sym(blocklabel(t^.blockid)));
+            for i:=last.svalue+1 to t^._low.svalue-1 do
+              list.concat(Tai_const.Create_sym(elselabel));
+            for i:=t^._low.svalue to t^._high.svalue do
+              list.concat(Tai_const.Create_sym(blocklabel(t^.blockid)));
             last:=t^._high;
             if assigned(t^.greater) then
-              genitem(t^.greater);
+              genitem(list,t^.greater);
           end;
 
       begin
-        if (cs_create_smart in aktmoduleswitches) or
-           (af_smartlink_sections in target_asm.flags) then
-          jumpsegment:=current_procinfo.aktlocaldata
-        else
-          jumpsegment:=datasegment;
+        opcgsize:=def_cgsize(opsize);
         if not(jumptable_no_range) then
           begin
              { case expr less than min_ => goto elselabel }
-             cg.a_cmp_const_reg_label(exprasmlist,opsize,jmp_lt,aint(min_),hregister,elselabel);
+             cg.a_cmp_const_reg_label(current_asmdata.CurrAsmList,opcgsize,jmp_lt,aint(min_),hregister,elselabel);
              { case expr greater than max_ => goto elselabel }
-             cg.a_cmp_const_reg_label(exprasmlist,opsize,jmp_gt,aint(max_),hregister,elselabel);
+             cg.a_cmp_const_reg_label(current_asmdata.CurrAsmList,opcgsize,jmp_gt,aint(max_),hregister,elselabel);
           end;
-        objectlibrary.getlabel(table);
-        indexreg:=cg.getaddressregister(exprasmlist);
-        cg.a_op_const_reg_reg(exprasmlist,OP_SHL,OS_ADDR,2,hregister,indexreg);
+        current_asmdata.getjumplabel(table);
+        indexreg:=cg.getaddressregister(current_asmdata.CurrAsmList);
+        cg.a_op_const_reg_reg(current_asmdata.CurrAsmList,OP_SHL,OS_ADDR,2,hregister,indexreg);
         { create reference }
-        reference_reset_symbol(href,table,0);
+        reference_reset_symbol(href,table,0,sizeof(pint));
         href.offset:=(-aint(min_))*4;
-        basereg:=cg.getaddressregister(exprasmlist);
-        cg.a_loadaddr_ref_reg(exprasmlist,href,basereg);
+        basereg:=cg.getaddressregister(current_asmdata.CurrAsmList);
+        cg.a_loadaddr_ref_reg(current_asmdata.CurrAsmList,href,basereg);
 
-        jmpreg:=cg.getaddressregister(exprasmlist);
+        jmpreg:=cg.getaddressregister(current_asmdata.CurrAsmList);
 
-        reference_reset(href);
+        reference_reset(href,sizeof(pint));
         href.index:=indexreg;
         href.base:=basereg;
-        cg.a_load_ref_reg(exprasmlist,OS_ADDR,OS_ADDR,href,jmpreg);
+        cg.a_load_ref_reg(current_asmdata.CurrAsmList,OS_ADDR,OS_ADDR,href,jmpreg);
 
-        exprasmlist.concat(taicpu.op_reg(A_JMP,jmpreg));
+        current_asmdata.CurrAsmList.concat(taicpu.op_reg(A_JMP,jmpreg));
         { Delay slot }
-        exprasmlist.concat(taicpu.op_none(A_NOP));
+        current_asmdata.CurrAsmList.concat(taicpu.op_none(A_NOP));
         { generate jump table }
-        if not(cs_littlesize in aktglobalswitches) then
-          jumpSegment.concat(Tai_Align.Create_Op(4,0));
-        jumpSegment.concat(Tai_label.Create(table));
+        new_section(current_procinfo.aktlocaldata,sec_data,current_procinfo.procdef.mangledname,sizeof(pint));
+        current_procinfo.aktlocaldata.concat(Tai_label.Create(table));
         last:=min_;
-        genitem(hp);
+        genitem(current_procinfo.aktlocaldata,hp);
       end;
 
 
@@ -132,9 +126,3 @@ unit ncpuset;
 begin
   ccasenode:=tcpucasenode;
 end.
-{
-  $Log: ncpuset.pas,v $
-  Revision 1.5  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

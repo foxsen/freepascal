@@ -1,5 +1,4 @@
 {
-    $Id: watcom.pp,v 1.5 2005/02/14 17:13:32 peter Exp $
 
 }
 //  this is generally go32 unit from go32v2 target.
@@ -210,7 +209,7 @@ interface
       end;
 
 
-    procedure test_int31(flag : longint);
+    procedure test_int31(flag : longint); stdcall; { flag is pushed on stack }
       begin
          asm
             pushl %ebx
@@ -1153,10 +1152,3 @@ begin
    int31error:=0;
    dosmemselector:=get_ds;
 end.
-
-{
-  $Log: watcom.pp,v $
-  Revision 1.5  2005/02/14 17:13:32  peter
-    * truncate log
-
-}

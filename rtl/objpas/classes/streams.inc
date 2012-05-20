@@ -1,5 +1,4 @@
 {
-    $Id: streams.inc,v 1.9 2005/03/25 20:07:43 peter Exp $
     This file is part of the Free Component Library (FCL)
     Copyright (c) 1999-2000 by the Free Pascal development team
 
@@ -15,7 +14,29 @@
 {*                             TStream                                      *}
 {****************************************************************************}
 
-{$ifdef seek64bit}
+procedure TStream.ReadNotImplemented;
+begin
+  raise EStreamError.CreateFmt(SStreamNoReading, [ClassName]) at get_caller_addr(get_frame);
+end;
+
+procedure TStream.WriteNotImplemented;
+begin
+  raise EStreamError.CreateFmt(SStreamNoWriting, [ClassName]) at get_caller_addr(get_frame);
+end;
+
+function TStream.Read(var Buffer; Count: Longint): Longint;
+begin
+  ReadNotImplemented;
+  Result := 0;
+end;
+
+function TStream.Write(const Buffer; Count: Longint): Longint;
+begin
+  WriteNotImplemented;
+  Result := 0;
+end;
+
+
   function TStream.GetPosition: Int64;
 
     begin
@@ -92,7 +113,66 @@
        raise EStreamError.CreateFmt(SSeekNotImplemented,[ClassName]);
     end;
 
-  function TStream.Seek(const Offset: Int64; Origin: TSeekorigin): Int64;
+  procedure TStream.Discard(const Count: Int64);
+
+  const
+    CSmallSize      =255;
+    CLargeMaxBuffer =32*1024; // 32 KiB
+  var
+    Buffer: array[1..CSmallSize] of Byte;
+
+  begin
+    if Count=0 then
+      Exit;
+    if Count<=SizeOf(Buffer) then
+      ReadBuffer(Buffer,Count)
+    else
+      DiscardLarge(Count,CLargeMaxBuffer);
+  end;
+
+  procedure TStream.DiscardLarge(Count: int64; const MaxBufferSize: Longint);
+
+  var
+    Buffer: array of Byte;
+
+  begin
+    if Count=0 then
+       Exit;
+    if Count>MaxBufferSize then
+      SetLength(Buffer,MaxBufferSize)
+    else
+      SetLength(Buffer,Count);
+    while (Count>=Length(Buffer)) do
+      begin
+      ReadBuffer(Buffer[0],Length(Buffer));
+      Dec(Count,Length(Buffer));
+      end;
+    if Count>0 then
+      ReadBuffer(Buffer[0],Count);
+  end;
+
+  procedure TStream.InvalidSeek;
+
+  begin
+    raise EStreamError.CreateFmt(SStreamInvalidSeek, [ClassName]) at get_caller_addr(get_frame);
+  end;
+
+  procedure TStream.FakeSeekForward(Offset: Int64;  const Origin: TSeekOrigin; const Pos: Int64);
+
+  var
+    Buffer: Pointer;
+    BufferSize, i: LongInt;
+
+  begin
+    if Origin=soBeginning then
+       Dec(Offset,Pos);
+    if (Offset<0) or (Origin=soEnd) then
+      InvalidSeek;
+    if Offset>0 then
+      Discard(Offset);
+   end;
+
+ function TStream.Seek(const Offset: Int64; Origin: TSeekorigin): Int64;
 
     begin
       // Backwards compatibility that calls the longint Seek
@@ -101,40 +181,6 @@
         raise ERangeError.Create(SRangeError);
       Result:=Seek(longint(Offset),ord(Origin));
     end;
-
-{$else seek64bit}
-
-  function TStream.GetPosition: Longint;
-
-    begin
-       Result:=Seek(0,soFromCurrent);
-    end;
-
-  procedure TStream.SetPosition(Pos: Longint);
-
-    begin
-       Seek(pos,soFromBeginning);
-    end;
-
-  function TStream.GetSize: Longint;
-
-    var
-       p : longint;
-
-    begin
-       p:=GetPosition;
-       GetSize:=Seek(0,soFromEnd);
-       Seek(p,soFromBeginning);
-    end;
-
-  procedure TStream.SetSize(NewSize: Longint);
-
-    begin
-    // We do nothing. Pipe streams don't support this
-    // As wel as possible read-ony streams !!
-    end;
-
-{$endif seek64bit}
 
   procedure TStream.ReadBuffer(var Buffer; Count: Longint);
 
@@ -153,29 +199,45 @@
   function TStream.CopyFrom(Source: TStream; Count: Int64): Int64;
 
     var
-       i : Int64;
-       buffer : array[0..1023] of byte;
+       Buffer: Pointer;
+       BufferSize, i: LongInt;
 
+    const
+       MaxSize = $20000;
     begin
-       CopyFrom:=0;
-       If (Count=0) then
-         begin
-         // This WILL fail for non-seekable streams...
-         Source.Position:=0;
-         Count:=Source.Size;
-         end;
-       while Count>0 do
-         begin
-         if (Count>sizeof(buffer)) then
-           i:=sizeof(Buffer)
+
+       Result:=0;
+       if Count=0 then
+         Source.Position:=0;   // This WILL fail for non-seekable streams...
+       BufferSize:=MaxSize;
+       if (Count>0) and (Count<BufferSize) then
+         BufferSize:=Count;    // do not allocate more than needed
+
+       GetMem(Buffer,BufferSize);
+       try
+         if Count=0 then
+         repeat
+           i:=Source.Read(buffer^,BufferSize);
+           if i>0 then
+             WriteBuffer(buffer^,i);
+           Inc(Result,i);
+         until i<BufferSize
          else
-           i:=Count;
-         i:=Source.Read(buffer,i);
-         i:=Write(buffer,i);
-         if i=0 then break;
-         dec(count,i);
-         CopyFrom:=CopyFrom+i;
+         while Count>0 do
+         begin
+           if Count>BufferSize then
+             i:=BufferSize
+           else
+             i:=Count;
+           Source.ReadBuffer(buffer^,i);
+           WriteBuffer(buffer^,i);
+           Dec(count,i);
+           Inc(Result,i);
          end;
+       finally
+         FreeMem(Buffer);
+       end;
+
     end;
 
   function TStream.ReadComponent(Instance: TComponent): TComponent;
@@ -258,17 +320,21 @@
     end;
 
   procedure TStream.WriteResourceHeader(const ResName: string; {!!!: out} var FixupInfo: Integer);
-
+    var
+      ResType, Flags : word;
     begin
+       ResType:=NtoLE(word($000A));
+       Flags:=NtoLE(word($1030));
+       { Note: This is a Windows 16 bit resource }
        { Numeric resource type }
        WriteByte($ff);
        { Application defined data }
-       WriteWord($0a);
+       WriteWord(ResType);
        { write the name as asciiz }
        WriteBuffer(ResName[1],length(ResName));
        WriteByte(0);
        { Movable, Pure and Discardable }
-       WriteWord($1030);
+       WriteWord(Flags);
        { Placeholder for the resource size }
        WriteDWord(0);
        { Return current stream position so that the resource size can be
@@ -279,35 +345,40 @@
   procedure TStream.FixupResourceHeader(FixupInfo: Integer);
 
     var
-       ResSize : Integer;
+       ResSize,TmpResSize : Integer;
 
     begin
 
       ResSize := Position - FixupInfo;
+      TmpResSize := NtoLE(longword(ResSize));
 
       { Insert the correct resource size into the placeholder written by
         WriteResourceHeader }
       Position := FixupInfo - 4;
-      WriteDWord(ResSize);
+      WriteDWord(TmpResSize);
       { Seek back to the end of the resource }
       Position := FixupInfo + ResSize;
 
     end;
 
   procedure TStream.ReadResHeader;
-
+    var
+      ResType, Flags : word;
     begin
        try
+         { Note: This is a Windows 16 bit resource }
          { application specific resource ? }
          if ReadByte<>$ff then
            raise EInvalidImage.Create(SInvalidImage);
-         if ReadWord<>$000a then
+         ResType:=LEtoN(ReadWord);
+         if ResType<>$000a then
            raise EInvalidImage.Create(SInvalidImage);
          { read name }
          while ReadByte<>0 do
            ;
          { check the access specifier }
-         if ReadWord<>$1030 then
+         Flags:=LEtoN(ReadWord);
+         if Flags<>$1030 then
            raise EInvalidImage.Create(SInvalidImage);
          { ignore the size }
          ReadDWord;
@@ -349,9 +420,17 @@
        ReadDWord:=d;
     end;
 
+  function TStream.ReadQWord: QWord;
+    var
+       q: QWord;
+    begin
+      ReadBuffer(q,8);
+      ReadQWord:=q;
+
+    end;
+
   Function TStream.ReadAnsiString : String;
-  Type
-    PByte = ^Byte;
+
   Var
     TheSize : Longint;
     P : PByte ;
@@ -367,7 +446,7 @@
      end;
    end;
 
-  Procedure TStream.WriteAnsiString (S : String);
+  Procedure TStream.WriteAnsiString (const S : String);
 
   Var L : Longint;
 
@@ -395,14 +474,20 @@
        WriteBuffer(d,4);
     end;
 
+  procedure TStream.WriteQWord(q: QWord);
+    begin
+      WriteBuffer(q,8);
+    end;
+
 
 {****************************************************************************}
 {*                             THandleStream                                *}
 {****************************************************************************}
 
-Constructor THandleStream.Create(AHandle: Integer);
+Constructor THandleStream.Create(AHandle: THandle);
 
 begin
+  Inherited Create;
   FHandle:=AHandle;
 end;
 
@@ -421,8 +506,6 @@ begin
   Result:=FileWrite (FHandle,Buffer,Count);
   If Result=-1 then Result:=0;
 end;
-
-{$ifdef seek64bit}
 
 Procedure THandleStream.SetSize(NewSize: Longint);
 
@@ -444,21 +527,6 @@ begin
   Result:=FileSeek(FHandle,Offset,ord(Origin));
 end;
 
-{$else seek64bit}
-
-Procedure THandleStream.SetSize(NewSize: Longint);
-begin
-  FileTruncate(FHandle,NewSize);
-end;
-
-
-function THandleStream.Seek(Offset: Longint; Origin: Word): Longint;
-begin
-  Result:=FileSeek(FHandle,Offset,Origin);
-end;
-
-{$endif seek64bit}
-
 
 {****************************************************************************}
 {*                             TFileStream                                  *}
@@ -467,16 +535,7 @@ end;
 constructor TFileStream.Create(const AFileName: string; Mode: Word);
 
 begin
-  FFileName:=AFileName;
-  If Mode=fmcreate then
-    FHandle:=FileCreate(AFileName)
-  else
-    FHAndle:=FileOpen(AFileName,Mode);
-  If FHandle<0 then
-    If Mode=fmcreate then
-      raise EFCreateError.createfmt(SFCreateError,[AFileName])
-    else
-      raise EFOpenError.Createfmt(SFOpenError,[AFilename]);
+  Create(AFileName,Mode,438);
 end;
 
 
@@ -484,11 +543,12 @@ constructor TFileStream.Create(const AFileName: string; Mode: Word; Rights: Card
 
 begin
   FFileName:=AFileName;
-  If Mode=fmcreate then
-    FHandle:=FileCreate(AFileName)
+  If (Mode and fmCreate) > 0 then
+    FHandle:=FileCreate(AFileName,Mode,Rights)
   else
     FHAndle:=FileOpen(AFileName,Mode);
-  If FHandle<0 then
+
+  If (THandle(FHandle)=feInvalidHandle) then
     If Mode=fmcreate then
       raise EFCreateError.createfmt(SFCreateError,[AFileName])
     else
@@ -506,28 +566,31 @@ end;
 {*                             TCustomMemoryStream                          *}
 {****************************************************************************}
 
-procedure TCustomMemoryStream.SetPointer(Ptr: Pointer; ASize: Longint);
+procedure TCustomMemoryStream.SetPointer(Ptr: Pointer; ASize: PtrInt);
 
 begin
   FMemory:=Ptr;
   FSize:=ASize;
 end;
 
-{$ifdef seek64bit}
+
 function TCustomMemoryStream.GetSize: Int64;
 
 begin
   Result:=FSize;
 end;
-{$endif seek64bit}
+
+function TCustomMemoryStream.GetPosition: Int64;
+begin
+  Result:=FPosition;
+end;
 
 
-
-function TCustomMemoryStream.Read(var Buffer; Count: Longint): Longint;
+function TCustomMemoryStream.Read(var Buffer; Count: LongInt): LongInt;
 
 begin
   Result:=0;
-  If (FSize>0) and (FPosition<Fsize) then
+  If (FSize>0) and (FPosition<Fsize) and (FPosition>=0) then
     begin
     Result:=FSize-FPosition;
     If Result>Count then Result:=Count;
@@ -537,15 +600,19 @@ begin
 end;
 
 
-function TCustomMemoryStream.Seek(Offset: Longint; Origin: Word): Longint;
+function TCustomMemoryStream.Seek(const Offset: Int64; Origin: TSeekOrigin): Int64;
 
 begin
-  Case Origin of
+  Case Word(Origin) of
     soFromBeginning : FPosition:=Offset;
     soFromEnd       : FPosition:=FSize+Offset;
-    soFromCurrent   : FpoSition:=FPosition+Offset;
+    soFromCurrent   : FPosition:=FPosition+Offset;
   end;
   Result:=FPosition;
+  {$IFDEF DEBUG}
+  if Result < 0 then
+    raise Exception.Create('TCustomMemoryStream');
+  {$ENDIF}
 end;
 
 
@@ -577,7 +644,7 @@ end;
 
 Const TMSGrow = 4096; { Use 4k blocks. }
 
-procedure TMemoryStream.SetCapacity(NewCapacity: Longint);
+procedure TMemoryStream.SetCapacity(NewCapacity: PtrInt);
 
 begin
   SetPointer (Realloc(NewCapacity),Fsize);
@@ -585,32 +652,28 @@ begin
 end;
 
 
-function TMemoryStream.Realloc(var NewCapacity: Longint): Pointer;
-
-Var MoveSize : Longint;
+function TMemoryStream.Realloc(var NewCapacity: PtrInt): Pointer;
 
 begin
-  If NewCapacity>0 Then // round off to block size.
-    NewCapacity := (NewCapacity + (TMSGrow-1)) and not (TMSGROW-1);
+  If NewCapacity<0 Then
+    NewCapacity:=0
+  else
+    begin
+      // if growing, grow at least a quarter
+      if (NewCapacity>FCapacity) and (NewCapacity < (5*FCapacity) div 4) then
+        NewCapacity := (5*FCapacity) div 4;
+      // round off to block size.
+      NewCapacity := (NewCapacity + (TMSGrow-1)) and not (TMSGROW-1);
+    end;
   // Only now check !
   If NewCapacity=FCapacity then
     Result:=FMemory
   else
-    If NewCapacity=0 then
-      FreeMem (FMemory,Fcapacity)
-    else
-      begin
-      GetMem (Result,NewCapacity);
-      If Result=Nil then
+    begin
+      Result:=Reallocmem(FMemory,Newcapacity);
+      If (Result=Nil) and (Newcapacity>0) then
         Raise EStreamError.Create(SMemoryStreamError);
-      If FCapacity>0 then
-        begin
-        MoveSize:=FSize;
-        If MoveSize>NewCapacity then MoveSize:=NewCapacity;
-        Move (Fmemory^,Result^,MoveSize);
-        FreeMem (FMemory,FCapacity);
-        end;
-      end;
+    end;
 end;
 
 
@@ -645,7 +708,7 @@ procedure TMemoryStream.LoadFromFile(const FileName: string);
 Var S : TFileStream;
 
 begin
-  S:=TFileStream.Create (FileName,fmOpenRead);
+  S:=TFileStream.Create (FileName,fmOpenRead or fmShareDenyWrite);
   Try
     LoadFromStream(S);
   finally
@@ -654,7 +717,7 @@ begin
 end;
 
 
-procedure TMemoryStream.SetSize(NewSize: Longint);
+procedure TMemoryStream.SetSize({$ifdef CPU64}const{$endif CPU64} NewSize: PtrInt);
 
 begin
   SetCapacity (NewSize);
@@ -663,12 +726,12 @@ begin
     FPosition:=FSize;
 end;
 
-function TMemoryStream.Write(const Buffer; Count: Longint): Longint;
+function TMemoryStream.Write(const Buffer; Count: LongInt): LongInt;
 
-Var NewPos : Longint;
+Var NewPos : PtrInt;
 
 begin
-  If Count=0 then
+  If (Count=0) or (FPosition<0) then
     exit(0);
   NewPos:=FPosition+Count;
   If NewPos>Fsize then
@@ -682,10 +745,53 @@ begin
   Result:=Count;
 end;
 
+{****************************************************************************}
+{*                              TBytesStream                                *}
+{****************************************************************************}
+
+constructor TBytesStream.Create(const ABytes: TBytes);
+begin
+  inherited Create;
+  FBytes:=ABytes;
+  SetPointer(Pointer(FBytes),Length(FBytes));
+  FCapacity:=Length(FBytes);
+end;
+
+function TBytesStream.Realloc(var NewCapacity: PtrInt): Pointer;
+begin
+  // adapt TMemoryStream code to use with dynamic array
+  if NewCapacity<0 Then
+    NewCapacity:=0
+  else
+    begin
+      if (NewCapacity>Capacity) and (NewCapacity < (5*Capacity) div 4) then
+        NewCapacity := (5*Capacity) div 4;
+      NewCapacity := (NewCapacity + (TMSGrow-1)) and not (TMSGROW-1);
+    end;
+  if NewCapacity=Capacity then
+    Result:=Pointer(FBytes)
+  else
+    begin
+      SetLength(FBytes,Newcapacity);
+      Result:=Pointer(FBytes);
+      if (Result=nil) and (Newcapacity>0) then
+        raise EStreamError.Create(SMemoryStreamError);
+    end;
+end;
 
 {****************************************************************************}
 {*                             TStringStream                                *}
 {****************************************************************************}
+
+function TStringStream.GetSize: Int64;
+begin
+  Result:=Length(FDataString);
+end;
+
+function TStringStream.GetPosition: Int64;
+begin
+  Result:=FPosition;
+end;
 
 procedure TStringStream.SetSize(NewSize: Longint);
 
@@ -732,10 +838,12 @@ begin
   Case Origin of
     soFromBeginning : FPosition:=Offset;
     soFromEnd       : FPosition:=Length(FDataString)+Offset;
-    soFromCurrent   : FpoSition:=FPosition+Offset;
+    soFromCurrent   : FPosition:=FPosition+Offset;
   end;
-  If FPosition>Length(FDataString) then FPosition:=Length(FDataString);
-  If FPosition<0 then FPosition:=0;
+  If FPosition>Length(FDataString) then
+    FPosition:=Length(FDataString)
+  else If FPosition<0 then
+    FPosition:=0;
   Result:=FPosition;
 end;
 
@@ -746,7 +854,7 @@ begin
   Result:=Count;
   SetSize(FPosition+Count);
   // This supposes that FDataString is of type AnsiString)
-  Move (Buffer,PCHar(FDataString)[Fposition],Count);
+  Move (Buffer,PChar(FDataString)[Fposition],Count);
   FPosition:=FPosition+Count;
 end;
 
@@ -763,35 +871,72 @@ end;
 {*                             TResourceStream                              *}
 {****************************************************************************}
 
-procedure TResourceStream.Initialize(Instance: THandle; Name, ResType: PChar);
+{$ifdef UNICODE}
+procedure TResourceStream.Initialize(Instance: THandle; Name, ResType: PWideChar; NameIsID: Boolean);
+  begin
+    Res:=FindResource(Instance, Name, ResType);
+    if Res=0 then
+      if NameIsID then
+        raise EResNotFound.CreateFmt(SResNotFound,[IntToStr(PtrInt(Name))])
+      else
+        raise EResNotFound.CreateFmt(SResNotFound,[Name]);
+    Handle:=LoadResource(Instance,Res);
+    if Handle=0 then
+      if NameIsID then
+        raise EResNotFound.CreateFmt(SResNotFound,[IntToStr(PtrInt(Name))])
+      else
+        raise EResNotFound.CreateFmt(SResNotFound,[Name]);
+    SetPointer(LockResource(Handle),SizeOfResource(Instance,Res));
+  end;
 
-begin
-end;
+constructor TResourceStream.Create(Instance: THandle; const ResName: WideString; ResType: PWideChar);
+  begin
+    inherited create;
+    Initialize(Instance,PWideChar(ResName),ResType,False);
+  end;
+constructor TResourceStream.CreateFromID(Instance: THandle; ResID: Integer; ResType: PWideChar);
+  begin
+    inherited create;
+    Initialize(Instance,PWideChar(ResID),ResType,True);
+  end;
+{$else UNICODE}
 
+procedure TResourceStream.Initialize(Instance: THandle; Name, ResType: PChar; NameIsID: Boolean);
+  begin
+    Res:=FindResource(Instance, Name, ResType);
+    if Res=0 then
+      if NameIsID then
+        raise EResNotFound.CreateFmt(SResNotFound,[IntToStr(PtrInt(Name))])
+      else
+        raise EResNotFound.CreateFmt(SResNotFound,[Name]);
+    Handle:=LoadResource(Instance,Res);
+    if Handle=0 then
+      if NameIsID then
+        raise EResNotFound.CreateFmt(SResNotFound,[IntToStr(PtrInt(Name))])
+      else
+        raise EResNotFound.CreateFmt(SResNotFound,[Name]);
+    SetPointer(LockResource(Handle),SizeOfResource(Instance,Res));
+  end;
 
 constructor TResourceStream.Create(Instance: THandle; const ResName: string; ResType: PChar);
-
-begin
-end;
-
-
+  begin
+    inherited create;
+    Initialize(Instance,pchar(ResName),ResType,False);
+  end;
 constructor TResourceStream.CreateFromID(Instance: THandle; ResID: Integer; ResType: PChar);
-
-begin
-end;
+  begin
+    inherited create;
+    Initialize(Instance,pchar(PtrInt(ResID)),ResType,True);
+  end;
+{$endif UNICODE}
 
 
 destructor TResourceStream.Destroy;
-
-begin
-end;
-
-
-function TResourceStream.Write(const Buffer; Count: Longint): Longint;
-
-begin
-  Write:=0;
-end;
+  begin
+    UnlockResource(Handle);
+    FreeResource(Handle);
+    inherited destroy;
+  end;
 
 {****************************************************************************}
 {*                             TOwnerStream                                 *}
@@ -809,27 +954,245 @@ begin
   inherited Destroy;
 end;
 
-{
-  $Log: streams.inc,v $
-  Revision 1.9  2005/03/25 20:07:43  peter
-    * add const to 64bit seeks
+{****************************************************************************}
+{*                             TStreamAdapter                               *}
+{****************************************************************************}
+constructor TStreamAdapter.Create(Stream: TStream; Ownership: TStreamOwnership = soReference);
+begin
+  inherited Create;
+  FStream:=Stream;
+  FOwnership:=Ownership;
+  m_bReverted:=false;   // mantis 15003
+			// http://www.tech-archive.net/Archive/German/microsoft.public.de.vc/2005-08/msg00791.html
+			// http://code.google.com/p/ddab-lib/wiki/TPJIStreamWrapper
+end;
 
-  Revision 1.8  2005/02/14 17:13:31  peter
-    * truncate log
 
-  Revision 1.7  2005/01/20 16:37:57  peter
-    * 1.0.x fix
+destructor TStreamAdapter.Destroy;
+begin
+  if StreamOwnership=soOwned then
+    FreeAndNil(FStream);
+  inherited Destroy;
+end;
 
-  Revision 1.6  2005/01/19 19:57:57  michael
-  + CustomMemoryStream.getsize overridden
+{$warnings off}
+function TStreamAdapter.Read(pv: Pointer; cb: DWORD; pcbRead: PDWORD): HResult; stdcall;
+var
+  readcount: Longint;
+begin
+  if m_bReverted then
+    begin
+      Result := STG_E_REVERTED;
+      Exit;
+    end;
+  if pv = nil then
+    begin
+      Result := STG_E_INVALIDPOINTER;
+      Exit;
+    end;
 
-  Revision 1.5  2005/01/19 09:09:50  michael
-    * Patch from Peter to fix 64bit issue in tstream.seek()
+  readcount := FStream.Read(pv^, cb);
+  if pcbRead <> nil then pcbRead^ := readcount;
+  Result := S_OK;
+end;
 
-  Revision 1.4  2005/01/18 22:31:44  michael
-  + Patch from Mattias Gaertner to fix CopyFrom
+function TStreamAdapter.Write(pv: Pointer; cb: DWORD; pcbWritten: PDWORD): HResult; stdcall;
+var
+  writecount: Longint;
+begin
+  if m_bReverted then
+    begin
+      Result := STG_E_REVERTED;
+      Exit;
+    end;
+  if pv = nil then
+    begin
+      Result := STG_E_INVALIDPOINTER;
+      Exit;
+    end;
 
-  Revision 1.3  2005/01/09 13:15:37  michael
-  + Added TOwnerStream
+  writecount := FStream.Write(pv^, cb);
+  if pcbWritten <> nil then pcbWritten^ := writecount;
+  Result := S_OK;
+end;
 
- }
+function TStreamAdapter.Seek(dlibMove: Largeint; dwOrigin: Longint; out libNewPosition: Largeint): HResult; stdcall;
+var
+  newpos: Int64;
+begin
+  if m_bReverted then
+    begin
+      Result := STG_E_REVERTED;
+      Exit;
+    end;
+  case dwOrigin of
+    STREAM_SEEK_SET: newpos := FStream.Seek(dlibMove, soBeginning);
+    STREAM_SEEK_CUR: newpos := FStream.Seek(dlibMove, soCurrent);
+    STREAM_SEEK_END: newpos := FStream.Seek(dlibMove, soEnd);
+    else
+      begin
+        Result := STG_E_INVALIDFUNCTION;
+        Exit;
+      end;
+  end;
+  if @libNewPosition <> nil then
+    libNewPosition := newpos;
+  Result := S_OK;
+end;
+
+function TStreamAdapter.SetSize(libNewSize: Largeint): HResult; stdcall;
+begin
+  if m_bReverted then
+    begin
+      Result := STG_E_REVERTED;
+      Exit;
+    end;
+  if libNewSize<0 then
+    begin
+      Result := STG_E_INVALIDFUNCTION;
+      Exit;
+    end;
+  try
+    FStream.Size := libNewSize;
+    Result := S_OK;
+  except
+    // TODO: return different error value according to exception like STG_E_MEDIUMFULL
+    Result := E_FAIL;
+  end;
+end;
+
+
+function TStreamAdapter.CopyTo(stm: IStream; cb: Largeint; out cbRead: Largeint; out cbWritten: Largeint): HResult; stdcall;
+var
+  sz: dword;
+  buffer : array[0..1023] of byte;
+begin
+  if m_bReverted then
+    begin
+      Result := STG_E_REVERTED;
+      Exit;
+    end;
+
+  // the method is similar to TStream.CopyFrom => use CopyFrom implementation
+  cbWritten := 0;
+  cbRead := 0;
+  while cb > 0 do
+    begin
+      if (cb > sizeof(buffer)) then
+        sz := sizeof(Buffer)
+      else
+        sz := cb;
+      sz := FStream.Read(buffer, sz);
+      inc(cbRead, sz);
+      stm.Write(@buffer[0], sz, @sz);
+      inc(cbWritten, sz);
+      if sz = 0 then
+        begin
+          Result := E_FAIL;
+          Exit;
+        end;
+      dec(cb, sz);
+    end;
+  Result := S_OK;
+end;
+
+function TStreamAdapter.Commit(grfCommitFlags: Longint): HResult; stdcall;
+begin
+  if m_bReverted then
+    Result := STG_E_REVERTED
+  else
+    Result := S_OK;
+end;
+
+function TStreamAdapter.Revert: HResult; stdcall;
+begin
+  m_bReverted := True;
+  Result := S_OK;
+end;
+
+
+function TStreamAdapter.LockRegion(libOffset: Largeint; cb: Largeint; dwLockType: Longint): HResult; stdcall;
+begin
+  Result := STG_E_INVALIDFUNCTION;
+end;
+
+
+function TStreamAdapter.UnlockRegion(libOffset: Largeint; cb: Largeint; dwLockType: Longint): HResult; stdcall;
+begin
+  Result := STG_E_INVALIDFUNCTION;
+end;
+
+
+function TStreamAdapter.Stat(out statstg: TStatStg; grfStatFlag: Longint): HResult; stdcall;
+begin
+  if m_bReverted then
+    begin
+      Result := STG_E_REVERTED;
+      Exit;
+    end;
+  if grfStatFlag in [STATFLAG_DEFAULT,STATFLAG_NOOPEN,STATFLAG_NONAME] then
+  begin
+    if @statstg <> nil then
+    begin
+      fillchar(statstg, sizeof(TStatStg),#0);
+
+      { //TODO handle pwcsName
+        if grfStatFlag = STATFLAG_DEFAULT then
+          runerror(217) //Result :={$ifdef windows} STG_E_INVALIDFLAG{$else}E_INVALID_FLAG{$endif}
+      }
+
+      statstg.dwType := STGTY_STREAM;
+      statstg.cbSize := FStream.Size;
+      statstg.grfLocksSupported := LOCK_WRITE;
+    end;
+    Result := S_OK;
+  end else
+    Result := STG_E_INVALIDFLAG
+end;
+
+function TStreamAdapter.Clone(out stm: IStream): HResult; stdcall;
+begin
+  if m_bReverted then
+    begin
+      Result := STG_E_REVERTED;
+      Exit;
+    end;
+  // don't raise an exception here return error value that function is not implemented
+  // to implement this we need a clone method for TStream class
+  Result := STG_E_UNIMPLEMENTEDFUNCTION;
+end;
+
+constructor TProxyStream.Create(const Stream: IStream);
+begin
+  FStream := Stream;
+end;
+
+function TProxyStream.Read(var Buffer; Count: Longint): Longint;
+begin
+  Check(FStream.Read(@Buffer, Count, @Result));
+end;
+
+function TProxyStream. Seek(const Offset: int64; Origin: TSeekOrigin): int64;
+begin
+  Check(FStream.Seek(Offset, ord(Origin), result));
+end;
+
+function TProxyStream.Write(const Buffer; Count: Longint): Longint;
+begin
+  Check(FStream.Write(@Buffer, Count, @Result));
+end;
+
+function TProxyStream.GetIStream: IStream;
+begin
+  Result := FStream;
+end;
+
+procedure TProxyStream.Check(err:integer);
+var e : EInOutError;
+begin
+  e:= EInOutError.Create('Proxystream.Check');
+  e.Errorcode:=err;
+  raise e;
+end;
+
+{$warnings on}

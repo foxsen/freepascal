@@ -1,5 +1,4 @@
 {
-    $Id: oglx.pas,v 1.8 2005/02/14 17:13:06 peter Exp $
     Copyright (c) 2002 by Daniel Mantione, Peter Vreman
 
     Contains the binary reader and writer for the linear executable
@@ -206,14 +205,14 @@ uses
         i         : longint;
         globalval : byte;
         secrec    : coffsectionrec;
-        objdata   : TAsmObjectData;
+        objdata   : TObjData;
         p         : tasmsymbol;
         s         : string;}
       begin
-(*        objdata:=TAsmObjectData(objdatalist.first);
+(*        objdata:=TObjData(objdatalist.first);
         while assigned(objdata) do
          begin
-           with tcoffobjectdata(objdata) do
+           with tcoffObjData(objdata) do
             begin
               { The symbols used }
               p:=Tasmsymbol(symbols.First);
@@ -250,20 +249,20 @@ uses
                  p:=tasmsymbol(p.indexnext);
                end;
             end;
-           objdata:=TAsmObjectData(objdata.next);
+           objdata:=TObjData(objdata.next);
          end;*)
       end;
 
 
     procedure Tlxexeoutput.CalculateMemoryMap;
 {      var
-        objdata : TAsmObjectData;
+        objdata : TObjData;
         secsymidx,
         mempos,
         datapos : longint;
         sec     : TSection;
         sym     : tasmsymbol;
-        s       : TAsmSection;}
+        s       : TObjSection;}
       begin
 (*        { retrieve amount of sections }
         nsects:=0;
@@ -283,7 +282,7 @@ uses
         if not win32 then
          inc(mempos,sizeof(go32v2stub)+$1000);
         { add sections }
-        MapObjectdata(datapos,mempos);
+        MapObjData(datapos,mempos);
         { end symbol }
         AddGlobalSym('_etext',sections[sec_code].mempos+sections[sec_code].memsize);
         AddGlobalSym('_edata',sections[sec_data].mempos+sections[sec_data].memsize);
@@ -291,14 +290,14 @@ uses
         { symbols }
         nsyms:=0;
         sympos:=0;
-        if not(cs_link_strip in aktglobalswitches) then
+        if not(cs_link_strip in current_settings.globalswitches) then
          begin
            sympos:=datapos;
-           objdata:=TAsmObjectData(objdatalist.first);
+           objdata:=TObjData(objdatalist.first);
            while assigned(objdata) do
             begin
               inc(nsyms,objdata.symbols.count);
-              objdata:=TAsmObjectData(objdata.next);
+              objdata:=TObjData(objdata.next);
             end;
          end;*)
       end;
@@ -332,7 +331,7 @@ begin
     header.os_type:=1;          {OS/2}
     {Set the initial EIP.}
     header.eip_object:=code_object;
-    hsym:=tasmsymbol(globalsyms.search('start'));
+    hsym:=tasmsymbol(globalsyms.Find('start'));
     if not assigned(hsym) then
     begin
         comment(V_Error,'Entrypoint "start" not defined');
@@ -393,9 +392,3 @@ begin
 
   RegisterLinker(ld_i386_coff,Tlxlinker);}
 end.
-{
-  $Log: oglx.pas,v $
-  Revision 1.8  2005/02/14 17:13:06  peter
-    * truncate log
-
-}

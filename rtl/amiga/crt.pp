@@ -1,5 +1,4 @@
 {
-    $Id: crt.pp,v 1.5 2005/02/14 17:13:21 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Nils Sjoholm and Carl Eric Codere
 
@@ -480,7 +479,7 @@ begin
    ConData := pos + 1;
 end;
 
-function WhereX : Byte;
+function WhereX : tcrtcoord;
 begin
    WhereX := Byte(ConData(CD_CURRX))-lo(windmin);
 end;
@@ -495,7 +494,7 @@ begin
  RealY := Byte(ConData(CD_CURRY));
 end;
 
-function WhereY : Byte;
+function WhereY : tcrtcoord;
 begin
    WhereY := Byte(ConData(CD_CURRY))-hi(windmin);
 end;
@@ -517,7 +516,7 @@ end;
  end;
 
 
- procedure gotoxy(x,y : byte);
+ procedure gotoxy(x,y : tcrtcoord);
  begin
         if (x<1) then
           x:=1;
@@ -926,13 +925,3 @@ Begin
 {   assigncrt(Output);
    TextRec(Output).mode:=fmOutput;}
 end.
-
-
-
-
-
-  $Log: crt.pp,v $
-  Revision 1.5  2005/02/14 17:13:21  peter
-    * truncate log
-
-}

@@ -1,7 +1,6 @@
 {
-    $Id: bits.inc,v 1.4 2005/02/14 17:13:31 peter Exp $
     This file is part of the Free Component Library (FCL)
-    Copyright (c) 1999-2000 by the Free Pascal development team
+    Copyright (c) 1999-2008 by the Free Pascal development team
 
     See the file COPYING.FPC, included in this distribution,
     for details about the copyright.
@@ -15,30 +14,29 @@
 {*                               TBits                                      *}
 {****************************************************************************}
 
-Procedure BitsError (Msg : string);
+Procedure BitsError (const Msg : string);
 
 begin
-{$ifdef VER1_0}
-  Raise EBitsError.Create(Msg) at longint(get_caller_addr(get_frame));
-{$else VER1_0}
   Raise EBitsError.Create(Msg) at get_caller_addr(get_frame);
-{$endif VER1_0}
 end;
 
-Procedure BitsErrorFmt (Msg : string; const Args : array of const);
+Procedure BitsErrorFmt (const Msg : string; const Args : array of const);
 
 begin
-{$ifdef VER1_0}
-  Raise EBitsError.CreateFmt(Msg,args) at longint(get_caller_addr(get_frame));
-{$else VER1_0}
   Raise EBitsError.CreateFmt(Msg,args) at get_caller_addr(get_frame);
-{$endif VER1_0}
 end;
+
+{Min function for Longint}
+Function liMin(X, Y: Longint): Longint;
+  begin
+    Result := X;
+    if X > Y then Result := Y;
+  end;
 
 procedure TBits.CheckBitIndex (Bit : longint;CurrentSize : Boolean);
 
 begin
- if (bit<0) or (CurrentSize and (Bit>Size)) then
+ if (bit<0) or (CurrentSize and (Bit >= FBSize)) then
    BitsErrorFmt(SErrInvalidBitIndex,[bit]);
  if (bit>=MaxBitFlags) then
    BitsErrorFmt(SErrIndexTooLarge,[bit])
@@ -47,62 +45,83 @@ end;
 
 { ************* functions to match TBits class ************* }
 
-function TBits.getSize : longint;
+procedure TBits.setSize(value: longint);
+var
+  newSize, loop: LongInt;
 begin
-   result := (FSize shl BITSHIFT) - 1;
-end;
+  CheckBitIndex(value, false);
 
-procedure TBits.setSize(value : longint);
-begin
-   grow(value - 1);
+  if value <> 0 then
+    newSize :=  (value shr BITSHIFT) + 1
+  else
+    newSize := 0;
+
+  if newSize <> FSize then
+  begin
+    ReAllocMem(FBits, newSize * SizeOf(longint));
+    if FBits <> nil then
+    begin
+      if newSize > FSize then
+        for loop := FSize to newSize - 1 do
+          FBits^[loop] := 0;
+    end
+    else if newSize > 0 then
+      BitsError(SErrOutOfMemory);  { isn't ReallocMem supposed to throw EOutOfMemory? }
+    FSize := newSize;
+  end;
+  FBSize := value;
 end;
 
 procedure TBits.SetBit(bit : longint; value : Boolean);
+var
+  n: Integer;
 begin
-   if value = True then
-      seton(bit)
-   else
-      clear(bit);
+  grow(bit+1);   { validates bit range and adjusts FBSize if necessary }
+  n := bit shr BITSHIFT;
+  if value then
+    FBits^[n] := FBits^[n] or (longword(1) shl (bit and MASK))
+  else
+    FBits^[n] := FBits^[n] and not (longword(1) shl (bit and MASK));
 end;
 
 function TBits.OpenBit : longint;
 var
    loop : longint;
    loop2 : longint;
-   startIndex : longint;
 begin
    result := -1; {should only occur if the whole array is set}
-   for loop := 0 to FSize - 1 do
+   { map 0 to -1, 1..32 to 0, etc }
+   for loop := 0 to ((FBSize + MASK) shr BITSHIFT) - 1 do
    begin
       if FBits^[loop] <> $FFFFFFFF then
       begin
-         startIndex := loop * 32;
-         for loop2 := startIndex to startIndex + 31 do
+         for loop2 := 0 to MASK do
          begin
-            if get(loop2) = False then
-            begin
-               result := loop2;
-               break; { use this as the index to return }
-            end;
+           if (FBits^[loop] and (longint(1) shl loop2)) = 0 then
+           begin
+             result := (loop shl BITSHIFT) + loop2;
+             if result > FBSize then
+               result := FBSize;
+             Exit;
+           end;
          end;
-         break;  {stop looking for empty bit in records }
       end;
    end;
 
-   if result = -1 then
-      if FSize < MaxBitRec then
-          result := FSize * 32;  {first bit of next record}
+   if FSize < MaxBitRec then
+     result := FSize * 32;  {first bit of next record}
 end;
 
 { ******************** TBits ***************************** }
 
-constructor TBits.Create(theSize : longint {$ifndef VER1_0} = 0 {$endif});
+constructor TBits.Create(theSize : longint = 0 );
 begin
    FSize := 0;
+   FBSize := 0;
    FBits := nil;
    findIndex := -1;
    findState := True;  { no reason just setting it to something }
-   grow(theSize);
+   if TheSize > 0 then grow(theSize);
 end;
 
 destructor TBits.Destroy;
@@ -114,28 +133,10 @@ begin
    inherited Destroy;
 end;
 
-procedure TBits.grow(nbit : longint);
-var
-   newSize : longint;
-   loop : longint;
+procedure TBits.grow(nbit: longint);
 begin
-   CheckBitindex(nbit,false);
-
-   newSize :=  (nbit shr BITSHIFT) + 1;
-
-   if newSize > FSize then
-   begin
-      ReAllocMem(FBits, newSize * SizeOf(longint));
-      if FBits <> nil then
-        begin
-         if newSize > FSize then
-            for loop := FSize to newSize - 1 do
-               FBits^[loop] := 0;
-         FSize := newSize;
-       end
-      else
-        BitsError(SErrOutOfMemory);
-   end;
+  if nbit > FBSize then
+    SetSize(nbit);
 end;
 
 function TBits.getFSize : longint;
@@ -144,22 +145,13 @@ begin
 end;
 
 procedure TBits.seton(bit : longint);
-var
-   n : longint;
 begin
-   n := bit shr BITSHIFT;
-   grow(bit);
-   FBits^[n] := FBits^[n] or (longint(1) shl (bit and MASK));
+  SetBit(bit, True);
 end;
 
 procedure TBits.clear(bit : longint);
-var
-   n : longint;
 begin
-   CheckBitIndex(bit,false);
-   n := bit shr BITSHIFT;
-   grow(bit);
-   FBits^[n] := FBits^[n] and not(longint(1) shl (bit and MASK));
+  SetBit(bit, False);
 end;
 
 procedure TBits.clearall;
@@ -168,6 +160,8 @@ var
 begin
    for loop := 0 to FSize - 1 do
       FBits^[loop] := 0;
+{ don't clear FBSize here, it will cause exceptions on subsequent reading bit values }
+{ use 'Size := 0' to reset everything and deallocate storage }
 end;
 
 function TBits.get(bit : longint) : Boolean;
@@ -201,7 +195,7 @@ end;
 procedure TBits.notbits(bitset : TBits);
 var
    n : longint;
-   jj : longint;
+   jj : cardinal;
    loop : longint;
 begin
    if FSize < bitset.getFSize then
@@ -218,34 +212,32 @@ end;
 
 procedure TBits.orbits(bitset : TBits);
 var
-   n : longint;
    loop : longint;
 begin
-   if FSize < bitset.getFSize then
-      n := bitset.getFSize - 1
-   else
-      n := FSize - 1;
+   if FBSize < bitset.Size then
+     grow(bitset.Size);
 
-   grow(n shl BITSHIFT);
-
-   for loop := 0 to n do
+   for loop := 0 to FSize-1 do
       FBits^[loop] := FBits^[loop] or bitset.FBits^[loop];
 end;
 
 procedure TBits.xorbits(bitset : TBits);
 var
-   n : longint;
    loop : longint;
 begin
-   if FSize < bitset.getFSize then
-      n := bitset.getFSize - 1
-   else
-      n := FSize - 1;
+   if FBSize < bitset.Size then
+     grow(bitset.Size);
 
-   grow(n shl BITSHIFT);
-
-   for loop := 0 to n do
+   for loop := 0 to FSize-1 do
       FBits^[loop] := FBits^[loop] xor bitset.FBits^[loop];
+end;
+
+function TBits.Equals(Obj : TObject): Boolean;
+begin
+  if Obj is TBits then
+    Result := Equals(TBits(Obj))
+  else
+    Result := inherited Equals(Obj);
 end;
 
 function TBits.equals(bitset : TBits) : Boolean;
@@ -281,6 +273,7 @@ end;
 
 procedure TBits.SetIndex(index : longint);
 begin
+   CheckBitIndex(index,true);
    findIndex := index;
 end;
 
@@ -294,6 +287,7 @@ var
    loop : longint;
    loop2 : longint;
    startIndex : longint;
+   stopIndex : Longint;
    compareVal : cardinal;
 begin
    result := -1; {should only occur if none are set}
@@ -310,7 +304,8 @@ begin
       if FBits^[loop] <> compareVal then
       begin
          startIndex := loop * 32;
-         for loop2 := startIndex to startIndex + 31 do
+         stopIndex:= liMin(StartIndex+31,FBSize -1);
+         for loop2 := startIndex to stopIndex do
          begin
             if get(loop2) = state then
             begin
@@ -373,9 +368,3 @@ begin
 end;
 
 
-{
-  $Log: bits.inc,v $
-  Revision 1.4  2005/02/14 17:13:31  peter
-    * truncate log
-
-}

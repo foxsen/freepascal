@@ -1,5 +1,4 @@
 {
-    $Id: objpas.inc,v 1.50 2005/05/04 08:56:03 michael Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team
 
@@ -14,12 +13,29 @@
 
  **********************************************************************}
 
+{$ifdef FPC_HAS_FEATURE_VARIANTS}
+    procedure DoDispCallByIDError(res : Pointer; const disp : IDispatch;desc : PDispDesc; params : Pointer);
+      begin
+        handleerrorframe(RuntimeErrorExitCodes[reVarDispatch],get_frame);
+      end;
+
+
+    procedure fpc_dispatch_by_id(Result: Pointer; const Dispatch: pointer;
+      DispDesc: Pointer; Params: Pointer); compilerproc;
+      type
+        TDispProc = procedure(res : Pointer; const disp : IDispatch;desc : PDispDesc; params : Pointer);
+      begin
+        TDispProc(DispCallByIDProc)(Result,IDispatch(Dispatch),DispDesc,Params);
+      end;
+{$endif FPC_HAS_FEATURE_VARIANTS}
+
+
 {****************************************************************************
                   Internal Routines called from the Compiler
 ****************************************************************************}
 
     { the reverse order of the parameters make code generation easier }
-    function fpc_do_is(aclass : tclass;aobject : tobject) : boolean;[public,alias: 'FPC_DO_IS']; {$ifdef hascompilerproc} compilerproc; {$endif}
+    function fpc_do_is(aclass : tclass;aobject : tobject) : boolean;[public,alias: 'FPC_DO_IS']; compilerproc;
       begin
          fpc_do_is:=assigned(aobject) and assigned(aclass) and
            aobject.inheritsfrom(aclass);
@@ -27,63 +43,37 @@
 
 
     { the reverse order of the parameters make code generation easier }
-    function fpc_do_as(aclass : tclass;aobject : tobject): tobject;[public,alias: 'FPC_DO_AS']; {$ifdef hascompilerproc} compilerproc; {$endif}
+    function fpc_do_as(aclass : tclass;aobject : tobject): tobject;[public,alias: 'FPC_DO_AS']; compilerproc;
       begin
          if assigned(aobject) and not(aobject.inheritsfrom(aclass)) then
            handleerrorframe(219,get_frame);
          result := aobject;
       end;
 
-{$ifndef HASINTF}
-    { dummies for make cycle with 1.0.x }
-    procedure fpc_intf_decr_ref(var i: pointer);{$ifndef NOSAVEREGISTERS}saveregisters;{$endif}[public,alias: 'FPC_INTF_DECR_REF']; {$ifdef hascompilerproc} compilerproc; {$endif}
-      begin
-      end;
-
-    procedure fpc_intf_incr_ref(i: pointer);{$ifndef NOSAVEREGISTERS}saveregisters;{$endif}[public,alias: 'FPC_INTF_INCR_REF']; {$ifdef hascompilerproc} compilerproc; {$endif}
-      begin
-      end;
-
-    procedure fpc_intf_assign(var D: pointer; const S: pointer);[public,alias: 'FPC_INTF_ASSIGN']; {$ifdef hascompilerproc} compilerproc; {$endif}
-      begin
-      end;
-
-    function fpc_intf_as(const S: pointer; const iid: TGUID): pointer;[public,alias: 'FPC_INTF_AS']; {$ifdef hascompilerproc} compilerproc; {$endif}
-      begin
-      end;
-
-    function fpc_class_as_intf(const S: pointer; const iid: TGUID): pointer;[public,alias: 'FPC_CLASS_AS_INTF']; {$ifdef hascompilerproc} compilerproc; {$endif}
-      begin
-      end;
-
-{$else HASINTF}
-
     { interface helpers }
-    procedure fpc_intf_decr_ref(var i: pointer);{$ifndef NOSAVEREGISTERS}saveregisters;{$endif}[public,alias: 'FPC_INTF_DECR_REF']; {$ifdef hascompilerproc} compilerproc; {$endif}
+    procedure fpc_intf_decr_ref(var i: pointer);[public,alias: 'FPC_INTF_DECR_REF']; compilerproc;
       begin
         if assigned(i) then
-          IUnknown(i)._Release;
-        i:=nil;
+          begin
+            IUnknown(i)._Release;
+            i:=nil;
+          end;
       end;
 
-    {$ifdef hascompilerproc}
     { local declaration for intf_decr_ref for local access }
-    procedure intf_decr_ref(var i: pointer);{$ifndef NOSAVEREGISTERS}saveregisters;{$endif} [external name 'FPC_INTF_DECR_REF'];
-    {$endif hascompilerproc}
+    procedure intf_decr_ref(var i: pointer); [external name 'FPC_INTF_DECR_REF'];
 
 
-    procedure fpc_intf_incr_ref(i: pointer);{$ifndef NOSAVEREGISTERS}saveregisters;{$endif}[public,alias: 'FPC_INTF_INCR_REF']; {$ifdef hascompilerproc} compilerproc; {$endif}
+    procedure fpc_intf_incr_ref(i: pointer);[public,alias: 'FPC_INTF_INCR_REF']; compilerproc;
       begin
          if assigned(i) then
            IUnknown(i)._AddRef;
       end;
 
-    {$ifdef hascompilerproc}
     { local declaration of intf_incr_ref for local access }
-    procedure intf_incr_ref(i: pointer);{$ifndef NOSAVEREGISTERS}saveregisters;{$endif} [external name 'FPC_INTF_INCR_REF'];
-    {$endif hascompilerproc}
+    procedure intf_incr_ref(i: pointer); [external name 'FPC_INTF_INCR_REF'];
 
-    procedure fpc_intf_assign(var D: pointer; const S: pointer);[public,alias: 'FPC_INTF_ASSIGN']; {$ifdef hascompilerproc} compilerproc; {$endif}
+    procedure fpc_intf_assign(var D: pointer; const S: pointer);[public,alias: 'FPC_INTF_ASSIGN']; compilerproc;
       begin
          if assigned(S) then
            IUnknown(S)._AddRef;
@@ -92,49 +82,192 @@
          D:=S;
       end;
 
-    function fpc_intf_as(const S: pointer; const iid: TGUID): pointer;[public,alias: 'FPC_INTF_AS']; {$ifdef hascompilerproc} compilerproc; {$endif}
+    procedure fpc_intf_assign(var D: pointer; const s: pointer); [external name 'FPC_INTF_ASSIGN'];
 
+    {procedure fpc_intf_assign_by_iid(var D: pointer; const S: pointer; const iid: TGUID);[public,alias: 'FPC_INTF_ASSIGN2']; compilerproc;
+      var
+        tmp : pointer;
+      begin
+         if assigned(S) then
+           begin
+             tmp:=nil;
+             if IUnknown(S).QueryInterface(iid,tmp)<>S_OK then
+               handleerror(219);
+             if assigned(D) then
+               IUnknown(D)._Release;
+             D:=tmp;
+           end
+         else
+           begin
+             if assigned(D) then
+               IUnknown(D)._Release;
+             D:=nil;
+           end;
+      end;}
+
+
+    function fpc_intf_is(const S: pointer; const iid: TGUID): Boolean;[public,alias: 'FPC_INTF_IS']; compilerproc;
+      var
+        tmpi: pointer;
+      begin
+        tmpi:=nil;
+        fpc_intf_is:=Assigned(S) and (IUnknown(S).QueryInterface(iid,tmpi)=S_OK);
+        if Assigned(tmpi) then
+          IUnknown(tmpi)._Release;
+      end;
+
+
+    function fpc_intf_is_class(const S: pointer; const aclass: tclass): Boolean;[public,alias: 'FPC_INTF_IS_CLASS']; compilerproc;
+      var
+        tmpo: tobject;
+      begin
+        fpc_intf_is_class:=Assigned(S) and (IUnknown(S).QueryInterface(IObjectInstance,tmpo)=S_OK)  and tmpo.InheritsFrom(aclass);
+      end;
+
+
+    function fpc_class_is_intf(const S: pointer; const iid: TGUID): Boolean;[public,alias: 'FPC_CLASS_IS_INTF']; compilerproc;
+      var
+        tmpi: pointer;
+        tmpi2: pointer; // weak!
+      begin
+        tmpi:=nil;
+        tmpi2:=nil;
+        fpc_class_is_intf:=Assigned(S) and ((TObject(S).GetInterfaceWeak(IUnknown,tmpi2) and (IUnknown(tmpi2).QueryInterface(IID,tmpi)=S_OK)) or
+            TObject(S).GetInterface(IID,tmpi));
+        if Assigned(tmpi) then
+          IUnknown(tmpi)._Release;
+      end;
+
+
+    function fpc_class_is_corbaintf(const S: pointer; const iid: Shortstring): Boolean;[public,alias: 'FPC_CLASS_IS_CORBAINTF']; compilerproc;
+      begin
+        fpc_class_is_corbaintf:=Assigned(S) and Assigned(TObject(S).GetInterfaceEntryByStr(iid));
+      end;
+
+
+    function fpc_intf_cast(const S: pointer; const iid: TGUID): IInterface;[public,alias: 'FPC_INTF_CAST']; compilerproc;
+      var
+        tmpi: pointer;
+      begin
+        tmpi:=nil;
+        if Assigned(S) and (IUnknown(S).QueryInterface(iid,tmpi)=S_OK) then
+          pointer(fpc_intf_cast):=tmpi
+        else
+          fpc_intf_cast:= nil;
+      end;
+
+
+    function fpc_intf_cast_class(const S: pointer; const aclass: tclass): pointer;[public,alias: 'FPC_INTF_CAST_CLASS']; compilerproc;
+      var
+        tmpo: tobject;
+      begin
+        if Assigned(S) and (IUnknown(S).QueryInterface(IObjectInstance,tmpo)=S_OK) and tmpo.InheritsFrom(aclass) then
+          fpc_intf_cast_class:=tmpo
+        else
+          fpc_intf_cast_class:=nil;
+      end;
+
+
+    function fpc_class_cast_intf(const S: pointer; const iid: TGUID): IInterface;[public,alias: 'FPC_CLASS_CAST_INTF']; compilerproc;
+      var
+        tmpi: pointer;
+        tmpi2: pointer; // weak!
+      begin
+        tmpi:=nil;
+        tmpi2:=nil;
+        if Assigned(S) and ((TObject(S).GetInterfaceWeak(IUnknown,tmpi2) and (IUnknown(tmpi2).QueryInterface(IID,tmpi)=S_OK)) or
+            TObject(S).GetInterface(IID,tmpi)) then
+          pointer(fpc_class_cast_intf):=tmpi
+        else
+          fpc_class_cast_intf:=nil;
+      end;
+
+
+    function fpc_class_cast_corbaintf(const S: pointer; const iid: Shortstring): Pointer;[public,alias: 'FPC_CLASS_CAST_CORBAINTF']; compilerproc;
+      var
+        tmpi: pointer;
+      begin
+        if Assigned(S) and TObject(S).GetInterface(iid,tmpi) then
+          fpc_class_cast_corbaintf:=tmpi
+        else
+          fpc_class_cast_corbaintf:=nil;
+      end;
+
+
+    function fpc_intf_as(const S: pointer; const iid: TGUID): IInterface;[public,alias: 'FPC_INTF_AS']; compilerproc;
       var
         tmpi: pointer; // _AddRef before _Release
       begin
         if assigned(S) then
           begin
+             tmpi:=nil;
              if IUnknown(S).QueryInterface(iid,tmpi)<>S_OK then
                handleerror(219);
-             fpc_intf_as:=tmpi;
+             pointer(fpc_intf_as):=tmpi;
           end
         else
           fpc_intf_as:=nil;
       end;
 
 
-    function fpc_class_as_intf(const S: pointer; const iid: TGUID): pointer;[public,alias: 'FPC_CLASS_AS_INTF']; {$ifdef hascompilerproc} compilerproc; {$endif}
+    function fpc_intf_as_class(const S: pointer; const aclass: tclass): pointer;[public,alias: 'FPC_INTF_AS_CLASS']; compilerproc;
+      var
+        tmpo: tobject;
+      begin
+        if assigned(S) then
+          begin
+            if not ((IUnknown(S).QueryInterface(IObjectInstance,tmpo)=S_OK) and tmpo.inheritsfrom(aclass)) then
+              handleerror(219);
+            fpc_intf_as_class:=tmpo;
+          end
+        else
+          fpc_intf_as_class:=nil;
+      end;
 
+
+    function fpc_class_as_intf(const S: pointer; const iid: TGUID): IInterface;[public,alias: 'FPC_CLASS_AS_INTF']; compilerproc;
+      var
+        tmpi: pointer; // _AddRef before _Release
+        tmpi2: pointer; // weak!
+      begin
+        if assigned(S) then
+          begin
+             tmpi:=nil;
+             tmpi2:=nil;
+             if not ((TObject(S).GetInterfaceWeak(IUnknown,tmpi2) and (IUnknown(tmpi2).QueryInterface(IID,tmpi)=S_OK)) or TObject(S).GetInterface(IID,tmpi)) then
+               handleerror(219);
+             pointer(fpc_class_as_intf):=tmpi;
+          end
+        else
+          fpc_class_as_intf:=nil;
+      end;
+
+
+    function fpc_class_as_corbaintf(const S: pointer; const iid: Shortstring): Pointer;[public,alias: 'FPC_CLASS_AS_CORBAINTF']; compilerproc;
       var
         tmpi: pointer; // _AddRef before _Release
       begin
         if assigned(S) then
           begin
+             tmpi:=nil;
              if not TObject(S).GetInterface(iid,tmpi) then
                handleerror(219);
-             fpc_class_as_intf:=tmpi;
+             fpc_class_as_corbaintf:=tmpi;
           end
         else
-          fpc_class_as_intf:=nil;
+          fpc_class_as_corbaintf:=nil;
       end;
-{$endif HASINTF}
+
 
 {****************************************************************************
                                TOBJECT
 ****************************************************************************}
 
       constructor TObject.Create;
-
         begin
         end;
 
       destructor TObject.Destroy;
-
         begin
         end;
 
@@ -146,55 +279,53 @@
              self.destroy;
         end;
 
-      class function TObject.InstanceSize : LongInt;
+      class function TObject.InstanceSize : SizeInt;
 
         begin
-           InstanceSize:=plongint(pointer(self)+vmtInstanceSize)^;
+           InstanceSize := PVmt(Self)^.vInstanceSize;
         end;
+
+      var
+        emptyintf: ptruint; public name 'FPC_EMPTYINTF';
 
       procedure InitInterfacePointers(objclass: tclass;instance : pointer);
 
-{$ifdef HASINTF}
         var
-           intftable : pinterfacetable;
-           i : longint;
-{$ifdef FPC_REQUIRES_PROPER_ALIGNMENT}
-           IOffset : longint;
-{$endif FPC_REQUIRES_PROPER_ALIGNMENT}
+          ovmt: PVmt;
+          i: longint;
+          intftable: pinterfacetable;
+          Res: pinterfaceentry;
         begin
-          while assigned(objclass) do
+          ovmt := PVmt(objclass);
+          while assigned(ovmt) and (ovmt^.vIntfTable <> @emptyintf) do
             begin
-               intftable:=pinterfacetable((pointer(objclass)+vmtIntfTable)^);
-               if assigned(intftable) then
-                 for i:=0 to intftable^.EntryCount-1 do
-{$ifdef FPC_REQUIRES_PROPER_ALIGNMENT}
-                   begin
-                     move(intftable^.Entries[i].IOffset,IOffset,sizeof(longint));
-                     move(pointer(intftable^.Entries[i].VTable),ppointer(@(PChar(instance)[IOffset]))^,sizeof(pointer));
-                   end;
-{$else FPC_REQUIRES_PROPER_ALIGNMENT}
-                   ppointer(@(PChar(instance)[intftable^.Entries[i].IOffset]))^:=
-                     pointer(intftable^.Entries[i].VTable);
-{$endif FPC_REQUIRES_PROPER_ALIGNMENT}
-               objclass:=pclass(pointer(objclass)+vmtParent)^;
+              intftable:=ovmt^.vIntfTable;
+              if assigned(intftable) then
+              begin
+                i:=intftable^.EntryCount;
+                Res:=@intftable^.Entries[0];
+                while i>0 do begin
+                  if Res^.IType = etStandard then
+                    ppointer(@(pbyte(instance)[Res^.IOffset]))^:=
+                      pointer(Res^.VTable);
+                  inc(Res);
+                  dec(i);
+                end;
+              end;
+              ovmt:=ovmt^.vParent;
             end;
         end;
-{$else HASINTF}
-        begin
-        end;
-{$endif HASINTF}
 
-      class function TObject.InitInstance(instance : pointer) : tobject;
+      class function TObject.InitInstance(instance : pointer) : tobject; {$ifdef SYSTEMINLINE} inline; {$ENDIF}
 
         begin
            { the size is saved at offset 0 }
-           fillchar(instance^,plongint(pointer(self)+vmtInstanceSize)^,0);
+           fillchar(instance^, InstanceSize, 0);
            { insert VMT pointer into the new created memory area }
            { (in class methods self contains the VMT!)           }
            ppointer(instance)^:=pointer(self);
-{$ifdef HASINTF}
-           InitInterfacePointers(self,instance);
-{$endif HASINTF}
+           if PVmt(self)^.vIntfTable <> @emptyintf then
+             InitInterfacePointers(self,instance);
            InitInstance:=TObject(Instance);
         end;
 
@@ -203,7 +334,7 @@
         begin
            { type of self is class of tobject => it points to the vmt }
            { the parent vmt is saved at offset vmtParent              }
-           classparent:=pclass(pointer(self)+vmtParent)^;
+           classparent:=tclass(PVmt(Self)^.vParent);
         end;
 
       class function TObject.NewInstance : tobject;
@@ -212,7 +343,7 @@
            p : pointer;
 
         begin
-           getmem(p,plongint(pointer(self)+vmtInstanceSize)^);
+           getmem(p, InstanceSize);
            if p <> nil then
               InitInstance(p);
            NewInstance:=TObject(p);
@@ -247,27 +378,25 @@
       class function TObject.MethodAddress(const name : shortstring) : pointer;
 
         var
-           UName : ShortString;
            methodtable : pmethodnametable;
            i : dword;
-           vmt : tclass;
+           ovmt : PVmt;
 
         begin
-           UName := UpCase(name);
-           vmt:=self;
-           while assigned(vmt) do
+           ovmt:=PVmt(self);
+           while assigned(ovmt) do
              begin
-                methodtable:=pmethodnametable((Pointer(vmt)+vmtMethodTable)^);
+                methodtable:=pmethodnametable(ovmt^.vMethodTable);
                 if assigned(methodtable) then
                   begin
                      for i:=0 to methodtable^.count-1 do
-                       if UpCase(methodtable^.entries[i].name^)=UName then
+                       if ShortCompareText(methodtable^.entries[i].name^, name)=0 then
                          begin
                             MethodAddress:=methodtable^.entries[i].addr;
                             exit;
                          end;
                   end;
-                vmt:=pclass(pointer(vmt)+vmtParent)^;
+                ovmt := ovmt^.vParent;
              end;
            MethodAddress:=nil;
         end;
@@ -277,12 +406,12 @@
         var
            methodtable : pmethodnametable;
            i : dword;
-           vmt : tclass;
+           ovmt : PVmt;
         begin
-           vmt:=self;
-           while assigned(vmt) do
+           ovmt:=PVmt(self);
+           while assigned(ovmt) do
              begin
-                methodtable:=pmethodnametable((Pointer(vmt)+vmtMethodTable)^);
+                methodtable:=pmethodnametable(ovmt^.vMethodTable);
                 if assigned(methodtable) then
                   begin
                      for i:=0 to methodtable^.count-1 do
@@ -292,7 +421,7 @@
                             exit;
                          end;
                   end;
-                vmt:=pclass(pointer(vmt)+vmtParent)^;
+                ovmt := ovmt^.vParent;
              end;
            MethodName:='';
         end;
@@ -325,31 +454,29 @@
            end;
 
         var
-           UName: ShortString;
-           CurClassType: TClass;
+           ovmt: PVmt;
            FieldTable: PFieldTable;
            FieldInfo: PFieldInfo;
-           i: Integer;
+           i: longint;
 
         begin
            if Length(name) > 0 then
            begin
-             UName := UpCase(name);
-             CurClassType := ClassType;
-             while CurClassType <> nil do
+             ovmt := PVmt(ClassType);
+             while ovmt <> nil do
              begin
-               FieldTable := PFieldTable((Pointer(CurClassType) + vmtFieldTable)^);
+               FieldTable := PFieldTable(ovmt^.vFieldTable);
                if FieldTable <> nil then
                begin
-                 FieldInfo := @FieldTable^.Fields;
+                 FieldInfo := @FieldTable^.Fields[0];
                  for i := 0 to FieldTable^.FieldCount - 1 do
                  begin
-                   if UpCase(FieldInfo^.Name) = UName then
+                   if ShortCompareText(FieldInfo^.Name, name) = 0 then
                    begin
                      fieldaddress := Pointer(Self) + FieldInfo^.FieldOffset;
                      exit;
                    end;
-                   FieldInfo := @FieldInfo^.Name + 1 + Length(FieldInfo^.Name);
+                   FieldInfo := PFieldInfo(PByte(@FieldInfo^.Name) + 1 + Length(FieldInfo^.Name));
 {$ifdef FPC_REQUIRES_PROPER_ALIGNMENT}
                    { align to largest field of TFieldInfo }
                    FieldInfo := Align(FieldInfo, SizeOf(PtrUInt));
@@ -357,7 +484,7 @@
                  end;
                end;
                { Try again with the parent class type }
-               CurClassType:=pclass(pointer(CurClassType)+vmtParent)^;
+               ovmt:=ovmt^.vParent;
              end;
            end;
 
@@ -365,95 +492,94 @@
         end;
 
       function TObject.SafeCallException(exceptobject : tobject;
-        exceptaddr : pointer) : longint;
+        exceptaddr : pointer) : HResult;
 
         begin
-           safecallexception:=0;
+          safecallexception:=E_UNEXPECTED;
         end;
 
       class function TObject.ClassInfo : pointer;
 
         begin
-           ClassInfo:=ppointer(Pointer(self)+vmtTypeInfo)^;
+          ClassInfo := PVmt(Self)^.vTypeInfo;
         end;
 
       class function TObject.ClassName : ShortString;
 
         begin
-           ClassName:=PShortString((Pointer(Self)+vmtClassName)^)^;
+          ClassName := PVmt(Self)^.vClassName^;
         end;
 
       class function TObject.ClassNameIs(const name : string) : boolean;
 
         begin
-           ClassNameIs:=Upcase(ClassName)=Upcase(name);
+        // call to ClassName inlined here, this eliminates stack and string copying.
+           ClassNameIs:=ShortCompareText(PVmt(Self)^.vClassName^, name) = 0;
         end;
 
       class function TObject.InheritsFrom(aclass : TClass) : Boolean;
 
         var
-           vmt : tclass;
+           vmt: PVmt;
 
         begin
-           vmt:=self;
-           while assigned(vmt) do
+           if assigned(aclass) then
              begin
-                if vmt=aclass then
-                  begin
-                     InheritsFrom:=true;
-                     exit;
-                  end;
-                vmt:=pclass(pointer(vmt)+vmtParent)^;
-             end;
-           InheritsFrom:=false;
+               vmt:=PVmt(self);
+               while assigned(vmt) and (vmt <> PVmt(aclass)) do
+                 vmt := vmt^.vParent;
+               InheritsFrom := (vmt = PVmt(aclass));
+             end
+           else
+             inheritsFrom := False;
         end;
 
       class function TObject.stringmessagetable : pstringmessagetable;
 
-        type
-           pdword = ^dword;
-
         begin
-           stringmessagetable:=pstringmessagetable((pointer(Self)+vmtMsgStrPtr)^);
+          stringmessagetable:=PVmt(Self)^.vMsgStrPtr;
         end;
 
       type
          tmessagehandler = procedure(var msg) of object;
-         tmessagehandlerrec = packed record
-            proc : pointer;
-            obj : pointer;
-         end;
 
 
       procedure TObject.Dispatch(var message);
 
         type
-           tmsgtable = packed record
+{$PUSH}
+{$PACKRECORDS NORMAL}
+           PMsgIntTable = ^TMsgIntTable;
+           TMsgIntTable = record
               index : dword;
               method : pointer;
            end;
 
-           pmsgtable = ^tmsgtable;
-
+           PMsgInt = ^TMsgInt;
+           TMsgInt = record
+              count : longint;
+              msgs : array[0..0] of TMsgIntTable;
+           end;
+{$POP}
         var
            index : dword;
            count,i : longint;
-           msgtable : pmsgtable;
-           p : pointer;
-           vmt : tclass;
+           msgtable : PMsgIntTable;
+           p : PMsgInt;
+           ovmt : PVmt;
            msghandler : tmessagehandler;
 
         begin
            index:=dword(message);
-           vmt:=ClassType;
-           while assigned(vmt) do
+           ovmt := PVmt(ClassType);
+           while assigned(ovmt) do
              begin
                 // See if we have messages at all in this class.
-                p:=pointer(vmt)+vmtDynamicTable;
-                If Assigned(p) and (Pdword(p)^<>0) then
+                p:=PMsgInt(ovmt^.vDynamicTable);
+                If Assigned(p) then
                   begin
-                     msgtable:=pmsgtable(PtrInt(p^)+4);
-                     count:=pdword(p^)^;
+                     msgtable:=@p^.msgs;
+                     count:=p^.count;
                   end
                 else
                   Count:=0;
@@ -462,14 +588,13 @@
                   begin
                      if index=msgtable[i].index then
                        begin
-                          p:=msgtable[i].method;
-                          tmessagehandlerrec(msghandler).proc:=p;
-                          tmessagehandlerrec(msghandler).obj:=self;
+                          TMethod(msghandler).Code:=msgtable[i].method;
+                          TMethod(msghandler).Data:=self;
                           msghandler(message);
                           exit;
                        end;
                   end;
-                vmt:=pclass(pointer(vmt)+vmtParent)^;
+                ovmt:=ovmt^.vParent;
              end;
            DefaultHandler(message);
         end;
@@ -483,20 +608,20 @@
            name : shortstring;
            count,i : longint;
            msgstrtable : pmsgstrtable;
-           p : pointer;
-           vmt : tclass;
+           p: pstringmessagetable;
+           ovmt : PVmt;
            msghandler : tmessagehandler;
 
         begin
            name:=pshortstring(@message)^;
-           vmt:=ClassType;
-           while assigned(vmt) do
-             begin
-                p:=(pointer(vmt)+vmtMsgStrPtr);
-                If (P<>Nil) and (PDWord(P)^<>0) then
+           ovmt:=PVmt(ClassType);
+           while assigned(ovmt) do
+           begin
+                p := ovmt^.vMsgStrPtr;
+                if (P<>Nil) and (p^.count<>0) then
                   begin
-                  count:=pdword(PSizeUInt(p)^)^;
-                  msgstrtable:=pmsgstrtable(PSizeUInt(P)^+4);
+                  count:=p^.count;
+                  msgstrtable:=@p^.msgstrtable;
                   end
                 else
                   Count:=0;
@@ -505,15 +630,14 @@
                   begin
                      if name=msgstrtable[i].name^ then
                        begin
-                          p:=msgstrtable[i].method;
-                          tmessagehandlerrec(msghandler).proc:=p;
-                          tmessagehandlerrec(msghandler).obj:=self;
+                          TMethod(msghandler).Code:=msgstrtable[i].method;
+                          TMethod(msghandler).Data:=self;
                           msghandler(message);
                           exit;
                        end;
                   end;
-                vmt:=pclass(pointer(vmt)+vmtParent)^;
-             end;
+                ovmt:=ovmt^.vParent;
+           end;
            DefaultHandlerStr(message);
         end;
 
@@ -535,7 +659,11 @@
             Offset : Longint;
           end;
 
+{$ifdef CPU16}
+          TRecElemArray = packed array[1..Maxint div sizeof(TRecElem)-1] of TRecElem;
+{$else CPU16}
           TRecElemArray = packed array[1..Maxint] of TRecElem;
+{$endif CPU16}
 
           PRecRec = ^TRecRec;
           TRecRec = record
@@ -544,7 +672,7 @@
           end;
 
         var
-           vmt  : tclass;
+           vmt  : PVmt;
            temp : pbyte;
            count,
            i    : longint;
@@ -552,20 +680,18 @@
            recelem  : TRecElem;
 {$endif FPC_REQUIRES_PROPER_ALIGNMENT}
         begin
-           vmt:=ClassType;
+           vmt := PVmt(ClassType);
            while vmt<>nil do
              begin
                { This need to be included here, because Finalize()
                  has should support for tkClass }
-               Temp:=Pointer((Pointer(vmt)+vmtInitTable)^);
+               Temp:= vmt^.vInitTable;
                if Assigned(Temp) then
                  begin
                    inc(Temp);
                    I:=Temp^;
                    inc(temp,I+1);                // skip name string;
-{$ifdef FPC_ALIGNSRTTI}
                    temp:=aligntoptr(temp);
-{$endif FPC_ALIGNSRTTI}
 {$ifdef FPC_REQUIRES_PROPER_ALIGNMENT}
                    move(PRecRec(Temp)^.Count,Count,sizeof(Count));
 {$else FPC_REQUIRES_PROPER_ALIGNMENT}
@@ -583,7 +709,7 @@
                        int_Finalize (pointer(self)+Offset,Info);
 {$endif FPC_REQUIRES_PROPER_ALIGNMENT}
                  end;
-               vmt:=pclass(pointer(vmt)+vmtParent)^;
+               vmt:= vmt^.vParent;
              end;
         end;
 
@@ -597,7 +723,6 @@
         begin
         end;
 
-{$ifdef HASINTF}
       function IsGUIDEqual(const guid1, guid2: tguid): boolean;
         begin
           IsGUIDEqual:=
@@ -607,92 +732,242 @@
             (PDWORD(@guid1.D4[4])^=PDWORD(@guid2.D4[4])^);
         end;
 
-      function TObject.getinterface(const iid : tguid;out obj) : boolean;
-        var
-          IEntry: pinterfaceentry;
-        begin
-          IEntry:=getinterfaceentry(iid);
-          if Assigned(IEntry) then
-            begin
-              Pointer(obj):=Pointer(Self)+IEntry^.IOffset;
-              if assigned(pointer(obj)) then
-                iinterface(obj)._AddRef;
-              getinterface:=True;
-            end
-          else
-            begin
-              PPointer(@Obj)^:=nil;
-              getinterface:=False;
-            end;
-        end;
+      // Use of managed types should be avoided here; implicit _Addref/_Release
+      // will end up in unpredictable behaviour if called on CORBA interfaces.
+      type
+        TInterfaceGetter = procedure(out Obj) of object;
+        TClassGetter = function: TObject of object;
 
-      function TObject.getinterfacebystr(const iidstr : string;out obj) : boolean;
+      function GetInterfaceByEntry(Instance: pointer; IEntry: pinterfaceentry; out obj): boolean;
         var
-          IEntry: pinterfaceentry;
+          Getter: TMethod;
         begin
-          IEntry:=getinterfaceentrybystr(iidstr);
-          if Assigned(IEntry) then
-            begin
-              Pointer(obj):=Pointer(Self)+IEntry^.IOffset;
-              if assigned(pointer(obj)) then
-                iinterface(obj)._AddRef;
-              getinterfacebystr:=True;
-            end
-          else
-            begin
-              PPointer(@Obj)^:=nil;
-              getinterfacebystr:=False;
+          Pointer(Obj) := nil;
+          Getter.Data := Instance;
+          if Assigned(IEntry) and Assigned(Instance) then
+          begin
+            case IEntry^.IType of
+              etStandard:
+                  Pointer(Obj) := PByte(instance)+IEntry^.IOffset;
+              etFieldValue, etFieldValueClass:
+                  Pointer(obj) := PPointer(PByte(Instance)+IEntry^.IOffset)^;
+              etVirtualMethodResult:
+                begin
+                  // IOffset is relative to the VMT, not to instance.
+                  Getter.code := PPointer(PByte(PPointer(Instance)^) + IEntry^.IOffset)^;
+                  TInterfaceGetter(Getter)(obj);
+                end;
+              etVirtualMethodClass:
+                begin
+                  // IOffset is relative to the VMT, not to instance.
+                  Getter.code := PPointer(PByte(PPointer(Instance)^) + IEntry^.IOffset)^;
+                  TObject(obj) := TClassGetter(Getter)();
+                end;
+              etStaticMethodResult:
+                begin
+                  Getter.code := Pointer(IEntry^.IOffset);
+                  TInterfaceGetter(Getter)(obj);
+                end;
+              etStaticMethodClass:
+                begin
+                  Getter.code := Pointer(IEntry^.IOffset);
+                  TObject(obj) := TClassGetter(Getter)();
+                end;
             end;
-        end;
-
-      class function TObject.getinterfaceentry(const iid : tguid) : pinterfaceentry;
-        var
-          i: integer;
-          intftable: pinterfacetable;
-          Res: pinterfaceentry;
-        begin
-          getinterfaceentry:=nil;
-          intftable:=pinterfacetable((pointer(Self)+vmtIntfTable)^);
-          if assigned(intftable) then begin
-            i:=intftable^.EntryCount;
-            Res:=@intftable^.Entries[0];
-            while (i>0) and
-               not (assigned(Res^.iid) and IsGUIDEqual(Res^.iid^,iid)) do begin
-              inc(Res);
-              dec(i);
-            end;
-            if (i>0) then
-              getinterfaceentry:=Res;
           end;
-          if (getinterfaceentry=nil)and not(classparent=nil) then
-            getinterfaceentry:=classparent.getinterfaceentry(iid)
+          result := assigned(pointer(obj));
         end;
 
-      class function TObject.getinterfaceentrybystr(const iidstr : string) : pinterfaceentry;
+      function TObject.GetInterface(const iid : tguid;out obj) : boolean;
         var
-          i: integer;
-          intftable: pinterfacetable;
-          Res: pinterfaceentry;
+          IEntry: PInterfaceEntry;
+          Instance: TObject;
         begin
-          getinterfaceentrybystr:=nil;
-          intftable:=getinterfacetable;
-          if assigned(intftable) then begin
-            i:=intftable^.EntryCount;
-            Res:=@intftable^.Entries[0];
-            while (i>0) and (Res^.iidstr^<>iidstr) do begin
-              inc(Res);
-              dec(i);
-            end;
-            if (i>0) then
-              getinterfaceentrybystr:=Res;
+          if IsGUIDEqual(IObjectInstance,iid) then
+          begin
+            TObject(Obj) := Self;
+            Result := True;
+            Exit;
           end;
-          if (getinterfaceentrybystr=nil)and not(classparent=nil) then
-            getinterfaceentrybystr:=classparent.getinterfaceentrybystr(iidstr)
+
+          Instance := self;
+          repeat
+            IEntry := Instance.GetInterfaceEntry(iid);
+            result := GetInterfaceByEntry(Instance, IEntry, obj);
+
+            if (not result) or
+              (IEntry^.IType in [etStandard, etFieldValue,
+               etStaticMethodResult, etVirtualMethodResult]) then
+              Break;
+
+            { if interface is implemented by a class-type property or field,
+              continue search }
+            Instance := TObject(obj);
+          until False;
+
+          { Getter function will normally AddRef, so adding another reference here
+            will cause memleak. }
+          if result and (IEntry^.IType in [etStandard, etFieldValue]) then
+            IInterface(obj)._AddRef;
         end;
 
-      class function TObject.getinterfacetable : pinterfacetable;
+      function TObject.GetInterfaceWeak(const iid : tguid; out obj) : boolean;
+        var
+          IEntry: PInterfaceEntry;
+          Instance: TObject;
         begin
-          getinterfacetable:=pinterfacetable((pointer(Self)+vmtIntfTable)^);
+          if IsGUIDEqual(IObjectInstance,iid) then
+          begin
+            TObject(Obj) := Self;
+            Result := True;
+            Exit;
+          end;
+
+          Instance := self;
+          repeat
+            IEntry := Instance.GetInterfaceEntry(iid);
+            result := GetInterfaceByEntry(Instance, IEntry, obj);
+
+            if (not result) or
+              (IEntry^.IType in [etStandard, etFieldValue,
+               etStaticMethodResult, etVirtualMethodResult]) then
+              Break;
+
+            { if interface is implemented by a class-type property or field,
+              continue search }
+            Instance := TObject(obj);
+          until False;
+
+          { Getter function will normally AddRef, so we have to release it,
+            else the ref is not weak. }
+          if result and not (IEntry^.IType in [etStandard, etFieldValue]) then
+            IInterface(obj)._Release;
+        end;
+
+      function TObject.GetInterfaceByStr(const iidstr : shortstring;out obj) : boolean;
+        var
+          IEntry: PInterfaceEntry;
+          Instance: TObject;
+        begin
+          Instance := self;
+          repeat
+            IEntry := Instance.GetInterfaceEntryByStr(iidstr);
+            result := GetInterfaceByEntry(Instance, IEntry, obj);
+
+            if (not result) or
+              (IEntry^.IType in [etStandard, etFieldValue,
+               etStaticMethodResult, etVirtualMethodResult]) then
+              Break;
+
+            { if interface is implemented by a class-type property or field,
+              continue search }
+            Instance := TObject(obj);
+          until False;
+
+          { Getter function will normally AddRef, so adding another reference here
+            will cause memleak. (com interfaces only!) }
+          if result and Assigned(IEntry^.IID) and (IEntry^.IType in [etStandard, etFieldValue]) then
+            IInterface(obj)._AddRef;
+        end;
+
+      function TObject.GetInterface(const iidstr : shortstring;out obj) : boolean;
+        begin
+          Result := GetInterfaceByStr(iidstr,obj);
+        end;
+
+      class function TObject.GetInterfaceEntry(const iid : tguid) : pinterfaceentry;
+        var
+          i: longint;
+          intftable: pinterfacetable;
+          ovmt: PVmt;
+        begin
+          ovmt := PVmt(Self);
+          while Assigned(ovmt) and (ovmt^.vIntfTable <> @emptyintf) do
+          begin
+            intftable:=ovmt^.vIntfTable;
+            if assigned(intftable) then
+            begin
+              for i:=0 to intftable^.EntryCount-1 do
+              begin
+                result:=@intftable^.Entries[i];
+                if assigned(Result^.iid) and IsGUIDEqual(Result^.iid^,iid) then
+                  Exit;
+              end;
+            end;
+            ovmt := ovmt^.vParent;
+          end;
+          result := nil;
+        end;
+
+      class function TObject.GetInterfaceEntryByStr(const iidstr : shortstring) : pinterfaceentry;
+        var
+          i: longint;
+          intftable: pinterfacetable;
+          ovmt: PVmt;
+        begin
+          ovmt := PVmt(Self);
+          while Assigned(ovmt) and (ovmt^.vIntfTable <> @emptyintf) do
+          begin
+            intftable:=ovmt^.vIntfTable;
+            if assigned(intftable) then
+            begin
+              for i:=0 to intftable^.EntryCount-1 do
+              begin
+                result:=@intftable^.Entries[i];
+                if assigned(result^.iidstr) and (result^.iidstr^ = iidstr) then
+                  Exit;
+              end;
+            end;
+            ovmt := ovmt^.vParent;
+          end;
+          result:=nil;
+        end;
+
+      class function TObject.GetInterfaceTable : pinterfacetable;
+        begin
+          getinterfacetable:=PVmt(Self)^.vIntfTable;
+        end;
+
+      class function TObject.UnitName : ansistring;
+        type
+          // from the typinfo unit
+          TClassTypeInfo = {$ifndef FPC_REQUIRES_PROPER_ALIGNMENT}packed{$endif}record
+            ClassType: TClass;
+            ParentInfo: Pointer;
+            PropCount: SmallInt;
+            UnitName: ShortString;
+          end;
+          PClassTypeInfo = ^TClassTypeInfo;
+        var
+          classtypeinfo: PClassTypeInfo;
+        begin
+          classtypeinfo:=ClassInfo;
+          if Assigned(classtypeinfo) then
+          begin
+            // offset PTypeInfo by Length(Name) + 2 (ShortString length byte + SizeOf(Kind))
+            inc(Pointer(classtypeinfo), PByte(Pointer(classtypeinfo)+1)^ + 2);
+            {$ifdef FPC_REQUIRES_PROPER_ALIGNMENT}
+            classtypeinfo:=align(classtypeinfo,sizeof(classtypeinfo));
+            {$endif}
+            result:=classtypeinfo^.UnitName;
+          end
+          else
+            result:='';
+        end;
+
+      function TObject.Equals(Obj: TObject) : boolean;
+        begin
+          result:=Obj=Self;
+        end;
+
+      function TObject.GetHashCode: PtrInt;
+        begin
+          result:=PtrInt(Self);
+        end;
+
+      function TObject.ToString: ansistring;
+        begin
+          result:=ClassName;
         end;
 
 {****************************************************************************
@@ -700,32 +975,27 @@
 ****************************************************************************}
 
     function TInterfacedObject.QueryInterface(
-      const iid : tguid;out obj) : longint;stdcall;
+      {$IFDEF FPC_HAS_CONSTREF}constref{$ELSE}const{$ENDIF} iid : tguid;out obj) : longint;{$IFNDEF WINDOWS}cdecl{$ELSE}stdcall{$ENDIF};
 
       begin
          if getinterface(iid,obj) then
-           result:=0
+           result:=S_OK
          else
-           result:=longint($80004002);
+           result:=longint(E_NOINTERFACE);
       end;
 
-    function TInterfacedObject._AddRef : longint;stdcall;
+    function TInterfacedObject._AddRef : longint;{$IFNDEF WINDOWS}cdecl{$ELSE}stdcall{$ENDIF};
 
       begin
-         inclocked(frefcount);
-         _addref:=frefcount;
+         _addref:=interlockedincrement(frefcount);
       end;
 
-    function TInterfacedObject._Release : longint;stdcall;
+    function TInterfacedObject._Release : longint;{$IFNDEF WINDOWS}cdecl{$ELSE}stdcall{$ENDIF};
 
       begin
-         if declocked(frefcount) then
-           begin
-              self.destroy;
-              _Release:=0;
-           end
-         else
-           _Release:=frefcount;
+         _Release:=interlockeddecrement(frefcount);
+         if _Release=0 then
+           self.destroy;
       end;
 
     procedure TInterfacedObject.AfterConstruction;
@@ -747,40 +1017,65 @@
 
       begin
          NewInstance:=inherited NewInstance;
-         TInterfacedObject(NewInstance).frefcount:=1;
+         if NewInstance<>nil then
+           TInterfacedObject(NewInstance).frefcount:=1;
       end;
 
-{$endif HASINTF}
+{****************************************************************************
+                               TAGGREGATEDOBJECT
+****************************************************************************}
+
+    constructor TAggregatedObject.Create(const aController: IUnknown);
+
+      begin
+        inherited Create;
+        { do not keep a counted reference to the controller! }
+        fcontroller := Pointer(aController);
+      end;
+
+    function TAggregatedObject.QueryInterface(
+      {$IFDEF FPC_HAS_CONSTREF}constref{$ELSE}const{$ENDIF} iid : tguid;out obj) : longint;{$IFNDEF WINDOWS}cdecl{$ELSE}stdcall{$ENDIF};
+
+      begin
+         Result := IUnknown(fcontroller).QueryInterface(iid, obj);
+      end;
+
+    function TAggregatedObject._AddRef : longint;{$IFNDEF WINDOWS}cdecl{$ELSE}stdcall{$ENDIF};
+
+      begin
+         Result := IUnknown(fcontroller)._AddRef;
+      end;
+
+    function TAggregatedObject._Release : longint;{$IFNDEF WINDOWS}cdecl{$ELSE}stdcall{$ENDIF};
+
+      begin
+         Result := IUnknown(fcontroller)._Release;
+      end;
+
+    function TAggregatedObject.GetController : IUnknown;
+
+      begin
+         Result := IUnknown(fcontroller);
+      end;
+
+{****************************************************************************
+                               TContainedOBJECT
+****************************************************************************}
+
+    function TContainedObject.QueryInterface(
+            {$IFDEF FPC_HAS_CONSTREF}constref{$ELSE}const{$ENDIF} iid : tguid;out obj) : longint; {$IFNDEF WINDOWS}cdecl{$ELSE}stdcall{$ENDIF};
+
+    begin
+      if getinterface(iid,obj) then
+        result:=S_OK
+      else
+        result:=longint(E_NOINTERFACE);
+    end;
 
 {****************************************************************************
                              Exception Support
 ****************************************************************************}
 
+{$ifdef FPC_HAS_FEATURE_EXCEPTIONS}
 {$i except.inc}
-
-{****************************************************************************
-                                Initialize
-****************************************************************************}
-
-{
-  $Log: objpas.inc,v $
-  Revision 1.50  2005/05/04 08:56:03  michael
-  + Removed S_OK declarations, they are in objpash.inc
-
-  Revision 1.49  2005/04/28 17:58:18  florian
-    * getinterface fixed
-
-  Revision 1.48  2005/04/05 21:05:31  peter
-    * call initspecialchars if one of the specialchars is configured
-      for the first time
-
-  Revision 1.47  2005/03/13 08:34:58  florian
-    * fixed FieldAddress for 64 bit and CPUs requiring proper alignment
-
-  Revision 1.46  2005/02/14 17:13:26  peter
-    * truncate log
-
-}
-
-
-
+{$endif FPC_HAS_FEATURE_EXCEPTIONS}

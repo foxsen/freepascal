@@ -1,5 +1,4 @@
 {
-    $Id: sysnr.inc,v 1.2 2005/02/14 17:13:30 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2003 by Peter Vreman
     member of the Free Pascal development team.
@@ -163,6 +162,7 @@ Const
 //       syscall_nr_adjtime       = 140    SunOS Specific
       syscall_nr_getpeername      = 141 ; // Common
 //       syscall_nr_gethostid     = 142    SunOS Specific
+      syscall_nr_futex            = 142 ; // gethostid under SunOS
       syscall_nr_gettid           = 143 ; // ENOSYS under SunOS
       syscall_nr_getrlimit        = 144 ; // Common
       syscall_nr_setrlimit        = 145 ; // Common
@@ -171,12 +171,12 @@ Const
       syscall_nr_pciconfig_read   = 148 ; // ENOSYS under SunOS
       syscall_nr_pciconfig_write  = 149 ; // ENOSYS under SunOS
       syscall_nr_getsockname      = 150 ; // Common
-//       syscall_nr_getmsg        = 151    SunOS Specific
-//       syscall_nr_putmsg        = 152    SunOS Specific
+      syscall_nr_inotify_init     = 151 ; // Linux specific
+      syscall_nr_inotify_add_watch= 152 ; // Linux specific
       syscall_nr_poll             = 153 ; // Common
       syscall_nr_getdents64       = 154 ; // Linux specific
       syscall_nr_fcntl64          = 155 ; // Linux sparc32 Specific
-//       syscall_nr_getdirentries = 156    SunOS Specific
+      syscall_nr_inotify_rm_watch = 156 ; // Linux specific
       syscall_nr_statfs           = 157 ; // Common
       syscall_nr_fstatfs          = 158 ; // Common
       syscall_nr_umount           = 159 ; // Common
@@ -208,14 +208,14 @@ Const
       syscall_nr_setpgid          = 185 ; // Common
 //       syscall_nr_pathconf      = 186    SunOS Specific
       syscall_nr_tkill            = 187 ; // SunOS: fpathconf
-//       syscall_nr_sysconf       = 188    SunOS Specific
+      syscall_nr_exit_group       = 188 ; // SunOS sysconf
       syscall_nr_uname            = 189 ; // Linux Specific
       syscall_nr_init_module      = 190 ; // Linux Specific
       syscall_nr_personality      = 191 ; // Linux Specific
 //       syscall_nr_prof          = 192    Linux Specific
-//       syscall_nr_break         = 193    Linux Specific
-//       syscall_nr_lock          = 194    Linux Specific
-//       syscall_nr_mpx           = 195    Linux Specific
+      syscall_nr_epoll_create     = 193 ; // Linux Specific - was break
+      syscall_nr_epoll_ctl        = 194 ; // Linux Specific - was lock
+      syscall_nr_epoll_wait       = 195 ; // Linux Specific - was mpx
 //       syscall_nr_ulimit        = 196    Linux Specific
       syscall_nr_getppid          = 197 ; // Linux Specific
       syscall_nr_sigaction        = 198 ; // Linux Specific
@@ -275,11 +275,64 @@ Const
       syscall_nr_getsid           = 252;
       syscall_nr_fdatasync        = 253;
       syscall_nr_nfsservctl       = 254;
-      syscall_nr_aplib            = 255;
+      syscall_nr_sync_file_range   = 255;
+      syscall_nr_clock_settime     = 256;
+      syscall_nr_clock_gettime     = 257;
+      syscall_nr_clock_getres      = 258;
+      syscall_nr_clock_nanosleep   = 259;
+      syscall_nr_sched_getaffinity = 260;
+      syscall_nr_sched_setaffinity = 261;
+      syscall_nr_timer_settime     = 262;
+      syscall_nr_timer_gettime     = 263;
+      syscall_nr_timer_getoverrun  = 264;
+      syscall_nr_timer_delete      = 265;
+      syscall_nr_timer_create      = 266;
+      { syscall_nr_vserver           267 Reserved for VSERVER }
+      syscall_nr_io_setup          = 268;
+      syscall_nr_io_destroy        = 269;
+      syscall_nr_io_submit         = 270;
+      syscall_nr_io_cancel         = 271;
+      syscall_nr_io_getevents      = 272;
+      syscall_nr_mq_open           = 273;
+      syscall_nr_mq_unlink         = 274;
+      syscall_nr_mq_timedsend      = 275;
+      syscall_nr_mq_timedreceive   = 276;
+      syscall_nr_mq_notify         = 277;
+      syscall_nr_mq_getsetattr     = 278;
+      syscall_nr_waitid            = 279;
+      syscall_nr_tee               = 280; { was syscall_nr_sys_setaltroot    280; }
+      syscall_nr_add_key           = 281;
+      syscall_nr_request_key       = 282;
+      syscall_nr_keyctl            = 283;
+      syscall_nr_openat            = 284;
+      syscall_nr_mkdirat           = 285;
+      syscall_nr_mknodat           = 286;
+      syscall_nr_fchownat          = 287;
+      syscall_nr_futimesat         = 288;
+      syscall_nr_fstatat64         = 289;
+      syscall_nr_unlinkat          = 290;
+      syscall_nr_renameat          = 291;
+      syscall_nr_linkat            = 292;
+      syscall_nr_symlinkat         = 293;
+      syscall_nr_readlinkat        = 294;
+      syscall_nr_fchmodat          = 295;
+      syscall_nr_faccessat         = 296;
+      syscall_nr_pselect6          = 297;
+      syscall_nr_ppoll             = 298;
+      syscall_nr_unshare           = 299;
+      syscall_nr_set_robust_list   = 300;
+      syscall_nr_get_robust_list   = 301;
+      syscall_nr_migrate_pages     = 302;
+      syscall_nr_mbind             = 303;
+      syscall_nr_get_mempolicy     = 304;
+      syscall_nr_set_mempolicy     = 305;
+      syscall_nr_kexec_load        = 306;
+      syscall_nr_move_pages        = 307;
+      syscall_nr_getcpu            = 308;
+      syscall_nr_epoll_pwait       = 309;
+      syscall_nr_utimensat         = 310;
+      syscall_nr_signalfd          = 311;
+      syscall_nr_timerfd           = 312;
+      syscall_nr_eventfd           = 313;
+      syscall_nr_fallocate         = 314;
 
-{
-  $Log: sysnr.inc,v $
-  Revision 1.2  2005/02/14 17:13:30  peter
-    * truncate log
-
-}

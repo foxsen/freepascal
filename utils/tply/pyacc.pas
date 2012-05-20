@@ -99,16 +99,6 @@ $History: YACC.PAS $
 
 *)
 
-{$IFDEF MsDos}
-{$M 16384,0,655360}
-{$ENDIF}
-{$IFDEF DPMI}
-{$M 32768}
-{$ENDIF}
-{$IFDEF Windows}
-{$M 32768,0}
-{$ENDIF}
-
 {$X+}
 {$I-}
 program Yacc;
@@ -116,12 +106,8 @@ program Yacc;
 uses
 {$IFDEF Debug}
 {$IFDEF DPMI}
-  YaccChk,
-{$ENDIF}
-{$ENDIF}
-{$IFDEF Windows}
-{$IFNDEF Console}
-  WinCrt,
+  { YaccChk, removed as obsolete,
+    YaccChk source not available anymore PM }
 {$ENDIF}
 {$ENDIF}
   YaccLib, YaccBase, YaccMsgs, YaccSem, YaccTabl, YaccPars;

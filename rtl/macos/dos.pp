@@ -1,5 +1,4 @@
 {
-    $Id: dos.pp,v 1.12 2005/04/03 22:16:02 olle Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2004 by Olle Raab and
     members of the Free Pascal development team
@@ -300,7 +299,7 @@ var
 Begin
   {Make ToolServers working directory in sync with our working directory}
   PathArgToFullPath(':', wdpath);
-  wdpath:= 'Directory ' + wdpath;
+  wdpath:= 'Directory ''' + wdpath + '''';
   err:= ExecuteToolserverScript(PChar(wdpath), LastDosExitCode);
     {TODO Only change path when actually needed. But this requires some
      change counter to be incremented each time wd is changed. }

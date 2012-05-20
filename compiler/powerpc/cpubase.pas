@@ -1,5 +1,4 @@
 {
-    $Id: cpubase.pas,v 1.98 2005/02/26 01:27:00 jonas Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl
 
     Contains the base types for the PowerPC
@@ -50,8 +49,9 @@ uses
         a_dcbf, a_dcbi, a_dcbst, a_dcbt, a_dcbtst, a_dcbz, a_divw, a_divw_, a_divwo, a_divwo_,
         a_divwu, a_divwu_, a_divwuo, a_divwuo_, a_eciwx, a_ecowx, a_eieio, a_eqv,
         a_eqv_, a_extsb, a_extsb_, a_extsh, a_extsh_, a_fabs, a_fabs_, a_fadd,
-        a_fadd_, a_fadds, a_fadds_, a_fcmpo, a_fcmpu, a_fctiw, a_fctw_, a_fctwz,
-        a_fctwz_, a_fdiv, a_fdiv_, a_fdivs, a_fdivs_, a_fmadd, a_fmadd_, a_fmadds,
+        a_fadd_, a_fadds, a_fadds_, a_fcmpo, a_fcmpu, a_fctid, a_fctid_,
+        a_fctidz, a_fctidz_, a_fctiw, a_fctiw_, a_fctiwz, a_fctiwz_,
+        a_fdiv, a_fdiv_, a_fdivs, a_fdivs_, a_fmadd, a_fmadd_, a_fmadds,
         a_fmadds_, a_fmr, a_fmsub, a_fmsub_, a_fmsubs, a_fmsubs_, a_fmul, a_fmul_,
         a_fmuls, a_fmuls_, a_fnabs, a_fnabs_, a_fneg, a_fneg_, a_fnmadd,
         a_fnmadd_, a_fnmadds, a_fnmadds_, a_fnmsub, a_fnmsub_, a_fnmsubs,
@@ -59,7 +59,7 @@ uses
         a_fsel, a_fsel_, a_fsqrt, a_fsqrt_, a_fsqrts, a_fsqrts_, a_fsub, a_fsub_,
         a_fsubs, a_fsubs_, a_icbi, a_isync, a_lbz, a_lbzu, a_lbzux, a_lbzx,
         a_lfd, a_lfdu, a_lfdux, a_lfdx, a_lfs, a_lfsu, a_lfsux, a_lfsx, a_lha,
-        a_lhau, a_lhaux, a_lhax, a_hbrx, a_lhz, a_lhzu, a_lhzux, a_lhzx, a_lmw,
+        a_lhau, a_lhaux, a_lhax, a_lhbrx, a_lhz, a_lhzu, a_lhzux, a_lhzx, a_lmw,
         a_lswi, a_lswx, a_lwarx, a_lwbrx, a_lwz, a_lwzu, a_lwzux, a_lwzx, a_mcrf,
         a_mcrfs, a_mcrxr, a_mfcr, a_mffs, a_mffs_, a_mfmsr, a_mfspr, a_mfsr,
         a_mfsrin, a_mftb, a_mtcrf, a_mtfsb0, a_mtfsb1, a_mtfsf, a_mtfsf_,
@@ -67,7 +67,7 @@ uses
         a_mulhw_, a_mulhwu, a_mulhwu_, a_mulli, a_mullw, a_mullw_, a_mullwo,
         a_mullwo_, a_nand, a_nand_, a_neg, a_neg_, a_nego, a_nego_, a_nor, a_nor_,
         a_or, a_or_, a_orc, a_orc_, a_ori, a_oris, a_rfi, a_rlwimi, a_rlwimi_,
-        a_rlwinm, a_rlwinm_, a_rlwnm, a_sc, a_slw, a_slw_, a_sraw, a_sraw_,
+        a_rlwinm, a_rlwinm_, a_rlwnm, a_rlwnm_, a_sc, a_slw, a_slw_, a_sraw, a_sraw_,
         a_srawi, a_srawi_,a_srw, a_srw_, a_stb, a_stbu, a_stbux, a_stbx, a_stfd,
         a_stfdu, a_stfdux, a_stfdx, a_stfiwx, a_stfs, a_stfsu, a_stfsux, a_stfsx,
         a_sth, a_sthbrx, a_sthu, a_sthux, a_sthx, a_stmw, a_stswi, a_stswx, a_stw,
@@ -84,8 +84,8 @@ uses
         a_srwi, a_srwi_, a_clrlwi, a_clrlwi_, a_clrrwi, a_clrrwi_, a_clrslwi,
         a_clrslwi_, a_blr, a_bctr, a_blrl, a_bctrl, a_crset, a_crclr, a_crmove,
         a_crnot, a_mt {move to special prupose reg}, a_mf {move from special purpose reg},
-        a_nop, a_li, a_lis, a_la, a_mr, a_mr_, a_not, a_mtcr, a_mtlr, a_mflr,
-        a_mtctr, a_mfctr);
+        a_nop, a_li, a_lis, a_la, a_mr, a_mr_, a_not, a_not_, a_mtcr, a_mtlr, a_mflr,
+        a_mtctr, a_mfctr, a_mftbu, a_mfxer);
 
       {# This should define the array of instructions as string }
       op2strtable=array[tasmop] of string[8];
@@ -127,7 +127,7 @@ uses
       { MM Super register first and last }
       first_mm_imreg     = $20;
 
-{$warning TODO Calculate bsstart}
+{ TODO: Calculate bsstart}
       regnumber_count_bsstart = 64;
 
       regnumber_table : array[tregisterindex] of tregister = (
@@ -210,6 +210,10 @@ uses
       CondAsmOp:array[0..CondAsmOps-1] of TasmOp=(
          A_BC, A_TW, A_TWI
       );
+      CondAsmOpStr:array[0..CondAsmOps-1] of string[7]=(
+        'BC','TW','TWI'
+      );
+
 
 {*****************************************************************************
                                    Flags
@@ -235,9 +239,6 @@ uses
 *****************************************************************************}
 
     const
-      symaddr2str: array[trefaddr] of string[3] = ('','','@ha','@l','');
-
-    const
       { MacOS only. Whether the direct data area (TOC) directly contain
         global variables. Otherwise it contains pointers to global variables. }
       macos_direct_globals = false;
@@ -261,8 +262,10 @@ uses
 
       {# Defines the default address size for a processor, }
       OS_ADDR = OS_32;
-      {# the natural int size for a processor,             }
+      {# the natural int size for a processor,
+         has to match osuinttype/ossinttype as initialized in psystem }
       OS_INT = OS_32;
+      OS_SINT = OS_S32;
       {# the maximum float size for a processor,           }
       OS_FLOAT = OS_F64;
       {# the size of a vector register for a processor     }
@@ -303,7 +306,7 @@ uses
 
          Taken from GCC rs6000.h
       }
-{$warning As indicated in rs6000.h, but can't find it anywhere else!}
+{ TODO: As indicated in rs6000.h, but can't find it anywhere else!}
       NR_PIC_OFFSET_REG = NR_R30;
       { Return address of a function }
       NR_RETURN_ADDRESS_REG = NR_R0;
@@ -347,6 +350,9 @@ uses
         RS_R30,RS_R31
       );
 
+      { this is only for the generic code which is not used for this architecture }
+      saved_mm_registers : array[0..0] of tsuperregister = (RS_NO);
+
       {# Required parameter alignment when calling a routine declared as
          stdcall and cdecl. The alignment value should be the one defined
          by GCC or the target ABI.
@@ -377,6 +383,11 @@ uses
 
       NR_RTOC = NR_R2;
 
+      maxfpuregs = 8;
+
+      { minimum size of the stack frame if one exists }
+      MINIMUM_STACKFRAME_SIZE = 56;
+
 {*****************************************************************************
                                   Helpers
 *****************************************************************************}
@@ -388,7 +399,7 @@ uses
     procedure create_cond_imm(BO,BI:byte;var r : TAsmCond);
     procedure create_cond_norm(cond: TAsmCondFlag; cr: byte;var r : TasmCond);
 
-    function cgsize2subreg(s:Tcgsize):Tsubregister;
+    function cgsize2subreg(regtype: tregistertype; s:Tcgsize):Tsubregister;
     { Returns the tcgsize corresponding with the size of reg.}
     function reg_cgsize(const reg: tregister) : tcgsize;
 
@@ -399,11 +410,12 @@ uses
 
     function inverse_cond(const c: TAsmCond): Tasmcond; {$ifdef USEINLINE}inline;{$endif USEINLINE}
     function conditions_equal(const c1, c2: TAsmCond): boolean;
+    function dwarf_reg(r:tregister):shortint;
 
 implementation
 
     uses
-      rgBase,verbose;
+      rgbase,verbose;
 
     const
       std_regname_table : array[tregisterindex] of string[7] = (
@@ -489,6 +501,7 @@ implementation
 
     procedure create_cond_norm(cond: TAsmCondFlag; cr: byte;var r : TasmCond);
       begin
+        r.dirhint := DH_None;
         r.simple := true;
         r.cond := cond;
         case cond of
@@ -515,17 +528,19 @@ implementation
     function reg_cgsize(const reg: tregister): tcgsize;
       begin
         case getregtype(reg) of
-          R_MMREGISTER,
-          R_FPUREGISTER,
           R_INTREGISTER :
             result:=OS_32;
+          R_MMREGISTER:
+            result:=OS_M128;
+          R_FPUREGISTER:
+            result:=OS_F64;
           else
             internalerror(200303181);
         end;
       end;
 
 
-    function cgsize2subreg(s:Tcgsize):Tsubregister;
+    function cgsize2subreg(regtype: tregistertype; s:Tcgsize):Tsubregister;
       begin
         cgsize2subreg:=R_SUBWHOLE;
       end;
@@ -555,28 +570,11 @@ implementation
       end;
 
 
+    function dwarf_reg(r:tregister):shortint;
+      begin
+        result:=regdwarf_table[findreg_by_number(r)];
+        if result=-1 then
+          internalerror(200603251);
+      end;
+
 end.
-{
-  $Log: cpubase.pas,v $
-  Revision 1.98  2005/02/26 01:27:00  jonas
-    * fixed generic jumps optimizer and enabled it for ppc (the label table
-      was not being initialised -> getfinaldestination always failed, which
-      caused wrong optimizations in some cases)
-    * changed the inverse_cond into a function, because tasmcond is a record
-      on ppc
-    + added a compare_conditions() function for the same reason
-
-  Revision 1.97  2005/02/18 23:05:47  jonas
-    - removed a non-existing instruction (lcrxe)
-    * fixed an instruction (maffs_ -> mffs)
-
-  Revision 1.96  2005/02/14 17:13:10  peter
-    * truncate log
-
-  Revision 1.95  2005/01/20 16:38:45  peter
-    * load jmp_buf_size from system unit
-
-  Revision 1.94  2005/01/10 21:48:45  jonas
-    - removed deprecated constants
-
-}

@@ -1,5 +1,4 @@
 {
-    $Id: vesa.pas,v 1.10 2005/02/14 17:13:18 peter Exp $
     This file is part of the PinGUI - Platform Independent GUI Project
     Copyright (c) 1999 by Berczi Gabor
 
@@ -57,8 +56,7 @@ const
      vesa_mw_WindowB                  = $0001;
 
 type
-     {$ifdef FPC}tregisters=registers;{$endif}
-     {$ifdef TP}tregisters=registers;{$endif}
+     tregisters=registers;
 
      PtrRec16 = record
        Ofs,Seg: word;
@@ -135,9 +133,7 @@ Procedure FreeVesaModes;
 implementation
 
 uses
-{$ifdef FPC}
   video, mouse,
-{$endif FPC}
 {$ifdef TESTGRAPHIC}
   graph,
 {$endif TESTGRAPHIC}
@@ -364,7 +360,6 @@ begin
   VESAInit:=OK;
 end;
 
-{$ifdef FPC}
 Function VesaGetVideoModeData (Index : Word; Var Data : TVideoMode) : boolean;
 Var
   PrevCount : word;
@@ -587,7 +582,7 @@ begin
   if Force or MustUpdate then
    begin
      PrevColor:=GetColor;
-     PrevBkColor:=GetBkColor;
+     PrevBkColor:=GetBkColor{$ifdef FPC}(){$endif};
 
      for y:=0 to ScreenHeight-1 do
        for x:=0 to Screenwidth-1 do
@@ -622,7 +617,7 @@ begin
        move(videobuf^,oldvideobuf^,
          VideoBufSize);
      SetColor(PrevColor);
-     SetBkColor(GetBkColor);
+     SetBkColor(GetBkColor{$ifdef FPC}(){$endif});
    end;
   DrawTextBackground:=StoreDrawTextBackground;
 {$endif TESTGRAPHIC}
@@ -711,14 +706,4 @@ BEGIN
 {$endif TESTGRAPHIC}
 
   SetVideoDriver (Driver);
-{$endif FPC}
 END.
-{
-  $Log: vesa.pas,v $
-  Revision 1.10  2005/02/14 17:13:18  peter
-    * truncate log
-
-  Revision 1.9  2005/01/28 10:05:44  armin
-  * applied packed record fix from Tomas
-
-}

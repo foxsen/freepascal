@@ -1,5 +1,4 @@
 {
-    $Id: dw_txt.pp,v 1.3 2005/02/14 17:13:39 peter Exp $
 
     FPDoc  -  Free Pascal Documentation Tool
     Copyright (C) 2005 by Michael Van Canneyt
@@ -81,9 +80,8 @@ Type
     procedure StartChapter(ChapterName : String); override;
     procedure StartOverview(WithAccess : Boolean); override;
     procedure EndOverview; override;
-    procedure WriteOverviewMember(ALabel,AName,Access,ADescr : String); override;
-    procedure WriteOverviewMember(ALabel,AName,ADescr : String); override;
-    Class Function FileNameExtension : String; override;
+    procedure WriteOverviewMember(const ALabel,AName,Access,ADescr : String); override;
+    procedure WriteOverviewMember(const ALabel,AName,ADescr : String); override;
     // Description node conversion
     procedure DescrBeginBold; override;
     procedure DescrEndBold; override;
@@ -131,6 +129,7 @@ Type
     procedure DescrEndTableCell; override;
   Public
     Constructor Create(APackage: TPasPackage; AEngine: TFPDocEngine); override;
+    Class Function FileNameExtension : String; override;
     Class Procedure Usage(List : TStrings) ; override;
     Function InterpretOption(Const Cmd,Arg : String) : Boolean; override;
   end;
@@ -499,7 +498,7 @@ begin
   LineWidth:=DefaultLineWidth;
 end;
 
-procedure TTXTWriter.Usage(List: TStrings);
+class procedure TTXTWriter.Usage(List: TStrings);
 begin
   inherited Usage(List);
 end;
@@ -638,19 +637,19 @@ begin
   WriteLine(False);
 end;
 
-procedure TTxtWriter.WriteOverviewMember(ALabel,AName,Access,ADescr : String);
+procedure TTxtWriter.WriteOverviewMember(const ALabel,AName,Access,ADescr : String);
 
 begin
   WriteLnF('%.30s %.10s  %s',[AName,Access,ADescr]);
 end;
 
-procedure TTxtWriter.WriteOverviewMember(ALabel,AName,ADescr : String);
+procedure TTxtWriter.WriteOverviewMember(const ALabel,AName,ADescr : String);
 
 begin
   WriteLnF('%.30s %s ',[AName,ADescr]);
 end;
 
-function TTxtWriter.FileNameExtension: String;
+class function TTxtWriter.FileNameExtension: String;
 begin
   Result:=TxtExtension;
 end;
@@ -680,19 +679,3 @@ initialization
 finalization
   UnRegisterWriter('txt');
 end.
-
-
-{
-  $Log: dw_txt.pp,v $
-  Revision 1.3  2005/02/14 17:13:39  peter
-    * truncate log
-
-  Revision 1.2  2005/01/14 17:55:07  michael
-  + Added unix man page output; Implemented usage
-
-  Revision 1.1  2005/01/12 21:11:41  michael
-  + New structure for writers. Implemented TXT writer
-
-  Revision 1.8  2005/01/09 15:59:50  michael
-  + Split out Txt writer to linear and Txt writer
-}

@@ -1,4 +1,5 @@
 { %CPU=i386 }
+{ %OPT=-Cg- }
 { Old file: tbs0309.pp }
 { problem with ATT assembler written by bin writer     OK 0.99.14 (PFV) }
 
@@ -68,7 +69,7 @@ begin
    aw:=-4;
    bw:=45;
    asm
-     fildw aw
+     filds aw
      fstpl a
    end;
    if a<>-4.0 then

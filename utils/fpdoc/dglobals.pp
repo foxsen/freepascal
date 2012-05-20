@@ -1,5 +1,4 @@
 {
-    $Id: dglobals.pp,v 1.12 2005/05/15 19:36:30 hajny Exp $
 
     FPDoc  -  Free Pascal Documentation Tool
     Copyright (C) 2000 - 2002 by
@@ -24,10 +23,11 @@ unit dGlobals;
 
 interface
 
-uses Classes, DOM, PasTree, PParser;
+uses Classes, DOM, PasTree, PParser, StrUtils,uriparser;
 
 Var
   LEOL : Integer;
+  modir : string;
 
 resourcestring
   // Output strings
@@ -46,13 +46,16 @@ resourcestring
   SDocClasses                = 'Classes';
   SDocProceduresAndFunctions = 'Procedures and functions';
   SDocVariables              = 'Variables';
-
+  SDocIdentifierIndex        = 'Index';
+  SDocModuleIndex            = 'Index of all identifiers in unit ''%s''';
+  SDocPackageIndex           = 'Index of all identifiers in package ''%s''';
   SDocUnitOverview           = 'Overview of unit ''%s''';
   SDocOverview               = 'Overview';
   SDocSearch                 = 'Search';
   SDocDeclaration            = 'Declaration';
   SDocDescription            = 'Description';
   SDocErrors                 = 'Errors';
+  SDocVersion                = 'Version info';
   SDocSeeAlso                = 'See also';
   SDocExample                = 'Example';
   SDocArguments              = 'Arguments';
@@ -60,6 +63,7 @@ resourcestring
   SDocRemark                 = 'Remark:   ';
   SDocMethodOverview         = 'Method overview';
   SDocPropertyOverview       = 'Property overview';
+  SDocInterfacesOverview     = 'Interfaces overview';
   SDocPage                   = 'Page';
   SDocMethod                 = 'Method';
   SDocProperty               = 'Property';
@@ -77,6 +81,8 @@ resourcestring
   SDocSynopsis               = 'Synopsis';
   SDocVisibility             = 'Visibility';
   SDocOpaque                 = 'Opaque type';
+  SDocDateGenerated          = 'Documentation generated on: %s';
+  SDocNotes                  = 'Notes';
   
   // Topics
   SDocRelatedTopics = 'Related topics';
@@ -99,9 +105,30 @@ resourcestring
   
   // HTML usage
   SHTMLUsageFooter = 'Append xhtml from file as footer to html page';
+  SHTMLUsageFooterDate = 'Append footer with date. fmt is Optional format for FormatDateTime';
+  SHTMLUsageCharset = 'Set the HTML character set';
+  SHTMLHtmlSearch = 'Add search page with given name to the menu bar';
+  SHTMLIndexColcount = 'Use N columns in the identifier index pages';
+  SHTMLImageUrl = 'Prefix image URLs with url';
+    
+  // CHM usage
+  SCHMUsageTOC     = 'Use [File] as the table of contents. Usually a .hhc file.';
+  SCHMUsageIndex   = 'Use [File] as the index. Usually a .hhk file.';
+  SCHMUsageDefPage = 'Set the "Home" page relative to where it lives in the chm. i.e. "/index.html"';
+  SCHMUsageOtrFiles= 'A txt file containing a list of files to be added relative to the working directory.';
+  SCHMUsageCSSFile = 'Filename of a .css file to be included in the chm.';
+  SCHMUsageAutoTOC = 'Automatically generate a Table of Contents. Ignores --toc-file';
+  SCHMUsageAutoIDX = 'Automatically generate an Index. Ignores --index-file';
+  SCHMUsageMakeSearch = 'Automatically generate a Search Index from filenames that match *.htm*';
+  SCHMUsageChmTitle= 'Title of the chm. Defaults to the value from --package';
 
-  STitle                      = 'FPDoc - Free Pascal Documentation Tool';
-  SCopyright                  = '(c) 2000 - 2003 Areca Systems GmbH / Sebastian Guenther, sg@freepascal.org';
+  // Linear usage
+  SLinearUsageDupLinkedDocsP1 = 'Duplicate linked element documentation in';
+  SLinearUsageDupLinkedDocsP2 = 'descendant classes.';
+
+  STitle           = 'FPDoc - Free Pascal Documentation Tool';
+  SVersion         = 'Version %s [%s]';
+  SCopyright       = '(c) 2000 - 2003 Areca Systems GmbH / Sebastian Guenther, sg@freepascal.org';
 
   SCmdLineHelp     = 'Usage: %s [options]';
   SUsageOption010  = '--content         Create content file for package cross-references';
@@ -119,8 +146,20 @@ resourcestring
   SUsageOption130  = '--output=name     use name as the output name.';
   SUsageOption140  = '                  Each backend interpretes this as needed.';
   SUsageOption150  = '--package=name    Set the package name for which to create output';
+  SUsageOption155  = '--project=file    Use file as project file';  
   SUsageOption160  = '--show-private    Show private methods.';
   SUsageOption170  = '--warn-no-node    Warn if no documentation node was found.';
+  SUsageOption180  = '--mo-dir=dir      Set directory where language files reside to dir';
+  SUsageOption190  = '--parse-impl      (Experimental) try to parse implementation too';
+  SUsageOption200 =  '--dont-trim	Don''t trim XML contents';
+  SUsageOption210 =  '--write-project=file Do not write documentation, create project file instead';
+  SUsageOption220 =  '--verbose         Write more information on the screen';
+  SUsageOption230 =  '--dry-run         Only parse sources and XML, do not create output';
+  SUsageOption240 =  '--descr-dir=Dir   Add All XML files in Dir to list of description files';
+  SUsageOption250 =  '--input-dir=Dir   Add All *.pp and *.pas files in Dir to list of input files';
+  SUsageOption260 =  '--write-project=file Write all command-line options to a project file';
+  
+
   SUsageFormats        = 'The following output formats are supported by this fpdoc:';
   SUsageBackendHelp    = 'Specify an output format, combined with --help to get more help for this backend.';
   SUsageFormatSpecific = 'Output format "%s" supports the following options:';
@@ -132,17 +171,20 @@ resourcestring
   SNeedPackageName            = 'No package name specified. Please specify one using the --package option.';
   SDone                       = 'Done.';
   SErrCouldNotCreateOutputDir = 'Could not create output directory "%s"';
+  SErrCouldNotCreateFile      = 'Could not create file "%s": %s';
+  SSeeURL                     = '(See %s)';      // For linear text writers.
+  SParsingUsedUnit            = 'Parsing used unit "%s" with commandLine "%s"';
 
 Const
   SVisibility: array[TPasMemberVisibility] of string =
        ('Default', 'Private', 'Protected', 'Public',
-       'Published', 'Automated');
+       'Published', 'Automated','Strict Private','Strict Protected');
 
 type
 
   // Assumes a list of TObject instances and frees them on destruction
 
-  TObjectList = class(TList)
+  TObjectList = class(TFPList)
   public
     destructor Destroy; override;
   end;
@@ -185,6 +227,8 @@ type
     members, and so on...
   }
 
+  { TDocNode }
+
   TDocNode = class
   private
     FFirstChild, FNextSibling: TDocNode;
@@ -196,11 +240,15 @@ type
     FErrorsDoc: TDOMElement;
     FSeeAlso: TDOMElement;
     FFirstExample: TDOMElement;
+    FNotes : TDomElement;
     FLink: String;
     FTopicNode : Boolean;
+    FRefCount : Integer;
+    FVersion: TDomElement;
   public
     constructor Create(const AName: String; ANode: TDOMElement);
     destructor Destroy; override;
+    Function IncRefcount : Integer;
     function FindChild(const APathName: String): TDocNode;
     function CreateChildren(const APathName: String): TDocNode;
     // Properties for tree structure
@@ -214,25 +262,46 @@ type
     property ShortDescr: TDOMElement read FShortDescr;
     property Descr: TDOMElement read FDescr;
     property ErrorsDoc: TDOMElement read FErrorsDoc;
+    Property Version : TDomElement Read FVersion;
     property SeeAlso: TDOMElement read FSeeAlso;
     property FirstExample: TDOMElement read FFirstExample;
+    property Notes : TDOMElement read FNotes;
     property Link: String read FLink;
     Property TopicNode : Boolean Read FTopicNode;
+    Property RefCount : Integer Read FRefCount;
   end;
+  
 
 
   // The main FPDoc engine
+  TFPDocLogLevel = (dleWarnNoNode);
+  TFPDocLogLevels = set of TFPDocLogLevel;
+  TOnParseUnitEvent = Procedure (Sender : TObject; Const AUnitName : String; Out AInputFile,OSTarget,CPUTarget : String) of  Object;
 
+  { TFPDocEngine }
   TFPDocEngine = class(TPasTreeContainer)
+  private
+    FDocLogLevels: TFPDocLogLevels;
+    FOnParseUnit: TOnParseUnitEvent;
   protected
     DescrDocs: TObjectList;             // List of XML documents
     DescrDocNames: TStringList;         // Names of the XML documents
     FRootLinkNode: TLinkNode;
     FRootDocNode: TDocNode;
-    FPackages: TList;                   // List of TFPPackage objects
+    FPackages: TFPList;                   // List of TFPPackage objects
     CurModule: TPasModule;
     CurPackageDocNode: TDocNode;
+    function ParseUsedUnit(AName, AInputLine,AOSTarget,ACPUTarget: String): TPasModule; virtual;
+    Function LogEvent(E : TFPDocLogLevel) : Boolean;
+    Procedure DoLog(Const Msg : String);overload;
+    Procedure DoLog(Const Fmt : String; Args : Array of const);overload;
   public
+    Output: String;
+    HasContentFile: Boolean;
+    HidePrivate: Boolean;       // Hide private class members in output?
+    HideProtected: Boolean;     // Hide protected class members in output?
+    WarnNoNode : Boolean;       // Warn if no description node found for element.
+
     constructor Create;
     destructor Destroy; override;
     procedure SetPackageName(const APackageName: String);
@@ -250,9 +319,10 @@ type
     procedure AddLink(const APathName, ALinkTo: String);
     function FindAbsoluteLink(const AName: String): String;
     function ResolveLink(AModule: TPasModule; const ALinkDest: String): String;
+    function FindLinkedNode(ANode: TDocNode): TDocNode;
 
     // Documentation file support
-    procedure AddDocFile(const AFilename: String);
+    procedure AddDocFile(const AFilename: String;DontTrim:boolean=false);
 
     // Documentation retrieval
     function FindDocNode(AElement: TPasElement): TDocNode;
@@ -264,13 +334,8 @@ type
 
     property RootLinkNode: TLinkNode read FRootLinkNode;
     property RootDocNode: TDocNode read FRootDocNode;
-    property Package: TPasPackage read FPackage;
-
-    Output: String;
-    HasContentFile: Boolean;
-    HidePrivate: Boolean;       // Hide private class members in output?
-    HideProtected: Boolean;     // Hide protected class members in output?
-    WarnNoNode : Boolean;       // Warn if no description node found for element.
+    Property DocLogLevels : TFPDocLogLevels Read FDocLogLevels Write FDocLogLevels;
+    Property OnParseUnit : TOnParseUnitEvent Read FOnParseUnit Write FOnParseUnit;
   end;
 
 
@@ -279,11 +344,16 @@ procedure TranslateDocStrings(const Lang: String);
 Function IsLinkNode(Node : TDomNode) : Boolean;
 Function IsExampleNode(Example : TDomNode) : Boolean;
 
+// returns true is link is an absolute URI
+Function IsLinkAbsolute(ALink: String): boolean;
 
 
 implementation
 
 uses SysUtils, Gettext, XMLRead;
+
+const
+  AbsoluteLinkPrefixes : array[0..2] of string = ('/', 'http://', 'ms-its:');
 
 
 { TObjectList }
@@ -383,7 +453,7 @@ begin
     { No child found, let's create one if we are at the end of the path }
     if DotPos > 0 then
       // !!!: better throw an exception
-      WriteLn('Link path does not exist: ', APathName);
+      Raise Exception.CreateFmt('Link path does not exist: %s',[APathName]);
     Result := TLinkNode.Create(ChildName, ALinkTo);
     if Assigned(LastChild) then
       LastChild.FNextSibling := Result
@@ -409,6 +479,13 @@ begin
   if Assigned(NextSibling) then
     NextSibling.Free;
   inherited Destroy;
+end;
+
+Function TDocNode.IncRefcount : Integer;
+
+begin
+  Inc(FRefCount);
+  Result:=FRefCount;
 end;
 
 function TDocNode.FindChild(const APathName: String): TDocNode;
@@ -491,6 +568,22 @@ end;
 
 { TFPDocEngine }
 
+function TFPDocEngine.LogEvent(E: TFPDocLogLevel): Boolean;
+begin
+  Result:=E in FDocLogLevels;
+end;
+
+procedure TFPDocEngine.DoLog(const Msg: String);
+begin
+  If Assigned(OnLog) then
+    OnLog(Self,Msg);
+end;
+
+procedure TFPDocEngine.DoLog(const Fmt: String; Args: array of const);
+begin
+  DoLog(Format(Fmt,Args));
+end;
+
 constructor TFPDocEngine.Create;
 begin
   inherited Create;
@@ -499,7 +592,8 @@ begin
   FRootLinkNode := TLinkNode.Create('', '');
   FRootDocNode := TDocNode.Create('', nil);
   HidePrivate := True;
-  FPackages := TList.Create;
+  InterfaceOnly:=True;
+  FPackages := TFPList.Create;
 end;
 
 destructor TFPDocEngine.Destroy;
@@ -523,11 +617,14 @@ begin
     '#' + APackageName, nil, '', 0));
   FPackages.Add(FPackage);
   CurPackageDocNode := RootDocNode.FindChild('#' + APackageName);
+  If Assigned(CurPackageDocNode) then
+    CurPackageDocNode.IncRefCount;
 end;
 
 procedure TFPDocEngine.ReadContentFile(const AFilename, ALinkPrefix: String);
 var
   f: Text;
+  inheritanceinfo : TStringlist;
 
   procedure ReadLinkTree;
   var
@@ -538,7 +635,10 @@ var
   begin
     PrevSpaces := 0;
     CurParent := RootLinkNode;
-    PrevSibling := nil;
+    PrevSibling := CurParent.FirstChild;
+    if assigned(PrevSibling) then
+      while assigned(PrevSibling.NextSibling) do
+        PrevSibling := PrevSibling.NextSibling;
     StackIndex := 0;
     while True do
     begin
@@ -582,30 +682,32 @@ var
     end;
   end;
 
-  procedure ReadClasses;
-
-    function CreateClass(const AName: String): TPasClassType;
+  function ResolvePackageModule(AName:String;var pkg:TPasPackage;var module:TPasModule;createnew:boolean):String;
     var
-      DotPos, DotPos2, i: Integer;
+      DotPos, DotPos2, i,j: Integer;
       s: String;
-      Package: TPasPackage;
-      Module: TPasModule;
+      HPackage: TPasPackage;
+
     begin
+      pkg:=nil; module:=nil; result:='';
+
       // Find or create package
       DotPos := Pos('.', AName);
       s := Copy(AName, 1, DotPos - 1);
-      Package := nil;
+      HPackage := nil;
       for i := 0 to FPackages.Count - 1 do
         if CompareText(TPasPackage(FPackages[i]).Name, s) = 0 then
         begin
-          Package := TPasPackage(FPackages[i]);
+          HPackage := TPasPackage(FPackages[i]);
           break;
         end;
-      if not Assigned(Package) then
+      if not Assigned(HPackage) then
       begin
-        Package := TPasPackage(inherited CreateElement(TPasPackage, s, nil,
+        if not CreateNew then
+          exit;
+        HPackage := TPasPackage(inherited CreateElement(TPasPackage, s, nil,
           '', 0));
-        FPackages.Add(Package);
+        FPackages.Add(HPackage);
       end;
 
       // Find or create module
@@ -615,26 +717,189 @@ var
       until AName[DotPos2] = '.';
       s := Copy(AName, DotPos + 1, DotPos2 - DotPos - 1);
       Module := nil;
-      for i := 0 to Package.Modules.Count - 1 do
-        if CompareText(TPasModule(Package.Modules[i]).Name, s) = 0 then
+      for i := 0 to HPackage.Modules.Count - 1 do
+        if CompareText(TPasModule(HPackage.Modules[i]).Name, s) = 0 then
         begin
-          Module := TPasModule(Package.Modules[i]);
+          Module := TPasModule(HPackage.Modules[i]);
           break;
         end;
       if not Assigned(Module) then
       begin
-        Module := TPasModule.Create(s, Package);
-        Module.InterfaceSection := TPasSection.Create('', Module);
-        Package.Modules.Add(Module);
+        if not CreateNew then
+          exit;
+        Module := TPasModule.Create(s, HPackage);
+        Module.InterfaceSection := TInterfaceSection.Create('', Module);
+        HPackage.Modules.Add(Module);
       end;
+     pkg:=hpackage;
+     result:=Copy(AName, DotPos2 + 1, length(AName)-dotpos2);
+  end;
 
+  function SearchInList(clslist:TFPList;s:string):TPasElement;
+  var i : integer;
+      ClassEl: TPasElement;
+  begin
+    result:=nil;
+    for i:=0 to clslist.count-1 do
+      begin
+        ClassEl := TPasElement(clslist[i]);
+        if CompareText(ClassEl.Name,s) =0 then
+          exit(Classel); 
+      end;
+  end;
+
+  function ResolveClassType(AName:String):TPasClassType;
+  var 
+     pkg     : TPasPackage;
+     module  : TPasModule;
+     s       : string; 
+  begin
+    Result:=nil;
+    s:=ResolvePackageModule(AName,pkg,module,False);
+    if not assigned(module) then
+      exit;
+    result:=TPasClassType(SearchInList(Module.InterfaceSection.Classes,s));
+  end;
+
+  function ResolveAliasType(AName:String):TPasAliasType;
+  var 
+     pkg     : TPasPackage;
+     module  : TPasModule;
+     s       : string; 
+  begin
+    Result:=nil;
+    s:=ResolvePackageModule(AName,pkg,module,False);
+    if not assigned(module) then
+      exit;
+    result:=TPasAliasType(SearchInList(Module.InterfaceSection.Types,s));
+    if not (result is TPasAliasType) then
+      result:=nil;
+  end;
+
+  procedure ReadClasses;
+
+    function CreateClass(const AName: String;InheritanceStr:String): TPasClassType;
+    var
+      DotPos, DotPos2, i,j: Integer;
+      s: String;
+      HPackage: TPasPackage;
+      Module: TPasModule;
+
+    begin
+      s:= ResolvePackageModule(AName,HPackage,Module,True);
       // Create node for class
-      Result := TPasClassType.Create(Copy(AName, DotPos2 + 1, Length(AName)),
-        Module.InterfaceSection);
+      Result := TPasClassType.Create(s, Module.InterfaceSection);
       Result.ObjKind := okClass;
       Module.InterfaceSection.Declarations.Add(Result);
       Module.InterfaceSection.Classes.Add(Result);
+      // defer processing inheritancestr till all classes are loaded.
+      if inheritancestr<>'' then
+        InheritanceInfo.AddObject(Inheritancestr,result);
     end;
+
+   procedure splitalias(var instr:string;out outstr:string);
+   var i,j:integer;
+   begin 
+     if length(instr)=0 then exit;
+     instr:=trim(instr);
+     i:=pos('(',instr);
+     if i>0 then
+      begin 
+        j:=length(instr)-i;
+        if instr[length(instr)]=')' then
+          dec(j);
+        outstr:=copy(instr,i+1,j);
+        delete(instr,i,j+2);
+      end
+   end;
+
+   Function ResolveAndLinkClass(clname:String;IsClass:boolean;cls:TPasClassType):TPasClassType;
+   begin
+     result:=TPasClassType(ResolveClassType(clname)); 
+     if assigned(result) and not (cls=result) then  // save from tobject=implicit tobject
+       begin
+         result.addref;
+         if IsClass then
+           begin
+             cls.ancestortype:=result;
+//             writeln(cls.name, ' has as ancestor ',result.pathname);
+           end
+         else
+           begin    
+             cls.interfaces.add(result);
+//             writeln(cls.name, ' implements ',result.pathname);
+           end;
+       end
+     else
+       if cls<>result then
+         DoLog('Warning : ancestor class %s of class %s could not be resolved',[clname,cls.name]);
+end;
+
+function CreateAliasType (alname,clname : string;parentclass:TPasClassType; out cl2 :TPasClassType):TPasAliasType;
+// create alias clname =  alname
+var 
+  pkg     : TPasPackage;
+  module  : TPasModule; 
+  s       : string;  
+begin
+    Result:=nil;
+    s:=ResolvePackageModule(Alname,pkg,module,True);
+    if not assigned(module) then
+      exit;
+    cl2:=TPasClassType(ResolveClassType(alname));
+    if assigned( cl2) and not (parentclass=cl2) then  
+      begin
+        result:=ResolveAliasType(clname);
+        if assigned(result) then
+          begin
+//            writeln('found alias ',clname,' (',s,') ',result.classname);  
+          end
+        else
+          begin
+//            writeln('new alias ',clname,' (',s,') ');
+            cl2.addref;
+            Result := TPasAliasType(CreateElement(TPasAliasType,s,module.interfacesection,vispublic,'',0));
+            module.interfacesection.Declarations.Add(Result);
+            TPasAliasType(Result).DestType := cl2;
+          end
+      end
+end;
+
+   procedure ProcessInheritanceStrings(inhInfo:TStringList);
+
+   var i,j : integer;
+       cls : TPasClassType;  
+       cls2: TPasClassType;
+       clname,
+       alname : string;
+       inhclass   : TStringList;
+   begin
+     inhclass:=TStringList.Create;
+     inhclass.delimiter:=',';
+     if InhInfo.Count>0 then
+       for i:=0 to InhInfo.Count-1 do
+         begin
+           cls:=TPasClassType(InhInfo.Objects[i]);
+           inhclass.clear; 
+           inhclass.delimitedtext:=InhInfo[i];
+
+           for j:= 0 to inhclass.count-1 do
+             begin
+               //writeln('processing',inhclass[j]);
+               clname:=inhclass[j];
+               splitalias(clname,alname);               
+               if alname<>'' then // the class//interface we refered to is an alias
+                 begin
+                   // writeln('Found alias pair ',clname,' = ',alname);   
+                   if not assigned(CreateAliasType(alname,clname,cls,cls2)) then
+                      DoLog('Warning: creating alias %s for %s failed!',[alname,clname]);
+                 end 
+               else
+                 cls2:=ResolveAndLinkClass(clname,j=0,cls);
+             end;
+         end;
+    inhclass.free;
+   end;
 
   var
     s, Name: String;
@@ -642,58 +907,66 @@ var
     i: Integer;
     Member: TPasElement;
   begin
-    CurClass := nil;
-    while True do
-    begin
-      ReadLn(f, s);
-      if Length(s) = 0 then
-        break;
-      if s[1] = '#' then
+    inheritanceinfo :=TStringlist.Create;
+    Try
+      CurClass := nil;
+      while True do
       begin
-        // New class
-        i := Pos(' ', s);
-        CurClass := CreateClass(Copy(s, 1, i - 1));
-      end else
-      begin
-        i := Pos(' ', s);
-        if i = 0 then
-          Name := Copy(s, 3, Length(s))
-        else
-          Name := Copy(s, 3, i - 3);
-
-        case s[2] of
-          'M':
-            Member := TPasProcedure.Create(Name, CurClass);
-          'P':
-            begin
-              Member := TPasProperty.Create(Name, CurClass);
-              if i > 0 then
-                while i <= Length(s) do
-                begin
-                  case s[i] of
-                    'r':
-                      TPasProperty(Member).ReadAccessorName := '<dummy>';
-                    'w':
-                      TPasProperty(Member).WriteAccessorName := '<dummy>';
-                    's':
-                      TPasProperty(Member).StoredAccessorName := '<dummy>';
-                  end;
-                  Inc(i);
-                end;
-            end;
-          'V':
-            Member := TPasVariable.Create(Name, CurClass);
+        ReadLn(f, s);
+        if Length(s) = 0 then
+          break;
+        if s[1] = '#' then
+        begin
+          // New class
+          i := Pos(' ', s);
+          CurClass := CreateClass(Copy(s, 1, i - 1), copy(s,i+1,length(s)));
+        end else
+        begin
+          i := Pos(' ', s);
+          if i = 0 then
+            Name := Copy(s, 3, Length(s))
           else
-            raise Exception.Create('Invalid member type: ' + s[2]);
+            Name := Copy(s, 3, i - 3);
+
+          case s[2] of
+            'M':
+              Member := TPasProcedure.Create(Name, CurClass);
+            'P':
+              begin
+                Member := TPasProperty.Create(Name, CurClass);
+                if i > 0 then
+                  while i <= Length(s) do
+                  begin
+                    case s[i] of
+                      'r':
+                        TPasProperty(Member).ReadAccessorName := '<dummy>';
+                      'w':
+                        TPasProperty(Member).WriteAccessorName := '<dummy>';
+                      's':
+                        TPasProperty(Member).StoredAccessorName := '<dummy>';
+                    end;
+                    Inc(i);
+                  end;
+              end;
+            'V':
+              Member := TPasVariable.Create(Name, CurClass);
+            else
+              raise Exception.Create('Invalid member type: ' + s[2]);
+          end;
+          CurClass.Members.Add(Member);
         end;
-        CurClass.Members.Add(Member);
       end;
-    end;
+     ProcessInheritanceStrings(Inheritanceinfo);
+    finally
+     inheritanceinfo.Free;
+     end;
   end;
 
 var
   s: String;
 begin
+  if not FileExists(AFileName) then
+    raise EInOutError.Create('File not found: ' + AFileName);
   Assign(f, AFilename);
   Reset(f);
   while not EOF(f) do
@@ -730,10 +1003,18 @@ var
     end;
   end;
 
+  function CheckImplicitInterfaceLink(const s : String):String;
+  begin
+   if uppercase(s)='IUNKNOWN' then
+     Result:='#rtl.System.IUnknown'
+   else 
+     Result:=s;
+  end;
 var
   LinkNode: TLinkNode;
   i, j, k: Integer;
   Module: TPasModule;
+  Alias : TPasAliasType;
   ClassDecl: TPasClassType;
   Member: TPasElement;
   s: String;
@@ -763,11 +1044,36 @@ begin
       for j := 0 to Module.InterfaceSection.Classes.Count - 1 do
       begin
         ClassDecl := TPasClassType(Module.InterfaceSection.Classes[j]);
-        Write(ContentFile, ClassDecl.PathName, ' ');
-        if Assigned(ClassDecl.AncestorType) then
-          WriteLn(ContentFile, ClassDecl.AncestorType.PathName)
+        Write(ContentFile, CheckImplicitInterfaceLink(ClassDecl.PathName), ' ');
+        if Assigned(ClassDecl.AncestorType) then 
+          begin
+             // simple aliases to class types are coded as "alias(classtype)"
+             Write(ContentFile, CheckImplicitInterfaceLink(ClassDecl.AncestorType.PathName));
+             if ClassDecl.AncestorType is TPasAliasType then
+               begin
+                 alias:= TPasAliasType(ClassDecl.AncestorType);
+                 if assigned(alias.desttype) and (alias.desttype is TPasClassType) then
+                   write(ContentFile,'(',alias.desttype.PathName,')');   
+               end;
+          end
         else if ClassDecl.ObjKind = okClass then
-          WriteLn(ContentFile, '.TObject');
+          Write(ContentFile, '#rtl.System.TObject')
+        else if ClassDecl.ObjKind = okInterface then
+          Write(ContentFile, '#rtl.System.IUnknown');
+        if ClassDecl.Interfaces.Count>0 then
+          begin
+            for k:=0 to ClassDecl.Interfaces.count-1 do
+              begin
+                write(contentfile,',',CheckImplicitInterfaceLink(TPasClassType(ClassDecl.Interfaces[k]).PathName));
+                if TPasElement(ClassDecl.Interfaces[k]) is TPasAliasType then
+                  begin
+                    alias:= TPasAliasType(ClassDecl.Interfaces[k]);
+                    if assigned(alias.desttype) and (alias.desttype is TPasClassType) then
+                      write(ContentFile,'(',CheckImplicitInterfaceLink(alias.desttype.PathName),')');   
+                  end;
+              end;
+          end;
+        writeln(contentfile);
         for k := 0 to ClassDecl.Members.Count - 1 do
         begin
           Member := TPasElement(ClassDecl.Members[k]);
@@ -795,8 +1101,6 @@ begin
       end;
     end;
   end;
-
-
   finally
     Close(ContentFile);
   end;
@@ -817,46 +1121,42 @@ end;
 function TFPDocEngine.FindElement(const AName: String): TPasElement;
 
   function FindInModule(AModule: TPasModule; const LocalName: String): TPasElement;
+  
   var
-    l: TList;
+    l: TFPList;
     i: Integer;
+    
   begin
-    l := AModule.InterfaceSection.Declarations;
-    for i := 0 to l.Count - 1 do
-    begin
-      Result := TPasElement(l[i]);
-      if CompareText(Result.Name, LocalName) = 0 then
-        exit;
-    end;
+    If assigned(AModule.InterfaceSection) and 
+       Assigned(AModule.InterfaceSection.Declarations) then
+      begin
+      l:=AModule.InterfaceSection.Declarations;
+      for i := 0 to l.Count - 1 do
+        begin
+        Result := TPasElement(l[i]);
+        if  CompareText(Result.Name, LocalName) = 0 then
+          exit;
+        end;
+      end;  
     Result := nil;
  end;
 
 var
   i: Integer;
-  //ModuleName, LocalName: String;
   Module: TPasElement;
 begin
-{!!!: Don't know if we ever will have to use the following:
-  i := Pos('.', AName);
-  if i <> 0 then
-  begin
-    WriteLn('Dot found in name: ', AName);
-    Result := nil;
-  end else
-  begin}
-    Result := FindInModule(CurModule, AName);
-    if not Assigned(Result) then
-      for i := CurModule.InterfaceSection.UsesList.Count - 1 downto 0 do
+  Result := FindInModule(CurModule, AName);
+  if not Assigned(Result) then
+    for i := CurModule.InterfaceSection.UsesList.Count - 1 downto 0 do
+    begin
+      Module := TPasElement(CurModule.InterfaceSection.UsesList[i]);
+      if Module.ClassType = TPasModule then
       begin
-        Module := TPasElement(CurModule.InterfaceSection.UsesList[i]);
-        if Module.ClassType = TPasModule then
-        begin
-          Result := FindInModule(TPasModule(Module), AName);
-          if Assigned(Result) then
-            exit;
-        end;
+        Result := FindInModule(TPasModule(Module), AName);
+        if Assigned(Result) then
+          exit;
       end;
-  {end;}
+    end;
 end;
 
 function TFPDocEngine.FindModule(const AName: String): TPasModule;
@@ -876,6 +1176,8 @@ function TFPDocEngine.FindModule(const AName: String): TPasModule;
 
 var
   i: Integer;
+  AInPutLine,OSTarget,CPUTarget : String;
+
 begin
   Result := FindInPackage(Package);
   if not Assigned(Result) then
@@ -887,6 +1189,29 @@ begin
       if Assigned(Result) then
         exit;
     end;
+  if Not Assigned(Result) and Assigned(FOnParseUnit) then
+    begin
+    FOnParseUnit(Self,AName,AInputLine,OSTarget,CPUTarget);
+    If (AInPutLine<>'') then
+      Result:=ParseUsedUnit(AName,AInputLine,OSTarget,CPUTarget);
+    end;
+end;
+
+Function TFPDocEngine.ParseUsedUnit(AName,AInputLine,AOSTarget,ACPUTarget : String) : TPasModule;
+
+Var
+  M : TPasModule;
+
+begin
+  DoLog(SParsingUsedUnit,[AName,AInputLine]);
+  M:=CurModule;
+  CurModule:=Nil;
+  try
+    ParseSource(Self,AInputLine,AOSTarget,ACPUTarget,True);
+    Result:=CurModule;
+  finally
+    CurModule:=M;
+  end;
 end;
 
 procedure TFPDocEngine.AddLink(const APathName, ALinkTo: String);
@@ -910,9 +1235,18 @@ function TFPDocEngine.ResolveLink(AModule: TPasModule;
 var
   i: Integer;
   ThisPackage: TLinkNode;
-  UnitList: TList;
+  UnitList: TFPList;
+
+  function CanWeExit(AResult: string): boolean;
+  var
+    s: string;
+  begin
+    s := StringReplace(Lowercase(ALinkDest), '.', '_', [rfReplaceAll]);
+    Result := pos(s, AResult) > 0;
+  end;
+
 begin
-//WriteLn('ResolveLink(', ALinkDest, ')... ');
+  // system.WriteLn('ResolveLink(', AModule.Name, ' - ', ALinkDest, ')... ');
   if Length(ALinkDest) = 0 then
   begin
     SetLength(Result, 0);
@@ -923,9 +1257,18 @@ begin
     Result := FindAbsoluteLink(ALinkDest)
   else
   begin
-    Result := ResolveLink(AModule, AModule.PathName + '.' + ALinkDest);
-    if Length(Result) > 0 then
-      exit;
+    if Pos(AModule.Name, ALinkDest) = 1 then
+    begin
+      Result := ResolveLink(AModule, amodule.packagename + '.' + ALinkDest);
+      if CanWeExit(Result) then
+        Exit;
+    end
+    else
+    begin
+      Result := ResolveLink(AModule, AModule.PathName + '.' + ALinkDest);
+      if CanWeExit(Result) then
+        Exit;
+    end;
 
     { Try all packages }
     SetLength(Result, 0);
@@ -933,12 +1276,12 @@ begin
     while Assigned(ThisPackage) do
     begin
       Result := ResolveLink(AModule, ThisPackage.Name + '.' + ALinkDest);
-      if Length(Result) > 0 then
-        exit;
+      if CanWeExit(Result) then
+        Exit;
       ThisPackage := ThisPackage.NextSibling;
     end;
 
-    if Length(Result) = 0 then
+    if not CanWeExit(Result) then
     begin
       { Okay, then we have to try all imported units of the current module }
       UnitList := AModule.InterfaceSection.UsesList;
@@ -950,8 +1293,8 @@ begin
         begin
           Result := ResolveLink(AModule, ThisPackage.Name + '.' +
             TPasType(UnitList[i]).Name + '.' + ALinkDest);
-          if Length(Result) > 0 then
-            exit;
+            if CanWeExit(Result) then
+              Exit;
           ThisPackage := ThisPackage.NextSibling;
         end;
       end;
@@ -967,7 +1310,34 @@ begin
       end;
 end;
 
-procedure TFPDocEngine.AddDocFile(const AFilename: String);
+procedure ReadXMLFileALT(OUT ADoc:TXMLDocument;const AFileName:ansistring);
+var
+  Parser: TDOMParser;
+  Src: TXMLInputSource;
+  FileStream: TStream;
+begin
+  ADoc := nil;
+  FileStream := TFileStream.Create(AFilename, fmOpenRead+fmShareDenyWrite);
+  try
+    Parser := TDOMParser.Create; // create a parser object
+    try
+      Src := TXMLInputSource.Create(FileStream); // and the input source
+      src.SystemId:=FileNameToUri(AFileName);
+      try
+        Parser.Options.PreserveWhitespace := True;
+        Parser.Parse(Src, ADoc);
+      finally
+        Src.Free; // cleanup
+      end;
+    finally 
+     Parser.Free;
+     end;
+  finally
+    FileStream.Free;
+  end;
+end;
+
+procedure TFPDocEngine.AddDocFile(const AFilename: String;DontTrim:boolean=false);
 
   function ReadNode(OwnerDocNode: TDocNode; Element: TDOMElement): TDocNode;
   var
@@ -989,13 +1359,19 @@ procedure TFPDocEngine.AddDocFile(const AFilename: String);
           Result.FShortDescr := TDOMElement(Subnode)
         else if Subnode.NodeName = 'descr' then
           Result.FDescr := TDOMElement(Subnode)
+        else if Subnode.NodeName = 'version' then
+          begin
+          Result.FVersion := TDOMElement(Subnode)
+          end
         else if Subnode.NodeName = 'errors' then
           Result.FErrorsDoc := TDOMElement(Subnode)
         else if Subnode.NodeName = 'seealso' then
           Result.FSeeAlso := TDOMElement(Subnode)
         else if (Subnode.NodeName = 'example') and
           not Assigned(Result.FirstExample) then
-          Result.FFirstExample := TDOMElement(Subnode);
+          Result.FFirstExample := TDOMElement(Subnode)
+        else if (Subnode.NodeName = 'notes') then
+          Result.FNotes := TDOMElement(Subnode);
       end;
       Subnode := Subnode.NextSibling;
     end;
@@ -1026,7 +1402,10 @@ var
   PackageDocNode, TopicNode,ModuleDocNode: TDocNode;
 
 begin
-  ReadXMLFile(Doc, AFilename);
+  if DontTrim then
+    ReadXMLFileALT(Doc, AFilename)
+  else
+    ReadXMLFile(Doc, AFilename);
   DescrDocs.Add(Doc);
   DescrDocNames.Add(AFilename);
 
@@ -1036,6 +1415,7 @@ begin
     if (Node.NodeType = ELEMENT_NODE) and (Node.NodeName = 'package') then
       begin
       PackageDocNode := ReadNode(RootDocNode, TDOMElement(Node));
+      PackageDocNode.IncRefCount;
       // Scan all 'module' elements within this package element
       Subnode := Node.FirstChild;
       while Assigned(Subnode) do
@@ -1090,7 +1470,7 @@ begin
        WarnNoNode and
        (Length(AElement.PathName)>0) and
        (AElement.PathName[1]='#') then
-      Writeln('No documentation node found for identifier : ',AElement.PathName);
+      DoLog(Format('No documentation node found for identifier : %s',[AElement.PathName]));
     end;
 end;
 
@@ -1098,7 +1478,7 @@ function TFPDocEngine.FindDocNode(ARefModule: TPasModule;
   const AName: String): TDocNode;
 var
   CurPackage: TDocNode;
-  UnitList: TList;
+  UnitList: TFPList;
   i: Integer;
 begin
   if Length(AName) = 0 then
@@ -1145,24 +1525,51 @@ begin
 end;
 
 function TFPDocEngine.FindShortDescr(AElement: TPasElement): TDOMElement;
+
 var
-  DocNode: TDocNode;
+  DocNode,N: TDocNode;
+
 begin
   DocNode := FindDocNode(AElement);
   if Assigned(DocNode) then
-    Result := DocNode.ShortDescr
+    begin
+    N:=FindLinkedNode(DocNode);
+    If (N<>Nil) then
+      DocNode:=N;
+    Result := DocNode.ShortDescr;
+    end
   else
     Result := nil;
 end;
 
+
+function TFPDocEngine.FindLinkedNode(ANode : TDocNode) : TDocNode;
+
+Var
+  S: String;
+
+begin
+  If (ANode.Link='') then
+    Result:=Nil
+  else
+    Result:=FindDocNode(CurModule,ANode.Link);
+end;
+
 function TFPDocEngine.FindShortDescr(ARefModule: TPasModule;
   const AName: String): TDOMElement;
+
 var
-  DocNode: TDocNode;
+  N,DocNode: TDocNode;
+
 begin
   DocNode := FindDocNode(ARefModule, AName);
   if Assigned(DocNode) then
-    Result := DocNode.ShortDescr
+    begin
+    N:=FindLinkedNode(DocNode);
+    If (N<>Nil) then
+      DocNode:=N;
+    Result := DocNode.ShortDescr;
+    end
   else
     Result := nil;
 end;
@@ -1170,29 +1577,46 @@ end;
 function TFPDocEngine.GetExampleFilename(const ExElement: TDOMElement): String;
 var
   i: Integer;
+  fn : String;
+  
 begin
+  Result:='';
   for i := 0 to DescrDocs.Count - 1 do
-    if TDOMDocument(DescrDocs[i]) = ExElement.OwnerDocument then
     begin
-      Result := ExtractFilePath(DescrDocNames[i]) + ExElement['file'];
+    Fn:=ExElement['file'];
+    if (FN<>'') and (TDOMDocument(DescrDocs[i]) = ExElement.OwnerDocument) then
+      begin
+      Result := ExtractFilePath(DescrDocNames[i]) + FN;
       if (ExtractFileExt(Result)='') then
         Result:=Result+'.pp';
-      exit;
-    end;
-  SetLength(Result, 0);
+      end;
+    end;  
 end;
 
 
 { Global helpers }
 
 procedure TranslateDocStrings(const Lang: String);
+
+Const
+{$ifdef unix}
+  DefDir = '/usr/local/share/locale';
+{$else}  
+  DefDir = 'intl';
+{$endif}
+
 var
   mo: TMOFile;
+  dir : string;
 begin
+  dir:=modir;
+  If Dir='' then
+    Dir:=DefDir;
+  Dir:=IncludeTrailingPathDelimiter(Dir);
 {$IFDEF Unix}
-  mo := TMOFile.Create(Format('/usr/local/share/locale/%s/LC_MESSAGES/dglobals.mo', [Lang]));
+  mo := TMOFile.Create(Format(Dir+'%s/LC_MESSAGES/dglobals.mo', [Lang]));
 {$ELSE}
-  mo := TMOFile.Create(Format('intl/dglobals.%s.mo', [Lang]));
+  mo := TMOFile.Create(Format(Dir+'dglobals.%s.mo', [Lang]));
 {$ENDIF}
   try
     TranslateResourceStrings(mo);
@@ -1213,72 +1637,18 @@ begin
   Result:=Assigned(Example) and (Example.NodeType = ELEMENT_NODE) and (Example.NodeName = 'example')
 end;
 
+function IsLinkAbsolute(ALink: String): boolean;
+var
+  i: integer;
+begin
+  Result := false;
+  for i := low(AbsoluteLinkPrefixes) to high(AbsoluteLinkPrefixes) do
+    if CompareText(AbsoluteLinkPrefixes[i], copy(ALink,1,length(AbsoluteLinkPrefixes[i])))=0 then begin
+      Result := true;
+      break;
+    end;
+end;
+
 initialization
   LEOL:=Length(LineEnding);
 end.
-
-
-{
-  $Log: dglobals.pp,v $
-  Revision 1.12  2005/05/15 19:36:30  hajny
-    * mistyping fixed (xhmtl)
-
-  Revision 1.11  2005/05/09 18:50:13  michael
-  * Added patch from Vincent Snijders to add a footer to each HTML page
-
-  Revision 1.10  2005/05/04 08:38:58  michael
-  + Added support for opaque types
-
-  Revision 1.9  2005/02/14 17:13:38  peter
-    * truncate log
-
-  Revision 1.8  2005/01/14 17:55:07  michael
-  + Added unix man page output; Implemented usage
-
-  Revision 1.7  2005/01/12 21:11:41  michael
-  + New structure for writers. Implemented TXT writer
-
-  Revision 1.6  2005/01/09 15:59:50  michael
-  + Split out latex writer to linear and latex writer
-
-  Revision 1.5  2004/08/28 18:47:48  michael
-  + Removed temporary warning about reading of doc file
-
-  Revision 1.4  2004/08/28 18:03:23  michael
-  + Added warning if docnode not found (option --warn-no-node
-
-  Revision 1.3  2004/06/06 10:53:02  michael
-  + Added Topic support
-
-  Revision 1.2  2003/11/28 12:51:37  sg
-  * Added support for source references
-
-  Revision 1.1  2003/03/17 23:03:20  michael
-  + Initial import in CVS
-
-  Revision 1.13  2003/03/13 22:02:13  sg
-  * New version with many bugfixes and our own parser (now independent of the
-    compiler source)
-
-  Revision 1.12  2002/11/15 19:44:18  sg
-  * Cosmetic changes
-
-  Revision 1.11  2002/10/12 17:00:45  michael
-  + Changes to be able to disable private/protected nodes in skeleton
-
-  Revision 1.10  2002/05/24 00:13:22  sg
-  * much improved new version, including many linking and output fixes
-
-  Revision 1.9  2002/03/25 23:16:24  sg
-  * fixed missing storing of documenation data for the DocNode of a module
-    (so e.g. the Unit Overview is working again)
-
-  Revision 1.8  2002/03/12 10:58:35  sg
-  * reworked linking engine and internal structure
-
-  Revision 1.7  2002/01/20 11:19:55  michael
-  + Added link attribute and property to TFPelement
-
-  Revision 1.6  2001/12/17 22:16:02  sg
-  * Added TFPDocEngine.HideProtected
-}

@@ -1,5 +1,4 @@
 {
-    $Id: sysheap.inc,v 1.1 2005/02/06 16:57:18 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2001 by Free Pascal development team
 
@@ -55,7 +54,7 @@ end ['EAX'];
 }
 
 
-function SysOSAlloc (Size: PtrInt): pointer;
+function SysOSAlloc (Size: ptruint): pointer;
 var
   P: pointer;
   RC: cardinal;
@@ -70,47 +69,20 @@ begin
    WriteLn ('Trying to grow heap by ', Size, ' to ', Int_HeapSize);
 {$ENDIF}
 
-  if UseHighMem then
-   RC := DosAllocMem (P, Size, $403)
-  else
-   RC := DosAllocMem (P, Size, 3);
+  RC := DosAllocMem (P, Size, HeapAllocFlags);
   if RC = 0 then
    begin
 {$IFDEF EXTDUMPGROW}
-  if Int_HeapSize <> high (cardinal) then
-    WriteLn ('DosAllocMem returned memory at ', cardinal (P));
+    if Int_HeapSize <> high (cardinal) then
+     WriteLn ('DosAllocMem returned memory at ', cardinal (P));
 {$ENDIF}
-    RC := DosSetMem (P, Size, $410);
-    if RC = 0 then
-     begin
+    SysOSAlloc := P;
 {$IFDEF EXTDUMPGROW}
-      if Int_HeapSize <> high (cardinal) then
-       WriteLn ('New heap at ', cardinal (P));
-{$ENDIF EXTDUMPGROW}
-      SysOSAlloc := P;
-{$IFDEF EXTDUMPGROW}
-      if Int_HeapSize = high (cardinal) then
-       Int_HeapSize := Size
-      else
-       Inc (Int_HeapSize, Size);
-{$ENDIF EXTDUMPGROW}
-     end
+    if Int_HeapSize = high (cardinal) then
+     Int_HeapSize := Size
     else
-     begin
-{$IFDEF EXTDUMPGROW}
-      if Int_HeapSize <> high (cardinal) then
-       begin
-        WriteLn ('Error ', RC, ' in DosSetMem while trying to commit memory!');
-{      if Int_HeapSize = high (cardinal) then
-        WriteLn ('No allocated memory comitted yet!')
-       else
-}
-        WriteLn ('Total allocated memory is ', Int_HeapSize);
-       end;
+     Inc (Int_HeapSize, Size);
 {$ENDIF EXTDUMPGROW}
-      RC := DosFreeMem (P);
-      SysOSAlloc := nil;
-     end;
    end
   else
    begin
@@ -131,45 +103,39 @@ end;
 
 {$define HAS_SYSOSFREE}
 
-procedure SysOSFree (P: pointer; Size: PtrInt);
+procedure SysOSFree (P: pointer; Size: ptruint);
+{$IFDEF EXTDUMPGROW}
 var
   RC: cardinal;
+{$ENDIF EXTDUMPGROW}
 begin
 {$IFDEF EXTDUMPGROW}
   WriteLn ('Trying to free memory!');
   WriteLn ('Total allocated memory is ', Int_HeapSize);
   Dec (Int_HeapSize, Size);
+  RC :=
 {$ENDIF EXTDUMPGROW}
-  RC := DosSetMem (P, Size, $20);
-  if RC = 0 then
-   begin
-    RC := DosFreeMem (P);
+        DosFreeMem (P);
 {$IFDEF EXTDUMPGROW}
-    if RC <> 0 then
-     begin
-      WriteLn ('Error ', RC, ' during memory deallocation (DosFreeMem)!');
-      WriteLn ('Total allocated memory is ', Int_HeapSize);
-     end;
-{$ENDIF EXTDUMPGROW}
-   end
-{$IFDEF EXTDUMPGROW}
-  else
+  if RC <> 0 then
    begin
-    WriteLn ('Error ', RC, ' in DosSetMem while trying to decommit memory!');
+    WriteLn ('Error ', RC, ' during memory deallocation (DosFreeMem)!');
     WriteLn ('Total allocated memory is ', Int_HeapSize);
    end;
 {$ENDIF EXTDUMPGROW}
 end;
 
 
-{
-   $Log: sysheap.inc,v $
-   Revision 1.1  2005/02/06 16:57:18  peter
-     * threads for go32v2,os,emx,netware
+function ReadUseHighMem: boolean;
+begin
+ ReadUseHighMem := HeapAllocFlags and $400 = $400;
+end;
 
-   Revision 1.1  2005/02/06 13:06:20  peter
-     * moved file and dir functions to sysfile/sysdir
-     * win32 thread in systemunit
 
-}
-
+procedure WriteUseHighMem (B: boolean);
+begin
+ if B then
+  HeapAllocFlags := HeapAllocFlags or $400
+ else
+  HeapAllocFlags := HeapAllocFlags and not ($400);
+end;

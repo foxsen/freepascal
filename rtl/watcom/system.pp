@@ -1,5 +1,4 @@
 {
-    $Id: system.pp,v 1.24 2005/05/12 20:29:04 michael Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team.
 
@@ -26,26 +25,21 @@ INTERFACE
 
 {$include systemh.inc}
 
-{ include heap support headers }
 
 
-{$include heaph.inc}
-
-{Platform specific information}
-type
-  THandle = Longint;
-  TThreadID = THandle;
-  
 const
  LineEnding = #13#10;
 { LFNSupport is a variable here, defined below!!! }
  DirectorySeparator = '\';
  DriveSeparator = ':';
+ ExtensionSeparator = '.';
  PathSeparator = ';';
-{ FileNameCaseSensitive is defined separately below!!! }
+ AllowDirectorySeparators : set of char = ['\','/'];
+ AllowDriveSeparators : set of char = [':'];
+{ FileNameCaseSensitive and FileNameCasePreserving are defined separately below!!! }
  maxExitCode = 255;
  MaxPathLen = 256;
- 
+
 const
 { Default filehandles }
   UnusedHandle    = -1;
@@ -54,6 +48,7 @@ const
   StdErrorHandle  = 2;
 
   FileNameCaseSensitive : boolean = false;
+  FileNameCasePreserving: boolean = false;
   CtrlZMarksEOF: boolean = true; (* #26 is considered as end of file *)
 
   sLineBreak = LineEnding;
@@ -67,14 +62,16 @@ const
 
 var
 { Mem[] support }
-  mem  : array[0..$7fffffff] of byte absolute $0:$0;
-  memw : array[0..$7fffffff div sizeof(word)] of word absolute $0:$0;
-  meml : array[0..$7fffffff div sizeof(longint)] of longint absolute $0:$0;
+  mem  : array[0..$7fffffff-1] of byte absolute $0:$0;
+  memw : array[0..($7fffffff div sizeof(word)) -1] of word absolute $0:$0;
+  meml : array[0..($7fffffff div sizeof(longint)) -1] of longint absolute $0:$0;
 { C-compatible arguments and environment }
   argc  : longint;
   argv  : ppchar;
   envp  : ppchar;
   dos_argv0 : pchar;
+
+  AllFilesMask: string [3];
 
 {$ifndef RTLLITE}
 { System info }
@@ -115,146 +112,7 @@ IMPLEMENTATION
 {$include system.inc}
 
 
-const
-  carryflag = 1;
-
-type
-  tseginfo=packed record
-    offset  : pointer;
-    segment : word;
-  end;
-
-var
-  old_int00 : tseginfo;cvar;
-  old_int75 : tseginfo;cvar;
-
 {$asmmode ATT}
-
-{*****************************************************************************
-                             Watcom Helpers
-*****************************************************************************}
-
-function far_strlen(selector : word;linear_address : sizeuint) : longint;assembler;
-asm
-        movl linear_address,%edx
-        movl %edx,%ecx
-        movw selector,%gs
-.Larg19:
-        movb %gs:(%edx),%al
-        testb %al,%al
-        je .Larg20
-        incl %edx
-        jmp .Larg19
-.Larg20:
-        movl %edx,%eax
-        subl %ecx,%eax
-end;
-
-
-function get_ds : word;assembler;
-asm
-        movw    %ds,%ax
-end;
-
-
-function get_cs : word;assembler;
-asm
-        movw    %cs,%ax
-end;
-
-function dos_selector : word; assembler;
-asm
-   movw %ds,%ax  { no separate selector needed }
-end;
-
-procedure alloc_tb; assembler;
-{ allocate 8kB real mode transfer buffer }
-asm
-   pushl %ebx
-   movw $0x100,%ax
-   movw $512,%bx
-   int $0x31
-   movw %ax,tb_segment
-   shll $16,%eax
-   shrl $12,%eax
-   movl %eax,tb
-   popl %ebx
-end;
-
-procedure sysseg_move(sseg : word;source : sizeuint;dseg : word;dest : sizeuint;count : longint);
-begin
-   if count=0 then
-     exit;
-   if (sseg<>dseg) or ((sseg=dseg) and (source>dest)) then
-     asm
-        pushl %esi
-        pushl %edi
-        pushw %es
-        pushw %ds
-        cld
-        movl count,%ecx
-        movl source,%esi
-        movl dest,%edi
-        movw dseg,%ax
-        movw %ax,%es
-        movw sseg,%ax
-        movw %ax,%ds
-        movl %ecx,%eax
-        shrl $2,%ecx
-        rep
-        movsl
-        movl %eax,%ecx
-        andl $3,%ecx
-        rep
-        movsb
-        popw %ds
-        popw %es
-        popl %edi
-        popl %esi
-     end
-   else if (source<dest) then
-     { copy backward for overlapping }
-     asm
-        pushl %esi
-        pushl %edi
-        pushw %es
-        pushw %ds
-        std
-        movl count,%ecx
-        movl source,%esi
-        movl dest,%edi
-        movw dseg,%ax
-        movw %ax,%es
-        movw sseg,%ax
-        movw %ax,%ds
-        addl %ecx,%esi
-        addl %ecx,%edi
-        movl %ecx,%eax
-        andl $3,%ecx
-        orl %ecx,%ecx
-        jz .LSEG_MOVE1
-
-        { calculate esi and edi}
-        decl %esi
-        decl %edi
-        rep
-        movsb
-        incl %esi
-        incl %edi
-     .LSEG_MOVE1:
-        subl $4,%esi
-        subl $4,%edi
-        movl %eax,%ecx
-        shrl $2,%ecx
-        rep
-        movsl
-        cld
-        popw %ds
-        popw %es
-        popl %edi
-        popl %esi
-     end;
-end;
 
 var psp_selector:word; external name 'PSP_SELECTOR';
 
@@ -712,34 +570,6 @@ begin
 end;
 
 
-procedure getinoutres(def : word);
-var
-  regs : trealregs;
-begin
-  regs.realeax:=$5900;
-  regs.realebx:=$0;
-  sysrealintr($21,regs);
-  InOutRes:=lo(regs.realeax);
-  case InOutRes of
-   19 : InOutRes:=150;
-   21 : InOutRes:=152;
-   32 : InOutRes:=5;
-  end;
-  if InOutRes=0 then
-    InOutRes:=Def;
-end;
-
-
-   { Keep Track of open files }
-   const
-      max_files = 50;
-   var
-      openfiles : array [0..max_files-1] of boolean;
-{$ifdef SYSTEMDEBUG}
-      opennames : array [0..max_files-1] of pchar;
-   const
-      free_closed_names : boolean = true;
-{$endif SYSTEMDEBUG}
 
 {*****************************************************************************
                          System Dependent Exit code
@@ -747,7 +577,6 @@ end;
 
 procedure ___exit(exitcode:longint);cdecl;external name '___exit';
 
-procedure do_close(handle : longint);forward;
 
 Procedure system_exit;
 var
@@ -829,467 +658,11 @@ begin
 end;
 
 
-{*****************************************************************************
-      OS Memory allocation / deallocation
- ****************************************************************************}
-
-function ___sbrk(size:longint):pointer;cdecl; external name '___sbrk';
-
-function SysOSAlloc(size: ptrint): pointer;assembler;
-asm
-{$ifdef SYSTEMDEBUG}
-        cmpb    $1,accept_sbrk
-        je      .Lsbrk
-        movl    $0,%eax
-        jmp     .Lsbrk_fail
-      .Lsbrk:
-{$endif}
-        movl    size,%eax
-        pushl   %eax
-        call    ___sbrk
-        addl    $4,%esp
-{$ifdef SYSTEMDEBUG}
-      .Lsbrk_fail:
-{$endif}
-end;
-
-{ define HAS_SYSOSFREE}
-
-procedure SysOSFree(p: pointer; size: ptrint);
-begin
-end;
-
 { include standard heap management }
-{$include heap.inc}
+ { include heap.inc}
 
 
-{****************************************************************************
-                        Low level File Routines
- ****************************************************************************}
-
-procedure AllowSlash(p:pchar);
-var
-  i : longint;
-begin
-{ allow slash as backslash }
-  for i:=0 to strlen(p) do
-   if p[i]='/' then p[i]:='\';
-end;
-
-procedure do_close(handle : longint);
-var
-  regs : trealregs;
-begin
-  if Handle<=4 then
-   exit;
-  regs.realebx:=handle;
-  if handle<max_files then
-    begin
-       openfiles[handle]:=false;
-{$ifdef SYSTEMDEBUG}
-       if assigned(opennames[handle]) and free_closed_names then
-         begin
-            sysfreememsize(opennames[handle],strlen(opennames[handle])+1);
-            opennames[handle]:=nil;
-         end;
-{$endif SYSTEMDEBUG}
-    end;
-  regs.realeax:=$3e00;
-  sysrealintr($21,regs);
-  if (regs.realflags and carryflag) <> 0 then
-   GetInOutRes(lo(regs.realeax));
-end;
-
-procedure do_erase(p : pchar);
-var
-  regs : trealregs;
-begin
-  AllowSlash(p);
-  syscopytodos(longint(p),strlen(p)+1);
-  regs.realedx:=tb_offset;
-  regs.realds:=tb_segment;
-  if LFNSupport then
-   regs.realeax:=$7141
-  else
-   regs.realeax:=$4100;
-  regs.realesi:=0;
-  regs.realecx:=0;
-  sysrealintr($21,regs);
-  if (regs.realflags and carryflag) <> 0 then
-   GetInOutRes(lo(regs.realeax));
-end;
-
-procedure do_rename(p1,p2 : pchar);
-var
-  regs : trealregs;
-begin
-  AllowSlash(p1);
-  AllowSlash(p2);
-  if strlen(p1)+strlen(p2)+3>tb_size then
-   HandleError(217);
-  sysseg_move(get_ds,sizeuint(p2),dos_selector,tb,strlen(p2)+1);
-  sysseg_move(get_ds,sizeuint(p1),dos_selector,tb+strlen(p2)+2,strlen(p1)+1);
-  regs.realedi:=tb_offset;
-  regs.realedx:=tb_offset + strlen(p2)+2;
-  regs.realds:=tb_segment;
-  regs.reales:=tb_segment;
-  if LFNSupport then
-   regs.realeax:=$7156
-  else
-   regs.realeax:=$5600;
-  regs.realecx:=$ff;            { attribute problem here ! }
-  sysrealintr($21,regs);
-  if (regs.realflags and carryflag) <> 0 then
-   GetInOutRes(lo(regs.realeax));
-end;
-
-function do_write(h:longint;addr:pointer;len : longint) : longint;
-var
-  regs      : trealregs;
-  size,
-  writesize : longint;
-begin
-  writesize:=0;
-  while len > 0 do
-   begin
-     if len>tb_size then
-      size:=tb_size
-     else
-      size:=len;
-     syscopytodos(ptrint(addr)+writesize,size);
-     regs.realecx:=size;
-     regs.realedx:=tb_offset;
-     regs.realds:=tb_segment;
-     regs.realebx:=h;
-     regs.realeax:=$4000;
-     sysrealintr($21,regs);
-     if (regs.realflags and carryflag) <> 0 then
-      begin
-        GetInOutRes(lo(regs.realeax));
-        exit(writesize);
-      end;
-     inc(writesize,lo(regs.realeax));
-     dec(len,lo(regs.realeax));
-     { stop when not the specified size is written }
-     if lo(regs.realeax)<size then
-      break;
-   end;
-  Do_Write:=WriteSize;
-end;
-
-function do_read(h:longint;addr:pointer;len : longint) : longint;
-var
-  regs     : trealregs;
-  size,
-  readsize : longint;
-begin
-  readsize:=0;
-  while len > 0 do
-   begin
-     if len>tb_size then
-      size:=tb_size
-     else
-      size:=len;
-     regs.realecx:=size;
-     regs.realedx:=tb_offset;
-     regs.realds:=tb_segment;
-     regs.realebx:=h;
-     regs.realeax:=$3f00;
-     sysrealintr($21,regs);
-     if (regs.realflags and carryflag) <> 0 then
-      begin
-        GetInOutRes(lo(regs.realeax));
-        do_read:=0;
-        exit;
-      end;
-     syscopyfromdos(ptrint(addr)+readsize,lo(regs.realeax));
-     inc(readsize,lo(regs.realeax));
-     dec(len,lo(regs.realeax));
-     { stop when not the specified size is read }
-     if lo(regs.realeax)<size then
-      break;
-   end;
-  do_read:=readsize;
-end;
-
-
-function do_filepos(handle : longint) : longint;
-var
-  regs : trealregs;
-begin
-  regs.realebx:=handle;
-  regs.realecx:=0;
-  regs.realedx:=0;
-  regs.realeax:=$4201;
-  sysrealintr($21,regs);
-  if (regs.realflags and carryflag) <> 0 then
-   Begin
-     GetInOutRes(lo(regs.realeax));
-     do_filepos:=0;
-   end
-  else
-   do_filepos:=lo(regs.realedx) shl 16+lo(regs.realeax);
-end;
-
-
-procedure do_seek(handle,pos : longint);
-var
-  regs : trealregs;
-begin
-  regs.realebx:=handle;
-  regs.realecx:=pos shr 16;
-  regs.realedx:=pos and $ffff;
-  regs.realeax:=$4200;
-  sysrealintr($21,regs);
-  if (regs.realflags and carryflag) <> 0 then
-   GetInOutRes(lo(regs.realeax));
-end;
-
-
-
-function do_seekend(handle:longint):longint;
-var
-  regs : trealregs;
-begin
-  regs.realebx:=handle;
-  regs.realecx:=0;
-  regs.realedx:=0;
-  regs.realeax:=$4202;
-  sysrealintr($21,regs);
-  if (regs.realflags and carryflag) <> 0 then
-   Begin
-     GetInOutRes(lo(regs.realeax));
-     do_seekend:=0;
-   end
-  else
-   do_seekend:=lo(regs.realedx) shl 16+lo(regs.realeax);
-end;
-
-
-function do_filesize(handle : longint) : longint;
-var
-  aktfilepos : longint;
-begin
-  aktfilepos:=do_filepos(handle);
-  do_filesize:=do_seekend(handle);
-  do_seek(handle,aktfilepos);
-end;
-
-
-{ truncate at a given position }
-procedure do_truncate (handle,pos:longint);
-var
-  regs : trealregs;
-begin
-  do_seek(handle,pos);
-  regs.realecx:=0;
-  regs.realedx:=tb_offset;
-  regs.realds:=tb_segment;
-  regs.realebx:=handle;
-  regs.realeax:=$4000;
-  sysrealintr($21,regs);
-  if (regs.realflags and carryflag) <> 0 then
-   GetInOutRes(lo(regs.realeax));
-end;
-
-const
-  FileHandleCount : longint = 20;
-
-function Increase_file_handle_count : boolean;
-var
-  regs : trealregs;
-begin
-  Inc(FileHandleCount,10);
-  regs.realebx:=FileHandleCount;
-  regs.realeax:=$6700;
-  sysrealintr($21,regs);
-  if (regs.realflags and carryflag) <> 0 then
-   begin
-    Increase_file_handle_count:=false;
-    Dec (FileHandleCount, 10);
-   end
-  else
-    Increase_file_handle_count:=true;
-end;
-
-
-function dos_version : word;
-var
-  regs   : trealregs;
-begin
-  regs.realeax := $3000;
-  sysrealintr($21,regs);
-  dos_version := regs.realeax
-end;
-
-
-procedure do_open(var f;p:pchar;flags:longint);
-{
-  filerec and textrec have both handle and mode as the first items so
-  they could use the same routine for opening/creating.
-  when (flags and $100)   the file will be append
-  when (flags and $1000)  the file will be truncate/rewritten
-  when (flags and $10000) there is no check for close (needed for textfiles)
-}
-var
-  regs   : trealregs;
-  action : longint;
-  Avoid6c00 : boolean;
-begin
-  AllowSlash(p);
-{ check if Extended Open/Create API is safe to use }
-  Avoid6c00 := lo(dos_version) < 7;
-{ close first if opened }
-  if ((flags and $10000)=0) then
-   begin
-     case filerec(f).mode of
-      fminput,fmoutput,fminout : Do_Close(filerec(f).handle);
-      fmclosed : ;
-     else
-      begin
-        inoutres:=102; {not assigned}
-        exit;
-      end;
-     end;
-   end;
-{ reset file handle }
-  filerec(f).handle:=UnusedHandle;
-  action:=$1;
-{ convert filemode to filerec modes }
-  case (flags and 3) of
-   0 : filerec(f).mode:=fminput;
-   1 : filerec(f).mode:=fmoutput;
-   2 : filerec(f).mode:=fminout;
-  end;
-  if (flags and $1000)<>0 then
-   action:=$12; {create file function}
-{ empty name is special }
-  if p[0]=#0 then
-   begin
-     case FileRec(f).mode of
-       fminput :
-         FileRec(f).Handle:=StdInputHandle;
-       fminout, { this is set by rewrite }
-       fmoutput :
-         FileRec(f).Handle:=StdOutputHandle;
-       fmappend :
-         begin
-           FileRec(f).Handle:=StdOutputHandle;
-           FileRec(f).mode:=fmoutput; {fool fmappend}
-         end;
-     end;
-     exit;
-   end;
-{ real dos call }
-  syscopytodos(longint(p),strlen(p)+1);
-{$ifndef RTLLITE}
-  if LFNSupport then
-   regs.realeax := $716c                           { Use LFN Open/Create API }
-  else
-   regs.realeax:=$6c00;
-{$endif RTLLITE}
-   if Avoid6c00 then
-     regs.realeax := $3d00 + (flags and $ff)      { For now, map to Open API }
-   else
-     regs.realeax := $6c00;                   { Use Extended Open/Create API }
-  if byte(regs.realeax shr 8) = $3d then
-    begin  { Using the older Open or Create API's }
-      if (action and $00f0) <> 0 then
-        regs.realeax := $3c00;                   { Map to Create/Replace API }
-      regs.realds := tb_segment;
-      regs.realedx := tb_offset;
-    end
-  else
-    begin  { Using LFN or Extended Open/Create API }
-      regs.realedx := action;            { action if file does/doesn't exist }
-      regs.realds := tb_segment;
-      regs.realesi := tb_offset;
-      regs.realebx := $2000 + (flags and $ff);              { file open mode }
-    end;
-  regs.realecx := $20;                                     { file attributes }
-  sysrealintr($21,regs);
-{$ifndef RTLLITE}
-  if (regs.realflags and carryflag) <> 0 then
-    if lo(regs.realeax)=4 then
-      if Increase_file_handle_count then
-        begin
-          { Try again }
-          if LFNSupport then
-            regs.realeax := $716c                    {Use LFN Open/Create API}
-          else
-            if Avoid6c00 then
-              regs.realeax := $3d00+(flags and $ff) {For now, map to Open API}
-            else
-              regs.realeax := $6c00;            {Use Extended Open/Create API}
-          if byte(regs.realeax shr 8) = $3d then
-            begin  { Using the older Open or Create API's }
-              if (action and $00f0) <> 0 then
-                regs.realeax := $3c00;             {Map to Create/Replace API}
-              regs.realds := tb_segment;
-              regs.realedx := tb_offset;
-            end
-          else
-            begin  { Using LFN or Extended Open/Create API }
-              regs.realedx := action;      {action if file does/doesn't exist}
-              regs.realds := tb_segment;
-              regs.realesi := tb_offset;
-              regs.realebx := $2000+(flags and $ff);          {file open mode}
-            end;
-          regs.realecx := $20;                               {file attributes}
-          sysrealintr($21,regs);
-        end;
-{$endif RTLLITE}
-  if (regs.realflags and carryflag) <> 0 then
-    begin
-      GetInOutRes(lo(regs.realeax));
-      exit;
-    end
-  else
-    begin
-      filerec(f).handle:=lo(regs.realeax);
-{$ifndef RTLLITE}
-      { for systems that have more then 20 by default ! }
-      if lo(regs.realeax)>FileHandleCount then
-        FileHandleCount:=lo(regs.realeax);
-{$endif RTLLITE}
-    end;
-  if lo(regs.realeax)<max_files then
-    begin
-{$ifdef SYSTEMDEBUG}
-       if openfiles[lo(regs.realeax)] and
-          assigned(opennames[lo(regs.realeax)]) then
-         begin
-            Writeln(stderr,'file ',opennames[lo(regs.realeax)],'(',lo(regs.realeax),') not closed but handle reused!');
-            sysfreememsize(opennames[lo(regs.realeax)],strlen(opennames[lo(regs.realeax)])+1);
-         end;
-{$endif SYSTEMDEBUG}
-       openfiles[lo(regs.realeax)]:=true;
-{$ifdef SYSTEMDEBUG}
-       opennames[lo(regs.realeax)] := sysgetmem(strlen(p)+1);
-       move(p^,opennames[lo(regs.realeax)]^,strlen(p)+1);
-{$endif SYSTEMDEBUG}
-    end;
-{ append mode }
-  if ((flags and $100) <> 0) and
-   (FileRec (F).Handle <> UnusedHandle) then
-   begin
-     do_seekend(filerec(f).handle);
-     filerec(f).mode:=fmoutput; {fool fmappend}
-   end;
-end;
-
-function do_isdevice(handle:THandle):boolean;
-var
-  regs : trealregs;
-begin
-  regs.realebx:=handle;
-  regs.realeax:=$4400;
-  sysrealintr($21,regs);
-  do_isdevice:=(regs.realedx and $80)<>0;
-  if (regs.realflags and carryflag) <> 0 then
-   GetInOutRes(lo(regs.realeax));
-end;
-
+(*
 {*****************************************************************************
                            UnTyped File Handling
 *****************************************************************************}
@@ -1316,134 +689,7 @@ end;
 {$ifdef TEST_GENERIC}
 {$i generic.inc}
 {$endif TEST_GENERIC}
-
-{*****************************************************************************
-                           Directory Handling
-*****************************************************************************}
-
-procedure DosDir(func:byte;const s:string);
-var
-  buffer : array[0..255] of char;
-  regs   : trealregs;
-begin
-  move(s[1],buffer,length(s));
-  buffer[length(s)]:=#0;
-  AllowSlash(pchar(@buffer));
-  { True DOS does not like backslashes at end
-    Win95 DOS accepts this !!
-    but "\" and "c:\" should still be kept and accepted hopefully PM }
-  if (length(s)>0) and (buffer[length(s)-1]='\') and
-     Not ((length(s)=1) or ((length(s)=3) and (s[2]=':'))) then
-    buffer[length(s)-1]:=#0;
-  syscopytodos(longint(@buffer),length(s)+1);
-  regs.realedx:=tb_offset;
-  regs.realds:=tb_segment;
-  if LFNSupport then
-   regs.realeax:=$7100+func
-  else
-   regs.realeax:=func shl 8;
-  sysrealintr($21,regs);
-  if (regs.realflags and carryflag) <> 0 then
-   GetInOutRes(lo(regs.realeax));
-end;
-
-
-procedure mkdir(const s : string);[IOCheck];
-begin
-  If (s='') or (InOutRes <> 0) then
-   exit;
-  DosDir($39,s);
-end;
-
-
-procedure rmdir(const s : string);[IOCheck];
-begin
-  if (s = '.' ) then
-    InOutRes := 16;
-  If (s='') or (InOutRes <> 0) then
-   exit;
-  DosDir($3a,s);
-end;
-
-
-procedure chdir(const s : string);[IOCheck];
-var
-  regs : trealregs;
-begin
-  If (s='') or (InOutRes <> 0) then
-   exit;
-{ First handle Drive changes }
-  if (length(s)>=2) and (s[2]=':') then
-   begin
-     regs.realedx:=(ord(s[1]) and (not 32))-ord('A');
-     regs.realeax:=$0e00;
-     sysrealintr($21,regs);
-     regs.realeax:=$1900;
-     sysrealintr($21,regs);
-     if byte(regs.realeax)<>byte(regs.realedx) then
-      begin
-        Inoutres:=15;
-        exit;
-      end;
-     { DosDir($3b,'c:') give Path not found error on
-       pure DOS PM }
-     if length(s)=2 then
-       exit;
-   end;
-{ do the normal dos chdir }
-  DosDir($3b,s);
-end;
-
-
-procedure getdir(drivenr : byte;var dir : shortstring);
-var
-  temp : array[0..255] of char;
-  i    : longint;
-  regs : trealregs;
-begin
-  regs.realedx:=drivenr;
-  regs.realesi:=tb_offset;
-  regs.realds:=tb_segment;
-  if LFNSupport then
-   regs.realeax:=$7147
-  else
-   regs.realeax:=$4700;
-  sysrealintr($21,regs);
-  if (regs.realflags and carryflag) <> 0 then
-   Begin
-     GetInOutRes(lo(regs.realeax));
-     Dir := char (DriveNr + 64) + ':\';
-     exit;
-   end
-  else
-   syscopyfromdos(longint(@temp),251);
-{ conversion to Pascal string including slash conversion }
-  i:=0;
-  while (temp[i]<>#0) do
-   begin
-     if temp[i]='/' then
-      temp[i]:='\';
-     dir[i+4]:=temp[i];
-     inc(i);
-   end;
-  dir[2]:=':';
-  dir[3]:='\';
-  dir[0]:=char(i+3);
-{ upcase the string }
-  if not FileNameCaseSensitive then
-   dir:=upcase(dir);
-  if drivenr<>0 then   { Drive was supplied. We know it }
-   dir[1]:=char(65+drivenr-1)
-  else
-   begin
-   { We need to get the current drive from DOS function 19H  }
-   { because the drive was the default, which can be unknown }
-     regs.realeax:=$1900;
-     sysrealintr($21,regs);
-     i:= (regs.realeax and $ff) + ord('A');
-     dir[1]:=chr(i);
-   end;
-end;
+*)
 
 {*****************************************************************************
                          SystemUnit Initialization
@@ -1490,6 +736,10 @@ begin
  GetProcessID := 1;
 end;
 
+function CheckInitialStkLen(stklen : SizeUInt) : SizeUInt;
+begin
+  result := stklen;
+end;
 
 var
   temp_int : tseginfo;
@@ -1514,6 +764,7 @@ Begin
 { Setup heap }
   InitHeap;
   SysInitExceptions;
+  initunicodestringmanager;
 { Setup stdin, stdout and stderr }
   SysInitStdIO;
 { Setup environment and arguments }
@@ -1522,7 +773,13 @@ Begin
 { Use LFNSupport LFN }
   LFNSupport:=CheckLFN;
   if LFNSupport then
-   FileNameCaseSensitive:=true;
+   begin
+    FileNameCasePreserving:=true;
+    AllFilesMask := '*';
+   end
+  else
+   AllFilesMask := '*.*';
+
 { Reset IO Error }
   InOutRes:=0;
   ThreadID := 1;
@@ -1530,32 +787,5 @@ Begin
   InitDPMIExcp;
   InstallDefaultHandlers;
 {$endif  EXCEPTIONS_IN_SYSTEM}
-{$ifdef HASVARIANT}
   initvariantmanager;
-{$endif HASVARIANT}
-{$ifdef HASWIDESTRING}
-  initwidestringmanager;
-{$endif HASWIDESTRING}
 End.
-
-{
-  $Log: system.pp,v $
-  Revision 1.24  2005/05/12 20:29:04  michael
-  + Added maxpathlen constant (maximum length of filename path)
-
-  Revision 1.23  2005/05/10 21:45:08  hajny
-    * fix for potential SIGSEGV during argv allocation
-
-  Revision 1.22  2005/04/13 20:10:50  florian
-    + TThreadID
-
-  Revision 1.21  2005/04/03 21:10:59  hajny
-    * EOF_CTRLZ conditional define replaced with CtrlZMarksEOF, #26 handling made more consistent (fix for bug 2453)
-
-  Revision 1.20  2005/02/14 17:13:32  peter
-    * truncate log
-
-  Revision 1.19  2005/02/01 20:22:50  florian
-    * improved widestring infrastructure manager
-
-}

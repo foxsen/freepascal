@@ -1,5 +1,4 @@
 {
-    $Id: persist.inc,v 1.2 2005/02/14 17:13:31 peter Exp $
     This file is part of the Free Component Library (FCL)
     Copyright (c) 1999-2000 by the Free Pascal development team
 
@@ -25,7 +24,6 @@ begin
     SourceName:=Source.ClassName
   else
     SourceName:='Nil';
-  Writeln ('Error assigning to ',ClassName,' from : ',SourceName);
   raise EConvertError.CreateFmt (SAssignError,[SourceName,ClassName]);
 end;
 
@@ -51,13 +49,6 @@ begin
   Result:=Nil;
 end;
 
-destructor TPersistent.Destroy;
-
-begin
-  Inherited Destroy;
-end;
-
-
 procedure TPersistent.Assign(Source: TPersistent);
 
 begin
@@ -70,12 +61,14 @@ end;
 function  TPersistent.GetNamePath: string;
 
 Var OwnerName :String;
+    TheOwner: TPersistent;
 
 begin
- Result:=ClassNAme;
- If GetOwner<>Nil then
+ Result:=ClassName;
+ TheOwner:=GetOwner;
+ If TheOwner<>Nil then
    begin
-   OwnerName:=GetOwner.GetNamePath;
+   OwnerName:=TheOwner.GetNamePath;
    If OwnerName<>'' then Result:=OwnerName+'.'+Result;
    end;
 end;
@@ -85,41 +78,43 @@ end;
 {*                          TInterfacedPersistent                           *}
 {****************************************************************************}
 
-{$ifdef HASINTF}
 procedure TInterfacedPersistent.AfterConstruction;
+
+Var TheOwner: TPersistent;
+
 begin
   inherited;
-//  if GetOwner<>nil then
-//   GetOwner.GetInterface(IUnknown,FOwnerInterface);
+  TheOwner:=GetOwner;
+  if assigned(TheOwner) then
+    TheOwner.GetInterface(IUnknown,FOwnerInterface);
 end;
 
 
-function TInterfacedPersistent._AddRef: Integer;stdcall;
+function TInterfacedPersistent._AddRef: Integer;{$IFNDEF WINDOWS}cdecl{$ELSE}stdcall{$ENDIF};
 begin
-  if FOwnerInterface<>nil then
+  if assigned(FOwnerInterface) then
     Result:=FOwnerInterface._AddRef
   else
     Result:=-1;
 end;
 
 
-function TInterfacedPersistent._Release: Integer;stdcall;
+function TInterfacedPersistent._Release: Integer;{$IFNDEF WINDOWS}cdecl{$ELSE}stdcall{$ENDIF};
 begin
-  if FOwnerInterface <> nil then
+  if assigned(FOwnerInterface) then
     Result:=FOwnerInterface._Release
   else
     Result:=-1;
 end;
 
 
-function TInterfacedPersistent.QueryInterface(const IID: TGUID; out Obj): HResult;stdcall;
+function TInterfacedPersistent.QueryInterface({$IFDEF FPC_HAS_CONSTREF}constref{$ELSE}const{$ENDIF} IID: TGUID; out Obj): HResult;{$IFNDEF WINDOWS}cdecl{$ELSE}stdcall{$ENDIF};
 begin
   if GetInterface(IID, Obj) then
     Result:=0
   else
     Result:=HResult($80004002);
 end;
-{$endif HASINTF}
 
 
 {****************************************************************************}
@@ -153,14 +148,8 @@ end;
 
 procedure TRecall.Store;
 begin
-  if Assigned(FReference) then
+  if Assigned(FStorage) and Assigned(FReference) then
     FStorage.Assign(FReference);
 end;
 
 
-{
-  $Log: persist.inc,v $
-  Revision 1.2  2005/02/14 17:13:31  peter
-    * truncate log
-
-}

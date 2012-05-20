@@ -4,17 +4,19 @@
 
 [package]
 name=installer
-version=2.0.0
+version=2.7.1
 
 [target]
-programs_go32v2=install
-programs_win32=install
-programs_os2=install
-programs_linux=installer
+programs_go32v2=install writeidx
+programs_win32=install writeidx
+programs_os2=install writeidx
+programs_linux=installer writeidx
+programs_freebsd=installer writeidx
 
 [clean]
-units=scroll
+units=scroll insthelp
 files_linux=installer.pas
+files_freebsd=installer.pas
 
 [require]
 packages=fv unzip
@@ -30,6 +32,8 @@ fpcdir=..
 
 
 [rules]
+.NOTPARALLEL:
+
 #
 # FVision or old FV detection
 #
@@ -43,3 +47,5 @@ installer.pas: install.pas
 install$(EXEEXT) : install.pas scroll.pas
 
 installer$(EXEEXT) : installer.pas scroll.pas
+
+writeidx$(EXEEXT) : writeidx.pas insthelp.pas

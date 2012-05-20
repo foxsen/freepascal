@@ -1,5 +1,4 @@
 {
-    $Id: fpvars.pas,v 1.12 2005/02/14 17:13:18 peter Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 1998 by Berczi Gabor
 
@@ -34,12 +33,26 @@ type
     TCompPhase = (cpNothing,cpCompiling,cpLinking,
                   cpAborted,cpFailed,cpDone);
 
+    {Use edit keys according to Borland convention (shift+del,ctrl+ins,shift+ins)
+     or Microsoft convention (ctrl+x,ctrl+c,ctrl+v).}
+    Tedit_key_modes=(ekm_borland,ekm_microsoft);
+
+
+{$ifdef Unix}
+      {Microsoft convention is default on Unix, because the Borland "paste" key, Shift+Ins,
+       is not passed on to the program in most X terminal emulators.}
+const ekm_default = ekm_microsoft;
+{$else}
+const ekm_default = ekm_borland;
+{$endif}
+
+
 const ClipboardWindow  : PClipboardWindow = nil;
       CalcWindow       : PCalculator = nil;
       RecentFileCount  : integer = 0;
       LastCompileTime  : cardinal = 0;
-      OpenExts         : string = '*.pas;*.pp;*.inc';
-      HighlightExts    : string = '*.pas;*.pp;*.inc';
+      OpenExts         : string = '*.pas;*.pp;*.inc;*.dpr;*.lpr';
+      HighlightExts    : string = '*.pas;*.pp;*.inc;*.dpr;*.lpr';
       TabsPattern      : string = 'make*;make*.*;fpcmake.loc';
       SourceDirs       : string = '';
       StandardUnits    : string = '';
@@ -57,7 +70,7 @@ const ClipboardWindow  : PClipboardWindow = nil;
       UseMouse         : boolean = true;
       MainFile         : string = '';
       PrevMainFile     : string = '';
-      EXEFile          : string = '';
+      EXEFile          : ansistring = '';
       CompilationPhase : TCompPhase = cpNothing;
 {$ifndef NODEBUG}
       GDBWindow        : PGDBWindow = nil;
@@ -77,9 +90,9 @@ const ClipboardWindow  : PClipboardWindow = nil;
       ShowStatusOnError: boolean = true;
       StartupDir       : string = '.'+DirSep;
       IDEDir           : string = '.'+DirSep;
-{$ifdef Unix}
+{$if defined(WINDOWS) or defined(Unix)}
       SystemIDEDir     : string = '';
-{$endif Unix}
+{$endif defined(WINDOWS) or defined(Unix)}
       INIFileName      : string = ININame;
       SwitchesPath     : string = SwitchesName;
       CtrlMouseAction  : integer = acTopicSearch;
@@ -95,7 +108,7 @@ const ClipboardWindow  : PClipboardWindow = nil;
       AutoSaveOptions  : longint = asEnvironment+asDesktop;
       MiscOptions      : longint = moChangeDirOnOpen+moCloseOnGotoSource;
       EditorModified   : boolean = false;
-      IniCenterDebuggerRow : boolean = true;
+      IniCenterDebuggerRow : tcentre = do_centre;
       SleepTimeOut     : longint = trunc(10*18.2);
 {$ifdef USE_EXTERNAL_COMPILER}
       UseExternalCompiler : boolean = true;
@@ -103,6 +116,8 @@ const ClipboardWindow  : PClipboardWindow = nil;
 {$endif USE_EXTERNAL_COMPILER}
       ShowReadme       : boolean = true;
       AskRecompileIfModifiedFlag : boolean = true;
+
+      EditKeys:Tedit_key_modes = ekm_default;
 
 {$ifdef SUPPORT_REMOTE}
      RemoteMachine : string = '';
@@ -126,12 +141,3 @@ var   RecentFiles      : array[1..MaxRecentFileCount] of TRecentFileEntry;
 implementation
 
 END.
-{
-  $Log: fpvars.pas,v $
-  Revision 1.12  2005/02/14 17:13:18  peter
-    * truncate log
-
-  Revision 1.11  2005/01/08 11:43:18  florian
-    + vector unit window
-
-}

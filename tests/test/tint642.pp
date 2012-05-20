@@ -724,6 +724,7 @@ procedure testioqword;
                do_error(2101);
             end;
        end;
+    erase(t);
   end;
 
 procedure teststringqword;
@@ -731,7 +732,7 @@ procedure teststringqword;
   var
      q1,q2 : qword;
      s : string;
-     l : longint;
+     l : cardinal;
      a : ansistring;
      code : integer;
 

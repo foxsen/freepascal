@@ -1,6 +1,5 @@
 {
-    $Id: system.pp,v 1.26 2005/03/25 22:53:39 jonas Exp $
-    This file is part of the Free Pascal run time librar~y.
+    This file is part of the Free Pascal run time library.
     Copyright (c) 2000 by Marco van de Voort
     member of the Free Pascal development team.
 
@@ -21,7 +20,7 @@
 { If you use an aout system, set the conditional AOUT}
 { $Define AOUT}
 
-Unit {$ifdef VER1_0}SysBSD{$else}System{$endif};
+Unit System;
 
 Interface
 
@@ -39,14 +38,44 @@ Interface
 {$I sysunixh.inc}
 
 {$ifdef Darwin}
-var argc:cardinal;
+var argc:longint;
     argv:PPchar;
     envp:PPchar;
 {$endif}
 
 CONST SIGSTKSZ = 40960;
 
+{$if defined(CPUARM)}
+
+{$define fpc_softfpu_interface}
+{$i softfpu.pp}
+{$undef fpc_softfpu_interface}
+
+{$endif defined(CPUARM)}
+
+
 Implementation
+
+{$if defined(CPUARM) or defined(CPUM68K)}
+
+{$define fpc_softfpu_implementation}
+{$i softfpu.pp}
+{$undef fpc_softfpu_implementation}
+
+{ we get these functions and types from the softfpu code }
+{$define FPC_SYSTEM_HAS_float64}
+{$define FPC_SYSTEM_HAS_float32}
+{$define FPC_SYSTEM_HAS_flag}
+{$define FPC_SYSTEM_HAS_extractFloat64Frac0}
+{$define FPC_SYSTEM_HAS_extractFloat64Frac1}
+{$define FPC_SYSTEM_HAS_extractFloat64Exp}
+{$define FPC_SYSTEM_HAS_extractFloat64Sign}
+{$define FPC_SYSTEM_HAS_ExtractFloat32Frac}
+{$define FPC_SYSTEM_HAS_extractFloat32Exp}
+{$define FPC_SYSTEM_HAS_extractFloat32Sign}
+
+{$endif defined(CPUARM) or defined(CPUM68K)}
+
 
 {$I system.inc}
 
@@ -54,10 +83,21 @@ Implementation
                        Misc. System Dependent Functions
 *****************************************************************************}
 
+{$ifdef darwin}
+procedure normalexit(status: cint); cdecl; external 'c' name 'exit';
+{$endif}
+
 procedure System_exit;
+{$ifndef darwin}
 begin
    Fpexit(cint(ExitCode));
-End;
+end;
+{$else darwin}
+begin
+   { make sure the libc atexit handlers are called, needed for e.g. profiling }
+   normalexit(cint(ExitCode));
+end;
+{$endif darwin}
 
 
 Function ParamCount: Longint;
@@ -81,8 +121,8 @@ end;
 
  { variable where full path and filename and executable is stored }
  { is setup by the startup of the system unit.                    }
-var
- execpathstr : shortstring;
+//var
+// execpathstr : shortstring;
 
 function paramstr(l: longint) : string;
  begin
@@ -93,7 +133,10 @@ function paramstr(l: longint) : string;
 //       paramstr := execpathstr;
 //     end
 //   else
-     paramstr:=strpas(argv[l]);
+     if (l < argc) then
+       paramstr:=strpas(argv[l])
+     else
+       paramstr:='';
  end;
 
 Procedure Randomize;
@@ -103,13 +146,14 @@ End;
 
 
 {*****************************************************************************
-                         SystemUnit Initialization
+                         System Unit Initialization
 *****************************************************************************}
 
 function  reenable_signal(sig : longint) : boolean;
 var
   e,oe : TSigSet;
   i,j : byte;
+  olderrno: cint;
 begin
   fillchar(e,sizeof(e),#0);
   fillchar(oe,sizeof(oe),#0);
@@ -118,29 +162,59 @@ begin
   i:=sig mod 32;
   j:=sig div 32;
   e[j]:=1 shl i;
+  { this routine is called from a signal handler, so must not change errno }
+  olderrno:=geterrno;
   fpsigprocmask(SIG_UNBLOCK,@e,@oe);
   reenable_signal:=geterrno=0;
+  seterrno(olderrno);
 end;
+
+{$ifdef DEBUG}
+  { Declare InstallDefaultSignalHandler as forward to be able
+    to test aclling fpsigaction again within SignalToRunError
+    function implemented within sighnd.inc inlcude file }
+procedure InstallDefaultSignalHandler(signum: longint; out oldact: SigActionRec); forward;
+{$endif}
 
 {$i sighnd.inc}
 
+procedure InstallDefaultSignalHandler(signum: longint; out oldact: SigActionRec); public name '_FPC_INSTALLDEFAULTSIGHANDLER';
 var
   act: SigActionRec;
-
-Procedure InstallSignals;
-var
-  oldact: SigActionRec;
 begin
   { Initialize the sigaction structure }
   { all flags and information set to zero }
-  FillChar(act, sizeof(SigActionRec),0);
+  FillChar(act,sizeof(SigActionRec),0);
   { initialize handler                    }
-  act.sa_handler :=@SignalToRunError;
+  act.sa_handler:=@SignalToRunError;
+{$if defined(darwin) and defined(cpu64)}
+  act.sa_flags:=SA_SIGINFO or SA_64REGSET;
+{$else}
   act.sa_flags:=SA_SIGINFO;
-  FpSigAction(SIGFPE,act,oldact);
-  FpSigAction(SIGSEGV,act,oldact);
-  FpSigAction(SIGBUS,act,oldact);
-  FpSigAction(SIGILL,act,oldact);
+{$endif}
+  FpSigAction(signum,@act,@oldact);
+end;
+
+var
+  oldsigfpe: SigActionRec; public name '_FPC_OLDSIGFPE';
+  oldsigsegv: SigActionRec; public name '_FPC_OLDSIGSEGV';
+  oldsigbus: SigActionRec; public name '_FPC_OLDSIGBUS';
+  oldsigill: SigActionRec; public name '_FPC_OLDSIGILL';
+
+Procedure InstallSignals;
+begin
+  InstallDefaultSignalHandler(SIGFPE,oldsigfpe);
+  InstallDefaultSignalHandler(SIGSEGV,oldsigsegv);
+  InstallDefaultSignalHandler(SIGBUS,oldsigbus);
+  InstallDefaultSignalHandler(SIGILL,oldsigill);
+end;
+
+Procedure RestoreOldSignalHandlers;
+begin
+  FpSigAction(SIGFPE,@oldsigfpe,nil);
+  FpSigAction(SIGSEGV,@oldsigsegv,nil);
+  FpSigAction(SIGBUS,@oldsigbus,nil);
+  FpSigAction(SIGILL,@oldsigill,nil);
 end;
 
 
@@ -217,15 +291,18 @@ end;
 { can also be used with other BSD's if they use the system's crtX instead of prtX }
 
 {$ifdef Darwin}
-procedure pascalmain; external name 'PASCALMAIN';
 
-{ Main entry point in C style, needed to capture program parameters. }
-procedure main(argcparam: Longint; argvparam: ppchar; envpparam: ppchar); cdecl; [public];
+procedure pascalmain;cdecl;external name 'PASCALMAIN';
+
+procedure FPC_SYSTEMMAIN(argcparam: Longint; argvparam: ppchar; envpparam: ppchar); cdecl; [public];
 
 begin
   argc:= argcparam;
   argv:= argvparam;
   envp:= envpparam;
+{$ifdef cpui386}
+  Set8087CW(Default8087CW);  
+{$endif cpui386}
   pascalmain;  {run the pascal main program}
 end;
 {$endif Darwin}
@@ -236,49 +313,39 @@ begin
  GetProcessID := SizeUInt (fpGetPID);
 end;
 
+function CheckInitialStkLen(stklen : SizeUInt) : SizeUInt;
+begin
+  result := stklen;
+end;
 
 Begin
   IsConsole := TRUE;
-  IsLibrary := FALSE;
-  StackLength := InitialStkLen;
+  StackLength := CheckInitialStkLen(InitialStkLen);
   StackBottom := Sptr - StackLength;
-  { Set up signals handlers }
+  { Set up signals handlers (may be needed by init code to test cpu features) }
   InstallSignals;
+
+  SysResetFPU;
+  if not(IsLibrary) then
+    SysInitFPU;
+
+{$if defined(cpui386) or defined(cpuarm)}
+  fpc_cpucodeinit;
+{$endif cpui386}
   { Setup heap }
   InitHeap;
   SysInitExceptions;
-  { Arguments }
-  SetupCmdLine;
+  initunicodestringmanager;
   { Setup stdin, stdout and stderr }
   SysInitStdIO;
   { Reset IO Error }
   InOutRes:=0;
+  { Arguments }
+  SetupCmdLine;
   { threading }
   InitSystemThreads;
-{$ifdef HASVARIANT}
   initvariantmanager;
-{$endif HASVARIANT}
-{$ifdef HASWIDESTRING}
-  initwidestringmanager;
-{$endif HASWIDESTRING}
+  { restore original signal handlers in case this is a library }
+  if IsLibrary then
+    RestoreOldSignalHandlers;
 End.
-
-{
-  $Log: system.pp,v $
-  Revision 1.26  2005/03/25 22:53:39  jonas
-    * fixed several warnings and notes about unused variables (mainly) or
-      uninitialised use of variables/function results (a few)
-
-  Revision 1.25  2005/02/14 17:13:21  peter
-    * truncate log
-
-  Revision 1.24  2005/02/13 21:47:56  peter
-    * include file cleanup part 2
-
-  Revision 1.23  2005/02/06 12:16:52  peter
-    * bsd thread updates
-
-  Revision 1.22  2005/02/01 20:22:49  florian
-    * improved widestring infrastructure manager
-
-}

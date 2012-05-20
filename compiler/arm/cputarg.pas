@@ -1,5 +1,4 @@
 {
-    $Id: cputarg.pas,v 1.3 2005/02/14 17:13:09 peter Exp $
     Copyright (c) 2001-2002 by Peter Vreman
 
     Includes the arm dependent target units
@@ -39,6 +38,27 @@ implementation
     {$ifndef NOTARGETLINUX}
       ,t_linux
     {$endif}
+    {$ifndef NOTARGETWINCE}
+      ,t_win
+    {$endif}
+    {$ifndef NOTARGETGBA}
+      ,t_gba
+    {$endif}
+    {$ifndef NOTARGETPALMOS}
+      ,t_palmos
+    {$endif}
+    {$ifndef NOTARGETNDS}
+      ,t_nds
+    {$endif}
+    {$ifndef NOTARGETEMBEDDED}
+      ,t_embed
+    {$endif}
+    {$ifndef NOTARGETSYMBIAN}
+      ,t_symbian
+    {$endif}
+    {$ifndef NOTARGETBSD}
+      ,t_bsd
+    {$endif}
 
 {**************************************
              Assemblers
@@ -47,12 +67,27 @@ implementation
     {$ifndef NOAGARMGAS}
       ,agarmgas
     {$endif}
+
+      ,ogcoff
+
+{**************************************
+        Assembler Readers
+**************************************}
+
+  {$ifndef NoRaarmgas}
+       ,raarmgas
+  {$endif NoRaarmgas}
+
+{**************************************
+             Debuginfo
+**************************************}
+
+  {$ifndef NoDbgStabs}
+      ,dbgstabs
+  {$endif NoDbgStabs}
+  {$ifndef NoDbgDwarf}
+      ,dbgdwarf
+  {$endif NoDbgDwarf}
       ;
 
 end.
-{
-  $Log: cputarg.pas,v $
-  Revision 1.3  2005/02/14 17:13:09  peter
-    * truncate log
-
-}

@@ -1,5 +1,4 @@
 {
-    $Id: sysutilh.inc,v 1.15 2005/05/12 20:30:51 michael Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Florian Klaempfl
     member of the Free Pascal development team
@@ -13,15 +12,18 @@
 
  **********************************************************************}
 { Using inlining for small system functions/wrappers }
-{$ifdef HASINLINE}
-  {$inline on}
-  {$define SYSUTILSINLINE}
-{$endif}
+{$inline on}
+{$define SYSUTILSINLINE}
+
+  { Read internationalization settings }
+  {$i sysinth.inc}
 
   { Read date & Time function declarations }
   {$i osutilsh.inc}
 
+{$ifndef FPUNONE}
   {$i datih.inc}
+{$endif}
 
   { Read String Handling functions declaration }
   {$i sysstrh.inc}
@@ -29,13 +31,7 @@
 type
    { some helpful data types }
 
-{$IFDEF VER1_0}
-(* System type alias cannot be used under version *)
-(* 1.0 because of different names of System unit. *)
-   THandle = longint;
-{$ELSE VER1_0}
    THandle = System.THandle;
-{$ENDIF VER1_0}
 
    TProcedure = procedure;
 
@@ -45,19 +41,55 @@ type
 
    LongRec = packed record
       case Integer of
+{$ifdef FPC_LITTLE_ENDIAN}
         0 : (Lo,Hi : Word);
+{$else FPC_LITTLE_ENDIAN}
+        0 : (Hi,Lo : Word);
+{$endif FPC_LITTLE_ENDIAN}
         1 : (Bytes : Array[0..3] of Byte);
    end;
 
    WordRec = packed record
+{$ifdef FPC_LITTLE_ENDIAN}
      Lo,Hi : Byte;
+{$else FPC_LITTLE_ENDIAN}
+     Hi,Lo : Byte;
+{$endif FPC_LITTLE_ENDIAN}
    end;
 
    Int64Rec = packed record
       case integer of
+{$ifdef FPC_LITTLE_ENDIAN}
         0 : (Lo,Hi : Cardinal);
+{$else FPC_LITTLE_ENDIAN}
+        0 : (Hi,Lo : Cardinal);
+{$endif FPC_LITTLE_ENDIAN}
         1 : (Words : Array[0..3] of Word);
         2 : (Bytes : Array[0..7] of Byte);
+   end;
+
+   Int128Rec = packed record
+      case integer of
+{$ifdef FPC_LITTLE_ENDIAN}
+        0 : (Lo,Hi : QWord);
+{$else FPC_LITTLE_ENDIAN}
+        0 : (Hi,Lo : QWord);
+{$endif FPC_LITTLE_ENDIAN}
+        1 : (DWords : Array[0..3] of DWord);
+        2 : (Words : Array[0..7] of Word);
+        3 : (Bytes : Array[0..15] of Byte);
+   end;
+
+   OWordRec = packed record
+      case integer of
+{$ifdef FPC_LITTLE_ENDIAN}
+        0 : (Lo,Hi : QWord);
+{$else FPC_LITTLE_ENDIAN}
+        0 : (Hi,Lo : QWord);
+{$endif FPC_LITTLE_ENDIAN}
+        1 : (DWords : Array[0..3] of DWord);
+        2 : (Words : Array[0..7] of Word);
+        3 : (Bytes : Array[0..15] of Byte);
    end;
 
    PByteArray = ^TByteArray;
@@ -65,6 +97,8 @@ type
 
    PWordarray = ^TWordArray;
    TWordArray = array[0..16383] of Word;
+
+   TBytes = array of Byte;   
 
    { exceptions }
    Exception = class(TObject)
@@ -90,10 +124,15 @@ type
    ExceptClass = class of Exception;
 
    EExternal = class(Exception)
+{$ifdef windows}
+   { OS-provided exception record is stored on stack and has very limited lifetime.
+     Therefore store a complete copy. }
+   private
+     FExceptionRecord: TExceptionRecord;
+     function GetExceptionRecord: PExceptionRecord;
    public
-{$ifdef win32}
-     ExceptionRecord : PExceptionRecord;
-{$endif win32}
+     property ExceptionRecord : PExceptionRecord read GetExceptionRecord;
+{$endif windows}
    end;
 
    { integer math exceptions }
@@ -118,6 +157,7 @@ type
    EHeapMemoryError = class(Exception)
      protected
        AllowFree : boolean;
+     public
        procedure FreeInstance;override;
    end;
 
@@ -127,15 +167,20 @@ type
    EInvalidPointer  = Class(EHeapMemoryError);
    EOutOfMemory     = Class(EHeapMemoryError);
    EInvalidCast = Class(Exception);
-   EVariantError = Class(Exception);
+   EVariantError = Class(Exception)
+     ErrCode : longint;
+     Constructor CreateCode(Code : Longint);
+   end;
 
    EAccessViolation = Class(EExternal);
+   EBusError = Class(EAccessViolation);
    EPrivilege = class(EExternal);
    EStackOverflow = class(EExternal);
    EControlC = class(EExternal);
 
    { String conversion errors }
    EConvertError = class(Exception);
+   EFormatError = class(Exception);
 
    { Other errors }
    EAbort           = Class(Exception);
@@ -158,25 +203,47 @@ type
 
    ESafecallException = class(Exception);
    ENoThreadSupport = Class(Exception);
+   ENoWideStringSupport = Class(Exception);
+   ENotImplemented = class(Exception);
 
+   EArgumentException = class(Exception);
+   EArgumentOutOfRangeException = class(EArgumentException);
+
+   ENoConstructException = class(Exception);
 
    { Exception handling routines }
    function ExceptObject: TObject;
    function ExceptAddr: Pointer;
+   function ExceptFrameCount: Longint;
+   function ExceptFrames: PPointer;
    function ExceptionErrorMessage(ExceptObject: TObject; ExceptAddr: Pointer;
                                   Buffer: PChar; Size: Integer): Integer;
    procedure ShowException(ExceptObject: TObject; ExceptAddr: Pointer);
    procedure Abort;
    procedure OutOfMemoryError;
+
+
+Type
+   TBeepHandler = Procedure;
+
+Var
+   OnBeep : TBeephandler = Nil;
+
    procedure Beep;
    function SysErrorMessage(ErrorCode: Integer): String;
+
+Type
+   TCreateGUIDFunc = Function(Out GUID : TGUID) : Integer;
+
+Var
+   OnCreateGUID : TCreateGUIDFunc = Nil;
+   Function CreateGUID(out GUID : TGUID) : Integer;
 
 type
   TTerminateProc = Function: Boolean;
 
   procedure AddTerminateProc(TermProc: TTerminateProc);
   function CallTerminateProcs: Boolean;
-
 
 
 Var
@@ -200,21 +267,22 @@ Type
    TFileRec=FileRec;
    TTextRec=TextRec;
 
-  { Read internationalization settings }
-  {$i sysinth.inc}
 
   { Read pchar handling functions declaration }
-  {$IFNDEF VIRTUALPASCAL}
   {$i syspchh.inc}
-  {$ENDIF}
 
   { MCBS functions }
   {$i sysansih.inc}
+  {$i syscodepagesh.inc}
 
-{$ifndef VER1_0}
   { wide string functions }
   {$i syswideh.inc}
-{$endif VER1_0}
+
+{$ifdef FPC_HAS_UNICODESTRING}
+  { unicode string functions }
+  {$i sysunih.inc}
+  {$i sysencodingh.inc}
+{$endif FPC_HAS_UNICODESTRING}
 
   { Read filename handling functions declaration }
   {$i finah.inc}
@@ -230,31 +298,36 @@ Type
 
   procedure FreeAndNil(var obj);
 
-{$ifdef HASINTF}
   { interface handling }
   {$i intfh.inc}
-{$endif HASINTF}
 
-{
-  $Log: sysutilh.inc,v $
-  Revision 1.15  2005/05/12 20:30:51  michael
-  + Added MAX_PATH for Delphi/Kylix compatibility.
+  function SafeLoadLibrary(const FileName: AnsiString;
+    ErrorMode: DWord = {$ifdef windows}SEM_NOOPENFILEERRORBOX{$else windows}0{$endif windows}): HMODULE;
 
-  Revision 1.14  2005/03/12 14:56:22  florian
-    + added Ansi* routines to widestring manager
-    * made them using OS calls on windows
+  function GetModuleName(Module: HMODULE): string;
 
-  Revision 1.13  2005/02/14 17:13:31  peter
-    * truncate log
+{ some packages and unit related constants for compatibility }
 
-  Revision 1.12  2005/02/03 18:40:02  florian
-    * compilation with 1.0.x fixed
-    + infrastructure for WideCompareText implemented
+const
+  pfExeModule = $00000000;
+  pfNeverBuild = $00000001;
+  pfDesignOnly = $00000002;
+  pfRunOnly = $00000004;
+  pfIgnoreDupUnits = $00000008;
+  pfPackageModule = $40000000;
+  pfModuleTypeMask = $C0000000;
+  pfV3Produced =  $00000000;
+  pfProducerUndefined = $04000000;
+  pfBCB4Produced = $08000000;
+  pfDelphi4Produced = $0C000000;
+  pfLibraryModule = $80000000;
+  pfProducerMask = $0C000000;
 
-  Revision 1.11  2005/02/03 16:21:59  peter
-    * 1.0.x fix
+const
+  ufMainUnit     = $01;
+  ufPackageUnit  = $02;
+  ufWeakUnit     = $04;
+  ufOrgWeakUnit  = $08;
+  ufImplicitUnit = $10;
 
-  Revision 1.10  2005/02/01 20:22:50  florian
-    * improved widestring infrastructure manager
-
-}
+  ufWeakPackageUnit = ufPackageUnit or ufWeakUnit;

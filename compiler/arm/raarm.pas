@@ -1,5 +1,4 @@
 {
-    $Id: raarm.pas,v 1.3 2005/02/14 17:13:09 peter Exp $
     Copyright (c) 1998-2003 by Carl Eric Codere and Peter Vreman
 
     Handles the common arm assembler reader routines
@@ -28,7 +27,7 @@ unit raarm;
 
     uses
       cpubase,
-      aasmtai,
+      aasmtai,aasmdata,
       rautils;
 
     type
@@ -37,7 +36,8 @@ unit raarm;
 
       TARMInstruction=class(TInstruction)
         oppostfix : toppostfix;
-        function ConcatInstruction(p:TAAsmoutput) : tai;override;
+        wideformat : boolean; // For wide(32bit) instructions of the thumb-2 instruction set
+        function ConcatInstruction(p:TAsmList) : tai;override;
       end;
 
   implementation
@@ -45,17 +45,12 @@ unit raarm;
     uses
       aasmcpu;
 
-    function TARMInstruction.ConcatInstruction(p:TAAsmoutput) : tai;
+    function TARMInstruction.ConcatInstruction(p:TAsmList) : tai;
       begin
         result:=inherited ConcatInstruction(p);
         (result as taicpu).oppostfix:=oppostfix;
+        (result as taicpu).wideformat:=wideformat;
       end;
 
 
 end.
-{
-  $Log: raarm.pas,v $
-  Revision 1.3  2005/02/14 17:13:09  peter
-    * truncate log
-
-}

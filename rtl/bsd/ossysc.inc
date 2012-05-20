@@ -1,5 +1,4 @@
 {
-    $Id: ossysc.inc,v 1.26 2005/04/24 19:11:28 marco Exp $
     Copyright (c) 2002 by Marco van de Voort
 
     The base *BSD syscalls required to implement the system unit. These
@@ -72,27 +71,36 @@ FreeBSD: same implementation as NetBSD.
 }
 
 begin
-  Fplseek:=do_syscall(syscall_nr___syscall,syscall_nr_lseek,0,TSysParam(fd),0,lo(Offset),{0} hi(offset),Whence);
+  {$ifdef CPU64}
+    Fplseek:=do_syscall(syscall_nr___syscall,syscall_nr_lseek,TSysParam(fd),0,Offset,whence);
+  {$else}
+    Fplseek:=do_syscall(syscall_nr___syscall,syscall_nr_lseek,0,TSysParam(fd),0,lo(Offset),{0} hi(offset),Whence);
+  {$endif}
 end;
 
 function Fpftruncate(fd : cint; flength : off_t): cint; [public, alias : 'FPC_SYSC_FTRUNCATE'];
 
 begin
- Fpftruncate:=Do_syscall(syscall_nr___syscall,syscall_nr_ftruncate,0,fd,0,lo(flength),hi(flength));
-end;
+ {$ifdef CPU64}
+   Fpftruncate:=Do_syscall(syscall_nr___syscall,syscall_nr_ftruncate, fd  ,0   ,flength);
+ {$else}
+   Fpftruncate:=Do_syscall(syscall_nr___syscall,syscall_nr_ftruncate,0,fd,0,lo(flength),hi(flength));
+ {$endif}
 
-{$ifdef VER1_0}
- {$DEFINE FPC_LITTLE_ENDIAN}
-{$endif}
+end;
 
 
 Function Fpmmap(start:pointer;len:size_t;prot:cint;flags:cint;fd:cint;offst:off_t):pointer; [public, alias:  'FPC_SYSC_MMAP'];
 
 begin
-  Fpmmap:=pointer(longint(do_syscall(syscall_nr_mmap,TSysParam(Start),Len,Prot,Flags,fd,
-        {$ifdef FPC_BIG_ENDIAN}    hi(offst),lo(offst){$endif}
-        {$ifdef FPC_LITTLE_ENDIAN} lo(offst),hi(offst){$endif},0
-        )));
+ {$ifdef CPU64}
+  Fpmmap:=pointer(ptruint(do_syscall(TSysParam(syscall_nr_mmap),TSysParam(Start),TSysParam(Len),TSysParam(Prot),TSysParam(Flags),TSysParam(fd),0,TSysParam(offst))));
+{$else}
+ Fpmmap:=pointer(ptruint(do_syscall(syscall_nr_mmap,TSysParam(Start),Len,Prot,Flags,fd,0,
+         {$ifdef FPC_BIG_ENDIAN}    hi(offst),lo(offst){$endif}
+         {$ifdef FPC_LITTLE_ENDIAN} lo(offst),hi(offst){$endif}
+         )));
+{$endif}
 end;
 
 {$endif}
@@ -190,7 +198,7 @@ begin
    exit;
   ptr^.dd_fd:=fd;
   ptr^.dd_loc:=-1;
-  ptr^.dd_rewind:=longint(ptr^.dd_buf);
+  ptr^.dd_rewind:=ptrint(ptr^.dd_buf);
   ptr^.dd_size:=0;
 //  ptr^.dd_max:=sizeof(ptr^.dd_buf^);
   Fpopendir:=ptr;
@@ -215,9 +223,13 @@ with blockmode have this higher?}
 function readbuffer:longint;
 
 var retval :longint;
-
+    basep : clong;
 begin
+{$ifdef USE_GETDIRENTRIES_SYSCALL}
+ Retval:=do_syscall(syscall_nr_getdirentries,TSysParam(dirp^.dd_fd),TSysParam(@dirp^.dd_buf^),DIRBLKSIZ {sizeof(getdentsbuffer)},TSysParam(@basep));
+{$else not USE_GETDIRENTRIES_SYSCALL}
  Retval:=do_syscall(syscall_nr_getdents,TSysParam(dirp^.dd_fd),TSysParam(@dirp^.dd_buf^),DIRBLKSIZ {sizeof(getdentsbuffer)});
+{$endif not USE_GETDIRENTRIES_SYSCALL}
    dirp^.dd_rewind:=TSysParam(dirp^.dd_buf);
    if retval=0 then
     begin
@@ -240,7 +252,7 @@ begin
  if (dirp^.dd_buf=nil) or (dirp^.dd_loc=0) THEN
   exit(nil);
  if (dirp^.dd_loc=-1)   OR     {First readdir on this pdir. Initial fill of buffer}
-   (dirp^.dd_rewind>=(longint(dirp^.dd_buf)+dirp^.dd_size)) then  {no more entries left?}
+   (dirp^.dd_rewind>=(ptrint(dirp^.dd_buf)+dirp^.dd_size)) then  {no more entries left?}
   Begin
     if readbuffer=0 then        {succesful read?}
      Exit(NIL);                 {No more data}
@@ -288,7 +300,11 @@ end;
   If OldAct is non-nil the previous action is saved there.
 }
 
-function Fpsigaction(sig: cint; var act : sigactionrec; var oact : sigactionrec): cint; [public, alias : 'FPC_SYSC_SIGACTION'];
+{$ifdef USE_SIGACTION_SIGTRAMP}
+  procedure signal_trampoline; cdecl; forward;
+{$endif def USE_SIGACTION_SIGTRAMP}
+
+function Fpsigaction(sig: cint; act, oact: psigactionrec): cint; [public, alias : 'FPC_SYSC_SIGACTION'];
 
 {
   Change action of process upon receipt of a signal.
@@ -298,7 +314,12 @@ function Fpsigaction(sig: cint; var act : sigactionrec; var oact : sigactionrec)
 }
 
 begin
-  do_syscall(syscall_nr_sigaction,TSysParam(sig),TSysParam(@act),TSysParam(@oact));
+{$ifdef USE_SIGACTION_SIGTRAMP}
+  fpsigaction:=do_syscall(syscall_nr___sigaction_sigtramp,TSysParam(sig),TSysParam(act),TSysParam(oact),
+                          TSysParam(@signal_trampoline),2);
+{$else not USE_SIGACTION_SIGTRAMP}
+  fpsigaction:=do_syscall(syscall_nr_sigaction,TSysParam(sig),TSysParam(act),TSysParam(oact));
+{$endif not USE_SIGACTION_SIGTRAMP}
 end;
 
 (*=================== MOVED from sysunix.inc ========================*)
@@ -385,7 +406,7 @@ function Fpaccess(const pathname : pchar; amode : cint): cint; [public, alias : 
 begin
  FpAccess:=do_syscall(syscall_nr_access,TSysParam(pathname),amode);
 end;
-{
+(*
 function Fpaccess(const pathname : pathstr; amode : cint): cint;
 
 {
@@ -405,7 +426,7 @@ begin
  pathname:=pathname+#0;
  Access:=do_syscall(syscall_nr_access, TSysParam(@pathname[1]),mode)=0;
 end;
-}
+*)
 
 Function FpDup(fildes:cint):cint; [public, alias : 'FPC_SYSC_DUP'];
 
@@ -435,7 +456,7 @@ end;
   data is function-dependent.
 }
 
-Function FpIOCtl(Handle:cint;Ndx: culong;Data: Pointer):cint; [public, alias : 'FPC_SYSC_IOCTL'];
+Function FpIOCtl(Handle:cint;Ndx: TIOCtlRequest;Data: Pointer):cint; [public, alias : 'FPC_SYSC_IOCTL'];
 // This was missing here, instead hardcoded in Do_IsDevice
 begin
   FpIOCtl:=do_SysCall(syscall_nr_ioctl,handle,Ndx,TSysParam(data));
@@ -468,10 +489,30 @@ function FPSigProcMask(how:cint;nset : psigset;oset : psigset):cint; [public, al
   if OldSSet is non-null, the old set will be saved there.
 }
 
+{$ifdef OpenBSD}
+  { OpenBSD sigprocmask signal uses
+    sigset_t that are cint type
+    the value of nset^[0] must be passed as second parameter
+    the old mask value is in return value }
+  { How do we know if the call failed... PM }
+{$define OS_SIGPROCMASK_RETURNS_OVAL}
+{$endif}
+{$ifdef OS_SIGPROCMASK_RETURNS_OVAL}
+  var
+    res : cint;
+{$endif OS_SIGPROCMASK_RETURNS_OVAL}
 begin
-  FPsigprocmask:=do_syscall(syscall_nr_sigprocmask,longint(how),longint(nset),longint(oset));
+{$ifdef OS_SIGPROCMASK_RETURNS_OVAL}
+  res:=do_syscall(syscall_nr_sigprocmask,tsysparam(how),TSysParam(nset^[0]));
+  if assigned(oset) then
+    oset^[0]:=res;
+  FPsigprocmask:=0;
+
+{$else OS_SIGPROCMASK_RETURNS_OVAL}
+  FPsigprocmask:=do_syscall(syscall_nr_sigprocmask,tsysparam(how),TSysParam(nset),TSysParam(oset));
+{$endif OS_SIGPROCMASK_RETURNS_OVAL}
 end;
-{$user BLA!}
+{$warning user BLA!}
 Function FpNanoSleep(req : ptimespec;rem : ptimespec) : cint; [public, alias : 'FPC_SYSC_NANOSLEEP'];
 begin
   FpNanoSleep:=Do_SysCall(syscall_nr_nanosleep,TSysParam(req),TSysParam(rem));
@@ -511,6 +552,7 @@ begin
 
     ret := do_syscall(syscall_nr___getcwd,TSysParam(pt),TSysParam( ept - pt));
     If (ret = 0) Then
+      begin
         If (pt[0] <> '/') Then
            Begin
              bpt := pt;
@@ -523,7 +565,19 @@ begin
                  ept^:=c;
                  dec(ept);
                End;
-           End;
+           End
+      end
+{$ifdef openbsd}
+   { At least for openbsd, a positive return value is
+     the length of the returned pchar }
+   else if (ret<0) then
+{$else not opensd}
+   else
+{$endif openbsd}
+     begin
+       seterrno(-ret);
+       pt:=nil;
+     end;
  Fpgetcwd:=pt;
 end;
 
@@ -533,24 +587,13 @@ begin
   fpreadlink:=do_syscall(syscall_nr_readlink, TSysParam(name),TSysParam(linkname),maxlen);
 end;
 
-{
- $Log: ossysc.inc,v $
- Revision 1.26  2005/04/24 19:11:28  marco
-  * mmap had another, yet unknown 8th parameter which must be 0 and comes after the offset param
+function FpGetRLimit(resource:cint;rlim:PRLimit):cint; [public, alias : 'FPC_SYSC_GETRLIMIT'];
+begin
+  fpgetrlimit:=do_syscall(syscall_nr_getrlimit,TSysParam(Resource),TSysParam(rlim));
+end;
 
- Revision 1.25  2005/03/13 14:11:06  marco
-  * fix from mischi
+function FpSetRLimit(Resource:cint;rlim:PRLimit):cint; [public, alias : 'FPC_SYSC_SETRLIMIT'];
+begin
+  fpsetrlimit:=do_syscall(syscall_nr_setrlimit,TSysParam(Resource),TSysParam(rlim));
+end;
 
- Revision 1.24  2005/02/14 17:13:21  peter
-   * truncate log
-
- Revision 1.23  2005/02/13 21:47:56  peter
-   * include file cleanup part 2
-
- Revision 1.22  2005/02/13 20:01:37  peter
-   * include file cleanup
-
- Revision 1.21  2005/02/06 12:16:52  peter
-   * bsd thread updates
-
-}

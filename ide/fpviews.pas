@@ -1,5 +1,4 @@
 {
-    $Id: fpviews.pas,v 1.59 2005/03/07 17:16:56 peter Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 1998 by Berczi Gabor
 
@@ -125,10 +124,10 @@ type
 
     PSourceEditor = ^TSourceEditor;
     TSourceEditor = object(TFileEditor)
-      constructor Init(var Bounds: TRect; AHScrollBar, AVScrollBar:
-          PScrollBar; AIndicator: PIndicator;const AFileName: string);
       CompileStamp : longint;
       CodeCompleteTip: PFPToolTip;
+      constructor Init(var Bounds: TRect; AHScrollBar, AVScrollBar:
+          PScrollBar; AIndicator: PIndicator;const AFileName: string);
 {$ifndef NODEBUG}
     private
       ShouldHandleBreakpoints : boolean;
@@ -416,6 +415,7 @@ type
       function    GetSpecSymbolCount(SpecClass: TSpecSymbolClass): integer; virtual;
       function    GetSpecSymbol(SpecClass: TSpecSymbolClass; Index: integer): pstring; virtual;
       function    GetPalette: PPalette; virtual;
+      procedure   HandleEvent(var Event: TEvent); virtual;
     end;
 
     PFPCodeMemo = ^TFPCodeMemo;
@@ -463,6 +463,7 @@ function IOpenEditorWindow(Bounds: PRect; FileName: string; CurX,CurY: sw_intege
 function LastSourceEditor : PSourceWindow;
 function SearchOnDesktop(FileName : string;tryexts:boolean) : PSourceWindow;
 function TryToOpenFile(Bounds: PRect; FileName: string; CurX,CurY: sw_integer;tryexts: boolean): PSourceWindow;
+function TryToOpenFileMulti(Bounds: PRect; FileName: string; CurX,CurY: sw_integer;tryexts: boolean): PSourceWindow;
 function ITryToOpenFile(Bounds: PRect; FileName: string; CurX,CurY: sw_integer;tryexts, ShowIt,
          ForceNewWindow:boolean): PSourceWindow;
 function LocateSourceFile(const FileName: string; tryexts: boolean): string;
@@ -482,7 +483,7 @@ const
       SourceCmds  : TCommandSet =
         ([cmSave,cmSaveAs,cmCompile,cmHide,cmDoReload]);
       EditorCmds  : TCommandSet =
-        ([cmFind,cmReplace,cmSearchAgain,cmJumpLine,cmHelpTopicSearch]);
+        ([cmPrint,cmFind,cmReplace,cmSearchAgain,cmJumpLine,cmHelpTopicSearch,cmSelectAll,cmUnselect]);
       CompileCmds : TCommandSet =
         ([cmMake,cmBuild,cmRun]);
 
@@ -499,6 +500,41 @@ var  MsgParms : array[1..10] of
              1 : (Long: longint);
          end;
 
+const menu_key_common_copy_borland   = 'Ctrl+Ins';
+      menu_key_common_copy_microsoft = 'Ctrl+C';
+
+      menu_key_edit_undo             = 'Alt+BkSp';
+      menu_key_edit_cut_borland      = 'Shift+Del';
+      menu_key_edit_copy_borland     = menu_key_common_copy_borland;
+      menu_key_edit_paste_borland    = 'Shift+Ins';
+      menu_key_edit_cut_microsoft    = 'Ctrl+X';
+      menu_key_edit_copy_microsoft   = menu_key_common_copy_microsoft;
+      menu_key_edit_paste_microsoft  = 'Ctrl+V';
+      menu_key_edit_clear            = 'Ctrl+Del';
+
+      menu_key_common_helpindex      = 'Shift+F1';
+      menu_key_common_topicsearch    = 'Ctrl+F1';
+      menu_key_common_prevtopic      = 'Alt+F1';
+
+      menu_key_help_helpindex= menu_key_common_helpindex;
+      menu_key_help_topicsearch = menu_key_common_topicsearch;
+      menu_key_help_prevtopic= menu_key_common_prevtopic;
+
+      menu_key_hlplocal_index = menu_key_common_helpindex;
+      menu_key_hlplocal_topicsearch = menu_key_common_topicsearch;
+      menu_key_hlplocal_prevtopic = menu_key_common_prevtopic;
+      menu_key_hlplocal_copy_borland = menu_key_common_copy_borland;
+      menu_key_hlplocal_copy_microsoft = menu_key_common_copy_microsoft;
+
+{Configurable keys.}
+const menu_key_edit_cut:string[63]=menu_key_edit_cut_borland;
+      menu_key_edit_copy:string[63]=menu_key_edit_copy_borland;
+      menu_key_edit_paste:string[63]=menu_key_edit_paste_borland;
+      menu_key_hlplocal_copy:string[63]=menu_key_hlplocal_copy_borland;
+      cut_key:word=kbShiftDel;
+      copy_key:word=kbCtrlIns;
+      paste_key:word=kbShiftIns;
+
 procedure RegisterFPViews;
 
 implementation
@@ -507,8 +543,12 @@ uses
   Video,Strings,Keyboard,Validate,
   globtype,Tokens,Version,
   systems,cpubase,
+  itcpugas,
   {$if defined(I386) or defined(x64_86)}
      rax86,
+  {$endif}
+  {$ifdef m68k}
+     ag68kgas,
   {$endif}
 {$ifdef USE_EXTERNAL_COMPILER}
    fpintf, { superseeds version_string of version unit }
@@ -517,7 +557,7 @@ uses
   gdbint,
 {$endif NODEBUG}
   {$ifdef VESA}Vesa,{$endif}
-  FPString,FPSwitch,FPSymbol,FPDebug,FPVars,FPUtils,FPCompil,FPHelp,
+  FPSwitch,FPSymbol,FPDebug,FPVars,FPUtils,FPCompil,FPHelp,
   FPTools,FPIDE,FPCodTmp,FPCodCmp;
 
 const
@@ -608,6 +648,54 @@ var
   ReservedWords  : array[1..ReservedWordMaxLen] of PStringCollection;
   AsmReservedWords  : array[1..ReservedWordMaxLen] of PStringCollection;
 
+{$ifdef useresstrings}
+resourcestring
+{$else}
+const
+{$endif}
+      { Source editor local menu items }
+      menu_srclocal_openfileatcursor = 'Open ~f~ile at cursor';
+      menu_srclocal_browseatcursor = '~B~rowse symbol at cursor';
+      menu_srclocal_topicsearch = 'Topic ~s~earch';
+      menu_srclocal_options = '~O~ptions...';
+      menu_srclocal_reload = '~R~eload modified file';
+
+      { Help viewer local menu items }
+      menu_hlplocal_debug = 'Debug infos';
+      menu_hlplocal_contents = '~C~ontents';
+      menu_hlplocal_index = '~I~ndex';
+      menu_hlplocal_topicsearch = '~T~opic search';
+      menu_hlplocal_prevtopic = '~P~revious topic';
+      menu_hlplocal_copy = '~C~opy';
+
+      { Messages local menu items }
+      menu_msglocal_clear = '~C~lear';
+      menu_msglocal_gotosource = '~G~oto source';
+      menu_msglocal_tracksource = '~T~rack source';
+
+      menu_edit_cut          = 'Cu~t~';
+      menu_edit_copy         = '~C~opy';
+      menu_edit_paste        = '~P~aste';
+      menu_edit_clear        = 'C~l~ear';
+
+      msg_errorreadingfile = 'Error reading file %s';
+      msg_loadingfile = 'Loading %s';
+      msg_storingfile = 'Storing %s';
+      msg_closingfile = 'Closing %s';
+
+      dialog_gdbwindow = 'GDB window';
+      dialog_disaswindow = 'Disassembly window';
+      dialog_clipboard = 'Clipboard';
+      dialog_userscreen = 'User screen';
+      dialog_about = 'About';
+      label_about_compilerversion = 'Compiler Version';
+      label_about_debugger = 'Debugger';
+
+      menu_msglocal_saveas = 'Save ~a~s';
+      msg_openingsourcefile = 'Opening source file... (%s)';
+      msg_readingfileineditor = 'Reading %s into editor...';
+      msg_nodebuggersupportavailable = 'No debugger support available.';
+
 {****************************************************************************
                                 TStoreCollection
 ****************************************************************************}
@@ -627,7 +715,7 @@ end;
 
 
 function IsThereAnyEditor: boolean;
-function EditorWindow(P: PView): boolean; {$ifndef FPC}far;{$endif}
+function EditorWindow(P: PView): boolean;
 begin
   EditorWindow:=(P^.HelpCtx=hcSourceWindow);
 end;
@@ -636,7 +724,7 @@ begin
 end;
 
 procedure AskToReloadAllModifiedFiles;
-  procedure EditorWindowModifiedOnDisk(P: PView); {$ifndef FPC}far;{$endif}
+  procedure EditorWindowModifiedOnDisk(P: PView);
 begin
   if (P^.HelpCtx=hcSourceWindow) then
     PSourceWindow(P)^.Editor^.ReloadFile;
@@ -685,7 +773,7 @@ begin
 end;
 
 function IsThereAnyWindow: boolean;
-function CheckIt(P: PView): boolean; {$ifndef FPC}far;{$endif}
+function CheckIt(P: PView): boolean;
 begin
   CheckIt:=IsWindow(P);
 end;
@@ -694,7 +782,7 @@ begin
 end;
 
 function IsThereAnyVisibleWindow: boolean;
-function CheckIt(P: PView): boolean; {$ifndef FPC}far;{$endif}
+function CheckIt(P: PView): boolean;
 begin
   CheckIt:=IsWindow(P) and P^.GetState(sfVisible);
 end;
@@ -703,7 +791,7 @@ begin
 end;
 
 function FirstEditorWindow: PSourceWindow;
-function EditorWindow(P: PView): boolean; {$ifndef FPC}far;{$endif}
+function EditorWindow(P: PView): boolean;
 begin
   EditorWindow:=(P^.HelpCtx=hcSourceWindow);
 end;
@@ -715,7 +803,7 @@ function EditorWindowFile(const Name : String): PSourceWindow;
 var
   SName : string;
 
-  function EditorWindow(P: PView): boolean; {$ifndef FPC}far;{$endif}
+  function EditorWindow(P: PView): boolean;
   begin
     EditorWindow:=(TypeOf(P^)=TypeOf(TSourceWindow)) and
                   (FixFileName(PSourceWindow(P)^.Editor^.FileName)=SName);
@@ -732,7 +820,7 @@ function InDisassemblyWindow :boolean;
 var
   PW : PWindow;
 
-function CheckIt(P: PView): boolean; {$ifndef FPC}far;{$endif}
+function CheckIt(P: PView): boolean;
 begin
   CheckIt:=IsWindow(P) and P^.GetState(sfVisible) and
      (P^.HelpCtx <> hcWatchesWindow) and
@@ -863,43 +951,68 @@ begin
   GetReservedWord:=S;
 end;
 
+
+{$ifdef powerpc}
+  {$define USE_TasmCondFlag}
+  {$define Use_gas_op2str}
+{$endif}
+{$ifdef powerpc64}
+  {$define USE_TasmCondFlag}
+  {$define Use_gas_op2str}
+{$endif}
+{$ifdef i386}
+  {$define USE_TasmCond}
+  {$define Use_std_op2str}
+{$endif}
+{$ifdef m68k}
+  {$define USE_None}
+  {$define Use_gas_op2str}
+{$endif}
+
 function GetAsmReservedWordCount: integer;
 begin
   GetAsmReservedWordCount:=ord(lastop) - ord(firstop)
-{$ifndef x86_64}
-{$ifndef powerpc}
-{$ifndef arm}
+{$ifdef Use_TasmCond}
     + CondAsmOps*(ord(high(TasmCond))-ord(low(TasmCond)));
-{$else arm}
-   { the arm has an incredible amount of combinations of opcodes,
-     we've to solve this different }
-   ;
-{$endif arm}
-{$else powerpc}
-   + CondAsmOps*(ord(high(TAsmCondFlag))-ord(low(TAsmCondFlag)));
-{$endif powerpc}
-{$endif x86_64}
+{$endif Use_TasmCond}
+{$ifdef Use_TasmCondFlag}
+    + CondAsmOps*(ord(high(TasmCondFlag))-ord(low(TasmCondFlag)));
+{$endif Use_TasmCondFlag}
+{$ifdef Use_None}
+    ;
+{$endif Use_None}
 end;
 
 
+{$define NOASM}
 function GetAsmReservedWord(Index: integer): string;
 var
   CondNum,CondOpNum : integer;
 begin
-{$ifdef I386}
-  if index <= ord(lastop) - ord(firstop) then
-    GetAsmReservedWord:=std_op2str[tasmop(Index+ord(firstop))]
-  else
-    begin
-      index:=index - (ord(lastop) - ord(firstop) );
-      CondOpNum:= index div (ord(high(TasmCond))-ord(low(TasmCond)));
-      CondNum:=index - (CondOpNum * (ord(high(TasmCond))-ord(low(TasmCond))));
-      GetAsmReservedWord:=CondAsmOpStr[CondOpNum]+cond2str[TasmCond(CondNum+ord(low(TAsmCond))+1)];
-    end;
-{$else not I386}
 {$ifdef m68k}
+{$undef NOASM}
   if index <= ord(lastop) - ord(firstop) then
-    GetAsmReservedWord:=mot_op2str[tasmop(Index+ord(firstop))]
+    GetAsmReservedWord:=gas_op2str[tasmop(Index+ord(firstop))]
+  else
+    GetAsmReservedWord:='';
+  (*
+    begin
+      index:=index - (ord(lastop) - ord(firstop) );
+      CondOpNum:= index div (ord(high(TasmCond))-ord(low(TasmCond)));
+      CondNum:=index - (CondOpNum * (ord(high(TasmCond))-ord(low(TasmCond))));
+      GetAsmReservedWord:=CondAsmOpStr[CondOpNum]+cond2str[TasmCond(CondNum+ord(low(TAsmCond))+1)];
+    end;
+    *)
+{$else not m68k}
+  if index <= ord(lastop) - ord(firstop) then
+{$ifdef Use_gas_op2str}
+    GetAsmReservedWord:=gas_op2str[tasmop(Index+ord(firstop))]
+{$endif Use_gas_op2str}
+{$ifdef Use_std_op2str}
+    GetAsmReservedWord:=std_op2str[tasmop(Index+ord(firstop))]
+{$endif Use_std_op2str}
+{$ifdef Use_TASMCond}
+{$undef NOASM}
   else
     begin
       index:=index - (ord(lastop) - ord(firstop) );
@@ -907,10 +1020,21 @@ begin
       CondNum:=index - (CondOpNum * (ord(high(TasmCond))-ord(low(TasmCond))));
       GetAsmReservedWord:=CondAsmOpStr[CondOpNum]+cond2str[TasmCond(CondNum+ord(low(TAsmCond))+1)];
     end;
-{$else not m68k}
+{$endif Use_TASMCond}
+{$ifdef Use_TASMCondFlag}
+{$undef NOASM}
+  else
+    begin
+      index:=index - (ord(lastop) - ord(firstop) );
+      CondOpNum:= index div (ord(high(TasmCondFlag))-ord(low(TasmCondFlag)));
+      CondNum:=index - (CondOpNum * (ord(high(TasmCondFlag))-ord(low(TasmCondFlag))));
+      GetAsmReservedWord:=CondAsmOpStr[CondOpNum]+AsmCondFlag2Str[TasmCondFlag(CondNum+ord(low(TAsmCondFlag))+1)];
+    end;
+{$endif Use_TASMCond}
+{$endif not m68k}
+{$ifdef NOASM}
   GetAsmReservedWord:='';
-{$endif m68k}
-{$endif I386}
+{$endif NOASM}
 end;
 
 procedure InitReservedWords;
@@ -1028,7 +1152,7 @@ begin
 end;
 
 function SearchWindow(const Title: string): PWindow;
-function Match(P: PView): boolean; {$ifndef FPC}far;{$endif}
+function Match(P: PView): boolean;
 var W: PWindow;
     OK: boolean;
 begin
@@ -1094,7 +1218,7 @@ end;
 
 function SearchCoreForFileName(AFileName: string): PCodeEditorCore;
 var EC: PCodeEditorCore;
-function Check(P: PView): boolean; {$ifndef FPC}far;{$endif}
+function Check(P: PView): boolean;
 var OK: boolean;
 begin
   OK:=P^.HelpCtx=hcSourceWindow;
@@ -1348,7 +1472,7 @@ begin
       if JumpPos.X<>-1 then
       begin
         SetCurPtr(JumpPos.X,JumpPos.Y);
-        TrackCursor(true);
+        TrackCursor(do_centre);
       end;
     end;
 end;
@@ -1669,9 +1793,9 @@ var M: PMenu;
     MI: PMenuItem;
 begin
   MI:=
-    NewItem(menu_edit_cut,menu_key_edit_cut,kbShiftDel,cmCut,hcCut,
-    NewItem(menu_edit_copy,menu_key_edit_copy,kbCtrlIns,cmCopy,hcCopy,
-    NewItem(menu_edit_paste,menu_key_edit_paste,kbShiftIns,cmPaste,hcPaste,
+    NewItem(menu_edit_cut,menu_key_edit_cut,cut_key,cmCut,hcCut,
+    NewItem(menu_edit_copy,menu_key_edit_copy,copy_key,cmCopy,hcCopy,
+    NewItem(menu_edit_paste,menu_key_edit_paste,paste_key,cmPaste,hcPaste,
     NewItem(menu_edit_clear,menu_key_edit_clear,kbCtrlDel,cmClear,hcClear,
     NewLine(
     NewItem(menu_srclocal_openfileatcursor,'',kbNoKey,cmOpenAtCursor,hcOpenAtCursor,
@@ -1954,13 +2078,20 @@ function TFPHelpViewer.GetLocalMenu: PMenu;
 var M: PMenu;
 begin
   M:=NewMenu(
+{$ifdef DEBUG}
+    NewItem(menu_hlplocal_debug,'',kbNoKey,cmHelpDebug,hcHelpDebug,
+{$endif DEBUG}
     NewItem(menu_hlplocal_contents,'',kbNoKey,cmHelpContents,hcHelpContents,
     NewItem(menu_hlplocal_index,menu_key_hlplocal_index,kbShiftF1,cmHelpIndex,hcHelpIndex,
     NewItem(menu_hlplocal_topicsearch,menu_key_hlplocal_topicsearch,kbCtrlF1,cmHelpTopicSearch,hcHelpTopicSearch,
     NewItem(menu_hlplocal_prevtopic,menu_key_hlplocal_prevtopic,kbAltF1,cmHelpPrevTopic,hcHelpPrevTopic,
     NewLine(
-    NewItem(menu_hlplocal_copy,menu_key_hlplocal_copy,kbCtrlIns,cmCopy,hcCopy,
-    nil)))))));
+    NewItem(menu_hlplocal_copy,menu_key_hlplocal_copy,copy_key,cmCopy,hcCopy,
+    nil)))))))
+{$ifdef DEBUG}
+      )
+{$endif DEBUG}
+    ;
   GetLocalMenu:=M;
 end;
 
@@ -2145,7 +2276,7 @@ begin
             Hide;
           cmSave :
             if Editor^.IsClipboard=false then
-             if (Editor^.FileName='') and Editor^.GetModified then
+             if (Editor^.FileName='') then
               Editor^.SaveAs
              else
               Editor^.Save;
@@ -2546,7 +2677,7 @@ var
   LI : PEditorLineInfo;
 begin
    if AAddress<>0 then
-     inherited AddLine('$'+hexstr(AAddress,8)+S)
+     inherited AddLine('$'+hexstr(AAddress,sizeof(PtrUInt)*2)+S)
    else
      inherited AddLine(S);
    PL:=DisasLines^.At(DisasLines^.count-1);
@@ -2578,7 +2709,7 @@ begin
       SetCurPtr(0,DisasLines^.IndexOf(PL));
       PL^.SetFlags(lfDebuggerRow);
       CurL:=PL;
-      TrackCursor(false);
+      TrackCursor(do_not_centre);
     end;
   GetCurrentLine:=PL;
 end;
@@ -3010,7 +3141,7 @@ begin
   if W<>nil then
     begin
       W^.Select;
-      W^.Editor^.TrackCursor(true);
+      W^.Editor^.TrackCursor(do_centre);
       W^.Editor^.SetLineFlagExclusive(lfHighlightRow,Row);
     end;
   if Assigned(Owner) then
@@ -3309,7 +3440,7 @@ end;
 
 procedure TTab.ChangeBounds(var Bounds: TRect);
 var D: TPoint;
-procedure DoCalcChange(P: PView); {$ifndef FPC}far;{$endif}
+procedure DoCalcChange(P: PView);
 var
   R: TRect;
 begin
@@ -3599,7 +3730,7 @@ end;
 
 destructor TTab.Done;
 var P,X: PTabDef;
-procedure DeleteViews(P: PView); {$ifndef FPC}far;{$endif}
+procedure DeleteViews(P: PView);
 begin
   if P<>nil then Delete(P);
 end;
@@ -3759,11 +3890,13 @@ begin
        with W^.Editor^ do
        begin
          SetCurPtr(CurX,CurY);
-         TrackCursor(true);
+         TrackCursor(do_centre);
        end;
     W^.HelpCtx:=hcSourceWindow;
     Desktop^.Insert(W);
+    { this makes loading a lot slower and is not needed as far as I can see (FK)
     Message(Application,evBroadcast,cmUpdate,nil);
+    }
   end;
   PopStatus;
   IOpenEditorWindow:=W;
@@ -3777,7 +3910,7 @@ end;
 
 function LastSourceEditor : PSourceWindow;
 
-  function IsSearchedSource(P: PView) : boolean; {$ifndef FPC}far;{$endif}
+  function IsSearchedSource(P: PView) : boolean;
   begin
     if assigned(P) and
        (TypeOf(P^)=TypeOf(TSourceWindow)) then
@@ -3827,7 +3960,7 @@ function IsSearchedFile(W : PSourceWindow) : boolean;
       end;
     IsSearchedFile:=found;
   end;
-function IsSearchedSource(P: PView) : boolean; {$ifndef FPC}far;{$endif}
+function IsSearchedSource(P: PView) : boolean;
 begin
   if assigned(P) and
      (TypeOf(P^)=TypeOf(TSourceWindow)) then
@@ -3845,6 +3978,22 @@ function TryToOpenFile(Bounds: PRect; FileName: string; CurX,CurY: sw_integer;tr
 begin
   TryToOpenFile:=ITryToOpenFile(Bounds,FileName,CurX,CurY,tryexts,true,false);
 end;
+
+function TryToOpenFileMulti(Bounds: PRect; FileName: string; CurX,CurY: sw_integer;tryexts:boolean): PSourceWindow;
+var srec:SearchRec;
+    dir,name,ext : string;
+begin
+ fsplit(filename,dir,name,ext);
+ dir:=completedir(dir);
+ FindFirst(filename,anyfile,Srec);
+ while (DosError=0) do
+   begin
+     ITryToOpenFile(Bounds,dir+srec.name,CurX,CurY,tryexts,true,false);
+     FindNext(srec);
+   end;
+  FindClose(srec);
+end;
+
 
 function LocateSingleSourceFile(const FileName: string; tryexts: boolean): string;
 var D : DirStr;
@@ -4091,7 +4240,7 @@ begin
   Insert(New(PStaticText, Init(R2, ^C'With Graphic Support')));
   R2.Move(0,1);
 {$endif USE_GRAPH_SWITCH}
-  Insert(New(PStaticText, Init(R2, FormatStrStr2(^C'(%s %s)',label_about_compilerversion,Version_String))));
+  Insert(New(PStaticText, Init(R2, FormatStrStr2(^C'(%s %s)',label_about_compilerversion,Full_Version_String))));
 {$ifndef NODEBUG}
   if pos('Fake',GDBVersion)=0 then
     begin
@@ -4102,7 +4251,7 @@ begin
   else
 {$endif NODEBUG}
     R2.Move(0,2);
-  Insert(New(PStaticText, Init(R2, ^C'Copyright (C) 1998-2005 by')));
+  Insert(New(PStaticText, Init(R2, ^C'Copyright (C) 1998-2011 by')));
   R2.Move(0,2);
   Insert(New(PStaticText, Init(R2, ^C'B‚rczi G bor')));
   R2.Move(0,1);
@@ -4360,6 +4509,29 @@ begin
   SetFlags(Flags and not (efPersistentBlocks) or efSyntaxHighlight);
 end;
 
+procedure TFPMemo.HandleEvent(var Event: TEvent);
+var DontClear: boolean;
+    S: string;
+begin
+  case Event.What of
+    evKeyDown :
+      begin
+        DontClear:=false;
+        case Event.KeyCode of
+          kbEsc:
+            begin
+              Event.What:=evCommand;
+              Event.Command:=cmCancel;
+              PutEvent(Event);
+            end;
+        else DontClear:=true;
+        end;
+        if not DontClear then ClearEvent(Event);
+      end;
+  end;
+  inherited HandleEvent(Event);
+end;
+
 function TFPMemo.GetPalette: PPalette;
 const P: string[length(CFPMemo)] = CFPMemo;
 begin
@@ -4435,7 +4607,7 @@ end;
 
 
 {$ifdef VESA}
-function VESASetVideoModeProc(const VideoMode: TVideoMode; Params: Longint): Boolean; {$ifndef FPC}far;{$endif}
+function VESASetVideoModeProc(const VideoMode: TVideoMode; Params: Longint): Boolean;
 begin
   VESASetVideoModeProc:=VESASetMode(Params);
 end;
@@ -4493,24 +4665,3 @@ end;
 
 
 END.
-{
-  $Log: fpviews.pas,v $
-  Revision 1.59  2005/03/07 17:16:56  peter
-    * ignore reserved tokens of length 1
-
-  Revision 1.58  2005/02/14 17:13:18  peter
-    * truncate log
-
-  Revision 1.57  2005/01/16 00:43:03  florian
-    * fixed disassembly window on sparc
-
-  Revision 1.56  2005/01/08 13:43:44  florian
-    * updated version and copyright
-
-  Revision 1.55  2005/01/08 11:43:18  florian
-    + vector unit window
-
-  Revision 1.54  2005/01/07 19:09:28  florian
-    * highlight keywords of all language modes
-
-}

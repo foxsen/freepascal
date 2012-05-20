@@ -1,5 +1,4 @@
 {
-    $Id: setjump.inc,v 1.6 2005/02/14 17:13:21 peter Exp $
 
     This file is part of the Free Pascal run time library.
     Copyright (c) 2003 by the Free Pascal development team.
@@ -15,30 +14,58 @@
 
  **********************************************************************}
 
-function setjmp(var S : jmp_buf) : longint;assembler;[Public, alias : 'FPC_SETJMP'];nostackframe;
-  label FPC_SETJMP;
+function fpc_setjmp(var S : jmp_buf) : longint;assembler;[Public, alias : 'FPC_SETJMP'];nostackframe; compilerproc;
   asm
-    stmia   r0,{v1-v6, sl, fp, sp, lr}
+    {$if defined(FPUVFPV2) or defined(FPUVFPV3) or defined(FPUVFPV3_D16)}
+    {$if defined(CPUARMV3) or defined(CPUARMV4) or defined(CPUARMV5)}
+    fstmiax r0!, {d8-d15}
+    {$else}
+    fstmiad r0!, {d8-d15}
+    {$endif}
+    {$endif}
+
+    {$if defined(CPUCORTEXM3) or defined(CPUARMV7M)}
+    stmia	r0!, {v1-v6, sl, fp}
+    mov	   r2, sp
+    stmia	r0!, {r2, lr}
+
     mov     r0,#0
     mov     pc,lr
+    {$else}
+    stmia   r0,{v1-v6, sl, fp, sp, lr}
+    mov     r0,#0
+    bx      lr
+    {$endif}
   end;
 
 
-procedure longjmp(var S : jmp_buf;value : longint);assembler;[Public, alias : 'FPC_LONGJMP'];
+procedure fpc_longjmp(var S : jmp_buf;value : longint);assembler;[Public, alias : 'FPC_LONGJMP']; compilerproc;
   asm
-     mov     ip, r0
-     movs    r0, r1
-     moveq   r0, #1
-     ldmia   ip,{v1-v6, sl, fp, sp, pc}
+    {$if defined(CPUCORTEXM3) or defined(CPUARMV7M)}
+    mov     ip, r0
+    movs    r0, r1
+    it eq
+    moveq   r0, #1
+    {$if defined(FPUVFPV2) or defined(FPUVFPV3) or defined(FPUVFPV3_D16)}
+    fldmiad ip!, {d8-d15}
+    {$endif}
+    ldmia   ip!, {v1-v6, sl, fp}
+    ldr     sp, [ip]
+    add     ip, ip, #4
+    ldr     pc, [ip]
+    {$else}
+    mov     ip, r0
+    movs    r0, r1
+    moveq   r0, #1
+    {$if defined(FPUVFPV2) or defined(FPUVFPV3) or defined(FPUVFPV3_D16)}
+    {$if defined(CPUARMV3) or defined(CPUARMV4) or defined(CPUARMV5)}
+    fldmiax ip!, {d8-d15}
+    {$else}
+    fldmiad ip!, {d8-d15}
+    {$endif}
+    {$endif}
+    ldmia   ip,{v1-v6, sl, fp, sp, pc}
+    {$endif}
   end;
 
 
-{
-  $Log: setjump.inc,v $
-  Revision 1.6  2005/02/14 17:13:21  peter
-    * truncate log
-
-  Revision 1.5  2005/01/04 16:22:05  florian
-    + added nostackframe directive
-
-}

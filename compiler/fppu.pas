@@ -1,5 +1,4 @@
 {
-    $Id: fppu.pas,v 1.68 2005/03/20 22:36:45 olle Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl
 
     This unit implements the first loading and searching of the modules
@@ -36,21 +35,26 @@ unit fppu;
 interface
 
     uses
-       cutils,cclasses,
-       globtype,globals,finput,fmodule,
-       symbase,ppu,symtype;
+      cmsgs,verbose,
+      cutils,cclasses,
+      globtype,globals,finput,fmodule,
+      symbase,ppu,symtype;
 
     type
+
+       { tppumodule }
+
        tppumodule = class(tmodule)
           ppufile    : tcompilerppufile; { the PPU file }
-          sourcefn   : pstring; { Source specified with "uses .. in '..'" }
+          sourcefn   : TPathStr; { Source specified with "uses .. in '..'" }
+          comments   : TCmdStrList;
 {$ifdef Test_Double_checksum}
           crc_array  : pointer;
           crc_size   : longint;
           crc_array2 : pointer;
           crc_size2  : longint;
 {$endif def Test_Double_checksum}
-          constructor create(LoadedFrom:TModule;const s:string;const fn:string;_is_unit:boolean);
+          constructor create(LoadedFrom:TModule;const amodulename: string; const afilename:TPathStr;_is_unit:boolean);
           destructor destroy;override;
           procedure reset;override;
           function  openppu:boolean;
@@ -58,25 +62,38 @@ interface
           procedure writeppu;
           procedure loadppu;
           function  needrecompile:boolean;
+          procedure setdefgeneration;
+          procedure reload_flagged_units;
        private
+         { Each time a unit's defs are (re)created, its defsgeneration is
+           set to the value of a global counter, and the global counter is
+           increased. We only reresolve its dependent units' defs in case
+           they have been resolved only for an older generation, in order to
+           avoid endless resolving loops in case of cyclic dependencies. }
+          defsgeneration : longint;
+
+          function  search_unit_files(onlysource:boolean):boolean;
           function  search_unit(onlysource,shortname:boolean):boolean;
           procedure load_interface;
           procedure load_implementation;
-          procedure load_symtable_refs;
           procedure load_usedunits;
+          procedure printcomments;
+          procedure queuecomment(const s:TMsgStr;v,w:longint);
           procedure writesourcefiles;
           procedure writeusedunit(intf:boolean);
           procedure writelinkcontainer(var p:tlinkcontainer;id:byte;strippath:boolean);
           procedure writederefmap;
           procedure writederefdata;
-          procedure putasmsymbol_in_idx(s:tnamedindexitem;arg:pointer);
-          procedure writeasmsymbols;
+          procedure writeImportSymbols;
+          procedure writeResources;
           procedure readsourcefiles;
           procedure readloadunit;
           procedure readlinkcontainer(var p:tlinkcontainer);
           procedure readderefmap;
           procedure readderefdata;
-          procedure readasmsymbols;
+          procedure readImportSymbols;
+          procedure readResources;
+          procedure readwpofile;
 {$IFDEF MACRO_DIFF_HINT}
           procedure writeusedmacro(p:TNamedIndexItem;arg:pointer);
           procedure writeusedmacros;
@@ -84,47 +101,35 @@ interface
 {$ENDIF}
        end;
 
-    procedure reload_flagged_units;
-    function registerunit(callermodule:tmodule;const s : stringid;const fn:string) : tppumodule;
+    function registerunit(callermodule:tmodule;const s : TIDString;const fn:string) : tppumodule;
 
 
 implementation
 
 uses
-  verbose,systems,version,
+  SysUtils,strutils,
+  cfileutl,
+  systems,version,
   symtable, symsym,
+  wpoinfo,
   scanner,
-  aasmbase,
-  parser;
+  aasmbase,ogbase,
+  parser,
+  comphook;
 
-{****************************************************************************
-                                 Helpers
- ****************************************************************************}
 
-    procedure reload_flagged_units;
-      var
-        hp : tmodule;
-      begin
-        { now reload all dependent units }
-        hp:=tmodule(loaded_units.first);
-        while assigned(hp) do
-         begin
-           if hp.do_reload then
-             tppumodule(hp).loadppu;
-           hp:=tmodule(hp.next);
-         end;
-      end;
-
+var
+  currentdefgeneration: longint;
 
 {****************************************************************************
                                 TPPUMODULE
  ****************************************************************************}
 
-    constructor tppumodule.create(LoadedFrom:TModule;const s:string;const fn:string;_is_unit:boolean);
+    constructor tppumodule.create(LoadedFrom:TModule;const amodulename: string; const afilename:TPathStr;_is_unit:boolean);
       begin
-        inherited create(LoadedFrom,s,_is_unit);
+        inherited create(LoadedFrom,amodulename,afilename,_is_unit);
         ppufile:=nil;
-        sourcefn:=stringdup(fn);
+        sourcefn:=afilename;
       end;
 
 
@@ -133,13 +138,15 @@ uses
         if assigned(ppufile) then
          ppufile.free;
         ppufile:=nil;
-        stringdispose(sourcefn);
+        comments.free;
+        comments:=nil;
         inherited Destroy;
       end;
 
 
     procedure tppumodule.reset;
       begin
+        inc(currentdefgeneration);
         if assigned(ppufile) then
          begin
            ppufile.free;
@@ -148,20 +155,41 @@ uses
         inherited reset;
       end;
 
+    procedure tppumodule.queuecomment(const s:TMsgStr;v,w:longint);
+    begin
+      if comments = nil then
+        comments := TCmdStrList.create;
+      comments.insert(s);
+    end;
+
+    procedure tppumodule.printcomments;
+    var
+      comment: string;
+    begin
+      if comments = nil then
+        exit;
+      { comments are inserted in reverse order }
+      repeat
+        comment := comments.getlast;
+        if length(comment) = 0 then
+          exit;
+        do_comment(v_normal, comment);
+      until false;
+    end;
 
     function tppumodule.openppu:boolean;
       var
         ppufiletime : longint;
       begin
         openppu:=false;
-        Message1(unit_t_ppu_loading,ppufilename^);
+        Message1(unit_t_ppu_loading,ppufilename,@queuecomment);
       { Get ppufile time (also check if the file exists) }
-        ppufiletime:=getnamedfiletime(ppufilename^);
+        ppufiletime:=getnamedfiletime(ppufilename);
         if ppufiletime=-1 then
          exit;
       { Open the ppufile }
-        Message1(unit_u_ppu_name,ppufilename^);
-        ppufile:=tcompilerppufile.create(ppufilename^);
+        Message1(unit_u_ppu_name,ppufilename);
+        ppufile:=tcompilerppufile.create(ppufilename);
         if not ppufile.openfile then
          begin
            ppufile.free;
@@ -180,7 +208,7 @@ uses
       { check for allowed PPU versions }
         if not (ppufile.GetPPUVersion = CurrentPPUVersion) then
          begin
-           Message1(unit_u_ppu_invalid_version,tostr(ppufile.GetPPUVersion));
+           Message1(unit_u_ppu_invalid_version,tostr(ppufile.GetPPUVersion),@queuecomment);
            ppufile.free;
            ppufile:=nil;
            exit;
@@ -190,7 +218,7 @@ uses
          begin
            ppufile.free;
            ppufile:=nil;
-           Message(unit_u_ppu_invalid_processor);
+           Message(unit_u_ppu_invalid_processor,@queuecomment);
            exit;
          end;
       { check target }
@@ -198,17 +226,18 @@ uses
          begin
            ppufile.free;
            ppufile:=nil;
-           Message(unit_u_ppu_invalid_target);
+           Message(unit_u_ppu_invalid_target,@queuecomment);
            exit;
          end;
 {$ifdef cpufpemu}
-       { check if floating point emulation is on?}
-        if ((ppufile.header.flags and uf_fpu_emulation)<>0) and
-            (cs_fp_emulation in aktmoduleswitches) then
+       { check if floating point emulation is on?
+         fpu emulation isn't unit levelwise because it affects calling convention }
+       if ((ppufile.header.flags and uf_fpu_emulation)<>0) xor
+            (cs_fp_emulation in current_settings.moduleswitches) then
          begin
            ppufile.free;
            ppufile:=nil;
-           Message(unit_u_ppu_invalid_fpumode);
+           Message(unit_u_ppu_invalid_fpumode,@queuecomment);
            exit;
          end;
 {$endif cpufpemu}
@@ -217,31 +246,51 @@ uses
         flags:=ppufile.header.flags;
         crc:=ppufile.header.checksum;
         interface_crc:=ppufile.header.interface_checksum;
+        indirect_crc:=ppufile.header.indirect_checksum;
       { Show Debug info }
         Message1(unit_u_ppu_time,filetimestring(ppufiletime));
         Message1(unit_u_ppu_flags,tostr(flags));
         Message1(unit_u_ppu_crc,hexstr(ppufile.header.checksum,8));
         Message1(unit_u_ppu_crc,hexstr(ppufile.header.interface_checksum,8)+' (intfc)');
+        Message1(unit_u_ppu_crc,hexstr(ppufile.header.indirect_checksum,8)+' (indc)');
+        Comment(V_used,'Number of definitions: '+tostr(ppufile.header.deflistsize));
+        Comment(V_used,'Number of symbols: '+tostr(ppufile.header.symlistsize));
         do_compile:=false;
         openppu:=true;
+      end;
+
+
+    function tppumodule.search_unit_files(onlysource:boolean):boolean;
+      var
+        found : boolean;
+      begin
+        found:=false;
+        if search_unit(onlysource,false) then
+          found:=true;
+        if (not found) and
+           (length(modulename^)>8) and
+           search_unit(onlysource,true) then
+          found:=true;
+        search_unit_files:=found;
       end;
 
 
     function tppumodule.search_unit(onlysource,shortname:boolean):boolean;
       var
          singlepathstring,
-         filename : string;
+         filename : TCmdStr;
 
-         Function UnitExists(const ext:string;var foundfile:string):boolean;
+         Function UnitExists(const ext:string;var foundfile:TCmdStr):boolean;
          begin
-           Message1(unit_t_unitsearch,Singlepathstring+filename+ext);
-           UnitExists:=FindFile(FileName+ext,Singlepathstring,foundfile);
+           if CheckVerbosity(V_Tried) then
+             Message1(unit_t_unitsearch,Singlepathstring+filename+ext);
+           UnitExists:=FindFile(FileName+ext,Singlepathstring,true,foundfile);
          end;
 
-         Function PPUSearchPath(const s:string):boolean;
+         Function PPUSearchPath(const s:TCmdStr):boolean;
          var
            found : boolean;
-           hs    : string;
+           hs    : TCmdStr;
          begin
            Found:=false;
            singlepathstring:=FixPath(s,false);
@@ -255,10 +304,10 @@ uses
            PPUSearchPath:=Found;
          end;
 
-         Function SourceSearchPath(const s:string):boolean;
+         Function SourceSearchPath(const s:TCmdStr):boolean;
          var
            found   : boolean;
-           hs      : string;
+           hs      : TCmdStr;
          begin
            Found:=false;
            singlepathstring:=FixPath(s,false);
@@ -273,17 +322,19 @@ uses
               { Check for .pas }
               Found:=UnitExists(pasext,hs);
             end;
-           if not Found and (m_mac in aktmodeswitches) then
+           if not Found and
+              ((m_mac in current_settings.modeswitches) or
+               (tf_p_ext_support in target_info.flags)) then
             begin
               { Check for .p, if mode is macpas}
               Found:=UnitExists(pext,hs);
             end;
-           stringdispose(mainsource);
+           mainsource:='';
            if Found then
             begin
               sources_avail:=true;
               { Load Filenames when found }
-              mainsource:=StringDup(hs);
+              mainsource:=hs;
               SetFileName(hs,false);
             end
            else
@@ -291,7 +342,7 @@ uses
            SourceSearchPath:=Found;
          end;
 
-         Function SearchPath(const s:string):boolean;
+         Function SearchPath(const s:TCmdStr):boolean;
          var
            found : boolean;
          begin
@@ -306,24 +357,24 @@ uses
 
          Function SearchPathList(list:TSearchPathList):boolean;
          var
-           hp : TStringListItem;
+           hp : TCmdStrListItem;
            found : boolean;
          begin
            found:=false;
-           hp:=TStringListItem(list.First);
+           hp:=TCmdStrListItem(list.First);
            while assigned(hp) do
             begin
               found:=SearchPath(hp.Str);
               if found then
                break;
-              hp:=TStringListItem(hp.next);
+              hp:=TCmdStrListItem(hp.next);
             end;
            SearchPathList:=found;
          end;
 
        var
          fnd : boolean;
-         hs  : string;
+         hs  : TPathStr;
        begin
          if shortname then
           filename:=FixFileName(Copy(realmodulename^,1,8))
@@ -332,68 +383,59 @@ uses
          { try to find unit
             1. look for ppu in cwd
             2. look for ppu in outputpath if set, this is tp7 compatible (PFV)
-            3. look for the specified source file (from the uses line)
-            4. look for source in cwd
-            5. look in same path as local unit
-            6. local unit pathlist
-            7. global unit pathlist }
+            3. look for ppu in maindir
+            4. look for the specified source file (from the uses line)
+            5. look for source in cwd
+            6. look for source in maindir
+            7. local unit pathlist
+            8. global unit pathlist }
          fnd:=false;
          if not onlysource then
           begin
             fnd:=PPUSearchPath('.');
-            if (not fnd) and (outputpath^<>'') then
-             fnd:=PPUSearchPath(outputpath^);
-           end;
-         if (not fnd) and (sourcefn^<>'') then
+            if (not fnd) and (outputpath<>'') then
+             fnd:=PPUSearchPath(outputpath);
+            if (not fnd) and Assigned(main_module) and (main_module.Path<>'')  then
+             fnd:=PPUSearchPath(main_module.Path);
+          end;
+         if (not fnd) and (sourcefn<>'') then
           begin
             { the full filename is specified so we can't use here the
               searchpath (PFV) }
-            Message1(unit_t_unitsearch,AddExtension(sourcefn^,sourceext));
-            fnd:=FindFile(AddExtension(sourcefn^,sourceext),'',hs);
+            if CheckVerbosity(V_Tried) then
+              Message1(unit_t_unitsearch,ChangeFileExt(sourcefn,sourceext));
+            fnd:=FindFile(ChangeFileExt(sourcefn,sourceext),'',true,hs);
             if not fnd then
              begin
-               Message1(unit_t_unitsearch,AddExtension(sourcefn^,pasext));
-               fnd:=FindFile(AddExtension(sourcefn^,pasext),'',hs);
+               if CheckVerbosity(V_Tried) then
+                 Message1(unit_t_unitsearch,ChangeFileExt(sourcefn,pasext));
+               fnd:=FindFile(ChangeFileExt(sourcefn,pasext),'',true,hs);
              end;
-            if not fnd and ((m_mac in aktmodeswitches) or target_info.p_ext_support) then
+            if not fnd and
+               ((m_mac in current_settings.modeswitches) or
+                (tf_p_ext_support in target_info.flags)) then
              begin
-               Message1(unit_t_unitsearch,AddExtension(sourcefn^,pext));
-               fnd:=FindFile(AddExtension(sourcefn^,pext),'',hs);
+               if CheckVerbosity(V_Tried) then
+                 Message1(unit_t_unitsearch,ChangeFileExt(sourcefn,pext));
+               fnd:=FindFile(ChangeFileExt(sourcefn,pext),'',true,hs);
              end;
             if fnd then
              begin
                sources_avail:=true;
                do_compile:=true;
                recompile_reason:=rr_noppu;
-               stringdispose(mainsource);
-               mainsource:=StringDup(hs);
+               mainsource:=hs;
                SetFileName(hs,false);
              end;
           end;
          if not fnd then
            fnd:=SourceSearchPath('.');
-         if (not fnd) and Assigned(Loaded_From) then
-           begin
-             fnd:=PPUSearchPath(Loaded_From.Path^);
-             if not fnd then
-               fnd:=SourceSearchPath(Loaded_From.Path^);
-             if not fnd then
-               fnd:=SearchPathList(Loaded_From.LocalUnitSearchPath);
-           end;
+         if (not fnd) and Assigned(main_module) and (main_module.Path<>'') then
+           fnd:=SourceSearchPath(main_module.Path);
+         if (not fnd) and Assigned(loaded_from) then
+           fnd:=SearchPathList(loaded_from.LocalUnitSearchPath);
          if not fnd then
            fnd:=SearchPathList(UnitSearchPath);
-
-         { try to find a file with the first 8 chars of the modulename, like
-           dos }
-         if (not fnd) and (length(filename)>8) then
-          begin
-            filename:=copy(filename,1,8);
-            fnd:=SearchPath('.');
-            if (not fnd) then
-             fnd:=SearchPathList(LocalUnitSearchPath);
-            if not fnd then
-             fnd:=SearchPathList(UnitSearchPath);
-          end;
          search_unit:=fnd;
       end;
 
@@ -450,7 +492,7 @@ uses
             hp:=sourcefiles.files;
             for i:=1 to j-1 do
               hp:=hp.ref_next;
-            ppufile.putstring(hp.name^);
+            ppufile.putstring(hp.name);
             ppufile.putlongint(hp.getfiletime);
             dec(j);
          end;
@@ -476,7 +518,11 @@ uses
                ppufile.do_crc:=false;
                ppufile.putlongint(longint(hp.checksum));
                ppufile.putlongint(longint(hp.interface_checksum));
+               ppufile.putlongint(longint(hp.indirect_checksum));
                ppufile.do_crc:=oldcrc;
+               { combine all indirect checksums from units used by this unit }
+               if intf then
+                 ppufile.indirect_crc:=ppufile.indirect_crc xor hp.indirect_checksum;
              end;
            hp:=tused_unit(hp.next);
          end;
@@ -488,7 +534,7 @@ uses
     procedure tppumodule.writelinkcontainer(var p:tlinkcontainer;id:byte;strippath:boolean);
       var
         hcontainer : tlinkcontainer;
-        s : string;
+        s : TPathStr;
         mask : cardinal;
       begin
         hcontainer:=TLinkContainer.Create;
@@ -496,7 +542,7 @@ uses
          begin
            s:=p.get(mask);
            if strippath then
-            ppufile.putstring(SplitFileName(s))
+            ppufile.putstring(ExtractFileName(s))
            else
             ppufile.putstring(s);
            ppufile.putlongint(mask);
@@ -535,7 +581,7 @@ uses
         len,hlen : longint;
         buf : array[0..1023] of byte;
       begin
-        if derefdataintflen>derefdata.size then
+        if longword(derefdataintflen)>derefdata.size then
           internalerror(200310223);
         derefdata.seek(0);
         { Write interface data }
@@ -571,53 +617,43 @@ uses
       end;
 
 
-    procedure tppumodule.putasmsymbol_in_idx(s:tnamedindexitem;arg:pointer);
-      begin
-        if tasmsymbol(s).ppuidx<>-1 then
-         librarydata.asmsymbolidx^[tasmsymbol(s).ppuidx-1]:=tasmsymbol(s);
-      end;
-
-
-    procedure tppumodule.writeasmsymbols;
+    procedure tppumodule.writeImportSymbols;
       var
-        s : tasmsymbol;
-        i : longint;
-        asmsymtype : byte;
+        i,j : longint;
+        ImportLibrary : TImportLibrary;
+        ImportSymbol  : TImportSymbol;
       begin
-        { get an ordered list of all symbols to put in the ppu }
-        getmem(librarydata.asmsymbolidx,librarydata.asmsymbolppuidx*sizeof(pointer));
-        fillchar(librarydata.asmsymbolidx^,librarydata.asmsymbolppuidx*sizeof(pointer),0);
-        librarydata.symbolsearch.foreach(@putasmsymbol_in_idx,nil);
-        { write the number of symbols }
-        ppufile.putlongint(librarydata.asmsymbolppuidx);
-        { write the symbols from the indexed list to the ppu }
-        for i:=1 to librarydata.asmsymbolppuidx do
-         begin
-           s:=librarydata.asmsymbolidx^[i-1];
-           if not assigned(s) then
-            internalerror(200208071);
-           asmsymtype:=1;
-           if s.Classtype=tasmlabel then
-            begin
-              if tasmlabel(s).is_addr then
-               asmsymtype:=4
-              else if tasmlabel(s).typ=AT_DATA then
-               asmsymtype:=3
-              else
-               asmsymtype:=2;
-            end;
-           ppufile.putbyte(asmsymtype);
-           case asmsymtype of
-             1 :
-               ppufile.putstring(s.name);
-             2..4 :
-               ppufile.putlongint(tasmlabel(s).labelnr);
-           end;
-           ppufile.putbyte(byte(s.defbind));
-           ppufile.putbyte(byte(s.typ));
-         end;
-        ppufile.writeentry(ibasmsymbols);
+        for i:=0 to ImportLibraryList.Count-1 do
+          begin
+            ImportLibrary:=TImportLibrary(ImportLibraryList[i]);
+            ppufile.putstring(ImportLibrary.Name);
+            ppufile.putlongint(ImportLibrary.ImportSymbolList.Count);
+            for j:=0 to ImportLibrary.ImportSymbolList.Count-1 do
+              begin
+                ImportSymbol:=TImportSymbol(ImportLibrary.ImportSymbolList[j]);
+                ppufile.putstring(ImportSymbol.Name);
+                ppufile.putstring(ImportSymbol.MangledName);
+                ppufile.putlongint(ImportSymbol.OrdNr);
+                ppufile.putbyte(byte(ImportSymbol.IsVar));
+              end;
+          end;
+        ppufile.writeentry(ibImportSymbols);
       end;
+
+
+    procedure tppumodule.writeResources;
+      var
+        res : TCmdStrListItem;
+      begin
+        res:=TCmdStrListItem(ResourceFiles.First);
+        while res<>nil do
+          begin
+            ppufile.putstring(res.FPStr);
+            res:=TCmdStrListItem(res.Next);
+          end;
+        ppufile.writeentry(ibresources);
+      end;
+
 
 {$IFDEF MACRO_DIFF_HINT}
 
@@ -653,7 +689,7 @@ uses
            hs:=ppufile.getstring;
            was_initial:=boolean(ppufile.getbyte);
            was_used:=boolean(ppufile.getbyte);
-           mac:=tmacro(initialmacrosymtable.search(hs));
+           mac:=tmacro(initialmacrosymtable.Find(hs));
            if assigned(mac) then
              begin
 {$ifndef EXTDEBUG}
@@ -674,15 +710,17 @@ uses
     procedure tppumodule.readsourcefiles;
       var
         temp,hs       : string;
-        temp_dir      : string;
-        main_dir      : string;
+        temp_dir      : TCmdStr;
+        main_dir      : TCmdStr;
         found,
         is_main       : boolean;
         orgfiletime,
         source_time   : longint;
         hp            : tinputfile;
       begin
-        sources_avail:=true;
+        sources_avail:=(flags and uf_release) = 0;
+        if not sources_avail then
+          exit;
         is_main:=true;
         main_dir:='';
         while not ppufile.endofentry do
@@ -708,10 +746,10 @@ uses
                  2 path of main source
                  3 current dir
                  4 include/unit path }
-              Source_Time:=GetNamedFileTime(path^+hs);
+              Source_Time:=GetNamedFileTime(path+hs);
               found:=false;
               if Source_Time<>-1 then
-                hs:=path^+hs
+                hs:=path+hs
               else
                if not(is_main) then
                 begin
@@ -724,9 +762,9 @@ uses
               if (Source_Time=-1) then
                 begin
                   if is_main then
-                    found:=unitsearchpath.FindFile(hs,temp_dir)
+                    found:=unitsearchpath.FindFile(hs,true,temp_dir)
                   else
-                    found:=includesearchpath.FindFile(hs,temp_dir);
+                    found:=includesearchpath.FindFile(hs,true,temp_dir);
                   if found then
                    begin
                      Source_Time:=GetNamedFileTime(temp_dir);
@@ -737,18 +775,14 @@ uses
               if Source_Time<>-1 then
                 begin
                   if is_main then
-                    main_dir:=splitpath(hs);
+                    main_dir:=ExtractFilePath(hs);
                   temp:=' time '+filetimestring(source_time);
                   if (orgfiletime<>-1) and
                      (source_time<>orgfiletime) then
                     begin
-                      if ((flags and uf_release)=0) then
-                        begin
-                          do_compile:=true;
-                          recompile_reason:=rr_sourcenewer;
-                        end
-                      else
-                        Message2(unit_h_source_modified,hs,ppufilename^);
+                      do_compile:=true;
+                      recompile_reason:=rr_sourcenewer;
+                      Message2(unit_u_source_modified,hs,ppufilename,@queuecomment);
                       temp:=temp+' *';
                     end;
                 end
@@ -757,22 +791,20 @@ uses
                   sources_avail:=false;
                   temp:=' not found';
                 end;
-              hp:=tinputfile.create(hs);
+              hp:=tdosinputfile.create(hs);
               { the indexing is wrong here PM }
               sourcefiles.register_file(hp);
             end;
            if is_main then
              begin
-               stringdispose(mainsource);
-               mainsource:=stringdup(hs);
+               mainsource:=hs;
              end;
-           Message1(unit_u_ppu_source,hs+temp);
+           Message1(unit_u_ppu_source,hs+temp,@queuecomment);
            is_main:=false;
          end;
       { check if we want to rebuild every unit, only if the sources are
         available }
-        if do_build and sources_avail and
-           ((flags and uf_release)=0) then
+        if do_build and sources_avail then
           begin
              do_compile:=true;
              recompile_reason:=rr_build;
@@ -785,6 +817,7 @@ uses
         hs : string;
         pu : tused_unit;
         hp : tppumodule;
+        indchecksum,
         intfchecksum,
         checksum : cardinal;
       begin
@@ -793,12 +826,14 @@ uses
            hs:=ppufile.getstring;
            checksum:=cardinal(ppufile.getlongint);
            intfchecksum:=cardinal(ppufile.getlongint);
+           indchecksum:=cardinal(ppufile.getlongint);
            { set the state of this unit before registering, this is
              needed for a correct circular dependency check }
            hp:=registerunit(self,hs,'');
            pu:=addusedunit(hp,false,nil);
            pu.checksum:=checksum;
            pu.interface_checksum:=intfchecksum;
+           pu.indirect_checksum:=indchecksum;
          end;
         in_interface:=false;
       end;
@@ -824,6 +859,7 @@ uses
       begin
         { Load unit map used for resolving }
         derefmapsize:=ppufile.getlongint;
+        derefmapcnt:=derefmapsize;
         getmem(derefmap,derefmapsize*sizeof(tderefmaprec));
         fillchar(derefmap^,derefmapsize*sizeof(tderefmaprec),0);
         for i:=0 to derefmapsize-1 do
@@ -850,45 +886,56 @@ uses
       end;
 
 
-    procedure tppumodule.readasmsymbols;
+    procedure tppumodule.readImportSymbols;
       var
-        labelnr,
-        i     : longint;
-        name  : string;
-        bind  : TAsmSymBind;
-        typ   : TAsmSymType;
-        asmsymtype : byte;
+        j,
+        extsymcnt   : longint;
+        ImportLibrary  : TImportLibrary;
+        extsymname  : string;
+        extsymmangledname : string;
+        extsymordnr : longint;
+        extsymisvar : boolean;
       begin
-        librarydata.asmsymbolppuidx:=ppufile.getlongint;
-        if librarydata.asmsymbolppuidx>0 then
-         begin
-           getmem(librarydata.asmsymbolidx,librarydata.asmsymbolppuidx*sizeof(pointer));
-           fillchar(librarydata.asmsymbolidx^,librarydata.asmsymbolppuidx*sizeof(pointer),0);
-           for i:=1 to librarydata.asmsymbolppuidx do
-            begin
-              asmsymtype:=ppufile.getbyte;
-              case asmsymtype of
-                1 :
-                  name:=ppufile.getstring;
-                2..4 :
-                  labelnr:=ppufile.getlongint;
-                else
-                  internalerror(200208192);
+        while not ppufile.endofentry do
+          begin
+            ImportLibrary:=TImportLibrary.Create(ImportLibraryList,ppufile.getstring);
+            extsymcnt:=ppufile.getlongint;
+            for j:=0 to extsymcnt-1 do
+              begin
+                extsymname:=ppufile.getstring;
+                extsymmangledname:=ppufile.getstring;
+                extsymordnr:=ppufile.getlongint;
+                extsymisvar:=(ppufile.getbyte<>0);
+                TImportSymbol.Create(ImportLibrary.ImportSymbolList,extsymname,
+                  extsymmangledname,extsymordnr,extsymisvar);
               end;
-              bind:=tasmsymbind(ppufile.getbyte);
-              typ:=tasmsymtype(ppufile.getbyte);
-              case asmsymtype of
-                1 :
-                 librarydata.asmsymbolidx^[i-1]:=librarydata.newasmsymbol(name,bind,typ);
-                2 :
-                 librarydata.asmsymbolidx^[i-1]:=librarydata.newasmlabel(labelnr,false,false);
-                3 :
-                 librarydata.asmsymbolidx^[i-1]:=librarydata.newasmlabel(labelnr,false,true);
-                4 :
-                 librarydata.asmsymbolidx^[i-1]:=librarydata.newasmlabel(labelnr,true,false);
-              end;
-            end;
-         end;
+          end;
+      end;
+
+
+    procedure tppumodule.readResources;
+      begin
+        while not ppufile.endofentry do
+          resourcefiles.Insert(ppufile.getstring);
+      end;
+
+
+    procedure tppumodule.readwpofile;
+      var
+        orgwpofilename: string;
+        orgwpofiletime: longint;
+      begin
+        { check whether we are using the same wpo feedback input file as when
+          this unit was compiled (same file name and file date)
+        }
+        orgwpofilename:=ppufile.getstring;
+        orgwpofiletime:=ppufile.getlongint;
+        if (extractfilename(orgwpofilename)<>extractfilename(wpofeedbackinput)) or
+           (orgwpofiletime<>GetNamedFileTime(orgwpofilename)) then
+          { make sure we don't throw away a precompiled unit if the user simply
+            forgot to specify the right wpo feedback file
+          }
+          message3(unit_e_different_wpo_file,ppufilename,orgwpofilename,filetimestring(orgwpofiletime));
       end;
 
 
@@ -896,21 +943,35 @@ uses
       var
         b : byte;
         newmodulename : string;
+        ns: string;
       begin
        { read interface part }
          repeat
            b:=ppufile.readentry;
            case b of
+             ibjvmnamespace :
+               begin
+                 namespace:=stringdup(ppufile.getstring);
+               end;
              ibmodulename :
                begin
                  newmodulename:=ppufile.getstring;
-                 if (cs_check_unit_name in aktglobalswitches) and
+                 if (cs_check_unit_name in current_settings.globalswitches) and
                     (upper(newmodulename)<>modulename^) then
                    Message2(unit_f_unit_name_error,realmodulename^,newmodulename);
                  stringdispose(modulename);
                  stringdispose(realmodulename);
                  modulename:=stringdup(upper(newmodulename));
                  realmodulename:=stringdup(newmodulename);
+               end;
+             ibmoduleoptions:
+               begin
+                 ppufile.getsmallset(moduleoptions);
+                 if mo_has_deprecated_msg in moduleoptions then
+                   begin
+                     stringdispose(deprecatedmsg);
+                     deprecatedmsg:=stringdup(ppufile.getstring);
+                   end;
                end;
              ibsourcefiles :
                readsourcefiles;
@@ -932,10 +993,25 @@ uses
                readlinkcontainer(LinkotherStaticLibs);
              iblinkothersharedlibs :
                readlinkcontainer(LinkotherSharedLibs);
+             iblinkotherframeworks :
+               readlinkcontainer(LinkOtherFrameworks);
+             ibmainname:
+               begin
+                 mainname:=stringdup(ppufile.getstring);
+                 if (mainaliasname<>defaultmainaliasname) then
+                   Message1(scan_w_multiple_main_name_overrides,mainaliasname);
+                 mainaliasname:=mainname^;
+               end;
+             ibImportSymbols :
+               readImportSymbols;
              ibderefmap :
                readderefmap;
              ibderefdata :
                readderefdata;
+             ibresources:
+               readResources;
+             ibwpofile:
+               readwpofile;
              ibendinterface :
                break;
            else
@@ -959,7 +1035,8 @@ uses
              ibloadunit :
                readloadunit;
              ibasmsymbols :
-               readasmsymbols;
+{ TODO: Remove ibasmsymbols}
+               ;
              ibendimplementation :
                break;
            else
@@ -969,46 +1046,17 @@ uses
       end;
 
 
-    procedure tppumodule.load_symtable_refs;
-      var
-         b : byte;
-         i : longint;
-      begin
-        if (flags and uf_has_browser)<>0 then
-          begin
-            tstoredsymtable(globalsymtable).load_references(ppufile,true);
-            for i:=0 to unitmapsize-1 do
-              tstoredsymtable(globalsymtable).load_references(ppufile,false);
-            b:=ppufile.readentry;
-            if b<>ibendbrowser then
-             Message1(unit_f_ppu_invalid_entry,tostr(b));
-          end;
-        if ((flags and uf_local_browser)<>0) then
-          tstaticsymtable(localsymtable).load_references(ppufile,true);
-      end;
-
-
     procedure tppumodule.writeppu;
-      var
-        pu : tused_unit;
       begin
          Message1(unit_u_ppu_write,realmodulename^);
 
          { create unit flags }
-{$ifdef GDB}
-         if cs_gdb_dbx in aktglobalswitches then
-          flags:=flags or uf_has_dbx;
-{$endif GDB}
-         if cs_browser in aktmoduleswitches then
-          flags:=flags or uf_has_browser;
-         if cs_local_browser in aktmoduleswitches then
-          flags:=flags or uf_local_browser;
          if do_release then
           flags:=flags or uf_release;
          if assigned(localsymtable) then
            flags:=flags or uf_local_symtable;
 {$ifdef cpufpemu}
-         if (cs_fp_emulation in aktmoduleswitches) then
+         if (cs_fp_emulation in current_settings.moduleswitches) then
            flags:=flags or uf_fpu_emulation;
 {$endif cpufpemu}
 {$ifdef Test_Double_checksum_write}
@@ -1017,13 +1065,31 @@ uses
 {$endif def Test_Double_checksum_write}
 
          { create new ppufile }
-         ppufile:=tcompilerppufile.create(ppufilename^);
+         ppufile:=tcompilerppufile.create(ppufilename);
          if not ppufile.createfile then
           Message(unit_f_ppu_cannot_write);
 
-         { first the unitname }
+         { first the (JVM) namespace }
+         if assigned(namespace) then
+           begin
+             ppufile.putstring(namespace^);
+             ppufile.writeentry(ibjvmnamespace);
+           end;
+         { the unitname }
          ppufile.putstring(realmodulename^);
          ppufile.writeentry(ibmodulename);
+
+         ppufile.putsmallset(moduleoptions);
+         if mo_has_deprecated_msg in moduleoptions then
+           ppufile.putstring(deprecatedmsg^);
+         ppufile.writeentry(ibmoduleoptions);
+
+         { write the alternate main procedure name if any }
+         if assigned(mainname) then
+           begin
+             ppufile.putstring(mainname^);
+             ppufile.writeentry(ibmainname);
+           end;
 
          writesourcefiles;
 {$IFDEF MACRO_DIFF_HINT}
@@ -1034,31 +1100,51 @@ uses
          writeusedunit(true);
 
          { write the objectfiles and libraries that come for this unit,
-           preserve the containers becuase they are still needed to load
-           the link.res. All doesn't depend on the crc! It doesn't matter
+           preserve the containers because they are still needed to load
+           the link.res.
+            All doesn't depend on the crc! It doesn't matter
            if a unit is in a .o or .a file }
          ppufile.do_crc:=false;
+         { write after source files, so that we know whether or not the compiler
+           will recompile the unit when checking whether the correct wpo file is
+           used (if it will recompile the unit anyway, it doesn't matter)
+         }
+         if (wpofeedbackinput<>'') then
+           begin
+             ppufile.putstring(wpofeedbackinput);
+             ppufile.putlongint(getnamedfiletime(wpofeedbackinput));
+             ppufile.writeentry(ibwpofile);
+           end;
          writelinkcontainer(linkunitofiles,iblinkunitofiles,true);
          writelinkcontainer(linkunitstaticlibs,iblinkunitstaticlibs,true);
          writelinkcontainer(linkunitsharedlibs,iblinkunitsharedlibs,true);
          writelinkcontainer(linkotherofiles,iblinkotherofiles,false);
          writelinkcontainer(linkotherstaticlibs,iblinkotherstaticlibs,true);
          writelinkcontainer(linkothersharedlibs,iblinkothersharedlibs,true);
+         writelinkcontainer(linkotherframeworks,iblinkotherframeworks,true);
+         writeImportSymbols;
+         writeResources;
          ppufile.do_crc:=true;
 
          { generate implementation deref data, the interface deref data is
            already generated when calculating the interface crc }
-         if (cs_compilesystem in aktmoduleswitches) then
+         if (cs_compilesystem in current_settings.moduleswitches) then
            begin
              tstoredsymtable(globalsymtable).buildderef;
              derefdataintflen:=derefdata.size;
-           end;
+           end
+         else
+           { the unit may have been re-resolved, in which case the current
+             position in derefdata is not necessarily at the end }
+            derefdata.seek(derefdata.size);
          tstoredsymtable(globalsymtable).buildderefimpl;
          if (flags and uf_local_symtable)<>0 then
            begin
              tstoredsymtable(localsymtable).buildderef;
              tstoredsymtable(localsymtable).buildderefimpl;
            end;
+         tunitwpoinfo(wpoinfo).buildderef;
+         tunitwpoinfo(wpoinfo).buildderefimpl;
          writederefmap;
          writederefdata;
 
@@ -1067,7 +1153,7 @@ uses
          { write the symtable entries }
          tstoredsymtable(globalsymtable).ppuwrite(ppufile);
 
-         if assigned(globalmacrosymtable) and (globalmacrosymtable.symindex.count > 0) then
+         if assigned(globalmacrosymtable) and (globalmacrosymtable.SymList.count > 0) then
            begin
              ppufile.putbyte(byte(true));
              ppufile.writeentry(ibexportedmacros);
@@ -1085,9 +1171,6 @@ uses
          { write implementation uses }
          writeusedunit(false);
 
-         { write asmsymbols }
-         writeasmsymbols;
-
          { end of implementation }
          ppufile.writeentry(ibendimplementation);
 
@@ -1096,26 +1179,10 @@ uses
          if (flags and uf_local_symtable)<>0 then
            tstoredsymtable(localsymtable).ppuwrite(ppufile);
 
-         { write all browser section }
-         if (flags and uf_has_browser)<>0 then
-          begin
-            tstoredsymtable(globalsymtable).write_references(ppufile,true);
-            pu:=tused_unit(used_units.first);
-            while assigned(pu) do
-             begin
-               tstoredsymtable(pu.u.globalsymtable).write_references(ppufile,false);
-               pu:=tused_unit(pu.next);
-             end;
-            ppufile.writeentry(ibendbrowser);
-          end;
-         if ((flags and uf_local_browser)<>0) then
-           begin
-             if not assigned(localsymtable) then
-               internalerror(200408271);
-             tstaticsymtable(localsymtable).write_references(ppufile,true);
-           end;
+         { write whole program optimisation-related information }
+         tunitwpoinfo(wpoinfo).ppuwrite(ppufile);
 
-         { the last entry ibend is written automaticly }
+         { the last entry ibend is written automatically }
 
          { flush to be sure }
          ppufile.flush;
@@ -1123,15 +1190,19 @@ uses
          ppufile.header.size:=ppufile.size;
          ppufile.header.checksum:=ppufile.crc;
          ppufile.header.interface_checksum:=ppufile.interface_crc;
+         ppufile.header.indirect_checksum:=ppufile.indirect_crc;
          ppufile.header.compiler:=wordversion;
          ppufile.header.cpu:=word(target_cpu);
          ppufile.header.target:=word(target_info.system);
          ppufile.header.flags:=flags;
+         ppufile.header.deflistsize:=current_module.deflist.count;
+         ppufile.header.symlistsize:=current_module.symlist.count;
          ppufile.writeheader;
 
          { save crc in current module also }
          crc:=ppufile.crc;
          interface_crc:=ppufile.interface_crc;
+         indirect_crc:=ppufile.indirect_crc;
 
 {$ifdef Test_Double_checksum_write}
          close(CRCFile);
@@ -1151,14 +1222,25 @@ uses
 {$endif def Test_Double_checksum_write}
 
          { create new ppufile }
-         ppufile:=tcompilerppufile.create(ppufilename^);
+         ppufile:=tcompilerppufile.create(ppufilename);
          ppufile.crc_only:=true;
          if not ppufile.createfile then
            Message(unit_f_ppu_cannot_write);
 
-         { first the unitname }
+         { first the (JVM) namespace }
+         if assigned(namespace) then
+           begin
+             ppufile.putstring(namespace^);
+             ppufile.writeentry(ibjvmnamespace);
+           end;
+         { the unitname }
          ppufile.putstring(realmodulename^);
          ppufile.writeentry(ibmodulename);
+
+         ppufile.putsmallset(moduleoptions);
+         if mo_has_deprecated_msg in moduleoptions then
+           ppufile.putstring(deprecatedmsg^);
+         ppufile.writeentry(ibmoduleoptions);
 
          { the interface units affect the crc }
          writeusedunit(true);
@@ -1175,7 +1257,7 @@ uses
          { write the symtable entries }
          tstoredsymtable(globalsymtable).ppuwrite(ppufile);
 
-         if assigned(globalmacrosymtable) and (globalmacrosymtable.symindex.count > 0) then
+         if assigned(globalmacrosymtable) and (globalmacrosymtable.SymList.count > 0) then
            begin
              ppufile.putbyte(byte(true));
              ppufile.writeentry(ibexportedmacros);
@@ -1190,6 +1272,7 @@ uses
          { save crc  }
          crc:=ppufile.crc;
          interface_crc:=ppufile.interface_crc;
+         indirect_crc:=ppufile.indirect_crc;
 
          { end of implementation, to generate a correct ppufile
            for ppudump when using INTFPPU define }
@@ -1213,6 +1296,7 @@ uses
          ppufile.header.size:=ppufile.size;
          ppufile.header.checksum:=ppufile.crc;
          ppufile.header.interface_checksum:=ppufile.interface_crc;
+         ppufile.header.indirect_checksum:=ppufile.indirect_crc;
          ppufile.header.compiler:=wordversion;
          ppufile.header.cpu:=word(target_cpu);
          ppufile.header.target:=word(target_info.system);
@@ -1228,12 +1312,9 @@ uses
     procedure tppumodule.load_usedunits;
       var
         pu           : tused_unit;
-        load_refs    : boolean;
-        oldobjectlibrary : tasmlibrarydata;
       begin
         if current_module<>self then
          internalerror(200212284);
-        load_refs:=true;
 
         { load the used units from interface }
         in_interface:=true;
@@ -1252,12 +1333,21 @@ uses
                 crc. And when not compiled with -Ur then check the complete
                 crc }
               if (pu.u.interface_crc<>pu.interface_checksum) or
+                 (pu.u.indirect_crc<>pu.indirect_checksum) or
                  (
                   ((ppufile.header.flags and uf_release)=0) and
                   (pu.u.crc<>pu.checksum)
                  ) then
                begin
-                 Message2(unit_u_recompile_crc_change,realmodulename^,pu.u.realmodulename^);
+                 Message2(unit_u_recompile_crc_change,realmodulename^,pu.u.realmodulename^,@queuecomment);
+{$ifdef DEBUG_UNIT_CRC_CHANGES}
+                 if (pu.u.interface_crc<>pu.interface_checksum) then
+                   writeln('  intfcrc change: ',hexstr(pu.u.interface_crc,8),' <> ',hexstr(pu.interface_checksum,8))
+                 else if (pu.u.indirect_crc<>pu.indirect_checksum) then
+                   writeln('  indcrc change: ',hexstr(pu.u.indirect_crc,8),' <> ',hexstr(pu.indirect_checksum,8))
+                 else
+                   writeln('  implcrc change: ',hexstr(pu.u.crc,8),' <> ',hexstr(pu.checksum,8));
+{$endif DEBUG_UNIT_CRC_CHANGES}
                  recompile_reason:=rr_crcchanged;
                  do_compile:=true;
                  exit;
@@ -1269,6 +1359,8 @@ uses
         { ok, now load the interface of this unit }
         if current_module<>self then
          internalerror(200208187);
+        deflist.count:=ppufile.header.deflistsize;
+        symlist.count:=ppufile.header.symlistsize;
         globalsymtable:=tglobalsymtable.create(modulename^,moduleid);
         tstoredsymtable(globalsymtable).ppuload(ppufile);
 
@@ -1283,7 +1375,7 @@ uses
         interface_compiled:=true;
 
         { read the implementation part, containing
-          the implementation uses and objectdata }
+          the implementation uses and ObjData }
         in_interface:=false;
         load_implementation;
 
@@ -1300,9 +1392,16 @@ uses
               { add this unit to the dependencies }
               pu.u.adddependency(self);
               { need to recompile the current unit ? }
-              if (pu.u.interface_crc<>pu.interface_checksum) then
+              if (pu.u.interface_crc<>pu.interface_checksum) or
+                 (pu.u.indirect_crc<>pu.indirect_checksum) then
                 begin
-                  Message2(unit_u_recompile_crc_change,realmodulename^,pu.u.realmodulename^+' {impl}');
+                  Message2(unit_u_recompile_crc_change,realmodulename^,pu.u.realmodulename^+' {impl}',@queuecomment);
+{$ifdef DEBUG_UNIT_CRC_CHANGES}
+                  if (pu.u.interface_crc<>pu.interface_checksum) then
+                    writeln('  intfcrc change (2): ',hexstr(pu.u.interface_crc,8),' <> ',hexstr(pu.interface_checksum,8))
+                  else if (pu.u.indirect_crc<>pu.indirect_checksum) then
+                    writeln('  indcrc change (2): ',hexstr(pu.u.indirect_crc,8),' <> ',hexstr(pu.indirect_checksum,8));
+{$endif DEBUG_UNIT_CRC_CHANGES}
                   recompile_reason:=rr_crcchanged;
                   do_compile:=true;
                   exit;
@@ -1319,20 +1418,14 @@ uses
           end;
 
         { we can now derefence all pointers to the implementation parts }
-        oldobjectlibrary:=objectlibrary;
-        objectlibrary:=librarydata;
         tstoredsymtable(globalsymtable).derefimpl;
         if assigned(localsymtable) then
           tstoredsymtable(localsymtable).derefimpl;
-        objectlibrary:=oldobjectlibrary;
 
-        { load browser info if stored }
-        if ((flags and uf_has_browser)<>0) and load_refs then
-         begin
-           if current_module<>self then
-            internalerror(200208188);
-           load_symtable_refs;
-         end;
+         { read whole program optimisation-related information }
+         wpoinfo:=tunitwpoinfo.ppuload(ppufile);
+         tunitwpoinfo(wpoinfo).deref;
+         tunitwpoinfo(wpoinfo).derefimpl;
       end;
 
 
@@ -1348,15 +1441,52 @@ uses
              crc. And when not compiled with -Ur then check the complete
              crc }
            if (pu.u.interface_crc<>pu.interface_checksum) or
+              (pu.u.indirect_crc<>pu.indirect_checksum) or
               (
                (pu.in_interface) and
                (pu.u.crc<>pu.checksum)
               ) then
              begin
+{$ifdef DEBUG_UNIT_CRC_CHANGES}
+               if (pu.u.interface_crc<>pu.interface_checksum) then
+                 writeln('  intfcrc change (3): ',hexstr(pu.u.interface_crc,8),' <> ',hexstr(pu.interface_checksum,8))
+               else if (pu.u.indirect_crc<>pu.indirect_checksum) then
+                 writeln('  indcrc change (3): ',hexstr(pu.u.indirect_crc,8),' <> ',hexstr(pu.indirect_checksum,8))
+               else
+                 writeln('  implcrc change (3): ',hexstr(pu.u.crc,8),' <> ',hexstr(pu.checksum,8));
+{$endif DEBUG_UNIT_CRC_CHANGES}
                result:=true;
                exit;
              end;
            pu:=tused_unit(pu.next);
+         end;
+      end;
+
+
+    procedure tppumodule.setdefgeneration;
+      begin
+        defsgeneration:=currentdefgeneration;
+        inc(currentdefgeneration);
+      end;
+
+
+    procedure tppumodule.reload_flagged_units;
+      var
+        hp : tppumodule;
+      begin
+        { now reload all dependent units with outdated defs }
+        hp:=tppumodule(loaded_units.first);
+        while assigned(hp) do
+         begin
+           if hp.do_reload and
+              (hp.defsgeneration<defsgeneration) then
+             begin
+               hp.defsgeneration:=defsgeneration;
+               hp.loadppu
+             end
+           else
+             hp.do_reload:=false;
+           hp:=tppumodule(hp.next);
          end;
       end;
 
@@ -1366,8 +1496,9 @@ uses
         ImplIntf : array[boolean] of string[15]=('implementation','interface');
       var
         do_load,
-        second_time : boolean;
+        second_time        : boolean;
         old_current_module : tmodule;
+        pu : tused_unit;
       begin
         old_current_module:=current_module;
         Message3(unit_u_load_unit,old_current_module.modulename^,
@@ -1386,9 +1517,7 @@ uses
         { reset }
         do_load:=true;
         second_time:=false;
-        current_module:=self;
-        SetCompileModule(current_module);
-        Fillchar(aktfilepos,0,sizeof(aktfilepos));
+        set_current_module(self);
 
         { A force reload }
         if do_reload then
@@ -1412,6 +1541,23 @@ uses
                       tstoredsymtable(localsymtable).deref;
                       tstoredsymtable(localsymtable).derefimpl;
                     end;
+                   if assigned(wpoinfo) then
+                     begin
+                       tunitwpoinfo(wpoinfo).deref;
+                       tunitwpoinfo(wpoinfo).derefimpl;
+                     end;
+
+                   { We have to flag the units that depend on this unit even
+                     though it didn't change, because they might also
+                     indirectly depend on the unit that did change (e.g.,
+                     in case rgobj, rgx86 and rgcpu have been compiled
+                     already, and then rgobj is recompiled for some reason
+                     -> rgx86 is re-reresolved, but the vmtentries of trgcpu
+                     must also be re-resolved, because they will also contain
+                     pointers to procdefs in the old trgobj (in case of a
+                     recompile, all old defs are freed) }
+                   flagdependent(old_current_module);
+                   reload_flagged_units;
                  end
                else
                  Message1(unit_u_skipping_reresolving_unit,modulename^);
@@ -1421,12 +1567,6 @@ uses
 
         if do_load then
          begin
-           { we are loading a new module, save the state of the scanner
-             and reset scanner+module }
-           if assigned(current_scanner) then
-             current_scanner.tempcloseinputfile;
-           current_scanner:=nil;
-
            { loading the unit for a second time? }
            if state=ms_registered then
             state:=ms_load
@@ -1463,10 +1603,11 @@ uses
            if not do_compile then
             begin
               Message1(unit_u_loading_unit,modulename^);
-              search_unit(false,false);
+              search_unit_files(false);
               if not do_compile then
                begin
                  load_interface;
+                 setdefgeneration;
                  if not do_compile then
                   begin
                     load_usedunits;
@@ -1489,17 +1630,34 @@ uses
               { recompile the unit or give a fatal error if sources not available }
               if not(sources_avail) then
                begin
-                 if (not search_unit(true,false)) and
-                    (length(modulename^)>8) then
-                   search_unit(true,true);
+                 search_unit_files(true);
                  if not(sources_avail) then
                   begin
+                    printcomments;
                     if recompile_reason=rr_noppu then
-                      Message1(unit_f_cant_find_ppu,realmodulename^)
+                      begin
+                        pu:=tused_unit(loaded_from.used_units.first);
+                        while assigned(pu) do
+                          begin
+                            if pu.u=self then
+                              break;
+                            pu:=tused_unit(pu.next);
+                          end;
+                        if assigned(pu) and assigned(pu.unitsym) then
+                          MessagePos2(pu.unitsym.fileinfo,unit_f_cant_find_ppu,realmodulename^,loaded_from.realmodulename^)
+                        else
+                          Message2(unit_f_cant_find_ppu,realmodulename^,loaded_from.realmodulename^);
+                      end
                     else
                       Message1(unit_f_cant_compile_unit,realmodulename^);
                   end;
                end;
+              { we found the sources, we do not need the verbose messages anymore }
+              if comments <> nil then
+              begin
+                comments.free;
+                comments:=nil;
+              end;
               { Flag modules to reload }
               flagdependent(old_current_module);
               { Reset the module }
@@ -1507,7 +1665,8 @@ uses
               { compile this module }
               if not(state in [ms_compile,ms_second_compile]) then
                 state:=ms_compile;
-              compile(mainsource^);
+              compile(mainsource);
+              setdefgeneration;
             end
            else
             state:=ms_compiled;
@@ -1531,21 +1690,10 @@ uses
               assigned(tppumodule(old_current_module).ppufile) then
              tppumodule(old_current_module).ppufile.tempopen;
 {$endif SHORT_ON_FILE_HANDLES}
-
-           { reload old scanner }
-           current_scanner:=tscannerfile(old_current_module.scanner);
-           if assigned(current_scanner) then
-            begin
-              current_scanner.tempopeninputfile;
-              current_scanner.gettokenpos
-            end
-           else
-            fillchar(aktfilepos,sizeof(aktfilepos),0);
          end;
 
         { we are back, restore current_module }
-        current_module:=old_current_module;
-        SetCompileModule(current_module);
+        set_current_module(old_current_module);
       end;
 
 
@@ -1554,9 +1702,9 @@ uses
 *****************************************************************************}
 
 
-    function registerunit(callermodule:tmodule;const s : stringid;const fn:string) : tppumodule;
+    function registerunit(callermodule:tmodule;const s : TIDString;const fn:string) : tppumodule;
       var
-        ups   : stringid;
+        ups   : TIDString;
         hp    : tppumodule;
         hp2   : tmodule;
       begin
@@ -1609,24 +1757,3 @@ uses
       end;
 
 end.
-{
-  $Log: fppu.pas,v $
-  Revision 1.68  2005/03/20 22:36:45  olle
-    * Cleaned up handling of source file extension.
-    + Added support for .p extension for macos and darwin
-
-  Revision 1.67  2005/02/14 17:13:06  peter
-    * truncate log
-
-  Revision 1.66  2005/01/19 22:19:41  peter
-    * unit mapping rewrite
-    * new derefmap added
-
-  Revision 1.65  2005/01/10 21:02:35  olle
-    - disabled macro diff message
-
-  Revision 1.64  2005/01/09 20:24:43  olle
-    * rework of macro subsystem
-    + exportable macros for mode macpas
-
-}

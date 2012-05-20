@@ -1,5 +1,4 @@
 {
-    $Id: parabase.pas,v 1.12 2005/02/15 21:39:48 peter Exp $
     Copyright (c) 2002 by Florian Klaempfl
 
     Generic calling convention handling
@@ -27,7 +26,8 @@ unit parabase;
 
     uses
        cclasses,globtype,
-       cpubase,cgbase,cgutils;
+       cpubase,cgbase,cgutils,
+       symtype, ppu;
 
     type
        TCGParaReference = record
@@ -47,14 +47,38 @@ unit parabase;
            LOC_MMREGISTER,
            LOC_CMMREGISTER,
            LOC_REGISTER,
-           LOC_CREGISTER : (register : tregister);
+           LOC_CREGISTER : (
+             {
+
+             * If shiftval > 0:
+
+             The number of bits the value in the register must be shifted to the left before
+             it can be stored to memory in the function prolog.
+             This is used for passing OS_NO memory blocks less than register size and of "odd"
+             (3, 5, 6, 7) size on big endian machines, so that small memory blocks passed via
+             registers are properly aligned.
+
+             E.g. the value $5544433 is passed in bits 40-63 of the register (others are zero),
+             but they should actually be stored in the first bits of the stack location reserved
+             for this value. So they have to be shifted left by this amount of bits before.
+
+             * if shiftval < 0:
+
+             Similar as above, but the shifting must always be done and
+               1) for all parameter sizes < regsize
+               2) on the caller side
+             }
+             shiftval : shortint;
+             register : tregister);
        end;
 
        TCGPara = object
           Location  : PCGParalocation;
+          IntSize   : tcgint; { size of the total location in bytes }
           Alignment : ShortInt;
           Size      : TCGSize;  { Size of the parameter included in all locations }
-          IntSize: aint; { size of the total location in bytes }
+          Def       : tdef; { Type of the parameter }
+          DefDeref  : tderef;
 {$ifdef powerpc}
           composite: boolean; { under the AIX abi, how certain parameters are passed depends on whether they are composite or not }
 {$endif powerpc}
@@ -65,13 +89,18 @@ unit parabase;
           procedure   check_simple_location;
           function    add_location:pcgparalocation;
           procedure   get_location(var newloc:tlocation);
+
+          procedure   buildderef;
+          procedure   deref;
+          procedure   ppuwrite(ppufile:tcompilerppufile);
+          procedure   ppuload(ppufile:tcompilerppufile);
        end;
 
        tvarargsinfo = (
          va_uses_float_reg
        );
 
-       tparalist = class(tlist)
+       tparalist = class(TFPObjectList)
           procedure SortParas;
        end;
 
@@ -102,6 +131,7 @@ implementation
         size:=OS_NO;
         intsize:=0;
         location:=nil;
+        def:=nil;
 {$ifdef powerpc}
         composite:=false;
 {$endif powerpc}
@@ -195,7 +225,7 @@ implementation
         case location^.loc of
           LOC_REGISTER :
             begin
-{$ifndef cpu64bit}
+{$ifndef cpu64bitalu}
               if size in [OS_64,OS_S64] then
                 begin
                   if not assigned(location^.next) then
@@ -224,8 +254,125 @@ implementation
             begin
               newloc.reference.base:=location^.reference.index;
               newloc.reference.offset:=location^.reference.offset;
+              newloc.reference.alignment:=alignment;
             end;
         end;
+      end;
+
+
+    procedure TCGPara.buildderef;
+      begin
+        defderef.build(def);
+      end;
+
+
+    procedure TCGPara.deref;
+      begin
+        def:=tdef(defderef.resolve);
+      end;
+
+
+    procedure TCGPara.ppuwrite(ppufile: tcompilerppufile);
+      var
+        hparaloc: PCGParaLocation;
+        nparaloc: byte;
+      begin
+        ppufile.putbyte(byte(Alignment));
+        ppufile.putbyte(ord(Size));
+        ppufile.putaint(IntSize);
+{$ifdef powerpc}
+        ppufile.putbyte(byte(composite));
+{$endif}
+        ppufile.putderef(defderef);
+        nparaloc:=0;
+        hparaloc:=location;
+        while assigned(hparaloc) do
+          begin
+            inc(nparaloc);
+            hparaloc:=hparaloc^.Next;
+          end;
+        ppufile.putbyte(nparaloc);
+        hparaloc:=location;
+        while assigned(hparaloc) do
+          begin
+            ppufile.putbyte(byte(hparaloc^.Size));
+            ppufile.putbyte(byte(hparaloc^.loc));
+            case hparaloc^.loc of
+              LOC_REFERENCE:
+                begin
+                  ppufile.putlongint(longint(hparaloc^.reference.index));
+                  ppufile.putaint(hparaloc^.reference.offset);
+                end;
+              LOC_FPUREGISTER,
+              LOC_CFPUREGISTER,
+              LOC_MMREGISTER,
+              LOC_CMMREGISTER,
+              LOC_REGISTER,
+              LOC_CREGISTER :
+                begin
+                  ppufile.putbyte(hparaloc^.shiftval);
+                  ppufile.putlongint(longint(hparaloc^.register));
+                end;
+              { This seems to be required for systems using explicitparaloc (eg. MorphOS)
+                or otherwise it hits the internalerror below. I don't know if this is
+                the proper way to fix this, someone else with clue might want to take a
+                look. The compiler cycles on the affected systems with this enabled. (KB) }
+              LOC_VOID:
+                begin end
+              else
+                internalerror(2010053115);
+            end;
+            hparaloc:=hparaloc^.next;
+          end;
+      end;
+
+
+    procedure TCGPara.ppuload(ppufile: tcompilerppufile);
+      var
+        hparaloc: PCGParaLocation;
+        nparaloc: byte;
+      begin
+        reset;
+        Alignment:=shortint(ppufile.getbyte);
+        Size:=TCgSize(ppufile.getbyte);
+        IntSize:=ppufile.getaint;
+{$ifdef powerpc}
+        composite:=boolean(ppufile.getbyte);
+{$endif}
+        ppufile.getderef(defderef);
+        nparaloc:=ppufile.getbyte;
+        while nparaloc>0 do
+          begin
+            hparaloc:=add_location;
+            hparaloc^.size:=TCGSize(ppufile.getbyte);
+            hparaloc^.loc:=TCGLoc(ppufile.getbyte);
+            case hparaloc^.loc of
+              LOC_REFERENCE:
+                begin
+                  hparaloc^.reference.index:=tregister(ppufile.getlongint);
+                  hparaloc^.reference.offset:=ppufile.getaint;
+                end;
+              LOC_FPUREGISTER,
+              LOC_CFPUREGISTER,
+              LOC_MMREGISTER,
+              LOC_CMMREGISTER,
+              LOC_REGISTER,
+              LOC_CREGISTER :
+                begin
+                  hparaloc^.shiftval:=ppufile.getbyte;
+                  hparaloc^.register:=tregister(ppufile.getlongint);
+                end;
+              { This seems to be required for systems using explicitparaloc (eg. MorphOS)
+                or otherwise it hits the internalerror below. I don't know if this is
+                the proper way to fix this, someone else with clue might want to take a
+                look. The compiler cycles on the affected systems with this enabled. (KB) }
+              LOC_VOID:
+                begin end
+              else
+                internalerror(2010051301);
+            end;
+            dec(nparaloc);
+          end;
       end;
 
 
@@ -238,7 +385,7 @@ implementation
         I1 : tparavarsym absolute Item1;
         I2 : tparavarsym absolute Item2;
       begin
-        Result:=I1.paranr-I2.paranr;
+        Result:=longint(I1.paranr)-longint(I2.paranr);
       end;
 
 
@@ -249,30 +396,3 @@ implementation
 
 
 end.
-
-{
-   $Log: parabase.pas,v $
-   Revision 1.12  2005/02/15 21:39:48  peter
-     * remove is_single_reference
-     * revert loading of ref-to-ref para valu
-
-   Revision 1.11  2005/02/14 17:13:07  peter
-     * truncate log
-
-   Revision 1.10  2005/01/30 21:51:57  jonas
-     * fixed darwin cycle
-
-   Revision 1.9  2005/01/18 22:19:20  peter
-     * multiple location support for i386 a_param_ref
-     * remove a_param_copy_ref for i386
-
-   Revision 1.8  2005/01/10 21:50:05  jonas
-     + support for passing records in registers under darwin
-     * tcgpara now also has an intsize field, which contains the size in
-       bytes of the whole parameter
-
-   Revision 1.7  2005/01/07 16:22:54  florian
-     + implemented abi compliant handling of strucutured functions results on sparc platform
-
-}
-

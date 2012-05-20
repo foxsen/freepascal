@@ -1,5 +1,4 @@
 {
-    $Id: cpubase.pas,v 1.51 2005/02/26 01:27:00 jonas Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl and Peter Vreman
 
     Contains the base types for the i386 and x86-64 architecture
@@ -53,7 +52,7 @@ uses
 {$endif x86_64}
 
       { This should define the array of instructions as string }
-      op2strtable=array[tasmop] of string[11];
+      op2strtable=array[tasmop] of string[15];
 
     const
       { First value of opcode enumeration }
@@ -137,11 +136,15 @@ uses
       first_mm_imreg     = $08;
 {$endif x86_64}
 
-      { The subregister that specifies the entire register }
+      { The subregister that specifies the entire register and an address }
 {$ifdef x86_64}
-      R_SUBWHOLE    = R_SUBQ; {Hammer}
+      { Hammer }
+      R_SUBWHOLE    = R_SUBQ;
+      R_SUBADDR     = R_SUBQ;
 {$else x86_64}
-      R_SUBWHOLE    = R_SUBD;  {i386}
+      { i386 }
+      R_SUBWHOLE    = R_SUBD;
+      R_SUBADDR     = R_SUBD;
 {$endif x86_64}
 
       { Available Registers }
@@ -160,7 +163,7 @@ uses
 {$endif x86_64}
 
     const
-{$warning TODO Calculate bsstart}
+{ TODO: Calculate bsstart}
       regnumber_count_bsstart = 64;
 
       regnumber_table : array[tregisterindex] of tregister = (
@@ -228,7 +231,7 @@ uses
       LOC_SSEREGISTER = LOC_MMREGISTER;
       LOC_CSSEREGISTER = LOC_CMMREGISTER;
 
-      max_operands = 3;
+      max_operands = 4;
       maxfpuregs = 8;
 
 {*****************************************************************************
@@ -241,7 +244,7 @@ uses
                                   Helpers
 *****************************************************************************}
 
-    function cgsize2subreg(s:Tcgsize):Tsubregister;
+    function cgsize2subreg(regtype: tregistertype; s:Tcgsize):Tsubregister;
     function reg2opsize(r:Tregister):topsize;
     function reg_cgsize(const reg: tregister): tcgsize;
     function is_calljmp(o:tasmop):boolean;
@@ -251,6 +254,7 @@ uses
     function findreg_by_number(r:Tregister):tregisterindex;
     function std_regnum_search(const s:string):Tregister;
     function std_regname(r:Tregister):string;
+    function dwarf_reg(r:tregister):shortint;
 
     function inverse_cond(const c: TAsmCond): TAsmCond; {$ifdef USEINLINE}inline;{$endif USEINLINE}
     function conditions_equal(const c1, c2: TAsmCond): boolean; {$ifdef USEINLINE}inline;{$endif USEINLINE}
@@ -291,7 +295,7 @@ implementation
                                   Helpers
 *****************************************************************************}
 
-    function cgsize2subreg(s:Tcgsize):Tsubregister;
+    function cgsize2subreg(regtype: tregistertype; s:Tcgsize):Tsubregister;
       begin
         case s of
           OS_8,OS_S8:
@@ -304,9 +308,24 @@ implementation
             cgsize2subreg:=R_SUBQ;
           OS_M64:
             cgsize2subreg:=R_SUBNONE;
-          OS_F32,OS_F64,OS_C64,
+          OS_F32,OS_F64,OS_C64:
+            case regtype of
+              R_FPUREGISTER:
+                cgsize2subreg:=R_SUBWHOLE;
+              R_MMREGISTER:
+                case s of
+                  OS_F32:
+                    cgsize2subreg:=R_SUBMMS;
+                  OS_F64:
+                    cgsize2subreg:=R_SUBMMD;
+                  else
+                    internalerror(2009071901);
+                end;
+              else
+                internalerror(2009071902);
+            end;
           OS_M128,OS_MS128:
-            cgsize2subreg:=R_SUBWHOLE;
+            cgsize2subreg:=R_SUBMMWHOLE;
           else
             internalerror(200301231);
         end;
@@ -315,7 +334,7 @@ implementation
 
     function reg_cgsize(const reg: tregister): tcgsize;
       const subreg2cgsize:array[Tsubregister] of Tcgsize =
-            (OS_NO,OS_8,OS_8,OS_16,OS_32,OS_64,OS_NO,OS_NO,OS_NO);
+            (OS_NO,OS_8,OS_8,OS_16,OS_32,OS_64,OS_NO,OS_NO,OS_NO,OS_F32,OS_F64,OS_M128);
       begin
         case getregtype(reg) of
           R_INTREGISTER :
@@ -325,11 +344,15 @@ implementation
           R_MMXREGISTER:
             reg_cgsize:=OS_M64;
           R_MMREGISTER:
-            reg_cgsize:=OS_M128;
+            reg_cgsize:=subreg2cgsize[getsubreg(reg)];
           R_SPECIALREGISTER :
             case reg of
               NR_CS,NR_DS,NR_ES,NR_SS,NR_FS,NR_GS:
-                reg_cgsize:=OS_16
+                reg_cgsize:=OS_16;
+{$ifdef x86_64}
+              NR_DR0..NR_TR7:
+                reg_cgsize:=OS_64;
+{$endif x86_64}
               else
                 reg_cgsize:=OS_32
             end
@@ -342,7 +365,7 @@ implementation
     function reg2opsize(r:Tregister):topsize;
       const
         subreg2opsize : array[tsubregister] of topsize =
-          (S_NO,S_B,S_B,S_W,S_L,S_Q,S_NO,S_NO,S_NO);
+          (S_NO,S_B,S_B,S_W,S_L,S_Q,S_NO,S_NO,S_NO,S_NO,S_NO,S_NO);
       begin
         reg2opsize:=S_L;
         case getregtype(r) of
@@ -371,14 +394,21 @@ implementation
       begin
         case o of
           A_CALL,
+{$ifdef i386}
           A_JCXZ,
+{$endif i386}
           A_JECXZ,
+{$ifdef x86_64}
+          A_JRCXZ,
+{$endif x86_64}
           A_JMP,
           A_LOOP,
           A_LOOPE,
           A_LOOPNE,
           A_LOOPNZ,
           A_LOOPZ,
+          A_LCALL,
+          A_LJMP,
           A_Jcc :
             is_calljmp:=true;
           else
@@ -419,8 +449,16 @@ implementation
 
 
     function findreg_by_number(r:Tregister):tregisterindex;
+      var
+        hr : tregister;
       begin
-        result:=findreg_by_number_table(r,regnumber_index);
+        { for the name the sub reg doesn't matter }
+        hr:=r;
+        case getsubreg(hr) of
+          R_SUBMMS,R_SUBMMD,R_SUBMMWHOLE:
+            setsubreg(hr,R_SUBNONE);
+        end;
+        result:=findreg_by_number_table(hr,regnumber_index);
       end;
 
 
@@ -434,6 +472,8 @@ implementation
       var
         p : tregisterindex;
       begin
+        if getregtype(r) in [R_MMREGISTER,R_MMXREGISTER] then
+          r:=newreg(getregtype(r),getsupreg(r),R_SUBNONE);
         p:=findreg_by_number_table(r,regnumber_index);
         if p<>0 then
           result:=std_regname_table[p]
@@ -460,19 +500,12 @@ implementation
       end;
 
 
+    function dwarf_reg(r:tregister):shortint;
+      begin
+        result:=regdwarf_table[findreg_by_number(r)];
+        if result=-1 then
+          internalerror(200603251);
+      end;
+
 
 end.
-{
-  $Log: cpubase.pas,v $
-  Revision 1.51  2005/02/26 01:27:00  jonas
-    * fixed generic jumps optimizer and enabled it for ppc (the label table
-      was not being initialised -> getfinaldestination always failed, which
-      caused wrong optimizations in some cases)
-    * changed the inverse_cond into a function, because tasmcond is a record
-      on ppc
-    + added a compare_conditions() function for the same reason
-
-  Revision 1.50  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

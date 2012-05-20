@@ -1,5 +1,4 @@
 {
-    $Id: fpkeys.pas,v 1.6 2005/02/14 17:13:18 peter Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 1998-2000 by Pierre Muller
 
@@ -20,7 +19,7 @@ interface
 
   uses
     keyboard, Objects, Drivers, Dialogs, App,
-    FPViews, FPString, WViews;
+    FPViews, WViews;
 
 procedure  LearnKeysDialog;
 
@@ -37,13 +36,13 @@ Const
 type
    PKeyDialog = ^TKeyDialog;
    TKeyDialog = object(TCenterDialog)
-     Constructor Init(Const ATitle : String);
-     {Procedure HandleEvent(var E : TEvent);virtual;}
-     function Execute : Word;Virtual;
       PSTL : Array [1..NumWantedKeys] of PLabel;
       PL : Array [1..NumWantedKeys] of PInputLine;
       KeyOK : Array [1..NumWantedKeys] of boolean;
       PST,PST2 : PAdvancedStaticText;
+      Constructor Init(Const ATitle : String);
+     {Procedure HandleEvent(var E : TEvent);virtual;}
+     function Execute : Word;Virtual;
    end;
 
 Procedure LoadKeys(var S : TStream);
@@ -288,7 +287,7 @@ begin
                       if (OldKey=WantedKeys[i]) and (i<>j) then
                         begin
                           If ConfirmBox('"'+St+'" is used for'+#13+
-                            'key $'+IntToHex(OldKey,4)+' '+WantedKeysLabels[i]+#13+
+                            'key $'+hexstr(oldKey,4)+' '+WantedKeysLabels[i]+#13+
                             'Change it to '+WantedKeysLabels[j],nil,true)=cmYes then
                             begin
                               KeyEscape[i]:='';
@@ -337,10 +336,3 @@ begin
 end;
 
 end.
-
-{
-  $Log: fpkeys.pas,v $
-  Revision 1.6  2005/02/14 17:13:18  peter
-    * truncate log
-
-}

@@ -1,5 +1,4 @@
 {
-    $Id: m68k.inc,v 1.6 2005/02/14 17:13:30 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Carl-Eric Codere,
     member of the Free Pascal development team.
@@ -45,7 +44,7 @@ function get_frame : pointer; assembler;
 function get_caller_addr(framebp : pointer) : pointer;
   begin
      asm
-        move.l FRAMEBP,a0
+        move.l framebp,a0
         cmp.l #0,a0
         beq @Lnul_address
         move.l 4(a0),a0
@@ -70,19 +69,14 @@ function get_caller_frame(framebp : pointer) : pointer;
 
 
 {$define FPC_SYSTEM_HAS_SPTR}
-function Sptr : Longint;
-  begin
-    asm
-      move.l sp,d0
-      add.l  #8,d0
-      move.l d0,@RESULT
-    end ['d0'];
-  end;
+function Sptr : pointer; assembler;
+asm
+  move.l sp,d0
+end ['d0'];
 
 
 {$define FPC_SYSTEM_HAS_FILLCHAR}
-procedure FillChar(var x;count:longint;value:byte);[public,alias: 'FPC_FILL_OBJECT'];
-  begin
+procedure FillChar(var x;count:longint;value:byte); assembler;
     asm
      move.l 8(a6), a0      { destination                   }
      move.l 12(a6), d1     { number of bytes to fill       }
@@ -105,7 +99,6 @@ procedure FillChar(var x;count:longint;value:byte);[public,alias: 'FPC_FILL_OBJE
 
    @LMEMSET5:
     end ['d0','d1','a0'];
-  end;
 
 
 {$ifdef dummy}
@@ -233,7 +226,7 @@ end;
 
 
 {$define FPC_SYSTEM_HAS_MOVE}
-procedure move(var source;var dest;count : longint);
+procedure move(const source;var dest;count : longint);
 { base pointer+8 = source                  }
 { base pointer+12 = destination            }
 { base pointer+16 = number of bytes to move}
@@ -321,9 +314,31 @@ function abs(l : longint) : longint;
   end;
 
 
-{
-  $Log: m68k.inc,v $
-  Revision 1.6  2005/02/14 17:13:30  peter
-    * truncate log
+function InterLockedDecrement (var Target: longint) : longint;
+  begin
+  {$warning FIX ME}
+  end;
 
-}
+
+function InterLockedIncrement (var Target: longint) : longint;
+  begin
+  {$warning FIX ME}
+  end;
+
+
+function InterLockedExchange (var Target: longint;Source : longint) : longint;
+  begin
+  {$warning FIX ME}
+  end;
+
+
+function InterLockedExchangeAdd (var Target: longint;Source : longint) : longint;
+  begin
+  {$warning FIX ME}
+  end;
+
+
+function InterlockedCompareExchange(var Target: longint; NewValue: longint; Comperand: longint): longint;
+  begin
+  {$warning FIX ME}
+  end;

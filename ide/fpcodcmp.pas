@@ -1,5 +1,4 @@
 {
-    $Id: fpcodcmp.pas,v 1.15 2005/02/14 17:13:18 peter Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 1998 by Berczi Gabor
 
@@ -67,7 +66,7 @@ uses App,Views,MsgBox,Validate,
      systems, BrowCol,
      FPSwitch, FPCompil,
      FPVars, FPSymbol,
-     FPConst,FPString,FPViews;
+     FPConst,FPViews;
 
 {$ifndef NOOBJREG}
 const
@@ -78,6 +77,30 @@ const
      Store:   @TCodeCompleteWordList.Store
   );
 {$endif}
+
+{$ifdef useresstrings}
+resourcestring
+{$else}
+const
+{$endif}
+      { CodeComplete dialog }
+      dialog_codecomplete     = 'CodeComplete';
+      label_codecomplete_keywords = '~K~eywords';
+
+      dialog_codecomplete_add = 'Add new keyword';
+      label_codecomplete_add_keyword = 'Keyword';
+
+      dialog_codecomplete_edit = 'Edit keyword';
+      label_codecomplete_edit_keyword = 'Keyword';
+
+      msg_codecomplete_alreadyinlist = '"%s" is already in the list';
+
+      { standard button texts }
+      button_OK          = 'O~K~';
+      button_Cancel      = 'Cancel';
+      button_New         = '~N~ew';
+      button_Edit        = '~E~dit';
+      button_Delete      = '~D~elete';
 
 function FPCompleteCodeWord(const WordS: string; var Text: string): boolean;
 var OK: boolean;
@@ -198,7 +221,7 @@ var
   Level : longint;
   UpStandardUnits : string;
 
-  procedure InsertInS(P: PSymbol); {$ifndef FPC}far;{$endif}
+  procedure InsertInS(P: PSymbol);
 
     procedure InsertItemsInS(P: PSymbolCollection);
     var I: Sw_integer;
@@ -208,7 +231,7 @@ var
     end;
   Var
     st : string;
-
+    CIndex : sw_integer;
   begin
     Inc(level);
     if UnitsCodeCompleteWords^.Count=MaxCollectionSize then
@@ -216,7 +239,12 @@ var
     st:=P^.GetName;
     if Length(st)>=CodeCompleteMinLen then
       if not ((level=1) and OnlyStandard and (st=UpCaseStr(CodeCompleteUnitName))) then
-        UnitsCodeCompleteWords^.Insert(NewStr(Lowcasestr(st)));
+        begin
+          st:=Lowcasestr(st);
+          UnitsCodeCompleteWords^.LookUp(st,CIndex);
+          if CIndex<>-1 then
+          UnitsCodeCompleteWords^.Insert(NewStr(st));
+        end;
     { this is wrong because it inserted args or locals of proc
       in the globals list !! PM}
     if (P^.Items<>nil) and (level=1) and
@@ -632,10 +660,3 @@ begin
 end;
 
 END.
-
-{
- $Log: fpcodcmp.pas,v $
- Revision 1.15  2005/02/14 17:13:18  peter
-   * truncate log
-
-}

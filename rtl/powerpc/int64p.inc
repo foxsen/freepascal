@@ -1,5 +1,4 @@
 {
-    $Id: int64p.inc,v 1.9 2005/03/11 12:41:41 jonas Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team
 
@@ -15,7 +14,7 @@
  **********************************************************************}
 
 {$define FPC_SYSTEM_HAS_DIV_QWORD}
-    function fpc_div_qword(n,z : qword) : qword;assembler;[public,alias: 'FPC_DIV_QWORD']; {$ifdef hascompilerproc} compilerproc; {$endif}
+    function fpc_div_qword(n,z : qword) : qword;assembler;[public,alias: 'FPC_DIV_QWORD']; compilerproc;
       { from the ppc compiler writers guide }
       assembler; nostackframe;
       asm
@@ -127,7 +126,7 @@
 {$define FPC_SYSTEM_HAS_MOD_QWORD}
     function int_div_qword(n,z : qword) : qword;external name 'FPC_DIV_QWORD';
 
-    function fpc_mod_qword(n,z : qword) : qword;assembler;[public,alias: 'FPC_MOD_QWORD']; {$ifdef hascompilerproc} compilerproc; {$endif}
+    function fpc_mod_qword(n,z : qword) : qword;assembler;[public,alias: 'FPC_MOD_QWORD']; compilerproc;
       assembler;
       var
         oldlr: pointer;
@@ -145,7 +144,7 @@
     { multiplies two qwords
       the longbool for checkoverflow avoids a misaligned stack
     }
-    function fpc_mul_qword(f1,f2 : qword;checkoverflow : longbool) : qword;[public,alias: 'FPC_MUL_QWORD']; {$ifdef hascompilerproc} compilerproc; {$endif}
+    function fpc_mul_qword(f1,f2 : qword;checkoverflow : longbool) : qword;[public,alias: 'FPC_MUL_QWORD']; compilerproc;
       assembler; nostackframe;
       asm
         // (r3:r4) = (r3:r4) * (r5:r6),  checkoverflow is in r7
@@ -153,7 +152,7 @@
 
         or.     r10,r3,r5    // are both msw's 0?
         mulhwu  r8,r4,r6    // msw of product of lsw's
-        subi    r0,r7,1     // if no overflowcheck, r0 := $ffffffff, else r0 := 0;
+        not     r0,r7       // if no overflowcheck, r0 := $ffffffff, else r0 := 0;
         beq     .LDone      // if both msw's are zero, skip cross products
         mullw   r9,r4,r5    // lsw of first cross-product
         cntlzw  r11,r3      // count leading zeroes of msw1
@@ -201,15 +200,3 @@
       end;
 
 
-{
-  $Log: int64p.inc,v $
-  Revision 1.9  2005/03/11 12:41:41  jonas
-    * mini scheduling optimization
-
-  Revision 1.8  2005/02/19 14:16:02  jonas
-    * fixed overflow detection, + some small optimizations
-
-  Revision 1.7  2005/02/14 17:13:31  peter
-    * truncate log
-
-}

@@ -1,5 +1,4 @@
 {
-    $Id: itx86int.pas,v 1.6 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl
 
     This unit contains the i386 AT&T instruction tables
@@ -40,6 +39,15 @@ implementation
       cpubase;
 
     const
+    {$ifdef x86_64}
+      int_regname_table : array[tregisterindex] of string[7] = (
+        {$i r8664int.inc}
+      );
+
+      int_regname_index : array[tregisterindex] of tregisterindex = (
+        {$i r8664iri.inc}
+      );
+    {$else x86_64}
       int_regname_table : array[tregisterindex] of string[7] = (
         {$i r386int.inc}
       );
@@ -47,6 +55,7 @@ implementation
       int_regname_index : array[tregisterindex] of tregisterindex = (
         {$i r386iri.inc}
       );
+    {$endif x86_64}
 
 
     function findreg_by_intname(const s:string):byte;
@@ -86,9 +95,3 @@ implementation
       end;
 
 end.
-{
-  $Log: itx86int.pas,v $
-  Revision 1.6  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

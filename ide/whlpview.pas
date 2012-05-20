@@ -1,5 +1,4 @@
 {
-    $Id: whlpview.pas,v 1.13 2005/02/14 17:13:18 peter Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 1998 by Berczi Gabor
 
@@ -103,7 +102,7 @@ type
       PLinePosCollection = ^TLinePosCollection;
       TLinePosCollection = object(TNoDisposeCollection)
         function At(Index: sw_Integer): sw_integer;
-        procedure Insert (Item: ptrint);virtual;
+        procedure Insert (Item: pointer);virtual;
       end;
 
       PHelpTopic = ^THelpTopic;
@@ -208,10 +207,11 @@ type
         procedure   InitScrollBars; virtual;
         procedure   InitHelpView; virtual;
         procedure   ShowIndex; virtual;
+        procedure   ShowDebugInfos; virtual;
         procedure   ShowTopic(SourceFileID: word; Context: THelpCtx); virtual;
         procedure   HandleEvent(var Event: TEvent); virtual;
         procedure   Close; virtual;
-        function    GetPalette: PPalette; virtual; { needs to be overriden }
+        function    GetPalette: PPalette; virtual; { needs to be overridden }
       end;
 
 implementation
@@ -402,9 +402,9 @@ begin
   at := longint (inherited at(Index));
 end;
 
-procedure TLinePosCollection.Insert (Item: ptrint);
+procedure TLinePosCollection.Insert (Item: pointer);
 begin
-  Inherited Insert(pointer(Item));
+  Inherited Insert(Item);
 end;
 
 constructor THelpTopic.Init(ATopic: PTopic);
@@ -482,7 +482,7 @@ begin
       Bounds.Move(Delta,0);
   if Line='' then Line:=' ';
   Lines^.Insert(NewStr(Line));
-  LinesPos^.Insert(LinePos);
+  LinesPos^.Insert(pointer(LinePos));
   ClearLine;
   LineStart:=NextLineStart;
   CurPos.X:=Margin+LineStart; Line:=CharStr(#255,LineStart); Inc(CurPos.Y);
@@ -862,8 +862,17 @@ begin
 end;
 
 function THelpViewer.GetLinkTarget(Index: sw_integer): string;
+var
+  Ctx : THelpCtx;
+  ID : sw_integer;
 begin
   GetLinkTarget:='';
+  if HelpTopic=nil then begin ID:=0; Ctx:=0; end else
+     begin
+       ID:=GetLinkFileID(Index);
+       Ctx:=GetLinkContext(Index);
+     end;
+  GetLinkTarget:=HelpFacility^.GetTopicInfo(ID,CTx);
 end;
 
 function THelpViewer.GetLinkText(Index: sw_integer): string;
@@ -937,7 +946,7 @@ begin
   begin
     GetLinkBounds(Link,R);
     SetCurPtr(R.A.X,R.A.Y);
-    TrackCursor(true);
+    TrackCursor(do_centre);
     {St:=GetLinkTarget(Link);
     If St<>'' then
       SetTitle('Help '+St);}
@@ -1000,7 +1009,7 @@ begin
       ISwitchToTopic(FileID_,Context_,false);
       ScrollTo(Delta_.X,Delta_.Y);
       SetCurPtr(CurPos_.X,CurPos_.Y);
-      TrackCursor(false);
+      TrackCursor(do_not_centre);
       if CurLink<>CurLink_ then SetCurLink(CurLink_);
     end;
     DrawView;
@@ -1027,8 +1036,10 @@ begin
           IndexHelpTopic:=HelpTopic;
      end;
  end;
-  if Owner<>nil then Owner^.Lock;
-  SetCurPtr(0,0); TrackCursor(false);
+  if Owner<>nil then
+    Owner^.Lock;
+  SetCurPtr(0,0);
+  TrackCursor(do_not_centre);
   RenderTopic;
   BuildTopicWordList;
   Lookup('');
@@ -1106,7 +1117,7 @@ begin
       GetLinkBounds(P^.Index,R);
       SetCurPtr(R.A.X+(I-1)+length(Lookupword),R.A.Y);
       CurLink:=P^.Index; DrawView;
-      TrackCursor(true);
+      TrackCursor(do_centre);
       if Owner<>nil then Owner^.UnLock;
     end;
   end;
@@ -1161,7 +1172,7 @@ begin
             PrevTopic;
         else DontClear:=true;
         end;
-        if DontClear=false then ClearEvent(Event);
+        if not DontClear then ClearEvent(Event);
       end;
     evKeyDown :
       begin
@@ -1170,7 +1181,11 @@ begin
           kbTab :
             SelectNextLink(true);
           kbShiftTab :
-            begin NoSelect:=true; SelectNextLink(false); NoSelect:=false; end;
+            begin
+              NoSelect:=true;
+              SelectNextLink(false);
+              NoSelect:=false;
+            end;
           kbEnter :
             if CurLink<>-1 then
               SelectLink(CurLink);
@@ -1180,12 +1195,18 @@ begin
         else
           case Event.CharCode of
              #32..#255 :
-               begin NoSelect:=true; Lookup(LookupWord+Event.CharCode); NoSelect:=false; end;
-          else DontClear:=true;
+               begin
+                 NoSelect:=true;
+                 Lookup(LookupWord+Event.CharCode);
+                 NoSelect:=false;
+               end;
+          else
+            DontClear:=true;
           end;
         end;
-        TrackCursor(false);
-        if DontClear=false then ClearEvent(Event);
+        TrackCursor(do_not_centre);
+        if not DontClear then
+          ClearEvent(Event);
       end;
   end;
   inherited HandleEvent(Event);
@@ -1345,6 +1366,18 @@ begin
   end;
 end;
 
+procedure THelpWindow.ShowDebugInfos;
+begin
+{$ifdef DEBUG}
+  DebugMessage(GetTitle(255),'Generic Help window',1,1);
+  if HelpView^.CurLink<>-1 then
+    begin
+      DebugMessage('','Curlink is '+IntToStr(HelpView^.CurLink),1,1);
+      DebugMessage('',HelpView^.GetLinkTarget(HelpView^.CurLink),1,1);
+    end;
+{$endif DEBUG}
+end;
+
 procedure THelpWindow.InitScrollBars;
 var R: TRect;
 begin
@@ -1404,9 +1437,3 @@ begin
 end;
 
 END.
-{
-  $Log: whlpview.pas,v $
-  Revision 1.13  2005/02/14 17:13:18  peter
-    * truncate log
-
-}

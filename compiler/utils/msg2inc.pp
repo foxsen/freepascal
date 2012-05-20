@@ -1,5 +1,4 @@
 {
-    $Id: msg2inc.pp,v 1.15 2005/02/14 17:13:10 peter Exp $
     This program is part of the Free Pascal run time library.
     Copyright (c) 1998-2002 by Peter Vreman
 
@@ -80,9 +79,9 @@ begin
   Writeln('Loading messagefile ',fn);
 {Read the message file}
   assign(f,fn);
-  {$I-}
+  {$push} {$I-}
    reset(f);
-  {$I+}
+  {$pop}
   if ioresult<>0 then
    begin
      WriteLn('fatal error: '+fn+' not found');
@@ -164,6 +163,8 @@ begin
    end;
 { alloc memory }
   getmem(msgtxt,msgsize);
+{ no linebreak after last entry }
+  dec(msgsize);
   ptxt:=msgtxt;
   getmem(enumtxt,enumsize);
   penum:=enumtxt;
@@ -569,9 +570,9 @@ begin
   Writeln('Renumbering ',fn);
 {Read the message file}
   assign(f,fn);
-  {$I-}
+  {$push} {$I-}
    reset(f);
-  {$I+}
+  {$pop}
   if ioresult<>0 then
    begin
      WriteLn('*** message file '+fn+' not found ***');
@@ -613,15 +614,21 @@ Var
 begin
   hs:='';
   for i:=1 to length(s) do
-    if (S[i]='$') then
-     begin
-       if (s[i+1] in ['0'..'9']) then
-        hs:=hs+'arg'
-       else
-        hs:=hs+'\$';
-     end
+    case S[i] of
+      '$' :
+        if (s[i+1] in ['0'..'9']) then
+          hs:=hs+'arg'
+        else
+          hs:=hs+'\$';
+      '&','{','}','#','_','%':            // Escape these characters
+        hs := hs + '\' + S[i];
+      '~','^':
+        hs := hs + '\'+S[i]+' ';
+      '\':
+        hs:=hs+'$\backslash$'
     else
-      hs:=hs+s[i];
+      hs := hs + S[i];
+    end;  
   EscapeString:=hs;
 end;
 
@@ -637,9 +644,9 @@ begin
   writeln('Writing TeXfile ',outfn);
 { Open infile }
   assign(f,infn);
-  {$I-}
+  {$push} {$I-}
    reset(f);
-  {$I+}
+  {$pop}
   if ioresult<>0 then
    begin
      WriteLn('*** message file '+infn+' not found ***');
@@ -814,15 +821,3 @@ begin
                 end;
   end;
 end.
-{
-  $Log: msg2inc.pp,v $
-  Revision 1.15  2005/02/14 17:13:10  peter
-    * truncate log
-
-  Revision 1.14  2005/01/24 17:41:57  olle
-    + added support for macos
-
-  Revision 1.13  2005/01/09 16:13:09  peter
-    * don't force to add .tex
-
-}

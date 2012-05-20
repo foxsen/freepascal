@@ -1,8 +1,8 @@
-{ %OPT= -Sen }
+{ %OPT= -Sen -vn }
 
 { Old file: tbs0317.pp }
 
-{ This shouldn't give a warning, because it can be used in an other program }
+{ This shouldn't give a warning, because it can be used in another program }
 var
   exportedc : longint;cvar;public;
 begin

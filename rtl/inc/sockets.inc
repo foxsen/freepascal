@@ -1,5 +1,4 @@
 {
-    $Id: sockets.inc,v 1.18 2005/03/25 22:53:39 jonas Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team
 
@@ -32,13 +31,54 @@ end;
 
 
 
-Procedure IOSock(var F:text);
+procedure iosock(var f:text);
+
+var r:sizeint;
+    def_error:word;
+
 begin
-  case textrec(f).mode of
-   fmoutput : {$ifdef unix}fpWrite{$else}fdwrite{$endif}(textrec(f).handle,textrec(f).bufptr^,textrec(f).bufpos);
-    fminput : textrec(f).BufEnd:={$ifdef Unix}fpRead{$else}fdread{$endif}(textrec(f).handle,textrec(f).bufptr^,textrec(f).bufsize);
-  end;
-  textrec(f).bufpos:=0;
+  with textrec(f) do
+    begin
+      case mode of
+        fmoutput:
+          begin
+            repeat
+{$ifdef use_readwrite}
+              r:=fpwrite(handle,bufptr^,bufpos);
+{$else}
+              r:=fpsend(handle,bufptr,bufpos,0);
+{$endif}
+            until (r<>-1) or (SocketError <> EsockEINTR);
+            bufend:=r;
+            def_error:=101; {File write error.}
+          end;
+        fminput:
+          begin
+            repeat
+{$ifdef use_readwrite}
+              r:=fpread(handle,bufptr^,bufsize);
+{$else}
+              r:=fprecv(handle,bufptr,bufsize,0);
+{$endif}
+            until (r<>-1) or (SocketError <> EsockEINTR);
+            bufend:=r;
+            def_error:=100; {File read error.}
+          end;
+      end;
+      if r=-1 then
+        case SocketError of
+          EsockEBADF:
+{          EsysENOTSOCK:}   {Why is this constant not defined? (DM)}
+            inoutres:=6;    {Invalid file handle.}
+          EsockEFAULT:
+            inoutres:=217;
+          EsockEINVAL:
+            inoutres:=218;
+        else
+          inoutres:=def_error;
+        end;
+      bufpos:=0;
+    end;
 end;
 
 
@@ -75,6 +115,11 @@ begin
   TextRec(SockIn).FlushFunc:=@FlushSock;
   TextRec(SockIn).CloseFunc:=@CloseSock;
   TextRec(SockIn).Mode := fmInput;
+  Case DefaultTextLineBreakStyle Of
+    tlbsLF: TextRec(sockin).LineEnd := #10;
+    tlbsCRLF: TextRec(sockin).LineEnd := #13#10;
+    tlbsCR: TextRec(sockin).LineEnd := #13;
+   End;
 { Now the writing part. }
   Assign(SockOut,'.');
   Textrec(SockOut).Handle:=Sock;
@@ -84,6 +129,12 @@ begin
   TextRec(SockOut).FlushFunc:=@FlushSock;
   TextRec(SockOut).CloseFunc:=@CloseSock;
   TextRec(SockOut).Mode := fmOutput;
+
+   Case DefaultTextLineBreakStyle Of
+    tlbsLF: TextRec(sockout).LineEnd := #10;
+    tlbsCRLF: TextRec(sockout).LineEnd := #13#10;
+    tlbsCR: TextRec(sockout).LineEnd := #13;
+   End;
 end;
 
 
@@ -118,14 +169,23 @@ Var AddrLen : Longint;
 
 begin
   AddrLEn:=SizeOf(Addr);
-  DoAccept:=Accept(Sock,Addr,AddrLen);
+  repeat
+    DoAccept:=fpaccept(Sock,@Addr,@AddrLen);
+  until (DoAccept<>-1) or (SocketError <> EsockEINTR);
 end;
 
 Function DoConnect(Sock:longint;const addr: TInetSockAddr): Boolean;
 
+var
+  res: longint;
 begin
-  DoConnect:=Connect(Sock,Addr,SizeOF(TInetSockAddr));
+  repeat
+    res:=fpconnect(Sock,@Addr,SizeOF(TInetSockAddr));
+  until (res<>-1) or (SocketError <> EsockEINTR);
+  DoConnect:= res = 0;
 end;
+
+{$warnings off}
 
 Function Connect(Sock:longint;const addr: TInetSockAddr;var SockIn,SockOut:text):Boolean;
 
@@ -171,35 +231,37 @@ begin
    Accept:=false;
 end;
 
+{$warnings on}
+
 type thostaddr= packed array[1..4] of byte;
 
-function htonl( host : longint):longint; {$ifdef HASINLINE} inline; {$ENDIF}
+function htonl( host : longint):longint; inline;
 
 begin
 {$ifdef FPC_BIG_ENDIAN}
   htonl:=host;
 {$else}
   htonl:=THostAddr(host)[4];
-  htonl:=htonl or ( (THostAddr(host)[3]) shl 8);
-  htonl:=htonl or ( (THostAddr(host)[2]) shl 16);
-  htonl:=htonl or ( (THostAddr(host)[1]) shl 24);
+  htonl:=htonl or longint( (THostAddr(host)[3]) shl 8);
+  htonl:=htonl or longint( (THostAddr(host)[2]) shl 16);
+  htonl:=htonl or longint( (THostAddr(host)[1]) shl 24);
 {$endif}
 end;
 
-Function NToHl (Net : Longint) : Longint;  {$ifdef HASINLINE} inline; {$ENDIF}
+Function NToHl (Net : Longint) : Longint; inline;
 
 begin
 {$ifdef FPC_BIG_ENDIAN}
   ntohl:=net;
 {$else}
   ntohl:=THostAddr(Net)[4];
-  ntohl:=ntohl or ( (THostAddr(Net)[3]) shl 8);
-  ntohl:=ntohl or ( (THostAddr(Net)[2]) shl 16);
-  ntohl:=ntohl or ( (THostAddr(Net)[1]) shl 24);
+  ntohl:=ntohl or longint( (THostAddr(Net)[3]) shl 8);
+  ntohl:=ntohl or longint( (THostAddr(Net)[2]) shl 16);
+  ntohl:=ntohl or longint( (THostAddr(Net)[1]) shl 24);
 {$endif}
 end;
 
-function htons( host : word):word; {$ifdef HASINLINE} inline; {$ENDIF}
+function htons( host : word):word; inline;
 
 begin
 {$ifdef FPC_BIG_ENDIAN}
@@ -209,7 +271,7 @@ begin
 {$endif}
 end;
 
-Function NToHs (Net : word):word;{$ifdef HASINLINE} inline; {$ENDIF}
+Function NToHs (Net : word):word; inline;
 
 begin
 {$ifdef FPC_BIG_ENDIAN}
@@ -383,9 +445,55 @@ begin
     SetLength(HostAddrToStr6, Length(HostAddrToStr6)-1);
 end;
 
+
 function StrToHostAddr6(IP : String) : TIn6_addr;
-begin
-end;
+Var Part   : String;
+    IPv6   : TIn6_addr;
+    P,J    : Integer;
+    W      : Word;
+    Index  : Integer;
+    ZeroAt : Integer;
+Begin
+  FillChar(IPv6,SizeOf(IPv6),0);
+  { Every 16-bit block is converted at its own and stored into Result. When }
+  { the '::' zero-spacer is found, its location is stored. Afterwards the   }
+  { address is shifted and zero-filled.                                     }
+  Index := 0; ZeroAt := -1;
+  J := 0;
+  P := Pos(':',IP);
+  While (P > 0) and (Length(IP) > 0) and (Index < 8) do
+    Begin
+      Part := '$'+Copy(IP,1,P-1);
+      Delete(IP,1,P);
+      if Length(Part) > 1 then  { is there a digit after the '$'? }
+        Val(Part,W,J)
+      else W := 0;
+      IPv6.u6_addr16[Index] := HtoNS(W);
+      if J <> 0 then
+        Begin
+          FillChar(IPv6,SizeOf(IPv6),0);
+          Exit;
+        End;
+      if IP[1] = ':' then
+        Begin
+          ZeroAt := Index;
+          Delete(IP,1,1);
+        End;
+      Inc(Index);
+      P := Pos(':',IP); if P = 0 then P := Length(IP)+1;
+    End;
+  { address      a:b:c::f:g:h }
+  { Result now   a : b : c : f : g : h : 0 : 0, ZeroAt = 2, Index = 6 }
+  { Result after a : b : c : 0 : 0 : f : g : h }
+  if ZeroAt >= 0 then
+    Begin
+      Move(IPv6.u6_addr16[ZeroAt+1],IPv6.u6_addr16[(8-Index)+ZeroAt+1],2*(Index-ZeroAt-1));
+      FillChar(IPv6.u6_addr16[ZeroAt+1],2*(8-Index),0);
+    End;
+
+  StrToHostAddr6:=IPv6;
+End;
+
 
 function NetAddrToStr6 (Entry : TIn6_Addr) : ansiString;
 begin
@@ -398,19 +506,3 @@ begin
 end;
 
 
-{
-  $Log: sockets.inc,v $
-  Revision 1.18  2005/03/25 22:53:39  jonas
-    * fixed several warnings and notes about unused variables (mainly) or
-      uninitialised use of variables/function results (a few)
-
-  Revision 1.17  2005/03/18 10:04:31  marco
-   * cosmetic fix in netaddrtostr
-
-  Revision 1.16  2005/02/14 17:13:26  peter
-    * truncate log
-
-  Revision 1.15  2005/02/13 19:59:57  marco
-   * More htons like functionality. IPV6 string support still missing
-
-}

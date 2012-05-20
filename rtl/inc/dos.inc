@@ -1,5 +1,4 @@
 {
-    $Id: dos.inc,v 1.8 2005/02/14 17:13:22 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2004 by Tomas Hajny,
     member of the Free Pascal development team.
@@ -17,16 +16,26 @@
 
  **********************************************************************}
 
-(* Everywhere the same now, but prepared for potential difference. *)
-const
- ExtensionSeparator = '.';
+procedure DoDirSeparators(var p:shortstring);
+var
+  i : longint;
+begin
+  for i:=1 to length(p) do
+    if p[i] in AllowDirectorySeparators then
+      p[i]:=DirectorySeparator;
+end;
+
+procedure DoDirSeparators(p:Pchar);
+var
+  i : longint;
+begin
+  for i:=0 to strlen(p) do
+    if p[i] in AllowDirectorySeparators then
+      p[i]:=DirectorySeparator;
+end;
 
 {$IFNDEF HAS_DOSEXITCODE}
- {$IFDEF HASTHREADVAR}
 threadvar
- {$ELSE HASTHREADVAR}
-var
- {$ENDIF HASTHREADVAR}
   LastDosExitCode: longint;
 
 function DosExitCode: word;
@@ -61,32 +70,15 @@ const
     Leap := true;
  end;
 
- {$IFDEF VER1_0}
-{ Necessary to avoid internal error 10... :-( }
-var
- DC: cardinal;
- I64: int64;
- {$ENDIF VER1_0}
 begin
   GetDate (Y, Mo, D, WD);
   GetTime (H, Mi, S, S100);
- {$IFDEF VER1_0}
-  DC := D + DayTable [Leap, Mo] + (Y div 400) * 97;
-  DC := DC + ((Y mod 400) div 100) * 24 + (Y mod 100) div 4;
-  I64 := S100 * 10 + S * 1000;
-  I64 := I64 + cardinal (Mi) * 60*1000;
-  I64 := I64 + int64 (H) * 60*60*1000;
-  I64 := I64 + int64 (DC) * 24*60*60*1000;
-  I64 := I64 + int64 (Y) * 365*24*60*60*1000;
-  GetMsCount := I64;
- {$ELSE VER1_0}
   GetMsCount := S100 * 10 + S * 1000 + cardinal (Mi) * 60*1000
        + int64 (H) * 60*60*1000
         + int64 (D + DayTable [Leap, Mo]
           + (Y div 400) * 97 + ((Y mod 400) div 100) * 24 + (Y mod 100) div 4)
                                                                 * 24*60*60*1000
          + int64 (Y) * 365*24*60*60*1000;
- {$ENDIF VER1_0}
 end;
 {$ENDIF HAS_GETMSCOUNT}
 
@@ -236,22 +228,13 @@ end;
 ****************************************************************************}
 
 {$IFNDEF HAS_FSPLIT}
+{$warnings off}
 Procedure FSplit (Path: PathStr; var Dir: DirStr; var Name: NameStr; var Ext: ExtStr);
 var
   DirEnd, ExtStart: Longint;
 begin
-  if DirectorySeparator = '/' then
-  { allow backslash as slash }
-    for DirEnd := 1 to Length (Path) do
-      begin
-        if Path [DirEnd] = '\' then Path [DirEnd] := DirectorySeparator
-      end
-  else
-    if DirectorySeparator = '\' then
-    { allow slash as backslash }
-      for DirEnd := 1 to Length (Path) do
-        if Path [DirEnd] = '/' then Path [DirEnd] := DirectorySeparator;
-
+  { allow slash and backslash }
+  DoDirSeparators(Path);
 { Find the first DirectorySeparator or DriveSeparator from the end. }
   DirEnd := Length (Path);
 { Avoid problems with platforms having DriveSeparator = DirectorySeparator. }
@@ -260,8 +243,8 @@ begin
     Dec (DirEnd)
   else
    while (DirEnd > 0) and
-                 (Path [DirEnd] <> DirectorySeparator) and
-                                           (Path [DirEnd] <> DriveSeparator) do
+         (Path [DirEnd] <> DirectorySeparator) and
+         (Path [DirEnd] <> DriveSeparator) do
     Dec (DirEnd);
 
 { The first "extension" should be returned if LFN }
@@ -288,6 +271,7 @@ begin
   Name := Copy (Path, DirEnd + 1, ExtStart - DirEnd - 1);
   Ext := Copy (Path, ExtStart, Length (Path) - ExtStart + 1);
 end;
+{$warnings on}
 {$ENDIF HAS_FSPLIT}
 
 
@@ -302,15 +286,3 @@ end;
 
 {$ENDIF HAS_FEXPAND}
 
-{
-  $Log: dos.inc,v $
-  Revision 1.8  2005/02/14 17:13:22  peter
-    * truncate log
-
-  Revision 1.7  2005/01/23 09:50:59  hajny
-    * yet another attempt to make Mac OS accept dos.inc without hacks ;-)
-
-  Revision 1.6  2005/01/01 20:31:02  olle
-    + hack again to make macos compile
-
-}

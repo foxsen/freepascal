@@ -1,3 +1,4 @@
+{%skiptarget=go32v2}
 { Source provided for Free Pascal Bug Report 3695 }
 { Submitted by "Pedro Lopez-Cabanillas" on  2005-02-25 }
 { e-mail: plcl@telefonica.net }
@@ -64,6 +65,7 @@ begin
     //WriteLn('Loop forever inside Tester.run when compiled by FPC 1.9.8');
   end;
   thread.Terminate;
+  CheckSynchronize;
   thread.waitfor;
 end;
 

@@ -1,5 +1,5 @@
 { %fail }
-{ %opt=-Sew }
+{ %opt=-Sew -vw }
 
 { Source provided for Free Pascal Bug Report 3643 }
 { Submitted by "Naj Kejah" on  2005-02-08 }
@@ -17,4 +17,3 @@ BEGIN
       if cuek = 4 then ;
     end;
 END.
-

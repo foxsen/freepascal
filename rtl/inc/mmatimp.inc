@@ -185,13 +185,13 @@ function objectname.inverse(Adeterminant:datatype):objectname;
 begin
     Adeterminant:=1/Adeterminant;
     inverse.data[0,0]:=(data[1,1]*data[2,2]-data[2,1]*data[1,2])*Adeterminant;
-    inverse.data[0,1]:=-(data[1,0]*data[2,2]-data[2,0]*data[1,2])*Adeterminant;
-    inverse.data[0,2]:=(data[1,0]*data[2,1]-data[2,0]*data[1,1])*Adeterminant;
-    inverse.data[1,0]:=-(data[0,1]*data[2,2]-data[2,1]*data[0,2])*Adeterminant;
+    inverse.data[0,1]:=-(data[0,1]*data[2,2]-data[2,1]*data[0,2])*Adeterminant;
+    inverse.data[0,2]:=(data[0,1]*data[1,2]-data[1,1]*data[0,2])*Adeterminant;
+    inverse.data[1,0]:=-(data[1,0]*data[2,2]-data[2,0]*data[1,2])*Adeterminant;
     inverse.data[1,1]:=(data[0,0]*data[2,2]-data[2,0]*data[0,2])*Adeterminant;
-    inverse.data[1,2]:=-(data[0,0]*data[2,1]-data[2,0]*data[0,1])*Adeterminant;
-    inverse.data[2,0]:=(data[0,1]*data[1,2]-data[1,1]*data[0,2])*Adeterminant;
-    inverse.data[2,1]:=-(data[0,0]*data[1,2]-data[1,0]*data[0,2])*Adeterminant;
+    inverse.data[1,2]:=-(data[0,0]*data[1,2]-data[1,0]*data[0,2])*Adeterminant;
+    inverse.data[2,0]:=(data[1,0]*data[2,1]-data[2,0]*data[1,1])*Adeterminant;
+    inverse.data[2,1]:=-(data[0,0]*data[2,1]-data[2,0]*data[0,1])*Adeterminant;
     inverse.data[2,2]:=(data[0,0]*data[1,1]-data[1,0]*data[0,1])*Adeterminant;
 end;
 {$endif}
@@ -704,10 +704,10 @@ begin
                              +r[1]*m2.data[1,0]
              {$if matsize>=3}+r[2]*m2.data[2,0]{$endif}
              {$if matsize>=4}+r[3]*m2.data[3,0]{$endif};
-           result.data[i,1]:=r[0]*m2.data[0,1]
-                            +r[1]*m2.data[1,1]
-            {$if matsize>=3}+r[2]*m2.data[2,1]{$endif}
-            {$if matsize>=4}+r[3]*m2.data[3,1]{$endif};
+            result.data[i,1]:=r[0]*m2.data[0,1]
+                             +r[1]*m2.data[1,1]
+             {$if matsize>=3}+r[2]*m2.data[2,1]{$endif}
+             {$if matsize>=4}+r[3]*m2.data[3,1]{$endif};
         {$if matsize>=3}
             result.data[i,2]:=r[0]*m2.data[0,2]
                              +r[1]*m2.data[1,2]
@@ -733,23 +733,23 @@ operator * (const m:objectname;const v:vectorcompanion) result:vectorcompanion;
 
 begin
     result.data[0]:=m.data[0,0]*v.data[0]
-                   +m.data[1,0]*v.data[1]
-   {$if matsize>=3}+m.data[2,0]*v.data[2]{$endif}
-   {$if matsize>=4}+m.data[3,0]*v.data[3]{$endif};
-    result.data[1]:=m.data[0,1]*v.data[0]
+                   +m.data[0,1]*v.data[1]
+   {$if matsize>=3}+m.data[0,2]*v.data[2]{$endif}
+   {$if matsize>=4}+m.data[0,3]*v.data[3]{$endif};
+    result.data[1]:=m.data[1,0]*v.data[0]
                    +m.data[1,1]*v.data[1]
-   {$if matsize>=3}+m.data[2,1]*v.data[2]{$endif}
-   {$if matsize>=4}+m.data[3,1]*v.data[3]{$endif};
+   {$if matsize>=3}+m.data[1,2]*v.data[2]{$endif}
+   {$if matsize>=4}+m.data[1,3]*v.data[3]{$endif};
 {$if matsize>=3}
-    result.data[2]:=m.data[0,2]*v.data[0]
-                   +m.data[1,2]*v.data[1]
+    result.data[2]:=m.data[2,0]*v.data[0]
+                   +m.data[2,1]*v.data[1]
                    +m.data[2,2]*v.data[2]
-   {$if matsize>=4}+m.data[3,2]*v.data[3]{$endif};
+   {$if matsize>=4}+m.data[2,3]*v.data[3]{$endif};
 {$endif}
 {$if matsize>=4}
-    result.data[3]:=m.data[0,3]*v.data[0]
-                   +m.data[1,3]*v.data[1]
-                   +m.data[2,3]*v.data[2]
+    result.data[3]:=m.data[3,0]*v.data[0]
+                   +m.data[3,1]*v.data[1]
+                   +m.data[3,2]*v.data[2]
                    +m.data[3,3]*v.data[3];
 {$endif}
 end;

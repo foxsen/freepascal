@@ -1,5 +1,4 @@
 {
-    $Id: cmem.pp,v 1.14 2005/03/04 16:49:34 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999 by Michael Van Canneyt, member of the
     Free Pascal development team
@@ -19,138 +18,125 @@ unit cmem;
 interface
 
 Const
-{$ifndef ver1_0}
+
+{$if defined(go32v2) or defined(wii)}
+  {$define USE_STATIC_LIBC}
+{$endif}
 
 {$if defined(win32)}
   LibName = 'msvcrt';
+{$elseif defined(win64)}
+  LibName = 'msvcrt';
+{$elseif defined(wince)}
+  LibName = 'coredll';
 {$elseif defined(netware)}
   LibName = 'clib';
 {$elseif defined(netwlibc)}
   LibName = 'libc';
 {$elseif defined(macos)}
   LibName = 'StdCLib';
+{$elseif defined(beos)}
+  LibName = 'root';
 {$else}
   LibName = 'c';
 {$endif}
 
-{$else}
-
-{$ifndef win32}
-  {$ifdef netware}
-  LibName = 'clib';
-  {$else}
-    {$ifdef netwlibc}
-    LibName = 'libc';
-    {$else}
-      {$ifdef macos}
-      LibName = 'StdCLib';
-      {$else}
-      LibName = 'c';
-      {$endif macos}
-    {$endif netwlibc}
-  {$endif}
-{$else}
-  LibName = 'msvcrt';
-{$endif}
-
-{$endif}
-
-Function Malloc (Size : ptrint) : Pointer; {$ifdef win32}stdcall{$else}cdecl{$endif}; external LibName name 'malloc';
-Procedure Free (P : pointer); {$ifdef win32}stdcall{$else}cdecl{$endif}; external LibName name 'free';
-function ReAlloc (P : Pointer; Size : ptrint) : pointer; {$ifdef win32}stdcall{$else}cdecl{$endif}; external LibName name 'realloc';
-Function CAlloc (unitSize,UnitCount : ptrint) : pointer; {$ifdef win32}stdcall{$else}cdecl{$endif}; external LibName name 'calloc';
+{$ifdef USE_STATIC_LIBC}
+  {$linklib c}
+Function malloc (Size : ptruint) : Pointer;cdecl; external;
+Procedure free (P : pointer); cdecl; external;
+function realloc (P : Pointer; Size : ptruint) : pointer;cdecl; external;
+Function calloc (unitSize,UnitCount : ptruint) : pointer;cdecl; external;
+{$else not USE_STATIC_LIBC}
+Function Malloc (Size : ptruint) : Pointer; cdecl; external LibName name 'malloc';
+Procedure Free (P : pointer); cdecl; external LibName name 'free';
+function ReAlloc (P : Pointer; Size : ptruint) : pointer; cdecl; external LibName name 'realloc';
+Function CAlloc (unitSize,UnitCount : ptruint) : pointer; cdecl; external LibName name 'calloc';
+{$endif not USE_STATIC_LIBC}
 
 implementation
 
-type
-  pptrint = ^ptrint;
-
-Function CGetMem  (Size : ptrint) : Pointer;
+Function CGetMem  (Size : ptruint) : Pointer;
 
 begin
-  CGetMem:=Malloc(Size+sizeof(ptrint));
+  CGetMem:=Malloc(Size+sizeof(ptruint));
   if (CGetMem <> nil) then
     begin
-      pptrint(CGetMem)^ := size;
-      inc(CGetMem,sizeof(ptrint));
+      Pptruint(CGetMem)^ := size;
+      inc(CGetMem,sizeof(ptruint));
     end;
 end;
 
-Function CFreeMem (P : pointer) : ptrint;
+Function CFreeMem (P : pointer) : ptruint;
 
 begin
   if (p <> nil) then
-    dec(p,sizeof(ptrint));
+    dec(p,sizeof(ptruint));
   Free(P);
   CFreeMem:=0;
 end;
 
-Function CFreeMemSize(p:pointer;Size:ptrint):ptrint;
+Function CFreeMemSize(p:pointer;Size:ptruint):ptruint;
 
 begin
   if size<=0 then
-    begin
-      if size<0 then
-        runerror(204);
-      exit;
-    end;
+    exit;
   if (p <> nil) then
     begin
-      if (size <> pptrint(p-sizeof(ptrint))^) then
+      if (size <> Pptruint(p-sizeof(ptruint))^) then
         runerror(204);
     end;
   CFreeMemSize:=CFreeMem(P);
 end;
 
-Function CAllocMem(Size : ptrint) : Pointer;
+Function CAllocMem(Size : ptruint) : Pointer;
 
 begin
-  CAllocMem:=calloc(Size+sizeof(ptrint),1);
+  CAllocMem:=calloc(Size+sizeof(ptruint),1);
   if (CAllocMem <> nil) then
     begin
-      pptrint(CAllocMem)^ := size;
-      inc(CAllocMem,sizeof(ptrint));
+      Pptruint(CAllocMem)^ := size;
+      inc(CAllocMem,sizeof(ptruint));
     end;
 end;
 
-Function CReAllocMem (var p:pointer;Size:ptrint):Pointer;
+Function CReAllocMem (var p:pointer;Size:ptruint):Pointer;
 
 begin
   if size=0 then
     begin
       if p<>nil then
         begin
-          dec(p,sizeof(ptrint));
+          dec(p,sizeof(ptruint));
           free(p);
           p:=nil;
         end;
     end
   else
     begin
-      inc(size,sizeof(ptrint));
+      inc(size,sizeof(ptruint));
       if p=nil then
         p:=malloc(Size)
       else
         begin
-          dec(p,sizeof(ptrint));
+          dec(p,sizeof(ptruint));
           p:=realloc(p,size);
         end;
       if (p <> nil) then
         begin
-          pptrint(p)^ := size-sizeof(ptrint);
-          inc(p,sizeof(ptrint));
+          Pptruint(p)^ := size-sizeof(ptruint);
+          inc(p,sizeof(ptruint));
         end;
     end;
   CReAllocMem:=p;
 end;
 
-Function CMemSize (p:pointer): ptrint;
+Function CMemSize (p:pointer): ptruint;
 
 begin
-  CMemSize:=pptrint(p-sizeof(ptrint))^;
+  CMemSize:=Pptruint(p-sizeof(ptruint))^;
 end;
 
-{$ifdef HASGETFPCHEAPSTATUS}  
 function CGetHeapStatus:THeapStatus;
 
 var res: THeapStatus;
@@ -165,14 +151,6 @@ function CGetFPCHeapStatus:TFPCHeapStatus;
 begin
   fillchar(CGetFPCHeapStatus,sizeof(CGetFPCHeapStatus),0);
 end;
-{$else HASGETFPCHEAPSTATUS}  
-Procedure CGetHeapStatus(var status:THeapStatus);
-
-begin
-  fillchar(status,sizeof(status),0);
-end;
-{$endif HASGETFPCHEAPSTATUS}  
-
 
 Const
  CMemoryManager : TMemoryManager =
@@ -184,10 +162,11 @@ Const
       AllocMem : @CAllocMem;
       ReallocMem : @CReAllocMem;
       MemSize : @CMemSize;
+      InitThread : nil;
+      DoneThread : nil;
+      RelocateHeap : nil;
       GetHeapStatus : @CGetHeapStatus;
-{$ifdef HASGETFPCHEAPSTATUS}  
-      GetFPCHeapStatus: @CGetFPCHeapStatus;	
-{$endif HASGETFPCHEAPSTATUS}  
+      GetFPCHeapStatus: @CGetFPCHeapStatus;
     );
 
 Var
@@ -200,16 +179,3 @@ Initialization
 Finalization
   SetMemoryManager (OldMemoryManager);
 end.
-
-{
- $Log: cmem.pp,v $
- Revision 1.14  2005/03/04 16:49:34  peter
-   * fix getheapstatus bootstrapping
-
- Revision 1.13  2005/02/28 15:38:38  marco
-  * getFPCheapstatus  (no, FPC HEAP, not FP CHEAP!)
-
- Revision 1.12  2005/02/14 17:13:22  peter
-   * truncate log
-
-}

@@ -1,7 +1,6 @@
 {
-    $Id: dynarrh.inc,v 1.4 2005/02/14 17:13:22 peter Exp $
     This file is part of the Free Pascal Run time library.
-    Copyright (c) 1999-2000 by the Free Pascal development team
+    Copyright (c) 1999-2005 by the Free Pascal development team
 
     This file contains type declarations necessary for the dynamic
     array routine helpers in syshelp.inc
@@ -17,12 +16,17 @@
 **********************************************************************}
 
 type
-   tdynarrayindex = sizeint;
-   pdynarrayindex = ^tdynarrayindex;
+  tdynarrayindex = sizeint;
+  pdynarrayindex = ^tdynarrayindex;
 
-{
-  $Log: dynarrh.inc,v $
-  Revision 1.4  2005/02/14 17:13:22  peter
-    * truncate log
-
-}
+  pdynarraytypeinfo = ^tdynarraytypeinfo;
+  tdynarraytypeinfo = packed record
+    kind : byte;
+    namelen : byte;
+    { here the chars follow, we've to skip them }
+    elesize : sizeint;
+    eletype : pdynarraytypeinfo;
+    vartype : longint;
+  end;
+  
+procedure DynArraySetLength(var a: Pointer; typeInfo: Pointer; dimCnt: SizeInt; lengthVec: PSizeInt);

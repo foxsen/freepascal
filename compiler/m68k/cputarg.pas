@@ -1,5 +1,4 @@
 {
-    $Id: cputarg.pas,v 1.4 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 2001-2002 by Peter Vreman
 
     Includes the m68k dependent target units
@@ -37,20 +36,26 @@ implementation
 **************************************}
 
     {$ifndef NOTARGETLINUX}
-      ,t_linux,t_amiga
+      ,t_linux
     {$endif}
+    {$ifndef NOTARGETAMIGA}
+      ,t_amiga
+    {$endif}
+    {$ifndef NOTARGETPALMOS}
+      ,t_palmos
+    {$endif}
+
+{**************************************
+          Assembler Readers
+**************************************}
+
+      ,ra68kmot
 
 {**************************************
              Assemblers
 **************************************}
 
-      ,agcpugas
+      ,ag68kgas
       ;
 
 end.
-{
-  $Log: cputarg.pas,v $
-  Revision 1.4  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

@@ -1,5 +1,4 @@
 {
-    $Id: cpubase.inc,v 1.17 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 1998-2000 by Florian Klaempfl and Peter Vreman
 
     Contains the basic declarations for the x86-64 architecture
@@ -34,7 +33,8 @@ type
     S_FS,S_FL,S_FX,S_FV,S_FXX,
     S_MD,
     S_NEAR,S_FAR,S_SHORT,
-    S_T
+    S_T,
+    S_XMM
   );
 
 {*****************************************************************************
@@ -47,13 +47,6 @@ const
     processor manufacturer.
   }
   std_op2str:op2strtable={$i x8664int.inc}
-
-{*****************************************************************************
-                                 Constants
-*****************************************************************************}
-
-    const
-      c_countusableregsint = 4;
 
 {*****************************************************************************
                                GDB Information
@@ -76,12 +69,14 @@ const
 
       { Defines the default address size for a processor, }
       OS_ADDR = OS_64;
-      { the natural int size for a processor,             }
+      { the natural int size for a processor,
+        has to match osuinttype/ossinttype as initialized in psystem }
       OS_INT = OS_64;
+      OS_SINT = OS_S64;
       { the maximum float size for a processor,           }
       OS_FLOAT = OS_F80;
       { the size of a vector register for a processor     }
-      OS_VECTOR = OS_M64;
+      OS_VECTOR = OS_M128;
 
 {*****************************************************************************
                           Generic Register names
@@ -103,14 +98,21 @@ const
       { Results are returned in this register (both 32 and 64 bits }
       NR_FUNCTION_RETURN_REG = NR_RAX;
       RS_FUNCTION_RETURN_REG = RS_RAX;
+      NR_FUNCTION_RETURN_REG_HIGH = NR_RDX;
+      RS_FUNCTION_RETURN_REG_HIGH = RS_RDX;
       { The value returned from a function is available in this register }
       NR_FUNCTION_RESULT_REG = NR_FUNCTION_RETURN_REG;
       RS_FUNCTION_RESULT_REG = RS_FUNCTION_RETURN_REG;
+      NR_FUNCTION_RESULT_REG_HIGH = NR_FUNCTION_RETURN_REG_HIGH;
+      RS_FUNCTION_RESULT_REG_HIGH = RS_FUNCTION_RETURN_REG_HIGH;
 
       { WARNING: don't change to R_ST0!! See comments above implementation of }
       { a_loadfpu* methods in rgcpu (JM)                                      }
       NR_FPU_RESULT_REG = NR_ST;
       NR_MM_RESULT_REG = NR_XMM0;
+      RS_MM_RESULT_REG = RS_XMM0;
+      NR_MM_RESULT_REG_HIGH = NR_XMM1;
+      RS_MM_RESULT_REG_HIGH = RS_XMM1;
 
       { Offset where the parent framepointer is pushed }
       PARENT_FRAMEPOINTER_OFFSET = 16;
@@ -120,22 +122,9 @@ const
 *****************************************************************************}
 
     const
-      { Registers which must be saved when calling a routine declared as
-        cppdecl, cdecl, stdcall, safecall, palmossyscall. The registers
-        saved should be the ones as defined in the target ABI and / or GCC.
-
-        This value can be deduced from the CALLED_USED_REGISTERS array in the
-        GCC source.
-      }
-      saved_standard_registers : array[0..4] of tsuperregister = (RS_EBX,RS_R12,RS_R13,RS_R14,RS_R15);
-      { Registers which must be saved when calling a routine declared as
-        cppdecl, cdecl, stdcall, safecall, palmossyscall. The registers
-        saved should be the ones as defined in the target ABI and / or GCC.
-
-        This value can be deduced from the CALLED_USED_REGISTERS array in the
-        GCC source.
-      }
-      saved_xmm_registers : array[0..4] of tsuperregister = (RS_EBX,RS_R12,RS_R13,RS_R14,RS_R15);
+      { these arrays differ between unix and win64 }
+      saved_standard_registers : array of tsuperregister = nil;
+      saved_mm_registers : array of tsuperregister = nil;
       { Required parameter alignment when calling a routine declared as
         stdcall and cdecl. The alignment value should be the one defined
         by GCC or the target ABI.
@@ -144,10 +133,3 @@ const
          PARM_BOUNDARY / BITS_PER_UNIT in the GCC source.
       }
       std_param_align = 8;
-
-{
-  $Log: cpubase.inc,v $
-  Revision 1.17  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

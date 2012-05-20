@@ -1,5 +1,4 @@
 {
-    $Id: signal.inc,v 1.26 2005/02/14 17:13:30 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Jonas Maebe,
     member of the Free Pascal development team.
@@ -21,28 +20,37 @@
 
 Const
   { For sending a signal }
-{$ifdef SPARC}
+{$ifdef CPUSPARC}
   SA_SIGINFO   = $200;
   SA_NOMASK    = $20;
 
   SIG_BLOCK   = 1;
   SIG_UNBLOCK = 2;
   SIG_SETMASK = 4;
-{$else SPARC}
+{$else CPUSPARC}
+{$ifdef CPUMIPS}
+  SA_NOCLDSTOP = 1;
+  SA_NOCLDWAIT = $10000;
+  SA_SIGINFO   = 8;
+{$else CPUMIPS}
   SA_NOCLDSTOP = 1;
   SA_NOCLDWAIT = 2;
   SA_SIGINFO   = 4;
-  SA_SHIRQ     = $04000000;
-  SA_STACK     = $08000000;
+{$endif CPUMIPS}
+  SA_RESTORER  = $04000000;
+  SA_ONSTACK   = $08000000;
   SA_RESTART   = $10000000;
   SA_INTERRUPT = $20000000;
-  SA_NOMASK    = $40000000;
-  SA_ONESHOT   = $80000000;
+  SA_NODEFER   = $40000000;
+  SA_RESETHAND = $80000000;
+
+  SA_NOMASK    = SA_NODEFER;
+  SA_ONESHOT   = SA_RESETHAND;
 
   SIG_BLOCK   = 0;
   SIG_UNBLOCK = 1;
   SIG_SETMASK = 2;
-{$endif SPARC}
+{$endif CPUSPARC}
 
   SIG_DFL = 0 ;
   SIG_IGN = 1 ;
@@ -119,17 +127,25 @@ Const
   SIGUNUSED  = 31;
 {$endif cpusparc}
 
+{ si_code field values for tsiginfo.si_code when si_signo = SIGFPE }
+const
+  FPE_INTDIV = 1; { integer divide by zero }
+  FPE_INTOVF = 2; { integer overflow }
+  FPE_FLTDIV = 3; { floating point divide by zero }
+  FPE_FLTOVF = 4; { floating point overflow }
+  FPE_FLTUND = 5; { floating point underflow }
+  FPE_FLTRES = 6; { floating point inexact result }
+  FPE_FLTINV = 7; { floating point invalid operation }
+  FPE_FLTSUB = 8; { floating point subscript out of range }
 
 const
   SI_PAD_SIZE   = ((128 div sizeof(longint)) - 3);
 
-
 type
-  SigSet  =  array[0..wordsinsigset-1] of cint;
-  sigset_t= SigSet;
-  PSigSet = ^SigSet;
-  psigset_t=psigset;
-  TSigSet = SigSet;
+  sigset_t = array[0..wordsinsigset-1] of cuLong;
+  tsigset  = sigset_t;
+  sigset   = sigset_t;
+  psigset  = ^tsigset;
 
   psiginfo = ^tsiginfo;
   tsiginfo = record
@@ -173,50 +189,31 @@ type
 {$i sighndh.inc}
 
 type
-  SignalHandler   = Procedure(Sig : Longint);cdecl;
-  PSignalHandler  = ^SignalHandler;
-  SignalRestorer  = Procedure;cdecl;
-  PSignalRestorer = ^SignalRestorer;
-  SigActionHandler = procedure(sig : longint; SigInfo: PSigInfo; SigContext: PSigContext);cdecl;
+  signalhandler_t = procedure(signal: longint); cdecl;
+  sigactionhandler_t = procedure(signal: longint; info: psiginfo; context: psigcontext); cdecl;
+  sigrestorerhandler_t = procedure; cdecl;
 
-{$ifdef CPUARM}
-{$define NEWSIGNAL}
-{$endif CPUARM}
+  signalhandler = signalhandler_t;
+  sigactionhandler = sigactionhandler_t;
+  sigrestorerhandler = sigrestorerhandler_t;
+  tsignalhandler = signalhandler_t;
+  tsigactionhandler = sigactionhandler_t;
+  tsigrestorerhandler = sigrestorerhandler_t;
 
-{$ifdef CPUx86_64}
-{$define NEWSIGNAL}
-{$endif CPUx86_64}
+  psigactionrec = ^sigactionrec;
 
-  SigActionRec = packed record  // this is temporary for the migration
-    sa_handler : SigActionHandler;
-   {$ifdef NEWSIGNAL}
-    Sa_Flags    : cuint;
-    Sa_restorer : SignalRestorer; { Obsolete - Don't use }
-    Sa_Mask     : SigSet;
-   {$else NEWSIGNAL}
-    Sa_Mask     : SigSet;
-    Sa_Flags    : Longint;
-    Sa_restorer : SignalRestorer; { Obsolete - Don't use }
-   {$endif NEWSIGNAL}
+{$ifdef FPC_USE_LIBC}  // libc order is different ?
+  sigactionrec = record
+    sa_handler: sigactionhandler_t;
+    sa_mask: sigset_t;
+    sa_flags: cint;
+    sa_restorer: sigrestorerhandler_t;
   end;
-  TSigActionRec = SigActionRec;
-  PSigActionRec = ^SigActionRec;
-
-{
-  $Log: signal.inc,v $
-  Revision 1.26  2005/02/14 17:13:30  peter
-    * truncate log
-
-  Revision 1.25  2005/02/05 22:53:43  peter
-    * use typecasted sigactionhandler, needed for arm
-
-  Revision 1.24  2005/02/05 22:45:54  peter
-    * sigactionhandler fixed for arm
-
-  Revision 1.23  2005/01/30 18:01:15  peter
-    * signal cleanup for linux
-    * sigactionhandler instead of tsigaction for bsds
-    * sigcontext moved to cpu dir
-
-}
-
+{$else}
+  sigactionrec = record
+    sa_handler: sigactionhandler_t;
+    sa_flags: culong;
+    sa_restorer: sigrestorerhandler_t;
+    sa_mask: sigset_t;
+  end;
+{$endif}

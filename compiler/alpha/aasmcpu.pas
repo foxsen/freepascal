@@ -1,5 +1,4 @@
 {
-    $Id: aasmcpu.pas,v 1.5 2005/02/14 17:13:09 peter Exp $
     Copyright (c) 1998-2000 by Florian Klaempfl
 
     Implements the assembler classes specific for the Alpha
@@ -31,7 +30,7 @@ unit aasmcpu;
 
     uses
        aasmbase,globals,verbose,
-       cpubase,aasmtai;
+       cpubase,aasmtai,aasmdata,aasmsym;
 
     type
       tai_frame = class(tai)
@@ -46,7 +45,7 @@ unit aasmcpu;
         end;
 
 
-      taicpu = class(taicpu_abstract)
+      taicpu = class(tai_cpu_abstract_sym)
          constructor op_none(op : tasmop);
 
          constructor op_reg(op : tasmop;_op1 : tregister);
@@ -280,9 +279,3 @@ implementation
 
 
     end.
-{
-  $Log: aasmcpu.pas,v $
-  Revision 1.5  2005/02/14 17:13:09  peter
-    * truncate log
-
-}

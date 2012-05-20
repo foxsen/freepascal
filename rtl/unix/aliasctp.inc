@@ -1,5 +1,4 @@
 {
-    $Id: aliasctp.inc,v 1.5 2005/03/16 22:26:12 florian Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2004 by Marco van de Voort
     Member of the Free Pascal development team
@@ -16,54 +15,46 @@
 
  **********************************************************************}
 
-Type
-    cInt8   = UnixType.cInt8;
-    cUInt8  = UnixType.cUInt8;
-    cUInt16 = UnixType.cUInt16;
-    cInt16  = UnixType.cInt16;
-    cInt32  = UnixType.cInt32;
-    cUInt32 = UnixType.cUInt32;
-    cInt64  = UnixType.cInt64;
-    cUInt64 = UnixType.cUInt64;
-    cuchar  = UnixType.cuchar;
-    cchar   = UnixType.cchar;
-    cInt    = UnixType.cInt;
-    cUInt   = UnixType.cUInt;
-    cLong   = UnixType.cLong;
-    cuLong  = UnixType.cuLong;
-    cshort  = UnixType.cshort;
-    cushort = UnixType.cushort;
-    cunsigned = UnixType.cunsigned;
-    pcuchar = UnixType.pcuchar;
-    pcchar  = UnixType.pcchar;
-    pcInt   = UnixType.pcInt;
-    pcUInt  = UnixType.pcUInt;
-    pcLong  = UnixType.pcLong;
-    pculong = UnixType.pculong;
-    pcshort = UnixType.pcshort;
-    pcushort= UnixType.pcushort;
-    pcunsigned = UnixType.pcunsigned;
+type
+  cint8                  = UnixType.cint8;       pcint8                 = UnixType.pcint8;
+  cuint8                 = UnixType.cuint8;      pcuint8                = UnixType.pcuint8;
+  cchar                  = UnixType.cchar;       pcchar                 = UnixType.pcchar;
+  cschar                 = UnixType.cschar;      pcschar                = UnixType.pcschar;
+  cuchar                 = UnixType.cuchar;      pcuchar                = UnixType.pcuchar;
 
-    { Floating point }
-    cFloat    = UnixType.cFloat;
-    cDouble   = UnixType.cDouble;
-    clDouble  = UnixType.clDouble;
-    pcFloat   = UnixType.pcFloat;
-    pcDouble  = UnixType.pcDouble;
-    pclDouble = UnixType.pclDouble;
-{
-   $Log: aliasctp.inc,v $
-   Revision 1.5  2005/03/16 22:26:12  florian
-     + ansi<->wide implemented using iconv
+  cint16                 = UnixType.cint16;      pcint16                = UnixType.pcint16;
+  cuint16                = UnixType.cuint16;     pcuint16               = UnixType.pcuint16;
+  cshort                 = UnixType.cshort;      pcshort                = UnixType.pcshort;
+  csshort                = UnixType.csshort;     pcsshort               = UnixType.pcsshort;
+  cushort                = UnixType.cushort;     pcushort               = UnixType.pcushort;
 
-   Revision 1.4  2005/03/13 10:05:13  florian
-     + floating point c types added
+  cint32                 = UnixType.cint32;      pcint32                = UnixType.pcint32;
+  cuint32                = UnixType.cuint32;     pcuint32               = UnixType.pcuint32;
+  cint                   = UnixType.cint;        pcint                  = UnixType.pcint;
+  csint                  = UnixType.csint;       pcsint                 = UnixType.pcsint;
+  cuint                  = UnixType.cuint;       pcuint                 = UnixType.pcuint;
+  csigned                = UnixType.csigned;     pcsigned               = UnixType.pcsigned;
+  cunsigned              = UnixType.cunsigned;   pcunsigned             = UnixType.pcunsigned;
 
-   Revision 1.3  2005/02/14 17:13:31  peter
-     * truncate log
+  cint64                 = UnixType.cint64;      pcint64                = UnixType.pcint64;
+  cuint64                = UnixType.cuint64;     pcuint64               = UnixType.pcuint64;
+  clonglong              = UnixType.clonglong;   pclonglong             = UnixType.pclonglong;
+  cslonglong             = UnixType.cslonglong;  pcslonglong            = UnixType.pcslonglong;
+  culonglong             = UnixType.culonglong;  pculonglong            = UnixType.pculonglong;
 
-   Revision 1.2  2005/02/05 23:02:37  florian
-     + added some missing c types
+  cbool                  = UnixType.cbool;       pcbool                 = UnixType.pcbool;
 
-}
+  clong                  = UnixType.clong;       pclong                 = UnixType.pclong;
+  cslong                 = UnixType.cslong;      pcslong                = UnixType.pcslong;
+  culong                 = UnixType.culong;      pculong                = UnixType.pculong;
+
+{$ifndef FPUNONE}
+  cfloat                 = UnixType.cfloat;      pcfloat                = UnixType.pcfloat;
+  cdouble                = UnixType.cdouble;     pcdouble               = UnixType.pcdouble;
+//  clongdouble            = UnixType.clongdouble; pclongdouble           = UnixType.pclongdouble;
+{$endif}
+
+  csize_t                = UnixType.size_t;      pcsize_t               = UnixType.psize_t;
+
+  coff_t                 = UnixType.TOff;
 

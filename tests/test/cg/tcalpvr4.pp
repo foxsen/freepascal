@@ -14,12 +14,11 @@
 { DEFINES:                                                       }
 {****************************************************************}
 { REMARKS: This tests a subset of the secondcalln() , it         }
-{          verifies procedural variables for oldfpccall              }
+{          verifies procedural variables for oldfpccall          }
 {          calling conventions.                                  }
 {****************************************************************}
 program tcalpvr3;
 {$MODE OBJFPC}
-{$STATIC ON}
 {$R+}
 
 const
@@ -526,10 +525,3 @@ Begin
    WriteLn('Passed!');
 
 end.
-
-{
-   $Log: tcalpvr4.pp,v $
-   Revision 1.9  2005/02/14 17:13:37  peter
-     * truncate log
-
-}

@@ -1,8 +1,7 @@
 {
-    $Id: cpuinfo.pas,v 1.15 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 1998-2002 by the Free Pascal development team
 
-    Basic Processor information for the PowerPC
+    Basic Processor information for the m68k
 
     See the file COPYING.FPC, included in this distribution,
     for details about the copyright.
@@ -21,7 +20,7 @@ Interface
     globtype;
 
 Type
-   bestreal = real;
+   bestreal = double;
    ts32real = single;
    ts64real = double;
    ts80real = extended;
@@ -31,15 +30,15 @@ Type
    pbestreal=^bestreal;
 
    { possible supported processors for this target }
-   tprocessors =
-      (no_processor,
-       MC68000,
-       MC68020,
-       Coldfire
+   tcputype =
+      (cpu_none,
+       cpu_MC68000,
+       cpu_MC68020,
+       cpu_Coldfire
       );
 
    tfputype =
-     (no_fpuprocessor,
+     (fpu_none,
       fpu_soft,
       fpu_libgcc,
       fpu_68881
@@ -49,8 +48,6 @@ Const
    { calling conventions supported by the code generator }
    supported_calling_conventions : tproccalloptions = [
      pocall_internproc,
-     pocall_compilerproc,
-     pocall_inline,
      pocall_stdcall,
      { the difference to stdcall is only the name mangling }
      pocall_cdecl,
@@ -60,7 +57,7 @@ Const
      pocall_syscall
    ];
 
-   processorsstr : array[tprocessors] of string[5] = ('',
+   cputypestr : array[tcputype] of string[8] = ('',
      '68000',
      '68020',
      'COLDFIRE'
@@ -72,12 +69,19 @@ Const
      '68881'
    );
 
+   { Supported optimizations, only used for information }
+   supported_optimizerswitches = genericlevel1optimizerswitches+
+                                 genericlevel2optimizerswitches+
+                                 genericlevel3optimizerswitches-
+                                 { no need to write info about those }
+                                 [cs_opt_level1,cs_opt_level2,cs_opt_level3]+
+                                 [cs_opt_regvar,cs_opt_loopunroll,cs_opt_nodecse];
+
+   level1optimizerswitches = genericlevel1optimizerswitches;
+   level2optimizerswitches = genericlevel2optimizerswitches + level1optimizerswitches + 
+     [cs_opt_regvar,cs_opt_stackframe,cs_opt_nodecse];
+   level3optimizerswitches = genericlevel3optimizerswitches + level2optimizerswitches + [{,cs_opt_loopunroll}];
+
 Implementation
 
 end.
-{
-  $Log: cpuinfo.pas,v $
-  Revision 1.15  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

@@ -1,5 +1,4 @@
 {
-    $Id: t_wdosx.pas,v 1.6 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 2001-2002 Pavel ??????
 
     This unit implements support import,export,link routines
@@ -32,20 +31,20 @@ implementation
     uses
        cutils,
        fmodule,globals,systems,
-       import,export,link,t_win32,i_wdosx;
+       import,export,link,t_win,i_wdosx;
 
   type
-    timportlibwdosx=class(timportlibwin32)
+    timportlibwdosx=class(TImportLibWin)
     end;
 
-    texportlibwdosx=texportlibwin32;
+    texportlibwdosx=TExportLibWin;
 
-    tlinkerwdosx=class(tlinkerwin32)
+    TExternalLinkerwdosx=class(TExternalLinkerWin)
     public
        function  MakeExecutable:boolean;override;
     end;
 
-    tDLLScannerWdosx=class(tDLLScannerWin32)
+    tDLLScannerWdosx=class(TDLLScannerWin)
     end;
 
 
@@ -54,15 +53,15 @@ implementation
 *****************************************************************************}
 
 {*****************************************************************************
-                             TLINKERWDOSX
+                             TExternalLinkerWDOSX
 *****************************************************************************}
-function TLinkerWdosx.MakeExecutable:boolean;
+function TExternalLinkerWdosx.MakeExecutable:boolean;
 var
  b: boolean;
 begin
  b := Inherited MakeExecutable;
  if b then
-  DoExec(FindUtil('stubit'),current_module.exefilename^,false,false);
+  DoExec(FindUtil('stubit'),current_module.exefilename,false,false);
  Result := b;
 end;
 
@@ -75,7 +74,7 @@ end;
 *****************************************************************************}
 
 initialization
-  RegisterExternalLinker(system_i386_wdosx_info,TLinkerWdosx);
+  RegisterExternalLinker(system_i386_wdosx_info,TExternalLinkerWdosx);
   RegisterImport(system_i386_wdosx,TImportLibWdosx);
   RegisterExport(system_i386_wdosx,TExportLibWdosx);
   RegisterDLLScanner(system_i386_wdosx,TDLLScannerWdosx);
@@ -83,10 +82,3 @@ initialization
     {RegisterRes(res_gnu_windres_info);}
   RegisterTarget(system_i386_wdosx_info);
 end.
-
-{
-  $Log: t_wdosx.pas,v $
-  Revision 1.6  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

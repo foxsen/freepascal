@@ -1,5 +1,4 @@
 {
-    $Id: fpcmmain.pp,v 1.46 2005/05/05 13:26:56 peter Exp $
     Copyright (c) 2001 by Peter Vreman
 
     FPCMake - Main module
@@ -64,62 +63,85 @@ interface
 
     type
       TCpu=(
-        c_i386,c_m68k,c_powerpc,c_sparc,c_x86_64,c_arm
+        c_i386,c_m68k,c_powerpc,c_sparc,c_x86_64,c_arm,c_powerpc64,c_avr,c_armeb,c_armel,c_mips,c_mipsel,c_mips64,c_mips64el,c_jvm
       );
 
       TOS=(
-        o_linux,o_go32v2,o_win32,o_os2,o_freebsd,o_beos,o_netbsd,
+        o_linux,o_go32v2,o_win32,o_os2,o_freebsd,o_beos,o_haiku,o_netbsd,
         o_amiga,o_atari, o_solaris, o_qnx, o_netware, o_openbsd,o_wdosx,
-        o_palmos,o_macos,o_darwin,o_emx,o_watcom,o_morphos,o_netwlibc
+        o_palmos,o_macos,o_darwin,o_emx,o_watcom,o_morphos,o_netwlibc,
+        o_win64,o_wince,o_gba,o_nds,o_embedded,o_symbian,o_nativent,o_iphonesim,
+        o_wii,o_aix,o_java,o_android
       );
 
       TTargetSet=array[tcpu,tos] of boolean;
 
     const
       CpuStr : array[TCpu] of string=(
-        'i386','m68k','powerpc','sparc','x86_64','arm'
+        'i386','m68k','powerpc','sparc','x86_64','arm','powerpc64','avr','armeb', 'armel', 'mips', 'mipsel', 'mips64', 'mips64el', 'jvm'
       );
 
       CpuSuffix : array[TCpu] of string=(
-        '_i386','_m68k','_powerpc','_sparc','_x86_64','_arm'
+        '_i386','_m68k','_powerpc','_sparc','_x86_64','_arm','_powerpc64','avr','_armeb', '_armel', '_mips', '_mipsel', '_mips64', '_mips64el', '_jvm'
+      );
+
+      ppcSuffix : array[TCpu] of string=(
+        '386','m68k','ppc','sparc','x86_64','arm','ppc64','avr','armeb', 'armel', 'mips', 'mipsel', 'mips64', 'mips64el', 'jvm'
       );
 
       OSStr : array[TOS] of string=(
-        'linux','go32v2','win32','os2','freebsd','beos','netbsd',
+        'linux','go32v2','win32','os2','freebsd','beos','haiku','netbsd',
         'amiga','atari','solaris', 'qnx', 'netware','openbsd','wdosx',
-        'palmos','macos','darwin','emx','watcom','morphos','netwlibc'
+        'palmos','macos','darwin','emx','watcom','morphos','netwlibc',
+        'win64','wince','gba','nds','embedded','symbian','nativent',
+        'iphonesim', 'wii', 'aix', 'java', 'android'
       );
 
       OSSuffix : array[TOS] of string=(
-        '_linux','_go32v2','_win32','_os2','_freebsd','_beos','_netbsd',
+        '_linux','_go32v2','_win32','_os2','_freebsd','_beos','_haiku','_netbsd',
         '_amiga','_atari','_solaris', '_qnx', '_netware','_openbsd','_wdosx',
-        '_palmos','_macos','_darwin','_emx','_watcom','_morphos','_netwlibc'
+        '_palmos','_macos','_darwin','_emx','_watcom','_morphos','_netwlibc',
+        '_win64','_wince','_gba','_nds','_embedded','_symbian','_nativent',
+        '_iphonesim','_wii','_aix','_java','_android'
       );
 
       { This table is kept OS,Cpu because it is easier to maintain (PFV) }
       OSCpuPossible : array[TOS,TCpu] of boolean = (
-        { os          i386    m68k  ppc    sparc  x86_64 arm }
-        { linux }   ( true,  true,  true,  true,  true,  true),
-        { go32v2 }  ( true,  false, false, false, false, false),
-        { win32 }   ( true,  false, false, false, false, false),
-        { os2 }     ( true,  false, false, false, false, false),
-        { freebsd } ( true,  true,  false, false, true, false),
-        { beos }    ( true,  false, false, false, false, false),
-        { netbsd }  ( true,  true,  true,  true,  false, false),
-        { amiga }   ( false, true,  false, false, false, false),
-        { atari }   ( false, true,  false, false, false, false),
-        { solaris } ( true,  false, false, true,  false, false),
-        { qnx }     ( true,  false, false, false, false, false),
-        { netware } ( true,  false, false, false, false, false),
-        { openbsd } ( true,  true,  false, false, false, false),
-        { wdosx }   ( true,  false, false, false, false, false),
-        { palmos }  ( false, true,  false, false, false, false),
-        { macos }   ( false, false, true,  false, false, false),
-        { darwin }  ( false, false, true,  false, false, false),
-        { emx }     ( true,  false, false, false, false, false),
-        { watcom }  ( true,  false, false, false ,false, false),
-        { morphos } ( false, false, true,  false ,false, false),
-        { netwlibc }( true,  false, false, false, false, false)
+        { os          i386    m68k  ppc    sparc  x86_64 arm    ppc64  avr    armeb  armel  mips   mipsel mips64 misp64el jvm }
+        { linux }   ( true,  true,  true,  true,  true,  true,  true,  false, true,  false, true,  true,  false, false,   false),
+        { go32v2 }  ( true,  false, false, false, false, false, false, false, false, false, false, false, false, false,   false),
+        { win32 }   ( true,  false, false, false, false, false, false, false, false, false, false, false, false, false,   false),
+        { os2 }     ( true,  false, false, false, false, false, false, false, false, false, false, false, false, false,   false),
+        { freebsd } ( true,  true,  false, false, true,  false, false, false, false, false, false, false, false, false,   false),
+        { beos }    ( true,  false, false, false, false, false, false, false, false, false, false, false, false, false,   false),
+        { haiku }   ( true,  false, false, false, false, false, false, false, false, false, false, false, false, false,   false),
+        { netbsd }  ( true,  true,  true,  true,  true, false, false, false, false, false, false, false, false, false,   false),
+        { amiga }   ( false, true,  true,  false, false, false, false, false, false, false, false, false, false, false,   false),
+        { atari }   ( false, true,  false, false, false, false, false, false, false, false, false, false, false, false,   false),
+        { solaris } ( true,  false, false, true,  true,  false, false, false, false, false, false, false, false, false,   false),
+        { qnx }     ( true,  false, false, false, false, false, false, false, false, false, false, false, false, false,   false),
+        { netware } ( true,  false, false, false, false, false, false, false, false, false, false, false, false, false,   false),
+        { openbsd } ( true,  true,  false, false, true,  false, false, false, false, false, false, false, false, false,   false),
+        { wdosx }   ( true,  false, false, false, false, false, false, false, false, false, false, false, false, false,   false),
+        { palmos }  ( false, true,  false, false, false, true,  false, false, false, false, false, false, false, false,   false),
+        { macos }   ( false, false, true,  false, false, false, false, false, false, false, false, false, false, false,   false),
+        { darwin }  ( true,  false, true,  false, true,  true,  true,  false, false, false, false, false, false, false,   false),
+        { emx }     ( true,  false, false, false, false, false, false, false, false, false, false, false, false, false,   false),
+        { watcom }  ( true,  false, false, false ,false, false, false, false, false, false, false, false, false, false,   false),
+        { morphos } ( false, false, true,  false ,false, false, false, false, false, false, false, false, false, false,   false),
+        { netwlibc }( true,  false, false, false, false, false, false, false, false, false, false, false, false, false,   false),
+        { win64   } ( false, false, false, false, true,  false, false, false, false, false, false, false, false, false,   false),
+        { wince    }( true,  false, false, false, false, true,  false, false, false, false, false, false, false, false,   false),
+        { gba    }  ( false, false, false, false, false, true,  false, false, false, false, false, false, false, false,   false),
+        { nds    }  ( false, false, false, false, false, true,  false, false, false, false, false, false, false, false,   false),
+        { embedded }( true,  true,  true,  true,  true,  true,  true,  true,  true , false, false, false, false, false,   false),
+        { symbian } ( true,  false, false, false, false, true,  false, false, false, false, false, false, false, false,   false),
+        { nativent }( true,  false, false, false, false, false, false, false, false, false, false, false, false, false,   false),
+        { iphonesim }( true, false, false, false, false, false, false, false, false, false, false, false, false, false,   false),
+        { wii }     ( false, false, true,  false, false, false, false, false, false, false, false, false, false, false,   false),
+        { aix }     ( false, false, true,  false, false, false, true,  false, false, false, false, false, false, false,   false),
+        { java }    ( false, false, false, false, false, false, false, false, false, false, false, false, false, false,   true),
+        { android } ( false, false, false, false, false, false, false, false, false, false, false, false, false, false,   true)
       );
 
     type
@@ -701,8 +723,10 @@ implementation
 
 
     procedure TFPCMake.LoadMakefileFPC;
+{$ifdef SupportLCL}
       var
         s : string;
+{$endif SupportLCL}
       begin
         LoadSections;
         { Parse all sections }
@@ -712,12 +736,14 @@ implementation
         { Add some default variables like FPCDIR, UNITSDIR }
         AddFPCDefaultVariables;
         { Load LCL code ? }
+{$ifdef SupportLCL}
         s:=GetVariable('require_packages',true);
         if (pos('lcl',s)>0) or (PackageName='lcl') then
          begin
            FUsesLCL:=true;
            AddLCLDefaultVariables;
          end;
+{$endif SupportLCL}
         { Show globals }
         Verbose(FPCMakeDebug,s_globals);
         Variables.Foreach(@PrintDic);
@@ -820,8 +846,7 @@ implementation
 
     procedure TFPCMake.LoadPackageSection;
       var
-        hs,s : string;
-        t : TOS;
+        s : string;
       begin
         { Get package info from package section }
         FPackageSec:=TFPCMakeSection(FSections['package']);
@@ -1137,6 +1162,7 @@ implementation
 
     procedure TFPCMake.AddFPCDefaultVariables;
       var
+        cpu : TCpu;
         hs,s : string;
       begin
         { Already set FPCDIR }
@@ -1172,9 +1198,15 @@ implementation
          begin
 {$ifdef UNIX}
 {$ifndef NO_UNIX_UNIT}
-           if FileExists('/usr/local/bin/ppc386') then
+           cpu := low(TCpu);
+           while(cpuStr[cpu] <> {$I %FPCTARGETCPU%}) do begin
+             Inc(cpu);
+             if cpu > high(TCpu) then
+               raise Exception.Create('Internal error');
+           end;
+           if FileExists('/usr/local/bin/ppc' + ppcSuffix[cpu]) then
             begin
-              s:=ExtractFilePath({$ifdef ver1_0}ReadLink{$else}fpReadlink{$endif}('/usr/local/bin/ppc386'));
+              s:=ExtractFilePath({$ifdef ver1_0}ReadLink{$else}fpReadlink{$endif}('/usr/local/bin/ppc' + ppcSuffix[cpu]));
               if s<>'' then
                begin
                  if s[length(s)]='/' then
@@ -1184,9 +1216,9 @@ implementation
             end;
            if hs='' then
             begin
-              if FileExists('/usr/bin/ppc386') then
+              if FileExists('/usr/bin/ppc' + ppcSuffix[cpu]) then
                begin
-                 s:=ExtractFilePath({$ifdef ver1_0}ReadLink{$else}fpReadLink{$endif}('/usr/bin/ppc386'));
+                 s:=ExtractFilePath({$ifdef ver1_0}ReadLink{$else}fpReadLink{$endif}('/usr/bin/ppc' + ppcSuffix[cpu]));
                  if s<>'' then
                   begin
                     if s[length(s)]='/' then
@@ -1215,7 +1247,7 @@ implementation
         SetVariable('FPCDIR',s,false);
         { PACKAGESDIR }
         if GetVariable('PACKAGESDIR',false)='' then
-         SetVariable('PACKAGESDIR','$(FPCDIR)/packages/base $(FPCDIR)/packages/extra',false);
+         SetVariable('PACKAGESDIR','$(FPCDIR)/packages $(FPCDIR)/packages/base $(FPCDIR)/packages/extra $(FPCDIR)/packages',false);
         { UNITSDIR }
         if GetVariable('UNITSDIR',false)='' then
          SetVariable('UNITSDIR','$(FPCDIR)/units/$(FULLTARGET)',false);
@@ -1607,98 +1639,3 @@ implementation
       end;
 
 end.
-{
-  $Log: fpcmmain.pp,v $
-  Revision 1.46  2005/05/05 13:26:56  peter
-    * 2.0.0
-
-  Revision 1.45  2005/02/10 17:27:50  peter
-    * sunos to solaris
-
-  Revision 1.44  2005/01/10 20:33:09  peter
-    * use cpu-os style
-
-  Revision 1.43  2004/09/04 21:24:43  armin
-  * added target netwlibc
-
-  Revision 1.42  2004/07/11 18:58:19  peter
-    * support varaiable_cpu
-
-  Revision 1.41  2004/06/29 19:20:49  marco
-   * rtl only autoadded if name<>rtl (+/- line 1030)
-
-  Revision 1.40  2004/06/06 14:11:54  karoly
-    + added morphos target
-
-  Revision 1.39  2004/06/05 11:14:49  olle
-    * niceified
-
-  Revision 1.38  2004/05/20 12:02:48  marco
-   * freebsd/x86_64
-
-  Revision 1.37  2004/02/22 14:55:22  hajny
-    * small correction for checking of absolute paths
-
-  Revision 1.36  2004/02/07 00:22:24  florian
-    + arm-linux target
-
-  Revision 1.35  2004/01/05 17:45:02  marco
-   * netbsd patches
-
-  Revision 1.34  2003/09/30 09:10:28  marco
-   * watcom support
-
-  Revision 1.33  2003/09/27 13:00:30  peter
-    * fixed for unix
-
-  Revision 1.32  2003/05/20 23:54:45  florian
-    + darwin support added
-
-  Revision 1.31  2003/04/24 23:21:01  peter
-    * support different cpu target
-
-  Revision 1.30  2003/03/23 23:18:26  hajny
-    + platform extensions unified, emx target added
-
-  Revision 1.29  2003/01/13 15:09:16  florian
-    + macos and macosx target
-    * fixed target detection, first we should try the default target
-
-  Revision 1.28  2003/01/13 11:54:02  pierre
-   + palmos target added
-
-  Revision 1.27  2002/10/07 18:41:02  peter
-    * support mainpackage/subpackage. This allows to use things like
-      gnome1/gconf as required package
-
-  Revision 1.26  2002/09/07 15:40:31  peter
-    * old logs removed and tabs fixed
-
-  Revision 1.25  2002/07/30 13:18:42  marco
-   * OpenBSD fixes
-
-  Revision 1.24  2002/06/01 18:39:15  marco
-   * Renamefest
-
-  Revision 1.23  2002/03/15 11:37:46  armin
-  + Added netware target
-
-  Revision 1.22  2002/01/29 22:00:22  peter
-    * load package section first before setting globals
-    * fixed buildunit
-
-  Revision 1.21  2002/01/29 17:48:53  peter
-    * packages splitted to base and extra
-
-  Revision 1.20  2002/01/27 21:42:35  peter
-    * -r option to process target dirs also
-    * default changed to build only for current target
-    * removed auto building of required packages
-    * removed makefile target because it causes problems with
-      an internal rule of make
-
-  Revision 1.19  2002/01/06 21:50:04  peter
-    * lcl updates
-    * small optimizes for package check
-
-}

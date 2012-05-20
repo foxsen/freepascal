@@ -1,5 +1,4 @@
 {
-    $Id: ppumove.pp,v 1.8 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 1999-2002 by the FPC Development Team
 
     Add multiple FPC units into a static/shared library
@@ -24,24 +23,31 @@
 {$endif}
 Program ppumove;
 uses
+
+{$IFDEF MACOS}
+{$DEFINE USE_FAKE_SYSUTILS}
+{$ENDIF MACOS}
+
+{$IFNDEF USE_FAKE_SYSUTILS}
+  sysutils,
+{$ELSE}
+  fksysutl,
+{$ENDIF}
+
 {$ifdef unix}
-  {$ifdef ver1_0}
-  linux,
-  {$else}
-  Baseunix,Unix, UnixUtil,
-  {$endif}
+  Baseunix,Unix, Dos,
 {$else unix}
   dos,
 {$endif unix}
-  ppu,
+  cutils,ppu,systems,
   getopts;
 
 const
-  Version   = 'Version 1.00';
+  Version   = 'Version 2.1.1';
   Title     = 'PPU-Mover';
-  Copyright = 'Copyright (c) 1998-2002 by the Free Pascal Development Team';
+  Copyright = 'Copyright (c) 1998-2007 by the Free Pascal Development Team';
 
-  ShortOpts = 'o:e:d:qhsvbw';
+  ShortOpts = 'o:e:d:i:qhsvb';
   BufSize = 4096;
   PPUExt = 'ppu';
   ObjExt = 'o';
@@ -56,7 +62,7 @@ const
 
   { link options }
   link_none    = $0;
-  link_allways = $1;
+  link_always  = $1;
   link_static  = $2;
   link_smart   = $4;
   link_shared  = $8;
@@ -70,17 +76,21 @@ Type
 
 Var
   ArBin,LDBin,StripBin,
+  OutputFileForPPU,
   OutputFile,
   OutputFileForLink,  { the name of the output file needed when linking }
+  InputPath,
   DestPath,
   PPLExt,
   LibExt      : string;
+  DoStrip,
   Batch,
   Quiet,
   MakeStatic  : boolean;
   Buffer      : Pointer;
   ObjFiles    : PLinkOEnt;
   BatchFile   : Text;
+  Libs        : ansistring;
 
 {*****************************************************************************
                                  Helpers
@@ -91,11 +101,7 @@ Procedure Error(const s:string;stop:boolean);
   Write an error message to stderr
 }
 begin
-{$ifdef FPC}
   writeln(stderr,s);
-{$else}
-  writeln(s);
-{$endif}
   if stop then
    halt(1);
 end;
@@ -113,7 +119,7 @@ begin
      exit;
    end;
 {$ifdef unix}
-  Shell:={$ifdef ver1_0}linux{$else}unix{$endif}.shell(s);
+  Shell:=unix.fpsystem(s);
 {$else}
   exec(getenv('COMSPEC'),'/C '+s);
   Shell:=DosExitCode;
@@ -133,7 +139,7 @@ Var
 {$endif}
 begin
 {$ifdef unix}
-  FileExists:={$ifdef VER1_0}FStat{$ELSE}FpStat{$endif} (F,Info){$ifndef VER1_0}=0{$endif};
+  FileExists:=FpStat(F,Info)=0;
 {$else}
   FindFirst (F,anyfile,Info);
   FileExists:=DosError=0;
@@ -141,7 +147,7 @@ begin
 end;
 
 
-Function AddExtension(Const HStr,ext:String):String;
+Function ChangeFileExt(Const HStr,ext:String):String;
 {
   Return a filename which will have extension ext added if no
   extension is found
@@ -153,9 +159,9 @@ begin
   while (j>0) and (Hstr[j]<>'.') do
    dec(j);
   if j=0 then
-   AddExtension:=Hstr+'.'+Ext
+   ChangeFileExt:=Hstr+'.'+Ext
   else
-   AddExtension:=HStr;
+   ChangeFileExt:=HStr;
 end;
 
 
@@ -209,9 +215,9 @@ var
 begin
 { create the temp dir first }
   fsplit(libfn,d,n,e);
-  {$I-}
+  {$push}{$I-}
    mkdir(n+'.sl');
-  {$I+}
+  {$pop}
   if ioresult<>0 then;
 { Extract }
   if Shell(arbin+' x '+libfn)<>0 then
@@ -239,7 +245,9 @@ Var
   untilb : byte;
   l,m    : longint;
   f      : file;
+  ext,
   s      : string;
+  ppuversion : dword;
 begin
   DoPPU:=false;
   If Not Quiet then
@@ -258,10 +266,11 @@ begin
      Error('Error: Not a PPU File : '+PPUFn,false);
      Exit;
    end;
-  if inppu.GetPPUVersion<CurrentPPUVersion then
+  ppuversion:=inppu.GetPPUVersion;
+  if ppuversion<CurrentPPUVersion then
    begin
      inppu.free;
-     Error('Error: Wrong PPU Version : '+PPUFn,false);
+     Error('Error: Wrong PPU Version '+tostr(ppuversion)+' in '+PPUFn,false);
      Exit;
    end;
 { No .o file generated for this ppu, just skip }
@@ -286,6 +295,12 @@ begin
      inppu.free;
      Error('Error: PPU is not static linked : '+PPUFn,false);
      Exit;
+   end;
+{ Check if shared is allowed }
+  if tsystem(inppu.header.target) in [system_i386_go32v2] then
+   begin
+     Writeln('Warning: shared library not supported for ppu target, switching to static library');
+     MakeStatic:=true;
    end;
 { Create the new ppu }
   if PPUFn=PPLFn then
@@ -357,26 +372,52 @@ begin
 { just add a new entry with the new lib }
   if MakeStatic then
    begin
-     outppu.putstring(outputfileforlink);
+     outppu.putstring(OutputfileForPPU);
      outppu.putlongint(link_static);
      outppu.writeentry(iblinkunitstaticlibs)
    end
   else
    begin
-     outppu.putstring(outputfileforlink);
+     outppu.putstring(OutputfileForPPU);
      outppu.putlongint(link_shared);
      outppu.writeentry(iblinkunitsharedlibs);
    end;
 { read all entries until the end and write them also to the new ppu }
   repeat
     b:=inppu.readentry;
-  { don't write ibend, that's written automaticly }
+  { don't write ibend, that's written automatically }
     if b<>ibend then
      begin
-       repeat
-         inppu.getdatabuf(buffer^,bufsize,l);
-         outppu.putdata(buffer^,l);
-       until l<bufsize;
+       if b=iblinkothersharedlibs then
+         begin
+           while not inppu.endofentry do
+             begin
+               s:=inppu.getstring;
+               m:=inppu.getlongint;
+
+               outppu.putstring(s);
+
+               { strip lib prefix }
+               if copy(s,1,3)='lib' then
+                 delete(s,1,3);
+
+               { strip lib prefix }
+               if copy(s,1,3)='lib' then
+                 delete(s,1,3);
+               ext:=ExtractFileExt(s);
+               if ext<>'' then
+                 delete(s,length(s)-length(ext)+1,length(ext));
+
+               libs:=libs+' -l'+s;
+
+               outppu.putlongint(m);
+             end;
+         end
+       else
+         repeat
+           inppu.getdatabuf(buffer^,bufsize,l);
+           outppu.putdata(buffer^,l);
+         until l<bufsize;
        outppu.writeentry(b);
      end;
   until b=ibend;
@@ -388,12 +429,12 @@ begin
 { rename }
   if PPUFn=PPLFn then
    begin
-     {$I-}
+     {$push}{$I-}
       assign(f,PPUFn);
       erase(f);
       assign(f,'ppumove.$$$');
       rename(f,PPUFn);
-     {$I+}
+     {$pop}
      if ioresult<>0 then;
    end;
 { the end }
@@ -413,13 +454,13 @@ var
 {$endif}
 begin
 {$ifdef unix}
-  DoFile:=DoPPU(FileName,ForceExtension(FileName,PPLExt));
+  DoFile:=DoPPU(InputPath+FileName,InputPath+ForceExtension(FileName,PPLExt));
 {$else}
   DoFile:=false;
   findfirst(filename,$20,dir);
   while doserror=0 do
    begin
-     if not DoPPU(Dir.Name,ForceExtension(Dir.Name,PPLExt)) then
+     if not DoPPU(InputPath+Dir.Name,InputPath+ForceExtension(Dir.Name,PPLExt)) then
       exit;
      findnext(dir);
    end;
@@ -431,11 +472,10 @@ end;
 
 Procedure DoLink;
 {
-  Link the object files together to form a (shared) library, the only
-  problem here is the 255 char limit of Names
+  Link the object files together to form a (shared) library
 }
 Var
-  Names : String;
+  Names : ansistring;
   f     : file;
   Err   : boolean;
   P     : PLinkOEnt;
@@ -447,9 +487,9 @@ begin
   While p<>nil do
    begin
      if Names<>'' then
-      Names:=Names+' '+P^.name
+      Names:=Names+' '+InputPath+P^.name
      else
-      Names:=p^.Name;
+      Names:=InputPath+p^.Name;
      p:=p^.next;
    end;
   if Names='' then
@@ -459,27 +499,27 @@ begin
      exit;
    end;
   If not Quiet then
-   WriteLn(names);
+    WriteLn(names+Libs);
 { Run ar or ld to create the lib }
   If MakeStatic then
    Err:=Shell(arbin+' rs '+outputfile+' '+names)<>0
   else
    begin
-     Err:=Shell(ldbin+' -shared -o '+OutputFile+' '+names)<>0;
-     if not Err then
+     Err:=Shell(ldbin+' -shared -E -o '+OutputFile+' '+names+' '+libs)<>0;
+     if (not Err) and dostrip then
       Shell(stripbin+' --strip-unneeded '+OutputFile);
    end;
   If Err then
    Error('Fatal: Library building stage failed.',true);
 { fix permission to 644, so it's not 755 }
 {$ifdef unix}
-  {$ifdef VER1_0}ChMod{$ELSE}FPChmod{$endif}(OutputFile,420);
+  FPChmod(OutputFile,420);
 {$endif}
 { Rename to the destpath }
   if DestPath<>'' then
    begin
      Assign(F, OutputFile);
-     Rename(F,DestPath+'/'+OutputFile);
+     Rename(F,DestPath+DirectorySeparator+OutputFile);
    end;
 end;
 
@@ -489,7 +529,7 @@ Procedure usage;
   Print usage and exit.
 }
 begin
-  Writeln(paramstr(0),': [-qhwvbs] [-e ext] [-o name] [-d path] file [file ...]');
+  Writeln(paramstr(0),': [-qhvbsS] [-e ext] [-o name] [-d path] file [file ...]');
   Halt(0);
 end;
 
@@ -508,6 +548,7 @@ begin
   ObjFiles:=Nil;
   Quiet:=False;
   Batch:=False;
+  DoStrip:=False;
   OutputFile:='';
   PPLExt:='ppu';
   ArBin:='ar';
@@ -517,16 +558,18 @@ begin
     c:=Getopt (ShortOpts);
     Case C of
       EndOfOptions : break;
-      's' : MakeStatic:=True;
+      'S' : MakeStatic:=True;
       'o' : OutputFile:=OptArg;
       'd' : DestPath:=OptArg;
+      'i' : begin
+              InputPath:=OptArg;
+              if InputPath[length(InputPath)]<>DirectorySeparator then
+                InputPath:=InputPath+DirectorySeparator;
+            end;
       'e' : PPLext:=OptArg;
       'q' : Quiet:=True;
-      'w' : begin
-              ArBin:='arw';
-              LdBin:='ldw';
-            end;
       'b' : Batch:=true;
+      's' : DoStrip:=true;
       '?' : Usage;
       'h' : Usage;
     end;
@@ -546,6 +589,7 @@ end;
 var
   i : longint;
 begin
+  Libs:='';
   ProcessOpts;
 { Write Header }
   if not Quiet then
@@ -554,21 +598,14 @@ begin
      Writeln(Copyright);
      Writeln;
    end;
-{ Check if shared is allowed }
-{$ifndef unix}
-  if arbin<>'arw' then
-   begin
-     Writeln('Warning: shared library not supported for Go32, switching to static library');
-     MakeStatic:=true;
-   end;
-{$endif}
 { fix the libext and outputfilename }
   if Makestatic then
    LibExt:=StaticLibExt
   else
    LibExt:=SharedLibExt;
   if OutputFile='' then
-   OutPutFile:=Paramstr(OptInd);
+   OutputFile:=Paramstr(OptInd);
+  OutputFileForPPU:=OutputFile;
 { fix filename }
 {$ifdef unix}
   if Copy(OutputFile,1,3)<>'lib' then
@@ -594,7 +631,7 @@ begin
    end;
 { Process Files }
   i:=OptInd;
-  While (i<=ParamCount) and Dofile(AddExtension(Paramstr(i),PPUExt)) do
+  While (i<=ParamCount) and Dofile(ChangeFileExt(Paramstr(i),PPUExt)) do
    Inc(i);
 { Do Linking stage }
   DoLink;
@@ -605,16 +642,10 @@ begin
       Writeln('Writing pmove'+BatchExt);
      Close(BatchFile);
 {$ifdef unix}
-  {$ifdef VER1_0}ChMod{$ELSE}FPChmod{$endif}('pmove'+BatchExt,493);
+  FPChmod('pmove'+BatchExt,493);
 {$endif}
    end;
 { The End }
   if Not Quiet then
    Writeln('Done.');
 end.
-{
-  $Log: ppumove.pp,v $
-  Revision 1.8  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

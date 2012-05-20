@@ -1,5 +1,4 @@
 {
-    $Id: ttyname.inc,v 1.4 2005/02/14 17:13:31 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Peter Vreman
     member of the Free Pascal development team.
@@ -56,6 +55,7 @@ var
                 exit;
               end;
            end
+{$ifndef beos}	 
           else if (ino_t(d^.d_fileno)=myino) and (st.st_dev=mydev) then
            begin
              fpclosedir(dirstream^);
@@ -63,6 +63,7 @@ var
              mysearch:=true;
              exit;
            end;
+{$endif}
         end;
        d:=fpReaddir(dirstream^);
      end;
@@ -72,10 +73,12 @@ var
 
 begin
   TTYName:='';
-  if (fpfstat(handle,st)=-1) and (isatty (handle)<>-1) then
+  if (fpfstat(handle,st)=-1) or (isatty (handle)<>1) then
    exit;
+{$ifndef beos}	 
   mydev:=st.st_dev;
   myino:=st.st_ino;
+{$endif}
   mysearch('/dev');
 end;
 
@@ -88,9 +91,3 @@ begin
   TTYName:=TTYName(textrec(f).handle);
 end;
 
-{
-  $Log: ttyname.inc,v $
-  Revision 1.4  2005/02/14 17:13:31  peter
-    * truncate log
-
-}

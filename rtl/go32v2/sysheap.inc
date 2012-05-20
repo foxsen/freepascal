@@ -1,5 +1,4 @@
 {
-    $Id: sysheap.inc,v 1.1 2005/02/06 16:57:18 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2001 by Free Pascal development team
 
@@ -23,7 +22,7 @@
 
 function __sbrk(size:longint):longint;cdecl;external;
 
-function SysOSAlloc (size: PtrInt): pointer; assembler;
+function SysOSAlloc (size: ptruint): pointer; assembler;
 asm
 {$ifdef SYSTEMDEBUG}
         cmpb    $1,accept_sbrk
@@ -52,19 +51,9 @@ end;
 }
 {.$define HAS_SYSOSFREE}
 
-procedure SysOSFree(p: pointer; size: ptrint);
+procedure SysOSFree(p: pointer; size: ptruint);
 begin
 end;
 
 
-{
-   $Log: sysheap.inc,v $
-   Revision 1.1  2005/02/06 16:57:18  peter
-     * threads for go32v2,os,emx,netware
-
-   Revision 1.1  2005/02/06 13:06:20  peter
-     * moved file and dir functions to sysfile/sysdir
-     * win32 thread in systemunit
-
-}
 

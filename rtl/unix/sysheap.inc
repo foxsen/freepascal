@@ -1,5 +1,4 @@
 {
-    $Id: sysheap.inc,v 1.1 2005/02/07 22:04:55 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2001 by Free Pascal development team
 
@@ -16,7 +15,7 @@
 
  **********************************************************************}
 
-function SysOSAlloc(size: ptrint): pointer;
+function SysOSAlloc(size: ptruint): pointer;
 begin
   result:=Fpmmap(nil,Size,3,MAP_PRIVATE+MAP_ANONYMOUS,-1,0);
   if result=pointer(-1) then
@@ -27,24 +26,11 @@ end;
 
 {$define HAS_SYSOSFREE}
 
-procedure SysOSFree(p: pointer; size: ptrint);
+procedure SysOSFree(p: pointer; size: ptruint);
 begin
   fpmunmap(p, size);
 end;
 
 
 
-{
-   $Log: sysheap.inc,v $
-   Revision 1.1  2005/02/07 22:04:55  peter
-     * moved to unix
-
-   Revision 1.1  2005/02/06 16:57:18  peter
-     * threads for go32v2,os,emx,netware
-
-   Revision 1.1  2005/02/06 13:06:20  peter
-     * moved file and dir functions to sysfile/sysdir
-     * win32 thread in systemunit
-
-}
 

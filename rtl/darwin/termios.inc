@@ -1,5 +1,4 @@
 {
-    $Id: termios.inc,v 1.3 2005/02/14 17:13:22 peter Exp $
 }
 
 
@@ -152,7 +151,7 @@
 // as in linux freebsd netbsd and openbsd
 // Start
 Type
-  winsize = packed record
+  winsize = record
     ws_row,
     ws_col,
     ws_xpixel,
@@ -568,11 +567,39 @@ Type
         chr(_POSIX_VDISABLE), CINTR,  CQUIT,  CSUSP,  CDSUSP, CSTART, CSTOP,  CLNEXT,
         CDISCARD, CMIN, CTIME,  CSTATUS, chr(_POSIX_VDISABLE));
 
+
+// from /usr/include/sys/iocomm.h
+  { parameter length, at most 13 bits } 
+  IOCPARM_MASK = $1fff; 
+
+  {  max size of ioctl args  }
+  IOCPARM_MAX = IOCPARM_MASK + 1;
+
+  { no parameters }
+  IOC_VOID = culong($20000000);
+
+  { copy parameters out }
+  IOC_OUT = culong($40000000);
+
+  { copy parameters in }
+  IOC_IN = culong($80000000);
+
+  { copy paramters in and out }
+  IOC_INOUT = (IOC_IN or IOC_OUT);
+
+  { mask for IN/OUT/VOID }
+  IOC_DIRMASK = culong($e0000000);
+
+// from /usr/include/sys/filio.h
+
+  FIOCLEX = (IOC_VOID or (0 and IOCPARM_MASK) << 16) or ((ord('f') << 8) or 1);
+  FIONCLEX = (IOC_VOID or (0 and IOCPARM_MASK) << 16) or ((ord('f') << 8) or 2);
+  FIONREAD = (IOC_OUT or (sizeof(cint) and IOCPARM_MASK) << 16) or ((ord('f') << 8) or 127);
+  FIONBIO = (IOC_IN or (sizeof(cint) and IOCPARM_MASK) << 16) or ((ord('f') << 8) or 126);
+  FIOASYNC = (IOC_IN or (sizeof(cint) and IOCPARM_MASK) << 16) or ((ord('f') << 8) or 125);
+  FIOSETOWN = (IOC_IN or (sizeof(cint) and IOCPARM_MASK) << 16) or ((ord('f') << 8) or 124);
+  FIOGETOWN = (IOC_OUT or (sizeof(cint) and IOCPARM_MASK) << 16) or ((ord('f') << 8) or 123);
+  FIODTYPE = (IOC_OUT or (sizeof(cint) and IOCPARM_MASK) << 16) or ((ord('f') << 8) or 122);
+
 {$endif}
 
-{
-  $Log: termios.inc,v $
-  Revision 1.3  2005/02/14 17:13:22  peter
-    * truncate log
-
-}

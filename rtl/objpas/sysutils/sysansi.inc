@@ -1,6 +1,5 @@
 {
     *********************************************************************
-    $Id: sysansi.inc,v 1.5 2005/02/14 17:13:31 peter Exp $
     Copyright (C) 2002 by Florian Klaempfl
 
     This program is free software; you can redistribute it and/or modify
@@ -70,9 +69,45 @@ begin
   Result:=StrScan(Str,Chr);
 end;
 
-{
-  $Log: sysansi.inc,v $
-  Revision 1.5  2005/02/14 17:13:31  peter
-    * truncate log
+Function HashName(Name: PAnsiChar): LongWord;
+Var
+  thehash,g,I : LongWord;
+begin
+  thehash:=0;
+  For I:=1 to Length(Name) do { 0 terminated }
+    begin
+      thehash:=thehash shl 4;
+      inc(theHash,Ord(UpCase(Name[i])));
+      g:=thehash and LongWord($f shl 28);
+      if g<>0 then
+        begin
+          thehash:=thehash xor (g shr 24);
+          thehash:=thehash xor g;
+        end;
+    end;
+  If theHash=0 then
+    HashName:=$ffffffff
+  else
+    HashName:=TheHash;
+end;
 
-}
+function BytesOf(const Val: RawByteString): TBytes;
+var
+  Len:Integer;
+begin
+  Len:=Length(Val);
+  SetLength(Result,Len);
+  if Len>0 then
+    Move(Val[1],Result[0],Len);
+end;
+
+function BytesOf(const Val: AnsiChar): TBytes;
+begin
+  SetLength(Result,1);
+  Result[0]:=Byte(Val);
+end;
+
+Function CharInSet(Ch:AnsiChar;Const CSet : TSysCharSet) : Boolean;
+begin
+  result:=ch in CSet;
+end;

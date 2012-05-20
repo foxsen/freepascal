@@ -1,5 +1,4 @@
 {
-    $Id: except.inc,v 1.21 2005/05/08 21:20:26 michael Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Michael Van Canneyt
     member of the Free Pascal development team
@@ -34,94 +33,70 @@ Type
     frametype : Longint;
   end;
 
-  TExceptObjectClass = Class of TObject;
-
 Const
-  CatchAllExceptions : PtrInt = -1;
-{$ifdef SUPPORT_THREADVAR}
+  CatchAllExceptions = PtrInt(-1);
+
 ThreadVar
-{$else SUPPORT_THREADVAR}
-Var
-{$endif SUPPORT_THREADVAR}
   ExceptAddrStack   : PExceptAddr;
   ExceptObjectStack : PExceptObject;
 
-{$IFNDEF VIRTUALPASCAL}
 Function RaiseList : PExceptObject;
-
 begin
   RaiseList:=ExceptObjectStack;
 end;
-{$ENDIF}
+
 
 function AcquireExceptionObject: Pointer;
+var
+  _ExceptObjectStack : PExceptObject;
 begin
-  If ExceptObjectStack=nil then begin
-    AcquireExceptionObject := nil
-  end else begin
-    Inc(ExceptObjectStack^.refcount);
-    AcquireExceptionObject := ExceptObjectStack^.FObject;
-  end;
+  _ExceptObjectStack:=ExceptObjectStack;
+  If _ExceptObjectStack<>nil then
+    begin
+      Inc(_ExceptObjectStack^.refcount);
+      AcquireExceptionObject := _ExceptObjectStack^.FObject;
+    end
+  else
+    RunError(231);
 end;
+
 
 procedure ReleaseExceptionObject;
-begin
-  If ExceptObjectStack <> nil then begin
-    if ExceptObjectStack^.refcount > 0 then begin
-    Dec(ExceptObjectStack^.refcount);
-  end;
-end;
-end;
-
-{$ifndef HAS_ADDR_STACK_ON_STACK}
-Function fpc_PushExceptAddr (Ft: Longint): PJmp_buf ;
-  [Public, Alias : 'FPC_PUSHEXCEPTADDR'];{$ifndef NOSAVEREGISTERS}saveregisters;{$endif}
-{$else HAS_ADDR_STACK_ON_STACK}
-Function fpc_PushExceptAddr (Ft: Longint;_buf,_newaddr : pointer): PJmp_buf ;
-  [Public, Alias : 'FPC_PUSHEXCEPTADDR'];{$ifndef NOSAVEREGISTERS}saveregisters;{$endif}{$ifdef hascompilerproc} compilerproc; {$endif}
-{$endif HAS_ADDR_STACK_ON_STACK}
-
 var
-  Buf : PJmp_buf;
-  NewAddr : PExceptAddr;
+  _ExceptObjectStack : PExceptObject;
+begin
+  _ExceptObjectStack:=ExceptObjectStack;
+  If _ExceptObjectStack <> nil then
+    begin
+      if _ExceptObjectStack^.refcount > 0 then
+        Dec(_ExceptObjectStack^.refcount);
+    end
+  else
+    RunError(231);
+end;
+
+
+Function fpc_PushExceptAddr (Ft: Longint;_buf,_newaddr : pointer): PJmp_buf ;
+  [Public, Alias : 'FPC_PUSHEXCEPTADDR'];compilerproc;
+var
+  _ExceptAddrstack : ^PExceptAddr;
 begin
 {$ifdef excdebug}
   writeln ('In PushExceptAddr');
 {$endif}
-  If ExceptAddrstack=Nil then
-    begin
-{$ifndef HAS_ADDR_STACK_ON_STACK}
-      New(ExceptAddrStack);
-{$else HAS_ADDR_STACK_ON_STACK}
-      ExceptAddrStack:=PExceptAddr(_newaddr);
-{$endif HAS_ADDR_STACK_ON_STACK}
-      ExceptAddrStack^.Next:=Nil;
-    end
-  else
-    begin
-{$ifndef HAS_ADDR_STACK_ON_STACK}
-      New(NewAddr);
-{$else HAS_ADDR_STACK_ON_STACK}
-      NewAddr:=PExceptAddr(_newaddr);
-{$endif HAS_ADDR_STACK_ON_STACK}
-      NewAddr^.Next:=ExceptAddrStack;
-      ExceptAddrStack:=NewAddr;
-    end;
-{$ifndef HAS_ADDR_STACK_ON_STACK}
-  new(buf);
-{$else HAS_ADDR_STACK_ON_STACK}
-  buf:=PJmp_Buf(_buf);
-{$endif HAS_ADDR_STACK_ON_STACK}
-  ExceptAddrStack^.Buf:=Buf;
-  ExceptAddrStack^.FrameType:=ft;
-  fpc_PushExceptAddr:=Buf;
+  _ExceptAddrstack:=@ExceptAddrstack;
+  PExceptAddr(_newaddr)^.Next:=_ExceptAddrstack^;
+  _ExceptAddrStack^:=PExceptAddr(_newaddr);
+  PExceptAddr(_newaddr)^.Buf:=PJmp_Buf(_buf);
+  PExceptAddr(_newaddr)^.FrameType:=ft;
+  result:=PJmp_Buf(_buf);
 end;
 
 
-Procedure fpc_PushExceptObj (Obj : TObject; AnAddr,AFrame : Pointer);
-  [Public, Alias : 'FPC_PUSHEXCEPTOBJECT'];{$ifndef NOSAVEREGISTERS}saveregisters;{$endif}{$ifdef hascompilerproc} compilerproc; {$endif}
+Procedure PushExceptObject(Obj : TObject; AnAddr,AFrame : Pointer);
 var
   Newobj : PExceptObject;
+  _ExceptObjectStack : ^PExceptObject;
   framebufsize,
   framecount  : longint;
   frames      : PPointer;
@@ -133,27 +108,23 @@ begin
 {$ifdef excdebug}
   writeln ('In PushExceptObject');
 {$endif}
-  If ExceptObjectStack=Nil then
-    begin
-      New(ExceptObjectStack);
-      ExceptObjectStack^.Next:=Nil;
-    end
-  else
-    begin
-      New(NewObj);
-      NewObj^.Next:=ExceptObjectStack;
-      ExceptObjectStack:=NewObj;
-    end;
-  ExceptObjectStack^.FObject:=Obj;
-  ExceptObjectStack^.Addr:=AnAddr;
-  ExceptObjectStack^.refcount:=0;
+  _ExceptObjectStack:=@ExceptObjectStack;
+  New(NewObj);
+  NewObj^.Next:=_ExceptObjectStack^;
+  _ExceptObjectStack^:=NewObj;
+
+  NewObj^.FObject:=Obj;
+  NewObj^.Addr:=AnAddr;
+  NewObj^.refcount:=0;
+
   { Backtrace }
   curr_frame:=AFrame;
   prev_frame:=get_frame;
   frames:=nil;
   framebufsize:=0;
   framecount:=0;
-  while (framecount<RaiseMaxFrameCount) and (curr_frame > prev_frame) Do
+  while (framecount<RaiseMaxFrameCount) and (curr_frame > prev_frame) and
+        (curr_frame<(StackBottom + StackLength)) do
    Begin
      caller_addr := get_caller_addr(curr_frame);
      caller_frame := get_caller_frame(curr_frame);
@@ -170,156 +141,177 @@ begin
      prev_frame:=curr_frame;
      curr_frame:=caller_frame;
    End;
-  ExceptObjectStack^.framecount:=framecount;
-  ExceptObjectStack^.frames:=frames;
+  NewObj^.framecount:=framecount;
+  NewObj^.frames:=frames;
 end;
-
-{$ifdef hascompilerproc}
-{ make it avalable for local use }
-Procedure fpc_PushExceptObj (Obj : TObject; AnAddr,AFrame : Pointer); [external name 'FPC_PUSHEXCEPTOBJECT'];
-{$endif}
-
 
 Procedure DoUnHandledException;
+var
+  _ExceptObjectStack : PExceptObject;
 begin
-  If (ExceptProc<>Nil) and (ExceptObjectStack<>Nil) then
-    with ExceptObjectStack^ do
-      TExceptProc(ExceptProc)(FObject,Addr,FrameCount,Frames);
-  RunError(217);
+  _ExceptObjectStack:=ExceptObjectStack;
+  If (ExceptProc<>Nil) and (_ExceptObjectStack<>Nil) then
+    with _ExceptObjectStack^ do
+      begin
+        TExceptProc(ExceptProc)(FObject,Addr,FrameCount,Frames);
+        halt(217)
+      end;
+  if erroraddr = nil then
+    RunError(217)
+  else
+    Halt(errorcode);
 end;
 
-
-Function fpc_Raiseexception (Obj : TObject; AnAddr,AFrame : Pointer) : TObject;[Public, Alias : 'FPC_RAISEEXCEPTION']; {$ifdef hascompilerproc} compilerproc; {$endif}
+{$ifndef FPC_SYSTEM_HAS_RAISEEXCEPTION}
+Function fpc_RaiseException (Obj : TObject; AnAddr,AFrame : Pointer) : TObject;[Public, Alias : 'FPC_RAISEEXCEPTION']; compilerproc;
+var
+  _ExceptObjectStack : PExceptObject;
+  _ExceptAddrstack : PExceptAddr;
 begin
 {$ifdef excdebug}
   writeln ('In RaiseException');
 {$endif}
   fpc_Raiseexception:=nil;
-  fpc_PushExceptObj(Obj,AnAddr,AFrame);
-  If ExceptAddrStack=Nil then
+  PushExceptObject(Obj,AnAddr,AFrame);
+  _ExceptAddrstack:=ExceptAddrStack;
+  If _ExceptAddrStack=Nil then
     DoUnhandledException;
-  if (RaiseProc <> nil) and (ExceptObjectStack <> nil) then
-    with ExceptObjectStack^ do
+  _ExceptObjectStack:=ExceptObjectStack;
+  if (RaiseProc <> nil) and (_ExceptObjectStack <> nil) then
+    with _ExceptObjectStack^ do
       RaiseProc(FObject,Addr,FrameCount,Frames);
-  longjmp(ExceptAddrStack^.Buf^,FPC_Exception);
+  longjmp(_ExceptAddrStack^.Buf^,FPC_Exception);
 end;
+{$endif FPC_SYSTEM_HAS_RAISEEXCEPTION}
 
 
-Procedure fpc_PopAddrStack;[Public, Alias : 'FPC_POPADDRSTACK']; {$ifdef hascompilerproc} compilerproc; {$endif}
-{$ifndef HAS_ADDR_STACK_ON_STACK}
+Procedure fpc_PopAddrStack;[Public, Alias : 'FPC_POPADDRSTACK']; compilerproc;
 var
-  hp : PExceptAddr;
-{$endif HAS_ADDR_STACK_ON_STACK}
+  hp : ^PExceptAddr;
 begin
 {$ifdef excdebug}
   writeln ('In Popaddrstack');
 {$endif}
-  If ExceptAddrStack=nil then
+  hp:=@ExceptAddrStack;
+  If hp^=nil then
     begin
+{$ifdef excdebug}
       writeln ('At end of ExceptionAddresStack');
+{$endif}
       halt (255);
     end
   else
     begin
-{$ifndef HAS_ADDR_STACK_ON_STACK}
-      hp:=ExceptAddrStack;
-      ExceptAddrStack:=ExceptAddrStack^.Next;
-      dispose(hp^.buf);
-      dispose(hp);
-{$else HAS_ADDR_STACK_ON_STACK}
-      ExceptAddrStack:=ExceptAddrStack^.Next;
-{$endif HAS_ADDR_STACK_ON_STACK}
+      hp^:=hp^^.Next;
     end;
 end;
 
 
-function fpc_PopObjectStack : TObject;[Public, Alias : 'FPC_POPOBJECTSTACK']; {$ifdef hascompilerproc} compilerproc; {$endif}
+function fpc_PopObjectStack : TObject;[Public, Alias : 'FPC_POPOBJECTSTACK']; compilerproc;
 var
-  hp : PExceptObject;
+  hp,_ExceptObjectStack : PExceptObject;
 begin
 {$ifdef excdebug}
   writeln ('In PopObjectstack');
 {$endif}
-  If ExceptObjectStack=nil then
+  _ExceptObjectStack:=ExceptObjectStack;
+  If _ExceptObjectStack=nil then
     begin
-    writeln ('At end of ExceptionObjectStack');
-    halt (1);
-    end
-  else
-    begin
-       { we need to return the exception object to dispose it }
-       if ExceptObjectStack^.refcount = 0 then begin
-         fpc_PopObjectStack:=ExceptObjectStack^.FObject;
-       end else begin
-         fpc_PopObjectStack:=nil;
-       end;
-       hp:=ExceptObjectStack;
-       ExceptObjectStack:=ExceptObjectStack^.next;
-       if assigned(hp^.frames) then
-         freemem(hp^.frames);
-       dispose(hp);
-    end;
-end;
-
-{ this is for popping exception objects when a second exception is risen }
-{ in an except/on                                                        }
-function fpc_PopSecondObjectStack : TObject;[Public, Alias : 'FPC_POPSECONDOBJECTSTACK']; {$ifdef hascompilerproc} compilerproc; {$endif}
-var
-  hp : PExceptObject;
-begin
 {$ifdef excdebug}
-  writeln ('In PopObjectstack');
-{$endif}
-  If not(assigned(ExceptObjectStack)) or
-     not(assigned(ExceptObjectStack^.next)) then
-    begin
       writeln ('At end of ExceptionObjectStack');
+{$endif}
       halt (1);
     end
   else
     begin
-      if ExceptObjectStack^.next^.refcount=0 then
+       { we need to return the exception object to dispose it }
+       if _ExceptObjectStack^.refcount = 0 then begin
+         fpc_PopObjectStack:=_ExceptObjectStack^.FObject;
+       end else begin
+         fpc_PopObjectStack:=nil;
+       end;
+       hp:=_ExceptObjectStack;
+       ExceptObjectStack:=_ExceptObjectStack^.next;
+       if assigned(hp^.frames) then
+         freemem(hp^.frames);
+       dispose(hp);
+       erroraddr:=nil;
+    end;
+end;
+
+
+{ this is for popping exception objects when a second exception is risen }
+{ in an except/on                                                        }
+function fpc_PopSecondObjectStack : TObject;[Public, Alias : 'FPC_POPSECONDOBJECTSTACK']; compilerproc;
+var
+  hp,_ExceptObjectStack : PExceptObject;
+begin
+{$ifdef excdebug}
+  writeln ('In PopObjectstack');
+{$endif}
+  _ExceptObjectStack:=ExceptObjectStack;
+  If not(assigned(_ExceptObjectStack)) or
+     not(assigned(_ExceptObjectStack^.next)) then
+    begin
+{$ifdef excdebug}
+      writeln ('At end of ExceptionObjectStack');
+{$endif}
+      halt (1);
+    end
+  else
+    begin
+      if _ExceptObjectStack^.next^.refcount=0 then
         { we need to return the exception object to dispose it if refcount=0 }
-        fpc_PopSecondObjectStack:=ExceptObjectStack^.next^.FObject
+        fpc_PopSecondObjectStack:=_ExceptObjectStack^.next^.FObject
       else
         fpc_PopSecondObjectStack:=nil;
-      hp:=ExceptObjectStack^.next;
-      ExceptObjectStack^.next:=hp^.next;
+      hp:=_ExceptObjectStack^.next;
+      _ExceptObjectStack^.next:=hp^.next;
       if assigned(hp^.frames) then
         freemem(hp^.frames);
       dispose(hp);
     end;
 end;
 
-Procedure fpc_ReRaise;[Public, Alias : 'FPC_RERAISE']; {$ifdef hascompilerproc} compilerproc; {$endif}
+{$ifndef FPC_SYSTEM_HAS_RERAISE}
+Procedure fpc_ReRaise;[Public, Alias : 'FPC_RERAISE']; compilerproc;
+var
+  _ExceptAddrStack : PExceptAddr;
 begin
 {$ifdef excdebug}
   writeln ('In reraise');
 {$endif}
-  If ExceptAddrStack=Nil then
+  _ExceptAddrStack:=ExceptAddrStack;
+  If _ExceptAddrStack=Nil then
     DoUnHandledException;
   ExceptObjectStack^.refcount := 0;
-  longjmp(ExceptAddrStack^.Buf^,FPC_Exception);
+  longjmp(_ExceptAddrStack^.Buf^,FPC_Exception);
 end;
+{$endif FPC_SYSTEM_HAS_RERAISE}
 
+function Internal_PopSecondObjectStack : TObject; external name 'FPC_POPSECONDOBJECTSTACK';
+function Internal_PopObjectStack: TObject; external name 'FPC_POPOBJECTSTACK';
+procedure Internal_Reraise; external name 'FPC_RERAISE';
 
-Function fpc_Catches(Objtype : TClass) : TObject;[Public, Alias : 'FPC_CATCHES']; {$ifdef hascompilerproc} compilerproc; {$endif}
+Function fpc_Catches(Objtype : TClass) : TObject;[Public, Alias : 'FPC_CATCHES']; compilerproc;
 var
-  _Objtype : TExceptObjectClass;
+  _ExceptObjectStack : PExceptObject;
 begin
-  If ExceptObjectStack=Nil then
+  _ExceptObjectStack:=ExceptObjectStack;
+  If _ExceptObjectStack=Nil then
    begin
+{$ifdef excdebug}
      Writeln ('Internal error.');
+{$endif}
      halt (255);
    end;
-  _Objtype := TExceptObjectClass(Objtype);
-  if Not ((_Objtype = TExceptObjectClass(CatchAllExceptions)) or
-         (ExceptObjectStack^.FObject is _ObjType)) then
+  if Not ((Objtype = TClass(CatchAllExceptions)) or
+         (_ExceptObjectStack^.FObject is ObjType)) then
     fpc_Catches:=Nil
   else
     begin
       // catch !
-      fpc_Catches:=ExceptObjectStack^.FObject;
+      fpc_Catches:=_ExceptObjectStack^.FObject;
       { this can't be done, because there could be a reraise (PFV)
        PopObjectStack;
 
@@ -329,12 +321,23 @@ begin
     end;
 end;
 
-Procedure fpc_DestroyException(o : TObject);[Public, Alias : 'FPC_DESTROYEXCEPTION']; {$ifdef hascompilerproc} compilerproc; {$endif}
+Procedure fpc_DestroyException(o : TObject);[Public, Alias : 'FPC_DESTROYEXCEPTION']; compilerproc;
 begin
-  { with free we're on the really save side }
+  { with free we're on the really safe side }
   o.Free;
 end;
 
+{ TODO: no longer used, clean up }
+function fpc_GetExceptionAddr : Pointer;[Public, Alias : 'FPC_GETEXCEPTIONADDR']; compilerproc;
+var
+  _ExceptObjectStack : PExceptObject;
+begin
+  _ExceptObjectStack:=ExceptObjectStack;
+  if _ExceptObjectStack=nil then
+    fpc_GetExceptionAddr:=nil
+  else
+    fpc_GetExceptionAddr:=_ExceptObjectStack^.Addr;
+end;
 
 Procedure SysInitExceptions;
 {
@@ -344,23 +347,35 @@ begin
   ExceptObjectstack:=Nil;
   ExceptAddrStack:=Nil;
 end;
-{
-  $Log: except.inc,v $
-  Revision 1.21  2005/05/08 21:20:26  michael
-  + Patch to return nil if there is no exception object (as in Delphi)
 
-  Revision 1.20  2005/04/03 11:32:05  florian
-    * ref. counting for popping second exceptiono object fixed
 
-  Revision 1.19  2005/02/14 17:13:22  peter
-    * truncate log
+procedure fpc_doneexception;[public,alias:'FPC_DONEEXCEPTION'] compilerproc;
+begin
+  Internal_PopObjectStack.Free;
+end;
 
-  Revision 1.18  2005/01/29 17:01:18  peter
-    * fix crash with backtrace if invalid frame is passed
+procedure fpc_raise_nested;[public,alias:'FPC_RAISE_NESTED']compilerproc;
+begin
+  Internal_PopSecondObjectStack.Free;
+  Internal_Reraise;
+end;
 
-  Revision 1.17  2005/01/26 17:07:10  peter
-    * retrieve backtrace when exception is raised
-    * RaiseMaxFrameCount added to limit the number of backtraces, setting
-      it to 0 disables backtraces. Default is 16
+function fpc_safecallhandler(obj: TObject): HResult; [public,alias:'FPC_SAFECALLHANDLER']; compilerproc;
+var
+  raiselist: PExceptObject;
+  adr: Pointer;
+  exc: TObject;
+begin
+  raiselist:=ExceptObjectStack;
+  if Assigned(raiseList) then
+    adr:=raiseList^.Addr
+  else
+    adr:=nil;
+  exc:=Internal_PopObjectStack;
+  if Assigned(obj) and Assigned(exc) then
+    result:=obj.SafeCallException(exc,adr)
+  else
+    result:=E_UNEXPECTED;
+  exc.Free;
+end;
 
-}

@@ -1,5 +1,4 @@
 {
-    $Id: globdir.inc,v 1.10 2004/11/08 20:28:29 peter Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 1999 by Berczi Gabor
 
@@ -11,30 +10,31 @@
 
  **********************************************************************}
 
-{ --- Special OS settings --- }
-{$ifdef TP}
-  {$define SUPPORTVESA}
-  {$define TPUNIXLF}
-  {$define WinClipSupported}
-  {$define FSCaseInsensitive}
-  {$C FIXED PRELOAD PERMANENT}
-  {
-    Without defining this I got almost always SEGMENT NOT PRESENT (exc 11)
-    on exiting the IDE, when run on under NT4.0... Strange a bit, not?
-    (Actually the fault occours in TDOSScreen.GetVideoMode() at the
-     BIOS call, but I just can't figure out why....)
-  }
-{$endif}
+{$ifdef USE_GDBLIBINC}
+  {$include gdblib.inc}
+{$endif USE_GDBLIBINC}
 
+{ --- Special OS settings --- }
 {$ifdef Go32V2}
-  {$define SUPPORTVESA}
+  { NOVESA conditional avoids use of
+    vesa unit, it also disables USE_GRAPH_SWITCH
+    conditional, in order to obtain a go32v2 excutable that
+    doesn't require full screen switching
+    at startup on Windows OS }
+  {$ifndef NOVESA}
+    {$define SUPPORTVESA}
+  {$endif ndef NOVESA}
   {$define SUPPORTREDIR}
   {$define WinClipSupported}
   {$define HasSignal}
+  {$define SignalIsFunction}
+  {$define SignalIsCdecl}
   {$define FSCaseInsensitive}
   {$define HasSysMsgUnit}
   {$ifdef DEBUG}
-    {$define USE_GRAPH_SWITCH}
+    {$ifndef NOVESA}
+      {$define USE_GRAPH_SWITCH}
+    {$endif not NOVESA}
   {$endif DEBUG}
 {$endif}
 
@@ -43,6 +43,7 @@
   {$define SUPPORTREDIR}
   {$undef WinClipSupported}
   {$define HasSignal}
+  {$define SignalIsCdecl}
   {$define HasSysMsgUnit}
 {$endif}
 
@@ -52,6 +53,7 @@
   {$define SUPPORTREDIR}
   {$undef WinClipSupported}
   {$define HasSignal}
+  {$define SignalIsCdecl}
   {$define HasSysMsgUnit}
 {$endif}
 
@@ -60,6 +62,7 @@
   {$define SUPPORTREDIR}
   {$undef WinClipSupported}
   {$define HasSignal}
+  {$define SignalIsCdecl}
   {$define HasSysMsgUnit}
 {$endif}
 
@@ -68,14 +71,24 @@
   {$define SUPPORTREDIR}
   {$undef WinClipSupported}
   {$define HasSignal}
+  {$define SignalIsCdecl}
   {$define HasSysMsgUnit}
 {$endif}
 
-{$ifdef Win32}
+{$ifdef Windows}
   {$undef SUPPORTVESA}
   {$define SUPPORTREDIR}
   {$define WinClipSupported}
-  {$define HasSignal}
+  {$ifdef win32}
+    {$define HasSignal}
+    {$define SignalIsFunction}
+    {$define SignalIsCdecl}
+  {$endif}
+  {$ifdef win64}
+    {$define HasSignal}
+    {$define SignalIsFunction}
+    {$define SignalIsCdecl}
+  {$endif}
   {$define FSCaseInsensitive}
   {$define HasSysMsgUnit}
 {$endif}
@@ -84,6 +97,14 @@
   {define SUPPORTREDIR}
   {define WinClipSupported}
   {define HasSignal}
+  {$define FSCaseInsensitive}
+{$endif}
+
+{$ifdef Amiga}
+  {$define FSCaseInsensitive}
+{$endif}
+
+{$ifdef MorphOS}
   {$define FSCaseInsensitive}
 {$endif}
 
@@ -108,7 +129,6 @@
 
 { ----------- define DOS for DOS targets ---------- }
 {$ifdef GO32V2}{$define DOS}{$endif}
-{$ifdef TP}{$define DOS}{$endif}
 
 { include Undo/Redo code from Visa Harvey }
 { let everybody try it out  PM }
@@ -120,6 +140,8 @@
 {$ifdef DEBUG}
   {$define DebugUndo}
   {$define TEST_REGEXP}
+  { Use old regexpr unit by Joost }
+  {$define USE_OLD_REGEXP}
   { Use this to incorporate a call to
     external compiler.
     Parsing of compiler output is done,
@@ -128,16 +150,15 @@
   {$define EXEDEBUG}
 {$endif DEBUG}
 
-{$ifdef FPC}
+{$ifndef ver2_0}
   {$define USERESSTRINGS}
-  {$define USE_FREEVISION}
-
-  { Use inlining for small functions }
-  {$ifndef VER1_0}
-    {$inline on}
-    {.$define USEINLINE}
-  {$endif}
 {$endif}
+{$define USE_FREEVISION}
+{$define HASOUTLINE}
+
+{ Use inlining for small functions }
+  {$inline on}
+  {.$define USEINLINE}
 
 {$define TEST_PARTIAL_SYNTAX}
 { $ undef UNDO}

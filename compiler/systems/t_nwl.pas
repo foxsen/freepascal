@@ -1,5 +1,4 @@
 {
-    $Id: t_nwl.pas,v 1.13 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 1998-2004 by Peter Vreman
 
     This unit implements support import,export,link routines
@@ -99,19 +98,17 @@ implementation
 {$endif}
 
   uses
-    cutils,
+    SysUtils,
+    cutils,cfileutl,
     verbose,systems,globtype,globals,
     symconst,script,
-    fmodule,aasmbase,aasmtai,aasmcpu,cpubase,symsym,symdef,
-    import,export,link,i_nwl
+    fmodule,aasmbase,aasmtai,aasmdata,aasmcpu,cpubase,symsym,symdef,
+    import,export,link,i_nwl,ogbase
     {$ifdef netware} ,dos {$endif}
     ;
 
   type
     timportlibnetwlibc=class(timportlib)
-      procedure preparelib(const s:string);override;
-      procedure importprocedure(aprocdef:tprocdef;const module:string;index:longint;const name:string);override;
-      procedure importvariable(vs:tglobalvarsym;const name,module:string);override;
       procedure generatelib;override;
     end;
 
@@ -141,31 +138,17 @@ Const tmpLinkFileName = '~link~tmp.o';
                                TIMPORTLIBNETWARE
 *****************************************************************************}
 
-procedure timportlibnetwlibc.preparelib(const s : string);
-begin
-end;
-
-
-procedure timportlibnetwlibc.importprocedure(aprocdef:tprocdef;const module:string;index:longint;const name:string);
-begin
-  { insert sharedlibrary }
-  current_module.linkothersharedlibs.add(SplitName(module),link_allways);
-end;
-
-
-procedure timportlibnetwlibc.importvariable(vs:tglobalvarsym;const name,module:string);
-begin
-  { insert sharedlibrary }
-  current_module.linkothersharedlibs.add(SplitName(module),link_allways);
-  { reset the mangledname and turn off the dll_var option }
-  vs.set_mangledname(name);
-  exclude(vs.varoptions,vo_is_dll_var);
-end;
-
-
-procedure timportlibnetwlibc.generatelib;
-begin
-end;
+    procedure timportlibnetwlibc.generatelib;
+      var
+        i : longint;
+        ImportLibrary : TImportLibrary;
+      begin
+        for i:=0 to current_module.ImportLibraryList.Count-1 do
+          begin
+            ImportLibrary:=TImportLibrary(current_module.ImportLibraryList[i]);
+            current_module.linkothersharedlibs.add(ImportLibrary.Name,link_always);
+          end;
+      end;
 
 
 {*****************************************************************************
@@ -230,6 +213,7 @@ end;
 procedure texportlibnetwlibc.generatelib;
 var
   hp2 : texported_item;
+  pd  : tprocdef;
 begin
   hp2:=texported_item(current_module._exports.first);
   while assigned(hp2) do
@@ -239,14 +223,15 @@ begin
       begin
         { the manglednames can already be the same when the procedure
           is declared with cdecl }
-        if tprocsym(hp2.sym).first_procdef.mangledname<>hp2.name^ then
+        pd:=tprocdef(tprocsym(hp2.sym).ProcdefList[0]);
+        if pd.mangledname<>hp2.name^ then
          begin
 {$ifdef i386}
-           { place jump in codesegment }
-           codesegment.concat(Tai_align.Create_op(4,$90));
-           codeSegment.concat(Tai_symbol.Createname_global(hp2.name^,AT_FUNCTION,0));
-           codeSegment.concat(Taicpu.Op_sym(A_JMP,S_NO,objectlibrary.newasmsymbol(tprocsym(hp2.sym).first_procdef.mangledname,AB_EXTERNAL,AT_FUNCTION)));
-           codeSegment.concat(Tai_symbol_end.Createname(hp2.name^));
+           { place jump in al_procedures }
+           current_asmdata.asmlists[al_procedures].concat(Tai_align.Create_op(4,$90));
+           current_asmdata.asmlists[al_procedures].concat(Tai_symbol.Createname_global(hp2.name^,AT_FUNCTION,0));
+           current_asmdata.asmlists[al_procedures].concat(Taicpu.Op_sym(A_JMP,S_NO,current_asmdata.RefAsmSymbol(pd.mangledname)));
+           current_asmdata.asmlists[al_procedures].concat(Tai_symbol_end.Createname(hp2.name^));
 {$endif i386}
          end;
       end
@@ -288,7 +273,7 @@ Function TLinkerNetwlibc.WriteResponseFile(isdll:boolean) : Boolean;
 Var
   linkres      : TLinkRes;
   i            : longint;
-  s,s2,s3      : string;
+  s,s2,s3      : TCmdStr;
   ProgNam      : string [80];
   NlmNam       : string [80];
   hp2          : texported_item;  { for exports }
@@ -296,15 +281,15 @@ Var
 begin
   WriteResponseFile:=False;
 
-  ProgNam := current_module.exefilename^;
+  ProgNam := current_module.exefilename;
   i:=Pos(target_info.exeext,ProgNam);
   if i>0 then
     Delete(ProgNam,i,255);
   NlmNam := ProgNam + target_info.exeext;
 
   { Open link.res file }
-  LinkRes:=TLinkRes.Create(outputexedir+Info.ResName);             {for ld}
-  NLMConvLinkFile:=TLinkRes.Create(outputexedir+'n'+Info.ResName); {for nlmconv, written in CreateExeFile}
+  LinkRes:=TLinkRes.Create(outputexedir+Info.ResName,true);             {for ld}
+  NLMConvLinkFile:=TLinkRes.Create(outputexedir+'n'+Info.ResName,true); {for nlmconv, written in CreateExeFile}
 
   p := Pos ('"', Description);
   while (p > 0) do
@@ -392,7 +377,7 @@ begin
   NLMConvLinkFile.Add ('CHECK _LibCCheckUnload');
   NLMConvLinkFile.Add ('REENTRANT');            { needed by older libc versions }
 
-  if not (cs_link_strip in aktglobalswitches) then
+  if not (cs_link_strip in current_settings.globalswitches) then
   begin
     NLMConvLinkFile.Add ('DEBUG');
     Comment(V_Debug,'DEBUG');
@@ -421,7 +406,7 @@ begin
            if i>0 then
              Delete(S,i,255);
            S := S + '.imp'; S2 := '';
-           librarysearchpath.FindFile(S,S2);
+           librarysearchpath.FindFile(S,false,S2);
            {$ifdef netware}
            Comment(V_Debug,'IMPORT @'+s2);
            s2 := FExpand (S2);
@@ -438,7 +423,7 @@ begin
    begin
      While not SharedLibFiles.Empty do
       begin
-        {becuase of upper/lower case mix, we may get duplicate
+        {because of upper/lower case mix, we may get duplicate
          names but nlmconv ignores that.
          Here we are setting the import-files for nlmconv. I.e. for
          the module libc or libc.nlm we add IMPORT @libc.imp and also
@@ -456,7 +441,7 @@ begin
            begin  // special, with ! only the imp will be included but no module is autoloaded, needed i.e. for netware.imp inlcuded in libc ndk
              delete (s,1,1);
              S := S + '.imp';
-             librarysearchpath.FindFile(S,S3);
+             librarysearchpath.FindFile(S,false,S3);
              {$ifdef netware}
              Comment(V_Debug,'IMPORT @'+S3);
              S3 := FExpand (S3);
@@ -466,7 +451,7 @@ begin
            end else
            begin
              S := S + '.imp';
-             librarysearchpath.FindFile(S,S3);
+             librarysearchpath.FindFile(S,false,S3);
              {$ifdef netware}
              Comment(V_Debug,'IMPORT @'+S3);
              S3 := FExpand (S3);
@@ -542,21 +527,21 @@ Const
 
 function TLinkerNetwlibc.MakeNetwareLoadableModule (isLib : boolean):boolean;
 var
-  binstr : String;
-  cmdstr : TcmdStr;
+  binstr,
+  cmdstr : TCmdStr;
   xdcname : string;
   success  : boolean;
   StripStr : string[2];
   xdcpresent,usexdc : boolean;
   f : file;
 begin
-  if not(cs_link_extern in aktglobalswitches) then
-   Message1(exec_i_linking,current_module.exefilename^);
+  if not(cs_link_nolink in current_settings.globalswitches) then
+   Message1(exec_i_linking,current_module.exefilename);
 
 { Create some replacements }
   StripStr:='';
 
-  if (cs_link_strip in aktglobalswitches) then
+  if (cs_link_strip in current_settings.globalswitches) then
    StripStr:='-s';
 
 { Write used files and libraries and create Headerfile for
@@ -567,8 +552,8 @@ begin
 
 { if we have a xdc file, dont touch it, otherwise create a new
   one and remove it after nlmconv }
-  xdcname := ForceExtension(current_module.exefilename^,'.xdc');
-  xdcpresent := FileExists (xdcname);
+  xdcname := ChangeFileExt(current_module.exefilename,'.xdc');
+  xdcpresent := FileExists (xdcname,false);
   if not xdcpresent then
   begin
     assign (f,xdcname);
@@ -589,16 +574,16 @@ begin
 { Call linker, this will generate a new object file that will be passed
   to nlmconv. Otherwise we could not create nlms without debug info }
   SplitBinCmd(Info.ExeCmd[1],binstr,cmdstr);
-  Replace(cmdstr,'$EXE',maybequoted(current_module.exefilename^));
+  Replace(cmdstr,'$EXE',maybequoted(current_module.exefilename));
   Replace(cmdstr,'$RES',maybequoted(outputexedir+Info.ResName));
   Replace(cmdstr,'$STRIP',StripStr);
   Replace(cmdstr,'$TMPOBJ',maybequoted(outputexedir+tmpLinkFileName));
   Comment (v_debug,'Executing '+BinStr+' '+cmdstr);
-  success:=DoExec(FindUtil(BinStr),CmdStr,true,false);
+  success:=DoExec(BinStr,CmdStr,true,false);
 
   { Remove ReponseFile }
-  if (success) and not(cs_link_extern in aktglobalswitches) then
-    RemoveFile(outputexedir+Info.ResName);
+  if (success) and not(cs_link_nolink in current_settings.globalswitches) then
+    DeleteFile(outputexedir+Info.ResName);
 
 { Call nlmconv }
   if success then
@@ -608,14 +593,14 @@ begin
     SplitBinCmd(Info.ExeCmd[2],binstr,cmdstr);
     Replace(cmdstr,'$RES',maybequoted(outputexedir+'n'+Info.ResName));
     Comment (v_debug,'Executing '+BinStr+' '+cmdstr);
-    success:=DoExec(FindUtil(BinStr),CmdStr,true,false);
-    if (success) and not(cs_link_extern in aktglobalswitches) then
+    success:=DoExec(BinStr,CmdStr,true,false);
+    if (success) and not(cs_link_nolink in current_settings.globalswitches) then
     begin
-      RemoveFile(outputexedir+'n'+Info.ResName);
-      RemoveFile(outputexedir+tmpLinkFileName);
+      DeleteFile(outputexedir+'n'+Info.ResName);
+      DeleteFile(outputexedir+tmpLinkFileName);
       if not xdcpresent then
         if usexdc then
-          RemoveFile (xdcname);
+          DeleteFile (xdcname);
     end;
   end;
 
@@ -644,9 +629,3 @@ initialization
   RegisterExport(system_i386_netwlibc,TExportLibNetwlibc);
   RegisterTarget(system_i386_netwlibc_info);
 end.
-{
-  $Log: t_nwl.pas,v $
-  Revision 1.13  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

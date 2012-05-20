@@ -1,5 +1,4 @@
 {
-    $Id: cpuinfo.pas,v 1.21 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl
 
     Basic Processor information for the SPARC
@@ -39,23 +38,28 @@ type
   pbestreal=^bestreal;
 
   { possible supported processors for this target }
-  tprocessors=(no_processor,SPARC_V7,SPARC_V8,SPARC_V9);
+  tcputype=(cpu_none,
+    cpu_SPARC_V7,
+    cpu_SPARC_V8,
+    cpu_SPARC_V9
+  );
 
-  tfputype =(no_fpu,fpu_soft,fpu_hard);
+  tfputype =(fpu_none,
+    fpu_soft,
+    fpu_hard
+  );
 
 
 const
   { calling conventions supported by the code generator }
   supported_calling_conventions : tproccalloptions = [
     pocall_internproc,
-    pocall_compilerproc,
-    pocall_inline,
     pocall_stdcall,
     pocall_cdecl,
     pocall_cppdecl
   ];
 
-   processorsstr : array[tprocessors] of string[10] = ('',
+   cputypestr : array[tcputype] of string[10] = ('',
      'SPARC V7',
      'SPARC V8',
      'SPARC V9'
@@ -66,12 +70,20 @@ const
      'HARD'
    );
 
+   { Supported optimizations, only used for information }
+   supported_optimizerswitches = genericlevel1optimizerswitches+
+                                 genericlevel2optimizerswitches+
+                                 genericlevel3optimizerswitches-
+                                 { no need to write info about those }
+                                 [cs_opt_level1,cs_opt_level2,cs_opt_level3]+
+                                 [cs_opt_regvar,cs_opt_loopunroll,
+								  cs_opt_tailrecursion,cs_opt_nodecse];
+
+   level1optimizerswitches = genericlevel1optimizerswitches;
+   level2optimizerswitches = genericlevel2optimizerswitches + level1optimizerswitches + 
+     [cs_opt_regvar,cs_opt_tailrecursion,cs_opt_nodecse];
+   level3optimizerswitches = genericlevel3optimizerswitches + level2optimizerswitches + [{,cs_opt_loopunroll}];
+
 implementation
 
 end.
-{
-  $Log: cpuinfo.pas,v $
-  Revision 1.21  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

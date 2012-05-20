@@ -1,6 +1,5 @@
 {
     *********************************************************************
-    $Id: sysansih.inc,v 1.4 2005/02/14 17:13:31 peter Exp $
     Copyright (C) 2002 by Florian Klaempfl
 
     This program is free software; you can redistribute it and/or modify
@@ -26,13 +25,9 @@ function AnsiPos(const substr,s : string) : SizeInt;
 function AnsiStrPos(str,substr : PChar) : PChar;
 function AnsiStrRScan(Str : PChar;Chr : Char) : PChar;
 function AnsiStrScan(Str : PChar;Chr: Char) : PChar;
+function HashName(Name: PAnsiChar): LongWord;
 
-{
-  $Log: sysansih.inc,v $
-  Revision 1.4  2005/02/14 17:13:31  peter
-    * truncate log
+function BytesOf(const Val: RawByteString): TBytes;
+function BytesOf(const Val: AnsiChar): TBytes;
 
-  Revision 1.3  2005/02/03 16:21:59  peter
-    * 1.0.x fix
-
-}
+Function CharInSet(Ch: AnsiChar;Const CSet : TSysCharSet) : Boolean;

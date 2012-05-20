@@ -1,5 +1,4 @@
 {
-    $Id: system.pp,v 1.6 2005/02/14 17:13:31 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team.
 
@@ -19,6 +18,8 @@ interface
 
 {$define FPC_IS_SYSTEM}
 
+{$linklib m}
+
 { include system-independent routine headers }
 
 {$I sysunixh.inc}
@@ -27,8 +28,36 @@ var argc:longint;
     argv:PPchar;
     envp:PPchar;
 
+{$if defined(CPUARM) or defined(CPUM68K) or defined(CPUSPARC)}
+
+{$define fpc_softfpu_interface}
+{$i softfpu.pp}
+{$undef fpc_softfpu_interface}
+
+{$endif defined(CPUARM) or defined(CPUM68K) or defined(CPUSPARC)}
 
 implementation
+
+
+{$if defined(CPUARM) or defined(CPUM68K) or defined(CPUSPARC)}
+
+{$define fpc_softfpu_implementation}
+{$i softfpu.pp}
+{$undef fpc_softfpu_implementation}
+
+{ we get these functions and types from the softfpu code }
+{$define FPC_SYSTEM_HAS_float64}
+{$define FPC_SYSTEM_HAS_float32}
+{$define FPC_SYSTEM_HAS_flag}
+{$define FPC_SYSTEM_HAS_extractFloat64Frac0}
+{$define FPC_SYSTEM_HAS_extractFloat64Frac1}
+{$define FPC_SYSTEM_HAS_extractFloat64Exp}
+{$define FPC_SYSTEM_HAS_extractFloat64Sign}
+{$define FPC_SYSTEM_HAS_ExtractFloat32Frac}
+{$define FPC_SYSTEM_HAS_extractFloat32Exp}
+{$define FPC_SYSTEM_HAS_extractFloat32Sign}
+
+{$endif defined(CPUARM) or defined(CPUM68K) or defined(CPUSPARC)}
 
 { OS independant parts}
 
@@ -82,7 +111,10 @@ function paramstr(l: longint) : string;
 //       paramstr := execpathstr;
 //     end
 //   else
-     paramstr:=strpas(argv[l]);
+     if (l < argc) then
+       paramstr:=strpas(argv[l])
+     else
+       paramstr:='';
  end;
 
 Procedure Randomize;
@@ -99,6 +131,7 @@ function  reenable_signal(sig : longint) : boolean;
 var
   e,oe : TSigSet;
   i,j : byte;
+  olderrno: cint;
 begin
   fillchar(e,sizeof(e),#0);
   fillchar(oe,sizeof(oe),#0);
@@ -107,18 +140,18 @@ begin
   i:=sig mod 32;
   j:=sig div 32;
   e[j]:=1 shl i;
+  { this routine is called from a signal handler, so must not change errno }
+  olderrno:=geterrno;
   fpsigprocmask(SIG_UNBLOCK,@e,@oe);
   reenable_signal:=geterrno=0;
+  seterrno(olderrno);
 end;
 
 {$i sighnd.inc}
 
+procedure InstallDefaultSignalHandler(signum: longint; out oldact: SigActionRec); public name '_FPC_INSTALLDEFAULTSIGHANDLER';
 var
   act: SigActionRec;
-
-Procedure InstallSignals;
-var
-  oldact: SigActionRec;
 begin
   { Initialize the sigaction structure }
   { all flags and information set to zero }
@@ -126,10 +159,29 @@ begin
   { initialize handler                    }
   act.sa_handler :=@SignalToRunError;
   act.sa_flags:=SA_SIGINFO;
-  FpSigAction(SIGFPE,act,oldact);
-  FpSigAction(SIGSEGV,act,oldact);
-  FpSigAction(SIGBUS,act,oldact);
-  FpSigAction(SIGILL,act,oldact);
+  FpSigAction(signum,act,oldact);
+end;
+
+var
+  oldsigfpe: SigActionRec; public name '_FPC_OLDSIGFPE';
+  oldsigsegv: SigActionRec; public name '_FPC_OLDSIGSEGV';
+  oldsigbus: SigActionRec; public name '_FPC_OLDSIGBUS';
+  oldsigill: SigActionRec; public name '_FPC_OLDSIGILL';
+
+Procedure InstallSignals;
+begin
+  InstallDefaultSignalHandler(SIGFPE,oldsigfpe);
+  InstallDefaultSignalHandler(SIGSEGV,oldsigsegv);
+  InstallDefaultSignalHandler(SIGBUS,oldsigbus);
+  InstallDefaultSignalHandler(SIGILL,oldsigill);
+end;
+
+Procedure RestoreOldSignalHandlers;
+begin
+  FpSigAction(SIGFPE,@oldsigfpe,nil);
+  FpSigAction(SIGSEGV,@oldsigsegv,nil);
+  FpSigAction(SIGBUS,@oldsigbus,nil);
+  FpSigAction(SIGILL,@oldsigill,nil);
 end;
 
 
@@ -207,53 +259,35 @@ begin
  GetProcessID := SizeUInt (fpGetPID);
 end;
 
+function CheckInitialStkLen(stklen : SizeUInt) : SizeUInt;
+begin
+  result := stklen;
+end;
 
 Begin
   IsConsole := TRUE;
-  IsLibrary := FALSE;
-  StackLength := InitialStkLen;
+  StackLength := CheckInitialStkLen(InitialStkLen);
   StackBottom := Sptr - StackLength;
-{ Set up signals handlers }
+  { Set up signals handlers (may be needed by init code to test cpu features) }
   InstallSignals;
 { Setup heap }
   InitHeap;
   SysInitExceptions;
-{ Arguments }
-  SetupCmdLine;
+{$if defined(cpui386) or defined(cpuarm)}
+  fpc_cpucodeinit;
+{$endif cpui386}
+
+  initunicodestringmanager;
+
 { Setup stdin, stdout and stderr }
   SysInitStdIO;
 { Reset IO Error }
   InOutRes:=0;
+{ Arguments }
+  SetupCmdLine;
   InitSystemThreads;
-{$ifdef HASVARIANT}
   initvariantmanager;
-{$endif HASVARIANT}
-{$ifdef HASWIDESTRING}
-  initwidestringmanager;
-{$endif HASWIDESTRING}
+  { restore original signal handlers in case this is a library }
+  if IsLibrary then
+    RestoreOldSignalHandlers;
 End.
-
-{
- $Log: system.pp,v $
- Revision 1.6  2005/02/14 17:13:31  peter
-   * truncate log
-
- Revision 1.5  2005/02/14 16:32:41  peter
-   * solaris updates
-
- Revision 1.4  2005/02/13 22:13:20  peter
-   * get solaris back in shape
-
- Revision 1.3  2005/02/13 21:47:56  peter
-   * include file cleanup part 2
-
- Revision 1.2  2005/02/10 17:30:54  peter
-   * renamed to solaris
-
- Revision 1.5  2005/02/07 22:17:26  peter
-   * updated for 1.9.x unix rtl
-
- Revision 1.4  2005/02/01 20:22:50  florian
-   * improved widestring infrastructure manager
-
-}

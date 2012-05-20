@@ -1,5 +1,4 @@
 {
-    $Id: t_go32v2.pas,v 1.9 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 1998-2002 by Peter Vreman
 
     This unit implements support import,export,link routines
@@ -31,27 +30,51 @@ interface
 implementation
 
     uses
-       link,
-       cutils,cclasses,
-       globtype,globals,systems,verbose,script,fmodule,i_go32v2,ogcoff;
+       SysUtils,
+       cutils,cfileutl,cclasses,
+       globtype,globals,systems,verbose,script,
+       fmodule,i_go32v2,
+       link,ogcoff;
 
-  type
-    tlinkergo32v2=class(texternallinker)
-    private
-       Function  WriteResponseFile(isdll:boolean) : Boolean;
-       Function  WriteScript(isdll:boolean) : Boolean;
-    public
-       constructor Create;override;
-       procedure SetDefaultInfo;override;
-       function  MakeExecutable:boolean;override;
-    end;
+    type
+      TInternalLinkerGo32v2=class(TInternallinker)
+        constructor create;override;
+        procedure DefaultLinkScript;override;
+      end;
+
+      TExternalLinkerGo32v2=class(texternallinker)
+      private
+         Function  WriteResponseFile(isdll:boolean) : Boolean;
+         Function  WriteScript(isdll:boolean) : Boolean;
+      public
+         constructor Create;override;
+         procedure SetDefaultInfo;override;
+         function  MakeExecutable:boolean;override;
+      end;
 
 
 {****************************************************************************
-                               TLinkerGo32v2
+                                  TCoffLinker
 ****************************************************************************}
 
-Constructor TLinkerGo32v2.Create;
+    constructor TInternalLinkerGo32v2.Create;
+      begin
+        inherited Create;
+        CExeoutput:=TDJCoffexeoutput;
+        CObjInput:=TDJCoffObjInput;
+      end;
+
+
+    procedure TInternalLinkerGo32v2.DefaultLinkScript;
+      begin
+      end;
+
+
+{****************************************************************************
+                               TExternalLinkerGo32v2
+****************************************************************************}
+
+Constructor TExternalLinkerGo32v2.Create;
 begin
   Inherited Create;
   { allow duplicated libs (PM) }
@@ -60,16 +83,16 @@ begin
 end;
 
 
-procedure TLinkerGo32v2.SetDefaultInfo;
+procedure TExternalLinkerGo32v2.SetDefaultInfo;
 begin
   with Info do
    begin
-     ExeCmd[1]:='ld $SCRIPT $OPT $STRIP -o $EXE $RES';
+     ExeCmd[1]:='ld $RES';
    end;
 end;
 
 
-Function TLinkerGo32v2.WriteResponseFile(isdll:boolean) : Boolean;
+Function TExternalLinkerGo32v2.WriteResponseFile(isdll:boolean) : Boolean;
 Var
   linkres  : TLinkRes;
   i        : longint;
@@ -79,7 +102,17 @@ begin
   WriteResponseFile:=False;
 
   { Open link.res file }
-  LinkRes:=TLinkRes.Create(outputexedir+Info.ResName);
+  LinkRes:=TLinkRes.Create(outputexedir+Info.ResName,true);
+
+  { Add all options to link.res instead of passing them via command line:
+    DOS command line is limited to 126 characters! }
+  LinkRes.Add('--script='+maybequoted(outputexedir+Info.ScriptName));
+  if info.ExtraOptions<>'' then
+    LinkRes.Add(Info.ExtraOptions);
+(* Potential issues with older ld version??? *)
+  if (cs_link_strip in current_settings.globalswitches) then
+    LinkRes.Add('-s');
+  LinkRes.Add('-o '+maybequoted(current_module.exefilename));
 
   { Write staticlibraries }
   if not StaticLibFiles.Empty then
@@ -127,16 +160,16 @@ begin
 end;
 
 
-Function TLinkerGo32v2.WriteScript(isdll:boolean) : Boolean;
+Function TExternalLinkerGo32v2.WriteScript(isdll:boolean) : Boolean;
 Var
   scriptres  : TLinkRes;
-  HPath    : TStringListItem;
+  HPath    : TCmdStrListItem;
   s        : string;
 begin
   WriteScript:=False;
 
   { Open link.res file }
-  ScriptRes:=TLinkRes.Create(outputexedir+Info.ScriptName);
+  ScriptRes:=TLinkRes.Create(outputexedir+Info.ScriptName,true);
   ScriptRes.Add('OUTPUT_FORMAT("coff-go32-exe")');
   ScriptRes.Add('ENTRY(start)');
 
@@ -156,20 +189,29 @@ begin
        end;
    end;
   ScriptRes.Add('    *(.text)');
-  ScriptRes.Add('    etext  =  . ; _etext = .;');
+  ScriptRes.Add('    etext  =  . ;');
+  ScriptRes.Add('    PROVIDE(_etext  =  .);');
   ScriptRes.Add('    . = ALIGN(0x200);');
   ScriptRes.Add('  }');
   ScriptRes.Add('    .data  ALIGN(0x200) : {');
   ScriptRes.Add('      djgpp_first_ctor = . ;');
+  ScriptRes.Add('      *(SORT(.ctors.*))');
   ScriptRes.Add('      *(.ctor)');
+  ScriptRes.Add('      *(.ctors)');
   ScriptRes.Add('      djgpp_last_ctor = . ;');
   ScriptRes.Add('      djgpp_first_dtor = . ;');
+  ScriptRes.Add('      *(SORT(.dtors.*))');
   ScriptRes.Add('      *(.dtor)');
+  ScriptRes.Add('      *(.dtors)');
   ScriptRes.Add('      djgpp_last_dtor = . ;');
+  ScriptRes.Add('      __environ = . ;');
+  ScriptRes.Add('      PROVIDE(_environ = .);');
+  ScriptRes.Add('      LONG(0)');
   ScriptRes.Add('      *(.data)');
+  ScriptRes.Add('      *(.fpc*)');
   ScriptRes.Add('      *(.gcc_exc)');
   ScriptRes.Add('      ___EH_FRAME_BEGIN__ = . ;');
-  ScriptRes.Add('      *(.eh_fram)');
+  ScriptRes.Add('      *(.eh_fram*)');
   ScriptRes.Add('      ___EH_FRAME_END__ = . ;');
   ScriptRes.Add('      LONG(0)');
   ScriptRes.Add('       edata  =  . ; _edata = .;');
@@ -178,26 +220,39 @@ begin
   ScriptRes.Add('    .bss  SIZEOF(.data) + ADDR(.data) :');
   ScriptRes.Add('    {');
   ScriptRes.Add('      _object.2 = . ;');
-  ScriptRes.Add('      . += 24 ;');
+  ScriptRes.Add('      . += 32 ;');
   ScriptRes.Add('      *(.bss)');
   ScriptRes.Add('      *(COMMON)');
   ScriptRes.Add('       end = . ; _end = .;');
   ScriptRes.Add('       . = ALIGN(0x200);');
   ScriptRes.Add('    }');
+  ScriptRes.Add('    /* Stabs debugging sections.  */');
+  ScriptRes.Add('    .stab 0 : { *(.stab) }');
+  ScriptRes.Add('    .stabstr 0 : { *(.stabstr) }');
+  ScriptRes.Add('    /* DWARF 2 */');
+  ScriptRes.Add('    .debug_aranges  0 : { *(.debug_aranges) }');
+  ScriptRes.Add('    .debug_pubnames 0 : { *(.debug_pubnames) }');
+  ScriptRes.Add('    .debug_info     0 : { *(.debug_info) *(.gnu.linkonce.wi.*) }');
+  ScriptRes.Add('    .debug_abbrev   0 : { *(.debug_abbrev) }');
+  ScriptRes.Add('    .debug_line     0 : { *(.debug_line) }');
+  ScriptRes.Add('    .debug_frame    0 : { *(.debug_frame) }');
+  ScriptRes.Add('    .debug_str      0 : { *(.debug_str) }');
+  ScriptRes.Add('    .debug_loc      0 : { *(.debug_loc) }');
+  ScriptRes.Add('    .debug_macinfo  0 : { *(.debug_macinfo) }');
   ScriptRes.Add('  }');
 
   { Write path to search libraries }
-  HPath:=TStringListItem(current_module.locallibrarysearchpath.First);
+  HPath:=TCmdStrListItem(current_module.locallibrarysearchpath.First);
   while assigned(HPath) do
    begin
      ScriptRes.Add('SEARCH_DIR("'+GetShortName(HPath.Str)+'")');
-     HPath:=TStringListItem(HPath.Next);
+     HPath:=TCmdStrListItem(HPath.Next);
    end;
-  HPath:=TStringListItem(LibrarySearchPath.First);
+  HPath:=TCmdStrListItem(LibrarySearchPath.First);
   while assigned(HPath) do
    begin
      ScriptRes.Add('SEARCH_DIR("'+GetShortName(HPath.Str)+'")');
-     HPath:=TStringListItem(HPath.Next);
+     HPath:=TCmdStrListItem(HPath.Next);
    end;
 
 { Write and Close response }
@@ -209,20 +264,14 @@ end;
 
 
 
-function TLinkerGo32v2.MakeExecutable:boolean;
+function TExternalLinkerGo32v2.MakeExecutable:boolean;
 var
-  binstr : String;
+  binstr,
   cmdstr  : TCmdStr;
   success : boolean;
-  StripStr : string[40];
 begin
-  if not(cs_link_extern in aktglobalswitches) then
-   Message1(exec_i_linking,current_module.exefilename^);
-
-{ Create some replacements }
-  StripStr:='';
-  if (cs_link_strip in aktglobalswitches) then
-   StripStr:='-s';
+  if not(cs_link_nolink in current_settings.globalswitches) then
+   Message1(exec_i_linking,current_module.exefilename);
 
   { Write used files and libraries and our own ld script }
   WriteScript(false);
@@ -230,21 +279,14 @@ begin
 
 { Call linker }
   SplitBinCmd(Info.ExeCmd[1],binstr,cmdstr);
-  Replace(cmdstr,'$EXE',maybequoted(current_module.exefilename^));
-  Replace(cmdstr,'$OPT',Info.ExtraOptions);
-  if source_info.system=system_i386_go32v2 then
-    Replace(cmdstr,'$RES','@'+maybequoted(outputexedir+Info.ResName))
-  else
-    Replace(cmdstr,'$RES',maybequoted(outputexedir+Info.ResName));
-  Replace(cmdstr,'$STRIP',StripStr);
-  Replace(cmdstr,'$SCRIPT','--script='+maybequoted(outputexedir+Info.ScriptName));
+  Replace(cmdstr,'$RES','@'+maybequoted(outputexedir+Info.ResName));
   success:=DoExec(FindUtil(utilsprefix+BinStr),cmdstr,true,false);
 
 { Remove ReponseFile }
-  if (success) and not(cs_link_extern in aktglobalswitches) then
+  if (success) and not(cs_link_nolink in current_settings.globalswitches) then
    begin
-     RemoveFile(outputexedir+Info.ResName);
-     RemoveFile(outputexedir+Info.ScriptName);
+     DeleteFile(outputexedir+Info.ResName);
+     DeleteFile(outputexedir+Info.ScriptName);
    end;
 
   MakeExecutable:=success;   { otherwise a recursive call to link method }
@@ -252,7 +294,7 @@ end;
 
 
 {$ifdef notnecessary}
-procedure tlinkergo32v2.postprocessexecutable(const n : string);
+procedure TExternalLinkerGo32v2.postprocessexecutable(const n : string);
 type
   tcoffheader=packed record
     mach   : word;
@@ -292,11 +334,11 @@ var
   zerobuf : pointer;
 begin
   { when -s is used quit, because there is no .exe }
-  if cs_link_extern in aktglobalswitches then
+  if cs_link_nolink in current_settings.globalswitches then
    exit;
   { open file }
   assign(f,n);
-  {$I-}
+  {$push}{$I-}
    reset(f,1);
   if ioresult<>0 then
     Message1(execinfo_f_cant_open_executable,n);
@@ -347,7 +389,7 @@ begin
    end;
   freemem(zerobuf,maxfillsize);
   close(f);
-  {$I+}
+  {$pop}
   i:=ioresult;
   postprocessexecutable:=true;
 end;
@@ -359,16 +401,7 @@ end;
 *****************************************************************************}
 
 initialization
-  RegisterExternalLinker(system_i386_go32v2_info,TLinkerGo32v2);
-  RegisterInternalLinker(system_i386_go32v2_info,TCoffLinker);
+  RegisterExternalLinker(system_i386_go32v2_info,TExternalLinkerGo32v2);
+//  RegisterInternalLinker(system_i386_go32v2_info,TInternalLinkerGo32v2);
   RegisterTarget(system_i386_go32v2_info);
 end.
-{
-  $Log: t_go32v2.pas,v $
-  Revision 1.9  2005/02/14 17:13:10  peter
-    * truncate log
-
-  Revision 1.8  2005/01/30 12:03:28  peter
-    * only add @link.res if source is go32v2
-
-}

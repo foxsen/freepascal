@@ -42,6 +42,14 @@
 */
 
 	.text
+	.globl _dynamic_start
+	.type _dynamic_start,#function
+_dynamic_start:
+         ldr ip,=__dl_fini
+         str a1,[ip]
+         b _start
+
+	.text
 	.globl _start
 	.type _start,#function
 _start:
@@ -62,16 +70,39 @@ _start:
 	str sp,[a3]
    	str a2,[ip]
 
+        /* Save initial stackpointer */
+	ldr ip,=__stkptr
+	str sp,[ip]
+        /* align sp again to 8 byte boundary, needed by eabi */
+        sub sp,sp,#4
+
 	/* Let the libc call main and exit with its return code.  */
 	bl PASCALMAIN
 
 	.globl  _haltproc
     .type   _haltproc,#function
 _haltproc:
-	ldr r0,=operatingsystem_result
-	ldrb r0,[r0]
+        /* r0 contains exitcode */
 	swi 0x900001
 	b _haltproc
+
+	.globl  _haltproc_eabi
+        .type   _haltproc_eabi,#function
+_haltproc_eabi:
+        ldr r0,=__dl_fini
+        ldr r0,[r0]
+        cmp r0,#0
+
+        /* only branch if not equal zero */
+        movne lr,pc
+        bxne  r0     /* we require armv5 anyway, so use bx here */
+
+.Lloop:
+        ldr r0,=operatingsystem_result
+        ldr r0,[r0]
+        mov r7,#248  /* exit group call */
+	swi 0x0
+	b .Lloop
 
 	/* Define a symbol for the first piece of initialized data.  */
 	.data
@@ -82,6 +113,9 @@ __data_start:
 	data_start = __data_start
 
 .bss
+        .comm __dl_fini,4
+        .comm __stkptr,4
+
         .comm operatingsystem_parameter_envp,4
         .comm operatingsystem_parameter_argc,4
         .comm operatingsystem_parameter_argv,4
@@ -104,22 +138,4 @@ __data_start:
         .long 2,0,0
 3:      .align 4
 
-/*
-  $Log: prt0.as,v $
-  Revision 1.5  2004/11/05 12:48:15  florian
-    * beautified
-
-  Revision 1.4  2004/07/03 21:50:31  daniel
-    * Modified bootstrap code so separate prt0.as/prt0_10.as files are no
-      longer necessary
-
-  Revision 1.3  2004/03/11 22:39:53  florian
-    * arm startup code fixed
-    * made some generic math code more readable
-
-  Revision 1.2  2004/01/20 18:32:46  florian
-    * fixed sigill problem when running in gdb
-
-  Revision 1.1  2003/08/27 13:07:07  florian
-    * initial revision of arm startup code
-*/
+.section .note.GNU-stack,"",%progbits

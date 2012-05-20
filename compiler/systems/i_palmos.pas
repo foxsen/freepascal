@@ -1,5 +1,4 @@
 {
-    $Id: i_palmos.pas,v 1.7 2005/03/20 22:36:45 olle Exp $
     Copyright (c) 1998-2002 by Peter Vreman
 
     This unit implements support information structures for PalmOS
@@ -22,6 +21,8 @@
 { This unit implements support information structures for PalmOS. }
 unit i_palmos;
 
+{$i fpcdefs.inc}
+
   interface
 
     uses
@@ -33,15 +34,12 @@ unit i_palmos;
             system       : system_m68k_PalmOS;
             name         : 'PalmOS';
             shortname    : 'PalmOS';
-            flags        : [tf_code_small,tf_static_a5_based];
+            flags        : [tf_code_small,tf_static_reg_based,tf_smartlink_sections];
             cpu          : cpu_m68k;
-            short_name   : 'PALMOS';
             unit_env     : 'PALMUNITS';
             extradefines : '';
-            sharedlibext : '.so';
-            staticlibext : '.a';
             exeext       : '';
-            defext       : '';
+            defext       : '.def';
             scriptext    : '.sh';
             smartext     : '.sl';
             unitext      : '.ppu';
@@ -50,33 +48,129 @@ unit i_palmos;
             objext       : '.o';
             resext       : '.res';
             resobjext    : '.or';
+            sharedlibext : '.so';
+            staticlibext : '.a';
             staticlibprefix : 'libp';
             sharedlibprefix : 'lib';
-            p_ext_support : false;
+            sharedClibext : '.so';
+            staticClibext : '.a';
+            staticClibprefix : 'lib';
+            sharedClibprefix : 'lib';
+            importlibprefix : 'libimp';
+            importlibext : '.a';
             Cprefix      : '_';
             newline      : #10;
             dirsep       : '/';
-            files_case_relevent : true;
             assem        : as_gas;
             assemextern  : as_gas;
-            link         : ld_m68k_palmos;
-            linkextern   : ld_m68k_palmos;
-            ar           : ar_m68k_ar;
+            link         : nil;
+            linkextern   : nil;
+            ar           : ar_gnu_ar;
             res          : res_none;
+            dbg          : dbg_stabs;
             script       : script_unix;
             endian       : endian_big;
-            stackalignment : 2;
-            maxCrecordalignment : 4;
+            alignment    :
+              (
+                procalign       : 4;
+                loopalign       : 4;
+                jumpalign       : 0;
+                constalignmin   : 0;
+                constalignmax   : 4;
+                varalignmin     : 0;
+                varalignmax     : 4;
+                localalignmin   : 0;
+                localalignmax   : 4;
+                recordalignmin  : 0;
+                recordalignmax  : 2;
+                maxCrecordalign : 4
+              );
+            first_parm_offset : 8;
             stacksize    : 8192;
-            DllScanSupported:false;
-            use_function_relative_addresses : false
+            abi : abi_default;
           );
 
        res_m68k_palmos_info : tresinfo =
           (
             id     : res_m68k_palmos;
             resbin : 'pilrc';
-            rescmd : '-I $INC $RES'
+            rescmd : '-I $INC $RES';
+            rcbin  : '';
+            rccmd  : '';
+            resourcefileclass : nil;
+            resflags : [];
+          );
+
+       system_arm_palmos_info : tsysteminfo =
+          (
+            system       : system_arm_PalmOS;
+            name         : 'PalmOS';
+            shortname    : 'PalmOS';
+            flags        : [tf_code_small,tf_static_reg_based,tf_smartlink_sections,tf_requires_proper_alignment];
+            cpu          : cpu_arm;
+            unit_env     : 'PALMUNITS';
+            extradefines : '';
+            exeext       : '';
+            defext       : '.def';
+            scriptext    : '.sh';
+            smartext     : '.sl';
+            unitext      : '.ppu';
+            unitlibext   : '.ppl';
+            asmext       : '.s';
+            objext       : '.o';
+            resext       : '.res';
+            resobjext    : '.or';
+            sharedlibext : '.so';
+            staticlibext : '.a';
+            staticlibprefix : 'libp';
+            sharedlibprefix : 'lib';
+            sharedClibext : '.so';
+            staticClibext : '.a';
+            staticClibprefix : 'lib';
+            sharedClibprefix : 'lib';
+            importlibprefix : 'libimp';
+            importlibext : '.a';
+            Cprefix      : '_';
+            newline      : #10;
+            dirsep       : '/';
+            assem        : as_gas;
+            assemextern  : as_gas;
+            link         : nil;
+            linkextern   : nil;
+            ar           : ar_gnu_ar;
+            res          : res_none;
+            dbg          : dbg_stabs;
+            script       : script_unix;
+            endian       : endian_big;
+            alignment    :
+              (
+                procalign       : 4;
+                loopalign       : 4;
+                jumpalign       : 0;
+                constalignmin   : 0;
+                constalignmax   : 4;
+                varalignmin     : 0;
+                varalignmax     : 4;
+                localalignmin   : 0;
+                localalignmax   : 4;
+                recordalignmin  : 0;
+                recordalignmax  : 2;
+                maxCrecordalign : 4
+              );
+            first_parm_offset : 8;
+            stacksize    : 8192;
+            abi : abi_default;
+          );
+
+       res_arm_palmos_info : tresinfo =
+          (
+            id     : res_m68k_palmos;
+            resbin : 'pilrc';
+            rescmd : '-I $INC $RES';
+            rcbin  : '';
+            rccmd  : '';
+            resourcefileclass : nil;
+            resflags : [];
           );
 
 implementation
@@ -87,14 +181,9 @@ initialization
     set_source_info(system_m68k_palmos_info);
   {$endif palmos}
 {$endif cpu68}
+{$ifdef cpuarm}
+  {$ifdef palmos}
+    set_source_info(system_arm_palmos_info);
+  {$endif palmos}
+{$endif cpuarm}
 end.
-{
-  $Log: i_palmos.pas,v $
-  Revision 1.7  2005/03/20 22:36:45  olle
-    * Cleaned up handling of source file extension.
-    + Added support for .p extension for macos and darwin
-
-  Revision 1.6  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

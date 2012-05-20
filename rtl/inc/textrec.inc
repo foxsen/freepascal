@@ -1,5 +1,4 @@
 {
-    $Id: textrec.inc,v 1.9 2005/02/26 15:42:45 florian Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team
 
@@ -31,11 +30,7 @@ type
     Handle    : THandle;
     Mode      : longint;
     bufsize   : SizeInt;
-{$IFDEF FPC_LINEEND_IN_TEXTREC}
     _private  : SizeInt;
-{$ELSE FPC_LINEEND_IN_TEXTREC}
-    LineEnd   : TLineEndStr;
-{$ENDIF FPC_LINEEND_IN_TEXTREC}
     bufpos,
     bufend    : SizeInt;
     bufptr    : ^textbuf;
@@ -43,24 +38,12 @@ type
     inoutfunc,
     flushfunc,
     closefunc : pointer;
-{$ifndef FPC_HASUSERDATA32}    
-    UserData  : array[1..16] of byte;
-{$else FPC_HASUSERDATA32}    
     UserData  : array[1..32] of byte;
-{$endif FPC_HASUSERDATA32}
     name      : array[0..textrecnamelength-1] of char;
-{$IFDEF FPC_LINEEND_IN_TEXTREC}
     LineEnd   : TLineEndStr;
-{$ENDIF FPC_LINEEND_IN_TEXTREC}
     buffer    : textbuf;
+{$ifdef FPC_HAS_CPSTRING}
+    CodePage  : TSystemCodePage;
+{$endif}
   End;
 
-{
-  $Log: textrec.inc,v $
-  Revision 1.9  2005/02/26 15:42:45  florian
-    * userdata in file/textrecs now 32 bytes
-
-  Revision 1.8  2005/02/14 17:13:29  peter
-    * truncate log
-
-}

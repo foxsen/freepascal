@@ -1,5 +1,4 @@
 {
-    $Id: pthread.inc,v 1.8 2005/04/09 20:29:15 marco Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Peter Vreman
     member of the Free Pascal development team.
@@ -23,6 +22,7 @@
 CONST PTHREAD_EXPLICIT_SCHED       = 0;
       PTHREAD_CREATE_DETACHED      = 1;
       PTHREAD_SCOPE_PROCESS        = 0;
+      SEM_FAILED                   = -1;
 
  TYPE
     ppthread_t           = ^pthread_t;
@@ -43,26 +43,34 @@ CONST PTHREAD_EXPLICIT_SCHED       = 0;
 function  pthread_getspecific      (t : pthread_key_t):pointer; cdecl; external 'c';
 function  pthread_setspecific      (t : pthread_key_t;p:pointer):cint; cdecl; external 'c';
 function  pthread_key_create       (p : ppthread_key_t;f: __destr_func_t):cint; cdecl;external 'c';
-function  pthread_attr_init           (p : ppthread_key_t):cint; cdecl; external 'c';
+function  pthread_attr_init           (p : ppthread_attr_t):cint; cdecl; external 'c';
 function  pthread_attr_setinheritsched(p : ppthread_attr_t;i:cint):cint; cdecl; external 'c';
 function  pthread_attr_setscope      (p : ppthread_attr_t;i:cint):cint;cdecl;external 'c';
 function  pthread_attr_setdetachstate (p : ppthread_attr_t;i:cint):cint;cdecl;external 'c';
+function  pthread_attr_setstacksize(p: ppthread_attr_t; stacksize: size_t):cint;cdecl;external 'c';
+
 function  pthread_create ( p: ppthread_t;attr : ppthread_attr_t;f:__startroutine_t;arg:pointer):cint;cdecl;external 'c';
 procedure pthread_exit  ( p: pointer); cdecl;external 'c';
-function  pthread_self:cint; cdecl;external 'c';
+function  pthread_self:pthread_t; cdecl;external 'c';
 function  pthread_mutex_init (p:ppthread_mutex_t;o:ppthread_mutexattr_t):cint; cdecl;external 'c';
-function  pthread_mutex_destroy (p:ppthread_mutexattr_t):cint; cdecl;external 'c';
-function  pthread_mutex_lock    (p:ppthread_mutexattr_t):cint; cdecl;external 'c';
-function  pthread_mutex_unlock  (p:ppthread_mutexattr_t):cint; cdecl;external 'c';
+function  pthread_mutex_destroy (p:ppthread_mutex_t):cint; cdecl;external 'c';
+function  pthread_mutex_lock    (p:ppthread_mutex_t):cint; cdecl;external 'c';
+function  pthread_mutex_trylock (p:ppthread_mutex_t):cint; cdecl;external 'c';
+function  pthread_mutex_unlock  (p:ppthread_mutex_t):cint; cdecl;external 'c';
 function  pthread_cancel(_para1:pthread_t):cint;cdecl;external 'c';
 function  pthread_detach(_para1:pthread_t):cint;cdecl;external 'c';
 function  pthread_join(_para1:pthread_t; _para2:Ppointer):cint;cdecl;external 'c';
 function  pthread_cond_destroy(_para1:Ppthread_cond_t):cint;cdecl;external 'c' name 'pthread_cond_destroy';
 function  pthread_cond_init(_para1:Ppthread_cond_t;_para2:Ppthread_condattr_t):cint;cdecl;external  'c' name 'pthread_cond_init';
 function  pthread_cond_signal(_para1:Ppthread_cond_t):cint;cdecl;external 'c' name 'pthread_cond_signal';
+function  pthread_cond_broadcast(_para1:Ppthread_cond_t):cint;cdecl;external 'c' name 'pthread_cond_broadcast';
 function  pthread_cond_wait(_para1:Ppthread_cond_t;_para2:Ppthread_mutex_t):cint;cdecl;external 'c' name 'pthread_cond_wait';
+function pthread_kill(__thread:pthread_t; __signo:cint):cint;cdecl;external 'c';
+function pthread_sigmask(how: cint; nset: psigset; oset: psigset): cint; cdecl; external 'c';
 
-function sem_init(__sem:Psem_t; __pshared:cint;__value:cuint):cint;cdecl; external 'c' name 'sem_init';
+// not yet implemented in Mac OS X 10.4.8!
+// function sem_init(__sem:Psem_t; __pshared:cint;__value:cuint):cint;cdecl; external 'c' name 'sem_init';
+function sem_open(name: pchar; oflag: cint): Psem_t; cdecl; varargs; external 'c' name 'sem_open';
 function sem_destroy(__sem:Psem_t):cint;cdecl;external 'c' name 'sem_destroy';
 function sem_close(__sem:Psem_t):cint;cdecl;external 'c'  name 'sem_close';
 function sem_unlink(__name:Pchar):cint;cdecl;external 'c' name 'sem_unlink';
@@ -75,14 +83,4 @@ function pthread_mutexattr_init(_para1:Ppthread_mutexattr_t):cint;cdecl;external
 function pthread_mutexattr_destroy(_para1:Ppthread_mutexattr_t):cint;cdecl;external 'c' name 'pthread_mutexattr_destroy';
 function pthread_mutexattr_gettype(_para1:Ppthread_mutexattr_t; _para2:Pcint):cint;cdecl;external 'c' name 'pthread_mutexattr_gettype';
 function pthread_mutexattr_settype(_para1:Ppthread_mutexattr_t; _para2:cint):cint;cdecl;external 'c' name 'pthread_mutexattr_settype';
-function pthread_cond_timedwait(__cond:ppthread_cond_t; __mutex:ppthread_mutex_t; __abstime:ptimespec):cint; cdecl;external 'c' name 'pthread_cond_timedwait'; 
-
-{
-  $Log: pthread.inc,v $
-  Revision 1.8  2005/04/09 20:29:15  marco
-    * added condtimedwait
-
-  Revision 1.7  2005/02/14 17:13:21  peter
-    * truncate log
-
-}
+function pthread_cond_timedwait(__cond:ppthread_cond_t; __mutex:ppthread_mutex_t; __abstime:ptimespec):cint; cdecl;external 'c' name 'pthread_cond_timedwait';

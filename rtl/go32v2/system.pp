@@ -1,5 +1,4 @@
 {
-    $Id: system.pp,v 1.53 2005/05/12 20:29:04 michael Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team.
 
@@ -28,7 +27,7 @@ interface
 {$ifndef NO_EXCEPTIONS_IN_SYSTEM}
 {$define EXCEPTIONS_IN_SYSTEM}
 {$endif NO_EXCEPTIONS_IN_SYSTEM}
-
+{$define USE_NOTHREADMANAGER}
 
 { include system-independent routine headers }
 
@@ -40,8 +39,11 @@ const
 { LFNSupport is a variable here, defined below!!! }
  DirectorySeparator = '\';
  DriveSeparator = ':';
+ ExtensionSeparator = '.';
  PathSeparator = ';';
-{ FileNameCaseSensitive is defined separately below!!! }
+ AllowDirectorySeparators : set of char = ['\','/'];
+ AllowDriveSeparators : set of char = [':'];
+{ FileNameCaseSensitive and FileNameCasePreserving are defined separately below!!! }
  maxExitCode = 255;
  MaxPathLen = 256;
 
@@ -53,6 +55,7 @@ const
   StdErrorHandle  = 2;
 
   FileNameCaseSensitive : boolean = false;
+  FileNameCasePreserving: boolean = false;
   CtrlZMarksEOF: boolean = true; (* #26 is considered as end of file *)
 
   sLineBreak = LineEnding;
@@ -70,10 +73,12 @@ var
   memw : array[0..($7fffffff div sizeof(word))-1] of word absolute $0:$0;
   meml : array[0..($7fffffff div sizeof(longint))-1] of longint absolute $0:$0;
 { C-compatible arguments and environment }
-  argc  : longint;
-  argv  : ppchar;
-  envp  : ppchar;
-  dos_argv0 : pchar;
+  argc:longint;public name 'operatingsystem_parameter_argc';
+  argv:PPchar;public name 'operatingsystem_parameter_argv';
+  envp:PPchar;public name 'operatingsystem_parameter_envp';
+  dos_argv0 : pchar; public name 'dos_argv0';
+
+  AllFilesMask: string [3];
 
 {$ifndef RTLLITE}
 { System info }
@@ -121,8 +126,8 @@ type
   end;
 
 var
-  stub_info       : p_stub_info;
-  go32_info_block : t_go32_info_block;
+  stub_info       : p_stub_info; public name 'operatingsystem_stub_info';
+  go32_info_block : t_go32_info_block; public name 'operatingsystem_go32_info_block';
 {$ifdef SYSTEMDEBUG}
 const
    accept_sbrk : boolean = true;
@@ -172,7 +177,7 @@ var
   useproxy : boolean;
   hp       : ppchar;
   doscmd   : string[129];  { Dos commandline copied from PSP, max is 128 chars +1 for terminating zero }
-  arglen,
+  arglen,cmdlen,
   count   : longint;
   argstart,
   pc,arg  : pchar;
@@ -228,16 +233,17 @@ begin
 {$EndIf }
   { create argv[0] }
   argv0len:=strlen(dos_argv0);
-  allocarg(count,argv0len);
-  move(dos_argv0^,argv[count]^,argv0len);
+  allocarg(count,argv0len+1);
+  move(dos_argv0^,argv[count]^,argv0len+1);
   inc(count);
   { setup cmdline variable }
-  cmdline:=Getmem(argv0len+length(doscmd)+2);
+  cmdlen:=argv0len+length(doscmd)+2;
+  cmdline:=Getmem(cmdlen);
   move(dos_argv0^,cmdline^,argv0len);
   cmdline[argv0len]:=' ';
   inc(argv0len);
   move(doscmd[1],cmdline[argv0len],length(doscmd));
-  cmdline[argv0len+length(doscmd)+1]:=#0;
+  cmdline[cmdlen-1]:=#0;
   { parse dos commandline }
   pc:=@doscmd[1];
   while pc^<>#0 do
@@ -386,9 +392,24 @@ begin
            proxy_s[13]:=#0;
            proxy_s[18]:=#0;
            proxy_s[23]:=#0;
+           { Do not set argv[2..4] to PROXY_S
+             values, because PROXY_S is on stack,
+             while ARGV[2..4] need to be on heap.
+             PM 2011-06-08
            argv[2]:=@proxy_s[9];
            argv[3]:=@proxy_s[14];
-           argv[4]:=@proxy_s[19];
+           argv[4]:=@proxy_s[19];}
+           allocarg(2,4);
+           strcopy(argv[2], @proxy_s[9]);
+           allocarg(3,4);
+           strcopy(argv[3], @proxy_s[14]);
+           allocarg(4,4);
+           strcopy(argv[4], @proxy_s[19]);
+           { We need to change this variable env name
+             otherwise it will be used by other DJGPP variables
+             if we call them. PM 2011-07-04
+             Hide it as '_!proxy' instead of ' !proxy' }
+           hp^[0]:='_';
            useproxy:=true;
            break;
          end;
@@ -455,7 +476,7 @@ begin
     inc(longint(cp)); { skip to next character }
     end;
   envp := sysgetmem((env_count+1) * sizeof(pchar));
-  if (envp = nil) then exit;
+  if (envp = nil) then HandleError (203);
   cp:=dos_env;
   env_count:=0;
   while cp^ <> #0 do
@@ -473,7 +494,7 @@ begin
   envp[env_count]:=nil;
   longint(cp):=longint(cp)+3;
   dos_argv0 := sysgetmem(strlen(cp)+1);
-  if (dos_argv0 = nil) then halt;
+  if (dos_argv0 = nil) then HandleError (203);
   strcopy(dos_argv0, cp);
   { update ___dos_argv0 also }
   ___dos_argv0:=dos_argv0
@@ -611,10 +632,15 @@ begin
  GetProcessID := SizeUInt (Go32_info_block.pid);
 end;
 
+function CheckInitialStkLen(stklen : SizeUInt) : SizeUInt;
+begin
+  result := stklen;
+end;
+
 var
   temp_int : tseginfo;
 Begin
-  StackLength := InitialStkLen;
+  StackLength := CheckInitialStkLen(InitialStkLen);
   StackBottom := __stkbottom;
   { To be set if this is a GUI or console application }
   IsConsole := TRUE;
@@ -633,6 +659,7 @@ Begin
 { Setup heap }
   InitHeap;
   SysInitExceptions;
+  initunicodestringmanager;
 { Setup stdin, stdout and stderr }
   SysInitStdIO;
 { Setup environment and arguments }
@@ -641,42 +668,20 @@ Begin
 { Use LFNSupport LFN }
   LFNSupport:=CheckLFN;
   if LFNSupport then
-   FileNameCaseSensitive:=true;
+   begin
+    FileNameCasePreserving:=true;
+    AllFilesMask := '*';
+   end
+  else
+   AllFilesMask := '*.*';
 { Reset IO Error }
   InOutRes:=0;
+{$ifdef FPC_HAS_FEATURE_THREADING}
   InitSystemThreads;
+{$endif}
 {$ifdef  EXCEPTIONS_IN_SYSTEM}
   InitDPMIExcp;
   InstallDefaultHandlers;
 {$endif  EXCEPTIONS_IN_SYSTEM}
-{$ifdef HASVARIANT}
   initvariantmanager;
-{$endif HASVARIANT}
-{$ifdef HASWIDESTRING}
-  initwidestringmanager;
-{$endif HASWIDESTRING}
 End.
-{
-  $Log: system.pp,v $
-  Revision 1.53  2005/05/12 20:29:04  michael
-  + Added maxpathlen constant (maximum length of filename path)
-
-  Revision 1.52  2005/05/05 11:40:23  peter
-  Call InitSystemThreads
-
-  Revision 1.51  2005/05/01 13:00:53  peter
-  use fillchar after reallocmem, fix taken from win32
-
-  Revision 1.50  2005/04/03 21:10:59  hajny
-    * EOF_CTRLZ conditional define replaced with CtrlZMarksEOF, #26 handling made more consistent (fix for bug 2453)
-
-  Revision 1.49  2005/02/14 17:13:22  peter
-    * truncate log
-
-  Revision 1.48  2005/02/06 16:57:18  peter
-    * threads for go32v2,os,emx,netware
-
-  Revision 1.47  2005/02/01 20:22:49  florian
-    * improved widestring infrastructure manager
-
-}

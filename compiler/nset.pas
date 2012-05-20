@@ -1,5 +1,4 @@
 {
-    $Id: nset.pas,v 1.58 2005/03/25 22:20:19 peter Exp $
     Copyright (c) 2000-2002 by Florian Klaempfl
 
     Type checking and register allocation for set/case nodes
@@ -27,55 +26,70 @@ unit nset;
 interface
 
     uses
-       cclasses,
+       cclasses,constexp,
        node,globtype,globals,
-       aasmbase,aasmtai,symtype;
+       aasmbase,aasmtai,aasmdata,ncon,nflw,symtype;
 
     type
+       TLabelType = (ltOrdinal, ltConstString);
+
        pcaselabel = ^tcaselabel;
        tcaselabel = record
-          { range }
-          _low,
-          _high   : TConstExprInt;
           { unique blockid }
           blockid : longint;
           { left and right tree node }
           less,
           greater : pcaselabel;
+
+          { range type }
+          case label_type : TLabelType of
+            ltOrdinal:
+            (
+              _low,
+              _high       : TConstExprInt;
+            );
+            ltConstString:
+            (
+              _low_str,
+              _high_str   : tstringconstnode;
+            );
        end;
 
        pcaseblock = ^tcaseblock;
        tcaseblock = record
-          { label (only used in pass_2) }
+          { label (only used in pass_generate_code) }
           blocklabel : tasmlabel;
+
+          statementlabel : tlabelnode;
           { instructions }
           statement  : tnode;
        end;
 
        tsetelementnode = class(tbinarynode)
           constructor create(l,r : tnode);virtual;
-          function det_resulttype:tnode;override;
+          function pass_typecheck:tnode;override;
           function pass_1 : tnode;override;
        end;
        tsetelementnodeclass = class of tsetelementnode;
 
        tinnode = class(tbinopnode)
-          constructor create(l,r : tnode);virtual;
-          function det_resulttype:tnode;override;
+          constructor create(l,r : tnode);virtual;reintroduce;
+          function pass_typecheck:tnode;override;
+          function simplify(forinline : boolean):tnode;override;
           function pass_1 : tnode;override;
        end;
        tinnodeclass = class of tinnode;
 
        trangenode = class(tbinarynode)
           constructor create(l,r : tnode);virtual;
-          function det_resulttype:tnode;override;
+          function pass_typecheck:tnode;override;
           function pass_1 : tnode;override;
        end;
        trangenodeclass = class of trangenode;
 
        tcasenode = class(tunarynode)
           labels    : pcaselabel;
-          blocks    : tlist;
+          blocks    : TFPList;
           elseblock : tnode;
           constructor create(l:tnode);virtual;
           destructor destroy;override;
@@ -83,37 +97,30 @@ interface
           procedure ppuwrite(ppufile:tcompilerppufile);override;
           procedure buildderefimpl;override;
           procedure derefimpl;override;
-          function getcopy : tnode;override;
+          function dogetcopy : tnode;override;
           procedure insertintolist(l : tnodelist);override;
-          function det_resulttype:tnode;override;
+          function pass_typecheck:tnode;override;
           function pass_1 : tnode;override;
           function docompare(p: tnode): boolean; override;
-          procedure addlabel(blockid:longint;l,h : TConstExprInt);
+          procedure addlabel(blockid:longint;l,h : TConstExprInt); overload;
+          procedure addlabel(blockid:longint;l,h : tstringconstnode); overload;
           procedure addblock(blockid:longint;instr:tnode);
           procedure addelseblock(instr:tnode);
        end;
        tcasenodeclass = class of tcasenode;
 
     var
-       csetelementnode : tsetelementnodeclass;
-       cinnode : tinnodeclass;
-       crangenode : trangenodeclass;
-       ccasenode : tcasenodeclass;
+       csetelementnode : tsetelementnodeclass = tsetelementnode;
+       cinnode : tinnodeclass = tinnode;
+       crangenode : trangenodeclass = trangenode;
+       ccasenode : tcasenodeclass = tcasenode;
 
     { counts the labels }
     function case_count_labels(root : pcaselabel) : longint;
     { searches the highest label }
-{$ifdef int64funcresok}
     function case_get_max(root : pcaselabel) : tconstexprint;
-{$else int64funcresok}
-    function case_get_max(root : pcaselabel) : longint;
-{$endif int64funcresok}
     { searches the lowest label }
-{$ifdef int64funcresok}
     function case_get_min(root : pcaselabel) : tconstexprint;
-{$else int64funcresok}
-    function case_get_min(root : pcaselabel) : longint;
-{$endif int64funcresok}
 
 
 implementation
@@ -123,7 +130,8 @@ implementation
       verbose,
       symconst,symdef,symsym,symtable,defutil,defcmp,
       htypechk,pass_1,
-      nbas,ncnv,ncon,nld,cgobj,cgbase;
+      nadd,nbas,ncnv,nld,cgobj,cgbase,
+      widestr;
 
 
 {*****************************************************************************
@@ -137,17 +145,17 @@ implementation
       end;
 
 
-    function tsetelementnode.det_resulttype:tnode;
+    function tsetelementnode.pass_typecheck:tnode;
       begin
          result:=nil;
-         resulttypepass(left);
+         typecheckpass(left);
          if assigned(right) then
-          resulttypepass(right);
-         set_varstate(left,vs_used,[vsf_must_be_valid]);
+          typecheckpass(right);
+         set_varstate(left,vs_read,[vsf_must_be_valid]);
          if codegenerror then
           exit;
 
-         resulttype:=left.resulttype;
+         resultdef:=left.resultdef;
       end;
 
 
@@ -162,7 +170,6 @@ implementation
           exit;
 
          expectloc:=left.expectloc;
-         calcregisters(self,0,0,0);
       end;
 
 
@@ -176,32 +183,28 @@ implementation
       end;
 
 
-    function tinnode.det_resulttype:tnode;
+    function tinnode.pass_typecheck:tnode;
 
       var
         t : tnode;
-        pst : pconstset;
 
         function createsetconst(psd : tsetdef) : pconstset;
         var
           pcs : pconstset;
-          pes : tenumsym;
           i : longint;
         begin
           new(pcs);
-          case psd.elementtype.def.deftype of
+          case psd.elementdef.typ of
             enumdef :
               begin
-                pes:=tenumsym(tenumdef(psd.elementtype.def).firstenum);
-                while assigned(pes) do
+                for i := 0 to tenumdef(psd.elementdef).symtable.SymList.Count - 1 do
                   begin
-                    include(pcs^,pes.value);
-                    pes:=pes.nextenum;
+                    include(pcs^,tenumsym(tenumdef(psd.elementdef).symtable.SymList[i]).value);
                   end;
               end;
             orddef :
               begin
-                for i:=torddef(psd.elementtype.def).low to torddef(psd.elementtype.def).high do
+                for i:=int64(torddef(psd.elementdef).low) to int64(torddef(psd.elementdef).high) do
                   include(pcs^,i);
               end;
           end;
@@ -210,14 +213,14 @@ implementation
 
       begin
          result:=nil;
-         resulttype:=booltype;
-         resulttypepass(right);
-         set_varstate(right,vs_used,[vsf_must_be_valid]);
+         resultdef:=pasbool8type;
+         typecheckpass(right);
+         set_varstate(right,vs_read,[vsf_must_be_valid]);
          if codegenerror then
           exit;
 
          { Convert array constructor first to set }
-         if is_array_constructor(right.resulttype.def) then
+         if is_array_constructor(right.resultdef) then
           begin
             arrayconstructor_to_set(right);
             firstpass(right);
@@ -225,74 +228,122 @@ implementation
              exit;
           end;
 
-         if right.resulttype.def.deftype<>setdef then
-           CGMessage(sym_e_set_expected);
-
-         if (right.nodetype=typen) then
-           begin
-             { we need to create a setconstn }
-             pst:=createsetconst(tsetdef(ttypenode(right).resulttype.def));
-             t:=csetconstnode.create(pst,ttypenode(right).resulttype);
-             dispose(pst);
-             right.free;
-             right:=t;
-           end;
-
-         resulttypepass(left);
-         set_varstate(left,vs_used,[vsf_must_be_valid]);
+         typecheckpass(left);
+         set_varstate(left,vs_read,[vsf_must_be_valid]);
          if codegenerror then
            exit;
 
-         if not assigned(left.resulttype.def) then
+         if not assigned(left.resultdef) then
            internalerror(20021126);
-         { insert a hint that a range check error might occur on non-byte
-           elements.with the in operator.
-         }
-         if  (
-               (left.resulttype.def.deftype = orddef) and not
-               (torddef(left.resulttype.def).typ in [s8bit,u8bit,uchar,bool8bit])
-             )
-            or
-             (
-               (left.resulttype.def.deftype = enumdef) and
-               (tenumdef(left.resulttype.def).maxval > 255)
-             )
-          then
-             CGMessage(type_h_in_range_check);
 
-         { type conversion/check }
-         if assigned(tsetdef(right.resulttype.def).elementtype.def) then
+         t:=self;
+         if isbinaryoverloaded(t) then
            begin
-             inserttypeconv(left,tsetdef(right.resulttype.def).elementtype);
+             result:=t;
+             exit;
            end;
 
+         if right.resultdef.typ<>setdef then
+           CGMessage(sym_e_set_expected);
+
+         if codegenerror then
+           exit;
+
+         if (m_tp7 in current_settings.modeswitches) then
+           begin
+             { insert a hint that a range check error might occur on non-byte
+               elements with the in operator.
+             }
+             if  (
+                   (left.resultdef.typ = orddef) and not
+                   (torddef(left.resultdef).ordtype in [s8bit,u8bit,uchar,pasbool8,bool8bit])
+                 )
+                or
+                 (
+                   (left.resultdef.typ = enumdef) and
+                   (tenumdef(left.resultdef).maxval > 255)
+                 )
+               then
+                 CGMessage(type_h_in_range_check);
+
+             { type conversion/check }
+             if assigned(tsetdef(right.resultdef).elementdef) then
+               inserttypeconv(left,tsetdef(right.resultdef).elementdef);
+           end
+         else if not is_ordinal(left.resultdef) or (left.resultdef.size > u32inttype.size) then
+           begin
+             CGMessage(type_h_in_range_check);
+             if is_signed(left.resultdef) then
+               inserttypeconv(left,s32inttype)
+             else
+               inserttypeconv(left,u32inttype);
+           end
+         else if assigned(tsetdef(right.resultdef).elementdef) and
+                 not(is_integer(tsetdef(right.resultdef).elementdef) and
+                     is_integer(left.resultdef)) then
+            { Type conversion to check things like 'char in set_of_byte'. }
+            { Can't use is_subequal because that will fail for            }
+            { 'widechar in set_of_char'                                   }
+            { Can't use the type conversion for integers because then     }
+            { "longint in set_of_byte" will give a range check error      }
+            { instead of false                                            }
+            inserttypeconv(left,tsetdef(right.resultdef).elementdef);
+
          { empty set then return false }
-         if not assigned(tsetdef(right.resulttype.def).elementtype.def) or
+         if not assigned(tsetdef(right.resultdef).elementdef) or
             ((right.nodetype = setconstn) and
              (tnormalset(tsetconstnode(right).value_set^) = [])) then
           begin
-            t:=cordconstnode.create(0,booltype,false);
-            resulttypepass(t);
+            t:=cordconstnode.create(0,pasbool8type,false);
+            typecheckpass(t);
             result:=t;
             exit;
           end;
 
-         { constant evaluation }
-         if (left.nodetype=ordconstn) and (right.nodetype=setconstn) then
-          begin
-            t:=cordconstnode.create(byte(tordconstnode(left).value in Tsetconstnode(right).value_set^),
-               booltype,true);
-            resulttypepass(t);
-            result:=t;
-            exit;
-          end;
+         result:=simplify(false);
       end;
 
 
-    { Warning : This is the first pass for the generic version }
-    { the only difference is mainly the result location which  }
-    { is changed, compared to the i386 version.                }
-    { ALSO REGISTER ALLOC IS WRONG?                            }
+    function tinnode.simplify(forinline : boolean):tnode;
+      var
+        t : tnode;
+      begin
+         result:=nil;
+         { constant evaluation }
+         if (left.nodetype=ordconstn) then
+           begin
+             if (right.nodetype=setconstn) then
+               begin
+                 { tordconstnode.value is int64 -> signed -> the expression }
+                 { below will be converted to longint on 32 bit systems due }
+                 { to the rule above -> will give range check error if      }
+                 { value > high(longint) if we don't take the signedness    }
+                 { into account                                             }
+                 if Tordconstnode(left).value.signed then
+                   t:=cordconstnode.create(byte(tordconstnode(left).value.svalue in Tsetconstnode(right).value_set^),
+                     pasbool8type,true)
+                 else
+                   t:=cordconstnode.create(byte(tordconstnode(left).value.uvalue in Tsetconstnode(right).value_set^),
+                     pasbool8type,true);
+                 typecheckpass(t);
+                 result:=t;
+                 exit;
+               end
+             else
+               begin
+                 if (Tordconstnode(left).value<int64(tsetdef(right.resultdef).setbase)) or
+                    (Tordconstnode(left).value>int64(Tsetdef(right.resultdef).setmax)) then
+                   begin
+                     t:=cordconstnode.create(0, pasbool8type, true);
+                     typecheckpass(t);
+                     result:=t;
+                     exit;
+                   end;
+               end;
+           end;
+      end;
+
+
     function tinnode.pass_1 : tnode;
       begin
          result:=nil;
@@ -302,22 +353,6 @@ implementation
          firstpass(left);
          if codegenerror then
            exit;
-
-         left_right_max;
-
-         if tsetdef(right.resulttype.def).settype<>smallset then
-           begin
-             if registersint < 3 then
-               registersint := 3;
-           end
-         else
-           begin
-              { a smallset needs maybe an misc. register }
-              if (left.nodetype<>ordconstn) and
-                not(right.expectloc in [LOC_CREGISTER,LOC_REGISTER]) and
-                (right.registersint<1) then
-                inc(registersint);
-           end;
       end;
 
 
@@ -326,24 +361,35 @@ implementation
 *****************************************************************************}
 
     constructor trangenode.create(l,r : tnode);
+      var
+        value: string;
 
       begin
+         { if right is char and left is string then }
+         { right should be treated as one-symbol string }
+         if is_conststringnode(l) and is_constcharnode(r) then
+           begin
+             value := char(tordconstnode(r).value.uvalue) + ''#0;
+             r.free;
+             r := cstringconstnode.createstr(value);
+             do_typecheckpass(r);
+           end;
          inherited create(rangen,l,r);
       end;
 
 
-    function trangenode.det_resulttype : tnode;
+    function trangenode.pass_typecheck : tnode;
       begin
          result:=nil;
-         resulttypepass(left);
-         resulttypepass(right);
-         set_varstate(left,vs_used,[vsf_must_be_valid]);
-         set_varstate(right,vs_used,[vsf_must_be_valid]);
+         typecheckpass(left);
+         typecheckpass(right);
+         set_varstate(left,vs_read,[vsf_must_be_valid]);
+         set_varstate(right,vs_read,[vsf_must_be_valid]);
          if codegenerror then
            exit;
          { both types must be compatible }
-         if compare_defs(left.resulttype.def,right.resulttype.def,left.nodetype)=te_incompatible then
-           IncompatibleTypes(left.resulttype.def,right.resulttype.def);
+         if compare_defs(left.resultdef,right.resultdef,left.nodetype)=te_incompatible then
+           IncompatibleTypes(left.resultdef,right.resultdef);
          { Check if only when its a constant set }
          if (left.nodetype=ordconstn) and (right.nodetype=ordconstn) then
           begin
@@ -352,7 +398,7 @@ implementation
                ((tordconstnode(left).value<0) or (tordconstnode(right).value>=0)) then
               CGMessage(parser_e_upper_lower_than_lower);
           end;
-        resulttype:=left.resulttype;
+        resultdef:=left.resultdef;
       end;
 
 
@@ -363,7 +409,6 @@ implementation
          firstpass(right);
          if codegenerror then
            exit;
-        left_right_max;
         expectloc:=left.expectloc;
       end;
 
@@ -392,11 +437,7 @@ implementation
       end;
 
 
-{$ifdef int64funcresok}
     function case_get_max(root : pcaselabel) : tconstexprint;
-{$else int64funcresok}
-    function case_get_max(root : pcaselabel) : longint;
-{$endif int64funcresok}
       var
          hp : pcaselabel;
       begin
@@ -407,11 +448,7 @@ implementation
       end;
 
 
-{$ifdef int64funcresok}
     function case_get_min(root : pcaselabel) : tconstexprint;
-{$else int64funcresok}
-    function case_get_min(root : pcaselabel) : longint;
-{$endif int64funcresok}
       var
          hp : pcaselabel;
       begin
@@ -428,6 +465,11 @@ implementation
            deletecaselabels(p^.greater);
          if assigned(p^.less) then
            deletecaselabels(p^.less);
+         if (p^.label_type = ltConstString) then
+           begin
+             p^._low_str.Free;
+             p^._high_str.Free;
+           end;
          dispose(p);
       end;
 
@@ -439,6 +481,11 @@ implementation
       begin
          new(n);
          n^:=p^;
+         if (p^.label_type = ltConstString) then
+           begin
+             n^._low_str := tstringconstnode(p^._low_str.getcopy);
+             n^._high_str := tstringconstnode(p^._high_str.getcopy);
+           end;
          if assigned(p^.greater) then
            n^.greater:=copycaselabel(p^.greater);
          if assigned(p^.less) then
@@ -451,14 +498,20 @@ implementation
       var
         b : byte;
       begin
-        ppufile.putexprint(p^._low);
-        ppufile.putexprint(p^._high);
+        ppufile.putbyte(byte(p^.label_type = ltConstString));
+        if (p^.label_type = ltConstString) then
+          begin
+            p^._low_str.ppuwrite(ppufile);
+            p^._high_str.ppuwrite(ppufile);
+          end
+        else
+          begin
+            ppufile.putexprint(p^._low);
+            ppufile.putexprint(p^._high);
+          end;
+
         ppufile.putlongint(p^.blockid);
-        b:=0;
-        if assigned(p^.greater) then
-         b:=b or 1;
-        if assigned(p^.less) then
-         b:=b or 2;
+        b:=ord(assigned(p^.greater)) or (ord(assigned(p^.less)) shl 1);
         ppufile.putbyte(b);
         if assigned(p^.greater) then
           ppuwritecaselabel(ppufile,p^.greater);
@@ -473,8 +526,20 @@ implementation
         p : pcaselabel;
       begin
         new(p);
-        p^._low:=ppufile.getexprint;
-        p^._high:=ppufile.getexprint;
+        if boolean(ppufile.getbyte) then
+          begin
+            p^.label_type := ltConstString;
+            p^._low_str := cstringconstnode.ppuload(stringconstn,ppufile);
+            p^._high_str := cstringconstnode.ppuload(stringconstn,ppufile);
+          end
+        else
+          begin
+            p^.label_type := ltOrdinal;
+
+            p^._low:=ppufile.getexprint;
+            p^._high:=ppufile.getexprint;
+          end;
+
         p^.blockid:=ppufile.getlongint;
         b:=ppufile.getbyte;
         if (b and 1)=1 then
@@ -497,7 +562,7 @@ implementation
       begin
          inherited create(casen,l);
          labels:=nil;
-         blocks:=tlist.create;
+         blocks:=TFPList.create;
          elseblock:=nil;
       end;
 
@@ -515,6 +580,7 @@ implementation
              hp:=pcaseblock(blocks[i]);
              dispose(hp);
            end;
+         blocks.free;
          inherited destroy;
       end;
 
@@ -526,7 +592,7 @@ implementation
         inherited ppuload(t,ppufile);
         elseblock:=ppuloadnode(ppufile);
         cnt:=ppufile.getlongint();
-        blocks:=tlist.create;
+        blocks:=TFPList.create;
         for i:=0 to cnt-1 do
           addblock(i,ppuloadnode(ppufile));
         labels:=ppuloadcaselabel(ppufile);
@@ -570,93 +636,203 @@ implementation
       end;
 
 
-    function tcasenode.det_resulttype : tnode;
+    function tcasenode.pass_typecheck : tnode;
       begin
         result:=nil;
-        resulttype:=voidtype;
+        resultdef:=voidtype;
       end;
-
 
 
     function tcasenode.pass_1 : tnode;
       var
-         old_t_times : longint;
-         hp : tnode;
          i  : integer;
+         node_thenblock,node_elseblock,if_node : tnode;
+         tempcaseexpr : ttempcreatenode;
+         if_block, init_block,stmt_block : tblocknode;
+         stmt : tstatementnode;
+         endlabel : tlabelnode;
+
+      function makeifblock(const labtree : pcaselabel; prevconditblock : tnode): tnode;
+        var
+          condit : tnode;
+        begin
+          if assigned(labtree^.less) then
+            result := makeifblock(labtree^.less, prevconditblock)
+          else
+            result := prevconditblock;
+
+          condit := caddnode.create(equaln, left.getcopy, labtree^._low_str.getcopy);
+
+          if (labtree^._low_str.fullcompare(labtree^._high_str)<>0) then
+            begin
+              condit.nodetype := gten;
+              condit := caddnode.create(
+                andn, condit, caddnode.create(
+                  lten, left.getcopy, labtree^._high_str.getcopy));
+            end;
+
+          result :=
+            cifnode.create(
+              condit, cgotonode.create(pcaseblock(blocks[labtree^.blockid])^.statementlabel.labsym), result);
+
+          if assigned(labtree^.greater) then
+            result := makeifblock(labtree^.greater, result);
+
+          typecheckpass(result);
+        end;
+
       begin
          result:=nil;
+         init_block:=nil;
          expectloc:=LOC_VOID;
+
          { evalutes the case expression }
          firstpass(left);
-         set_varstate(left,vs_used,[vsf_must_be_valid]);
+         set_varstate(left,vs_read,[vsf_must_be_valid]);
          if codegenerror then
            exit;
-         registersint:=left.registersint;
-         registersfpu:=left.registersfpu;
-{$ifdef SUPPORT_MMX}
-         registersmmx:=left.registersmmx;
-{$endif SUPPORT_MMX}
 
-         { walk through all instructions }
-
-         { estimates the repeat of each instruction }
-         old_t_times:=cg.t_times;
-         if not(cs_littlesize in aktglobalswitches) then
+         { Load caseexpr into temp var if complex. }
+         { No need to do this for ordinal, because }
+         { in that case caseexpr is generated once }
+         if (labels^.label_type = ltConstString) and (not valid_for_addr(left, false)) and
+           (blocks.count > 0) then
            begin
-              cg.t_times:=cg.t_times div case_count_labels(labels);
-              if cg.t_times<1 then
-                cg.t_times:=1;
+             init_block := internalstatements(stmt);
+             tempcaseexpr :=
+               ctempcreatenode.create(
+                 left.resultdef, left.resultdef.size, tt_persistent, true);
+             typecheckpass(tnode(tempcaseexpr));
+
+             addstatement(stmt, tempcaseexpr);
+             addstatement(
+               stmt, cassignmentnode.create(
+                 ctemprefnode.create(tempcaseexpr), left));
+
+             left := ctemprefnode.create(tempcaseexpr);
+             typecheckpass(left);
            end;
+
          { first case }
          for i:=0 to blocks.count-1 do
-           begin
-
-              firstpass(pcaseblock(blocks[i])^.statement);
-
-              { searchs max registers }
-              hp:=pcaseblock(blocks[i])^.statement;
-              if hp.registersint>registersint then
-                registersint:=hp.registersint;
-              if hp.registersfpu>registersfpu then
-                registersfpu:=hp.registersfpu;
-{$ifdef SUPPORT_MMX}
-              if hp.registersmmx>registersmmx then
-                registersmmx:=hp.registersmmx;
-{$endif SUPPORT_MMX}
-           end;
+           firstpass(pcaseblock(blocks[i])^.statement);
 
          { may be handle else tree }
          if assigned(elseblock) then
            begin
-              firstpass(elseblock);
-              if registersint<elseblock.registersint then
-                registersint:=elseblock.registersint;
-              if registersfpu<elseblock.registersfpu then
-                registersfpu:=elseblock.registersfpu;
-{$ifdef SUPPORT_MMX}
-              if registersmmx<elseblock.registersmmx then
-                registersmmx:=elseblock.registersmmx;
-{$endif SUPPORT_MMX}
-           end;
-         cg.t_times:=old_t_times;
+             firstpass(elseblock);
 
-         { there is one register required for the case expression    }
-         { for 64 bit ints we cheat: the high dword is stored in EDI }
-         { so we don't need an extra register                        }
-         if registersint<1 then
-           registersint:=1;
+             { kill case? }
+             if blocks.count=0 then
+               begin
+                 result:=elseblock;
+                 elseblock:=nil;
+                 exit;
+               end;
+           end
+         else
+           if blocks.count=0 then
+             begin
+               result:=cnothingnode.create;
+               exit;
+             end;
+
+         if (labels^.label_type = ltConstString) then
+           begin
+             endlabel:=clabelnode.create(cnothingnode.create,tlabelsym.create('$casestrofend'));
+             stmt_block:=internalstatements(stmt);
+             for i:=0 to blocks.count-1 do
+               begin
+                 pcaseblock(blocks[i])^.statementlabel:=clabelnode.create(cnothingnode.create,tlabelsym.create('$casestrof'));
+                 addstatement(stmt,pcaseblock(blocks[i])^.statementlabel);
+                 addstatement(stmt,pcaseblock(blocks[i])^.statement);
+                 pcaseblock(blocks[i])^.statement:=nil;
+                 addstatement(stmt,cgotonode.create(endlabel.labsym));
+               end;
+
+             firstpass(tnode(stmt_block));
+
+             if_node := makeifblock(labels, elseblock);
+
+             if assigned(init_block) then
+               firstpass(tnode(init_block));
+
+             if_block := internalstatements(stmt);
+
+             if assigned(init_block) then
+               addstatement(stmt, init_block);
+
+             addstatement(stmt, if_node);
+             addstatement(stmt,cgotonode.create(endlabel.labsym));
+             addstatement(stmt, stmt_block);
+             addstatement(stmt, endlabel);
+             result := if_block;
+             elseblock := nil;
+             exit;
+           end;
+
+         if is_boolean(left.resultdef) then
+           begin
+             case blocks.count of
+               2:
+                 begin
+                   if boolean(qword(labels^._low))=false then
+                     begin
+                       node_thenblock:=pcaseblock(blocks[labels^.greater^.blockid])^.statement;
+                       node_elseblock:=pcaseblock(blocks[labels^.blockid])^.statement;
+                       pcaseblock(blocks[labels^.greater^.blockid])^.statement:=nil;
+                     end
+                   else
+                     begin
+                       node_thenblock:=pcaseblock(blocks[labels^.blockid])^.statement;
+                       node_elseblock:=pcaseblock(blocks[labels^.less^.blockid])^.statement;
+                       pcaseblock(blocks[labels^.less^.blockid])^.statement:=nil;
+                     end;
+                   pcaseblock(blocks[labels^.blockid])^.statement:=nil;
+                 end;
+               1:
+                 begin
+                   if labels^._low=labels^._high then
+                     begin
+                       if boolean(qword(labels^._low))=false then
+                         begin
+                           node_thenblock:=elseblock;
+                           node_elseblock:=pcaseblock(blocks[labels^.blockid])^.statement;
+                         end
+                       else
+                         begin
+                           node_thenblock:=pcaseblock(blocks[labels^.blockid])^.statement;
+                           node_elseblock:=elseblock;
+                         end;
+                       pcaseblock(blocks[labels^.blockid])^.statement:=nil;
+                       elseblock:=nil;
+                     end
+                   else
+                     begin
+                       result:=pcaseblock(blocks[labels^.blockid])^.statement;
+                       pcaseblock(blocks[labels^.blockid])^.statement:=nil;
+                       elseblock:=nil;
+                       exit;
+                     end;
+                 end;
+             else
+               internalerror(200805031);
+           end;
+           result:=cifnode.create(left,node_thenblock,node_elseblock);
+           left:=nil;
+         end;
       end;
 
 
-    function tcasenode.getcopy : tnode;
+    function tcasenode.dogetcopy : tnode;
 
       var
          n : tcasenode;
          i : longint;
       begin
-         n:=tcasenode(inherited getcopy);
+         n:=tcasenode(inherited dogetcopy);
          if assigned(elseblock) then
-           n.elseblock:=elseblock.getcopy
+           n.elseblock:=elseblock.dogetcopy
          else
            n.elseblock:=nil;
          if assigned(labels) then
@@ -665,17 +841,17 @@ implementation
            n.labels:=nil;
          if assigned(blocks) then
            begin
-             n.blocks:=tlist.create;
+             n.blocks:=TFPList.create;
              for i:=0 to blocks.count-1 do
                begin
                  if not assigned(blocks[i]) then
                    internalerror(200411302);
-                 n.addblock(i,pcaseblock(blocks[i])^.statement.getcopy);
+                 n.addblock(i,pcaseblock(blocks[i])^.statement.dogetcopy);
                end;
            end
          else
-           n.labels:=nil;
-         getcopy:=n;
+           n.blocks:=nil;
+         dogetcopy:=n;
       end;
 
     procedure tcasenode.insertintolist(l : tnodelist);
@@ -696,7 +872,7 @@ implementation
       end;
 
 
-    function caseblocksequal(b1,b2:tlist): boolean;
+    function caseblocksequal(b1,b2:TFPList): boolean;
       var
         i : longint;
       begin
@@ -781,30 +957,59 @@ implementation
                       result:=insertlabel(p^.greater);
                  end
              else
-               Message(parser_e_double_caselabel);
+               begin
+                 dispose(hcaselabel);
+                 Message(parser_e_double_caselabel);
+               end
           end;
 
       begin
         new(hcaselabel);
         fillchar(hcaselabel^,sizeof(tcaselabel),0);
         hcaselabel^.blockid:=blockid;
+        hcaselabel^.label_type:=ltOrdinal;
         hcaselabel^._low:=l;
         hcaselabel^._high:=h;
         insertlabel(labels);
       end;
 
-begin
-   csetelementnode:=tsetelementnode;
-   cinnode:=tinnode;
-   crangenode:=trangenode;
-   ccasenode:=tcasenode;
+    procedure tcasenode.addlabel(blockid: longint; l, h: tstringconstnode);
+
+      var
+        hcaselabel : pcaselabel;
+
+      function insertlabel(var p : pcaselabel) : pcaselabel;
+        begin
+          if not assigned(p) then
+            begin
+              p := hcaselabel;
+              result := p;
+            end
+          else
+            if (p^._low_str.fullcompare(hcaselabel^._high_str) > 0) then
+              result := insertlabel(p^.less)
+          else
+            if (p^._high_str.fullcompare(hcaselabel^._low_str) < 0) then
+              result := insertlabel(p^.greater)
+          else
+            begin
+              hcaselabel^._low_str.free;
+              hcaselabel^._high_str.free;
+              dispose(hcaselabel);
+              Message(parser_e_double_caselabel);
+            end;
+        end;
+
+      begin
+        new(hcaselabel);
+        fillchar(hcaselabel^, sizeof(tcaselabel), 0);
+        hcaselabel^.blockid := blockid;
+        hcaselabel^.label_type := ltConstString;
+
+        hcaselabel^._low_str := tstringconstnode(l.getcopy);
+        hcaselabel^._high_str := tstringconstnode(h.getcopy);
+
+        insertlabel(labels);
+      end;
+
 end.
-{
-  $Log: nset.pas,v $
-  Revision 1.58  2005/03/25 22:20:19  peter
-    * add hint when passing an uninitialized variable to a var parameter
-
-  Revision 1.57  2005/02/14 17:13:06  peter
-    * truncate log
-
-}

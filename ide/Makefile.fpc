@@ -6,7 +6,7 @@
 
 [package]
 name=ide
-version=2.0.0
+version=2.7.1
 
 [target]
 dirs=compiler
@@ -21,7 +21,8 @@ fpcpackage=y
 options=-Sg
 
 [require]
-packages=fv gdbint regexpr
+packages=fv gdbint regexpr chm  fcl-base fcl-xml
+packages_go32v2=graph
 libc=y
 
 [default]
@@ -32,8 +33,48 @@ fpcdir=..
 # Automatic detection if libgdb.a is present
 #
 
+# set default value for PPC_TARGET
+ifndef PPC_TARGET
+PPC_TARGET=$(CPU_TARGET)
+endif
+
+# do not add -d$(CPU_TARGET)
+override NOCPUDEF=1
+# Use PPC_TARGET instead
+override FPCOPT+= -d$(PPC_TARGET)
+
 ifndef NOGDB
 
+ifeq ($(FULL_TARGET),i386-win32)
+needlinkparam=1
+endif
+
+
+ifeq ($(FULL_TARGET),x86_64-win64)
+needlinkparam=1
+endif
+
+ifeq ($(OS_TARGET),freebsd)
+needusrlocallib=1
+neednostdlib=1
+endif
+ifeq ($(OS_TARGET),openbsd)
+needusrlocallib=1
+endif
+ifeq ($(OS_TARGET),netbsd)
+neednostdlib=1
+endif
+
+ifdef needlinkparam
+override SPECIALLINK=-Xe -k--allow-multiple-definition
+endif
+
+ifdef needusrlocallib
+override SPECIALLINK+=-Fl/usr/local/lib
+endif
+ifdef neednostdlib
+override SPECIALLINK+=-Xd
+endif
 # Try to find GDB library
 # Look for a valid GDBLIBDIR environment variable
 ifdef GDBLIBDIR
@@ -51,11 +92,31 @@ endif
 override LIBGDBFILE:=$(firstword $(wildcard $(addsuffix /libgdb.a,$(GDBLIBDIR))))
 endif
 
+# No custom libgdb.a found, try using system default library if available
+ifeq ($(LIBGDBFILE),)
+SYSLIBDIR=/lib /usr/lib /usr/local/lib
+# Detect if libgdb.a is available
+override LIBGDBFILE=$(firstword $(wildcard $(addsuffix /libgdb.a,$(SYSLIBDIR))))
+ifneq (${LIBGDBFILE},)
+$(warning Using system default libgdb file located in ${LIBGDBFILE})
+GDBLIBDIR=$(dir ${LIBGDBFILE})
+endif
+endif
+
 # Disable GDB when no libgdb.a found
 ifeq ($(LIBGDBFILE),)
 GDB=
 else
 GDB=1
+# Detect if gdblib.inc is available
+override LIBGDBINC:=$(firstword $(wildcard $(addsuffix /gdblib.inc,$(GDBLIBDIR))))
+ifeq ($(LIBGDBINC),)
+GDBLIBINCFOUND=0
+GDBLIBINCCOND=
+else
+GDBLIBINCFOUND=1
+GDBLIBINCCOND=-dUSE_GDBLIBINC -I$(GDBLIBDIR)
+endif
 endif
 
 ifdef GDB
@@ -72,6 +133,8 @@ endif  #NOGDB
 
 
 [rules]
+.NOTPARALLEL:
+
 .PHONY: compilerunits compilerclean \
         nogdb gdb all \
         clean_compiler clean testgdb postgdbinfo
@@ -133,6 +196,7 @@ compilerclean :
 # to use.
 #
 fp$(EXEEXT): $(wildcard *.pas) $(wildcard *.inc)
+        $(COMPILER) $(GDBLIBINCCOND) $(SPECIALLINK) fp.pas
 
 buildfp:
         $(MAKE) compilerunits
@@ -141,6 +205,7 @@ buildfp:
         $(MAKE) postgdbinfo
 
 gdb:
+#        $(MAKE) -C ../packages/base/gdbint
         $(MAKE) buildfp
 
 nogdb:
@@ -181,60 +246,3 @@ endif
 clean_compiler:
         $(MAKE) -C compiler clean
         $(MAKE) -C ../compiler ppuclean
-
-#
-# $Log: Makefile.fpc,v $
-# Revision 1.32  2005/05/05 12:59:59  peter
-#   * 2.0.0
-#
-# Revision 1.31  2005/02/15 22:28:29  peter
-#   * 1.9.8
-#
-# Revision 1.30  2005/01/10 22:49:56  armin
-# * updated makefile.fpc versions to 1.9.7, regenerated makefiles
-#
-# Revision 1.29  2004/12/30 20:57:39  hajny
-#   * version 1.9.6
-#
-# Revision 1.28  2004/12/20 18:58:46  peter
-#   * UnixHier
-#
-# Revision 1.27  2004/11/11 15:20:52  florian
-#   * applied Peter's patch from yesterday
-#
-# Revision 1.26  2004/11/05 19:10:18  peter
-#   * report where libgdb.a is found
-#
-# Revision 1.25  2004/11/05 13:25:10  peter
-# libgdb now will be search in fpcdir
-#
-# Revision 1.24  2004/11/05 12:48:45  peter
-# finding of libgdb.a updated
-#
-# Revision 1.23  2004/11/02 09:14:09  peter
-#   * fix build with gdb
-#
-# Revision 1.22  2004/10/30 12:36:43  peter
-#   * units are now created in separate directory units/cpu-os/
-#   * distclean uses cleanall rule and removes units dir
-#   * cross compile support fixed, it is now possible to cycle a ppcsparc
-#     without deleting ppc386
-#   * bintutilsperfix defaults to cpu-os-
-#
-# Revision 1.21  2004/05/30 09:15:35  florian
-#   * first part of version number update
-#
-# Revision 1.20  2004/04/12 18:16:15  florian
-#   * i386 compilation on debian biarch fixed
-#
-# Revision 1.19  2004/01/05 23:29:35  marco
-#  * fixed a few makefiles version numbers
-#
-# Revision 1.18  2003/11/01 22:45:29  marco
-#  * updated package version
-#
-# Revision 1.17  2003/10/03 17:29:13  florian
-#   + id and log added
-#
-#
-

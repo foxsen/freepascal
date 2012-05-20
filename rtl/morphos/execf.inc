@@ -1,5 +1,4 @@
 {
-    $Id: execf.inc,v 1.6 2005/02/14 17:13:30 peter Exp $
     This file is part of the Free Pascal run time library.
 
     exec functions (V50) for MorphOS/PowerPC
@@ -587,12 +586,3 @@ function FindTaskByPID(processID: Cardinal): PTask;
 SysCall BaseSysV MOS_ExecBase 996;
 
 
-{
-  $Log: execf.inc,v $
-  Revision 1.6  2005/02/14 17:13:30  peter
-    * truncate log
-
-  Revision 1.5  2005/01/30 03:02:36  karoly
-    * syscalls with basesysv abi fixed
-
-}

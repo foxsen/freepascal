@@ -1,5 +1,4 @@
 {
-    $Id: int64p.inc,v 1.7 2005/02/14 17:13:22 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team
 
@@ -17,7 +16,7 @@
 {$R- no range checking }
 
 {$define FPC_SYSTEM_HAS_DIV_QWORD}
-    function fpc_div_qword(n,z : qword) : qword;assembler;[public,alias: 'FPC_DIV_QWORD']; {$ifdef hascompilerproc} compilerproc; {$endif}
+    function fpc_div_qword(n,z : qword) : qword;assembler;[public,alias: 'FPC_DIV_QWORD']; compilerproc;
       var
          shift,lzz,lzn : longint;
          saveebx,saveedi : longint;
@@ -31,13 +30,8 @@
             movl %ecx,%eax
             orl %ebx,%eax
             jnz .Lnodivzero
-{$ifdef REGCALL}
             movl  %ebp,%edx
             movl  $200,%eax
-{$else}
-            pushl %ebp
-            pushl $200
-{$endif}
             call HandleErrorFrame
             jmp .Lexit
 .Lnodivzero:
@@ -91,7 +85,7 @@
 
 
 {$define FPC_SYSTEM_HAS_MOD_QWORD}
-    function fpc_mod_qword(n,z : qword) : qword;assembler;[public,alias: 'FPC_MOD_QWORD']; {$ifdef hascompilerproc} compilerproc; {$endif}
+    function fpc_mod_qword(n,z : qword) : qword;assembler;[public,alias: 'FPC_MOD_QWORD']; compilerproc;
       var
          shift,lzz,lzn : longint;
          saveebx,saveedi : longint;
@@ -105,13 +99,8 @@
             movl %ecx,%eax
             orl %ebx,%eax
             jnz .Lnodivzero
-{$ifdef REGCALL}
             movl  %ebp,%edx
             movl  $200,%eax
-{$else}
-            pushl %ebp
-            pushl $200
-{$endif}
             call HandleErrorFrame
             jmp .Lexit
 .Lnodivzero:
@@ -172,7 +161,7 @@
     { multiplies two qwords
       the longbool for checkoverflow avoids a misaligned stack
     }
-    function fpc_mul_qword(f1,f2 : qword;checkoverflow : longbool) : qword;[public,alias: 'FPC_MUL_QWORD']; {$ifdef hascompilerproc} compilerproc; {$endif}
+    function fpc_mul_qword(f1,f2 : qword;checkoverflow : longbool) : qword;[public,alias: 'FPC_MUL_QWORD']; compilerproc;
       var
         r : qword;
         overflowed : boolean;
@@ -259,9 +248,3 @@
           HandleErrorFrame(215,get_frame);
       end;
 
-{
-  $Log: int64p.inc,v $
-  Revision 1.7  2005/02/14 17:13:22  peter
-    * truncate log
-
-}

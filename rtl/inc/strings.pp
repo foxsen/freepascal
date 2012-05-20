@@ -1,5 +1,4 @@
 {
-    $Id: strings.pp,v 1.10 2005/02/14 17:13:28 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team.
 
@@ -15,21 +14,23 @@
  **********************************************************************}
 unit strings;
 {$S-}
+{$inline on}
 interface
 
     { Implemented in System Unit }
-    function strpas(p:pchar):shortstring;external name 'FPC_PCHAR_TO_SHORTSTR';
+    function strpas(p:pchar):shortstring;inline;
+
     function strlen(p:pchar):sizeint;external name 'FPC_PCHAR_LENGTH';
 
     { Converts a Pascal string to a null-terminated string }
     function strpcopy(d : pchar;const s : string) : pchar;
 
     { Copies source to dest, returns a pointer to dest }
-    function strcopy(dest,source : pchar) : pchar;
+    function strcopy(dest,source : pchar) : pchar; overload;
 
     { Copies at most maxlen bytes from source to dest. }
     { Returns a pointer to dest }
-    function strlcopy(dest,source : pchar;maxlen : SizeInt) : pchar;
+    function strlcopy(dest,source : pchar;maxlen : SizeInt) : pchar; overload;
 
     { Copies source to dest and returns a pointer to the terminating }
     { null character.    }
@@ -50,8 +51,11 @@ interface
     { The same as strcomp, but at most l characters are compared  }
     function strlcomp(str1,str2 : pchar;l : SizeInt) : SizeInt;
 
-    { The same as strcomp but case insensitive       }
+    { The same as strcomp but case insensitive }
     function stricomp(str1,str2 : pchar) : SizeInt;
+
+    { The same as stricomp, but at most l characters are compared }
+    function strlicomp(str1,str2 : pchar;l : SizeInt) : SizeInt;
 
     { Copies l characters from source to dest, returns dest. }
     function strmove(dest,source : pchar;l : SizeInt) : pchar;
@@ -63,22 +67,28 @@ interface
     { If c doesn't occur, nil is returned }
     function strscan(p : pchar;c : char) : pchar;
 
+    { The same as strscan but case insensitive }
+    function striscan(p : pchar;c : char) : pchar;
+
     { Returns a pointer to the last occurrence of c in p }
     { If c doesn't occur, nil is returned }
     function strrscan(p : pchar;c : char) : pchar;
 
-    { converts p to all-lowercase, returns p   }
+    { The same as strrscan but case insensitive }
+    function strriscan(p : pchar;c : char) : pchar;
+
+    { converts p to all-lowercase, returns p }
     function strlower(p : pchar) : pchar;
 
-    { converts p to all-uppercase, returns p  }
+    { converts p to all-uppercase, returns p }
     function strupper(p : pchar) : pchar;
 
-    { The same al stricomp, but at most l characters are compared }
-    function strlicomp(str1,str2 : pchar;l : SizeInt) : SizeInt;
-
-    { Returns a pointer to the first occurrence of str2 in    }
-    { str2 Otherwise returns nil                          }
+    { Returns a pointer to the first occurrence of str2 in }
+    { str1 Otherwise returns nil }
     function strpos(str1,str2 : pchar) : pchar;
+
+    { The same as strpos but case insensitive       }
+    function stripos(str1,str2 : pchar) : pchar;
 
     { Makes a copy of p on the heap, and returns a pointer to this copy  }
     function strnew(p : pchar) : pchar;
@@ -86,7 +96,7 @@ interface
     { Allocates L bytes on the heap, returns a pchar pointer to it }
     function stralloc(L : SizeInt) : pchar;
 
-    { Releases a null-terminated string from the heap  }
+    { Releases a null-terminated string from the heap }
     procedure strdispose(p : pchar);
 
 implementation
@@ -110,6 +120,15 @@ implementation
 
 { Functions, different from the one in sysutils }
 
+
+    procedure fpc_pchar_to_shortstr(var res : openstring;p:pchar);[external name 'FPC_PCHAR_TO_SHORTSTR'];
+
+
+    function strpas(p:pchar):shortstring;{$ifdef SYSTEMINLINE}inline;{$endif}
+      begin
+        fpc_pchar_to_shortstr(strpas,p);
+      end;
+
     function stralloc(L : SizeInt) : pchar;
 
       begin
@@ -129,7 +148,7 @@ implementation
          len:=strlen(p)+1;
          getmem(strnew,len);
          if strnew<>nil then
-           strmove(strnew,p,len);
+           move(p^,strnew^,len);
       end;
 
     procedure strdispose(p : pchar);
@@ -143,10 +162,3 @@ implementation
       end;
 
 end.
-
-{
-  $Log: strings.pp,v $
-  Revision 1.10  2005/02/14 17:13:28  peter
-    * truncate log
-
-}

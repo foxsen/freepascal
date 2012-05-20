@@ -1,5 +1,4 @@
 {
-    $Id: rasm.pas,v 1.3 2005/02/14 17:13:07 peter Exp $
     Copyright (c) 1998-2003 by Peter Vreman, Florian Klaempfl and Carl Eric Codere
 
     Basic stuff for assembler readers
@@ -29,7 +28,7 @@ unit rasm;
     uses
       cclasses,
       rabase,
-      aasmtai,
+      aasmtai,aasmdata,
       systems,
       cpubase,
       cgbase;
@@ -38,13 +37,13 @@ unit rasm;
        tasmreader = class(tbaseasmreader)
          firsttoken     : boolean;
          _asmsorted     : boolean;
-         curlist        : TAAsmoutput;
+         curlist        : TAsmList;
          c              : char;
          actasmpattern  : string;
          actopcode      : tasmop;
          actasmregister : tregister;
          actcondition   : tasmcond;
-         iasmops        : tdictionary;
+         iasmops        : TFPHashList;
          constructor create;override;
          destructor destroy;override;
        end;
@@ -67,9 +66,3 @@ unit rasm;
 
 
 end.
-{
-  $Log: rasm.pas,v $
-  Revision 1.3  2005/02/14 17:13:07  peter
-    * truncate log
-
-}

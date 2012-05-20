@@ -408,11 +408,17 @@ begin
  i := 1000000000;
  k := i;
  i := i * 10;
+ { The next statement would create an overflow }
+ {$Q-}
  j := 1000000000 - i;
  k := k - i;
  if j <> k then
    result := false;
- if j <> (1000000000-(qword(1000000000) * 10)) then
+
+ { Since qword variable<>negative constant is always false according to the 
+   compiler (allowing it to optimize the if away) we need to do a preventive
+   typecast to qword.}
+ if j <> qword(1000000000-(qword(1000000000) * 10)) then
    result := false;
  j := (qword(1) shl 33);
  i := (qword(1) shl 34) - j;
@@ -420,7 +426,10 @@ begin
    result := false;
 
  i := 1 - j;
- if (i <> (1-(qword(1) shl 33))) then
+ { Since qword variable<>negative constant is always false according to the 
+   compiler (allowing it to optimize the if away) we need to do a preventive
+   typecast to qword.}
+ if i <> qword(1-(qword(1) shl 33)) then
    result := false;
 
  i := 100000;
@@ -706,11 +715,3 @@ Begin
   QwordTestGe;
   QwordTestSub;
 end.
-
-
-{
- $Log: tadint64.pp,v $
- Revision 1.8  2005/02/14 17:13:35  peter
-   * truncate log
-
-}

@@ -1,5 +1,4 @@
 {
-    $Id: makeskel.pp,v 1.15 2005/02/14 17:13:39 peter Exp $
 
     FPDoc  -  Free Pascal Documentation Tool
     Copyright (C) 2000 - 2003 by
@@ -16,7 +15,11 @@
 }
 
 
+{%RunCommand $MakeExe($(EdFile)) --package=fpvectorial --input=/home/felipe/Programas/fpctrunk/packages/fpvectorial/src/fpvectorial.pas}
 program MakeSkel;
+
+{$mode objfpc}
+{$h+}
 
 uses
   SysUtils, Classes, Gettext,
@@ -24,64 +27,184 @@ uses
 
 resourcestring
   STitle = 'MakeSkel - FPDoc skeleton XML description file generator';
+  SVersion = 'Version %s [%s]';
   SCopyright = '(c) 2000 - 2003 Areca Systems GmbH / Sebastian Guenther, sg@freepascal.org';
   SCmdLineHelp = 'See documentation for usage.';
   SCmdLineInvalidOption = 'Ignoring unknown option "%s"';
   SNoPackageNameProvided = 'Please specify a package name with --package=<name>';
   SOutputMustNotBeDescr = 'Output file must be different from description filenames.';
+  SCreatingNewNode = 'Creating documentation for new node : %s';
+  SNodeNotReferenced = 'Documentation node "%s" no longer used';
   SDone = 'Done.';
 
 type
   TCmdLineAction = (actionHelp, actionConvert);
 
+  TNodePair = Class(TObject)
+  Private
+    FEl : TPasElement;
+    FNode : TDocNode;
+  Public  
+    Constructor Create(AnElement : TPasElement; ADocNode : TDocNode);
+    Property Element : TPasElement Read FEl;
+    Property DocNode : TDocNode Read FNode;
+  end;
+
   TSkelEngine = class(TFPDocEngine)
+  Private
+    FEmittedList, 
+    FNodeList,
+    FModules : TStringList;
+    Procedure  DoWriteUnReferencedNodes(N : TDocNode; NodePath : String);
   public
+    Destructor Destroy; override;
+    Function MustWriteElement(El : TPasElement; Full : Boolean) : Boolean;
+    Function WriteElement(Var F : Text; El : TPasElement; ADocNode : TDocNode) : Boolean;
+    function FindModule(const AName: String): TPasModule; override;
     function CreateElement(AClass: TPTreeElement; const AName: String;
       AParent: TPasElement; AVisibility :TPasMemberVisibility;
       const ASourceFilename: String; ASourceLinenumber: Integer): TPasElement; override;
+    procedure WriteUnReferencedNodes;
+    Procedure WriteNodes(Var F : Text; AModule : TPasModule; List : TStrings);
+    Procedure DocumentFile(Var F : Text; Const AFileName,ATarget,ACPU : String);
+    Property NodeList : TStringList Read FNodeList;
+    Property EmittedList : TStringList Read FEmittedList;
   end;
 
 const
   CmdLineAction: TCmdLineAction = actionConvert;
   OSTarget: String = {$I %FPCTARGETOS%};
   CPUTarget: String = {$I %FPCTARGETCPU%};
+  FPCVersion: String = {$I %FPCVERSION%};
+  FPCDate: String = {$I %FPCDATE%};
 
 var
-  InputFiles, DescrFiles: TStringList;
-  DocLang: String;
-  Engine: TSkelEngine;
+  WriteDeclaration,
   UpdateMode,
+  SortNodes,
+  DisableOverride,
   DisableErrors,
   DisableSeealso,
   DisableArguments,
   DisableProtected,
   DisablePrivate,
   DisableFunctionResults: Boolean;
-
   EmitClassSeparator: Boolean;
-  PackageName, OutputName: String;
-  f: Text;
+  
+  
+Constructor TNodePair.Create(AnElement : TPasElement; ADocNode : TDocNode);
+
+begin
+  Fel:=Anelement;
+  FNode:=ADocNode;
+end;
+
+function TSkelEngine.FindModule(const AName: String): TPasModule; 
+
+Var
+  I : Integer;
+
+begin
+  Result:=Inherited FindModule(AName);
+  If (Result=Nil) then
+    begin // Create dummy list and search in that.
+    If (FModules=Nil) then
+      begin
+      FModules:=TStringList.Create;
+      FModules.Sorted:=True;
+      end;
+    I:=FModules.IndexOf(AName);
+    IF (I=-1) then
+      begin
+      Result:=TPasModule.Create(AName,Nil);
+      FModules.AddObject(AName,Result);
+      end
+    else
+      Result:=FModules.Objects[i] as TPasModule;  
+    end;  
+end;
+
+Destructor TSkelEngine.Destroy; 
+
+Var
+  I : Integer;
+
+begin
+  If Assigned(FModules) then 
+    begin
+    For I:=0 to FModules.Count-1 do
+      FModules.Objects[i].Free;
+    FreeAndNil(FModules);    
+    end;
+end;
+
+Function TSkelEngine.MustWriteElement(El : TPasElement; Full : Boolean) : Boolean;
+
+Var
+  ParentVisible:Boolean;
+  PT,PP : TPasElement;
+begin
+  ParentVisible:=True;
+  If (El is TPasArgument) or (El is TPasResultElement) then
+    begin
+    PT:=El.Parent;
+    // Skip ProcedureType or PasFunctionType
+    If (PT<>Nil) then
+      begin
+      if (PT is TPasProcedureType) or (PT is TPasFunctionType) then
+        PT:=PT.Parent;
+      If (PT<>Nil) and ((PT is TPasProcedure) or (PT is TPasProcedure))   then
+        PP:=PT.Parent
+      else
+        PP:=Nil;
+      If (PP<>Nil) and (PP is TPasClassType) then
+        begin
+        ParentVisible:=((not DisablePrivate or (PT.Visibility<>visPrivate)) and
+                       (not DisableProtected or (PT.Visibility<>visProtected)));
+        end;
+      end;
+    end;
+  Result:=Assigned(El.Parent) and (Length(El.Name) > 0) and
+          (ParentVisible and (not DisableArguments or (El.ClassType <> TPasArgument))) and
+          (ParentVisible and (not DisableFunctionResults or (El.ClassType <> TPasResultElement))) and
+          (not DisablePrivate or (el.Visibility<>visPrivate)) and
+          (not DisableProtected or (el.Visibility<>visProtected));
+  If Result and Full then
+    begin
+    Result:=(Not Assigned(FEmittedList) or (FEmittedList.IndexOf(El.FullName)=-1));
+    If DisableOverride and (El is TPasProcedure) then
+      Result:=Not TPasProcedure(El).IsOverride;
+    end;  
+end;
 
 
 function TSkelEngine.CreateElement(AClass: TPTreeElement; const AName: String;
   AParent: TPasElement; AVisibility : TPasMemberVisibility;
   const ASourceFilename: String; ASourceLinenumber: Integer): TPasElement;
 
-  Function WriteThisNode(APasElement : TPasElement)  : Boolean;
+Var
+  DN : TDocNode;
 
-  begin
-    Result:=Assigned(AParent) and (Length(AName) > 0) and
-            (not DisableArguments or (APasElement.ClassType <> TPasArgument)) and
-            (not DisableFunctionResults or (APasElement.ClassType <> TPasResultElement)) and
-            (not DisablePrivate or (AVisibility<>visPrivate)) and
-            (not DisableProtected or (AVisibility<>visProtected));
-    If Result and updateMode then
-      begin
-      Result:=FindDocNode(APasElement)=Nil;
-      If Result then
-        Writeln(stderr,'Creating documentation for new node ',APasElement.PathName);
-      end;
-  end;
+begin
+  Result := AClass.Create(AName, AParent);
+  Result.Visibility:=AVisibility;
+  if AClass.InheritsFrom(TPasModule) then
+    CurModule := TPasModule(Result);
+  // Track this element
+  If UpdateMode then
+    begin
+    DN:=FindDocNode(Result);    
+    If Assigned(DN) then
+      DN.IncRefCount;
+    end
+  else
+    DN:=Nil;  
+  // See if we need to write documentation for it
+  If MustWriteElement(Result,False) then
+    FNodeList.AddObject(Result.PathName,TNodePair.Create(Result,DN));
+end;
+
+Function TSkelEngine.WriteElement(Var F : Text;El : TPasElement; ADocNode : TDocNode) : Boolean;
 
   Function WriteOnlyShort(APasElement : TPasElement) : Boolean;
 
@@ -98,64 +221,219 @@ function TSkelEngine.CreateElement(AClass: TPTreeElement; const AName: String;
       Result:=(InheritsFrom(TPasType) and not InheritsFrom(TPasClassType)) or
               (InheritsFrom(TPasResString)) or
               (InheritsFrom(TPasVariable));
-
   end;
-
+  
+  Function NeedDeclaration(El : TPasElement) : boolean;
+  
+  begin
+    Result:=IsTypeVarConst(El) 
+            or WriteOnlyShort(El) 
+            or EL.InheritsFrom(TPasProcedure) 
+  end;
+    
 begin
-  Result := AClass.Create(AName, AParent);
-  if AClass.InheritsFrom(TPasModule) then
-    CurModule := TPasModule(Result);
-  if Result.ClassType = TPasModule then
+  // Check again, this time with full declaration.
+  Result:=MustWriteElement(El,True);
+  If Result and UpdateMode then
+     Result:=(ADocNode=Nil);
+  If Not Result Then
+    Exit;
+  If UpdateMode then
+    Writeln(stderr,Format(ScreatingNewNode,[el.PathName]));
+  FEmittedList.Add(El.FullName); // So we don't emit again.
+  WriteLn(f);
+  if EmitClassSeparator and (El.ClassType = TPasClassType) then
     begin
-    WriteLn(f);
     WriteLn(f, '<!--');
-    WriteLn(f, '  ====================================================================');
-    WriteLn(f, '    ', Result.Name);
-    WriteLn(f, '  ====================================================================');
+    WriteLn(f, '  ********************************************************************');
+    WriteLn(f, '    ', El.PathName);
+    WriteLn(f, '  ********************************************************************');
     WriteLn(f, '-->');
     WriteLn(f);
-    WriteLn(f, '<module name="', Result.Name, '">');
-    if not UpdateMode then
-      begin
-      WriteLn(f, '<short></short>');
-      WriteLn(f, '<descr>');
-      WriteLn(f, '</descr>');
-      end;
-    end
-  else if WriteThisNode(Result) then
+    end;
+  If Not (WriteDeclaration and NeedDeclaration(El)) then  
+    Writeln(F,'<!-- ', El.ElementTypeName,' Visibility: ',VisibilityNames[El.Visibility], ' -->')
+  else  
     begin
-    WriteLn(f);
-    if EmitClassSeparator and (Result.ClassType = TPasClassType) then
+    Writeln(F,'<!-- ',El.ElementTypeName,' Visibility: ',VisibilityNames[El.Visibility]);
+    Writeln(F,'     Declaration: ',El.GetDeclaration(True),' -->');
+    end;
+  WriteLn(f,'<element name="', El.FullName, '">');
+  WriteLn(f, '<short></short>');
+  if Not WriteOnlyShort(El) then
+    begin
+    WriteLn(f, '<descr>');
+    WriteLn(f, '</descr>');
+    if not (DisableErrors or IsTypeVarConst(El)) then
       begin
-      WriteLn(f, '<!--');
-      WriteLn(f, '  ********************************************************************');
-      WriteLn(f, '    ', Result.PathName);
-      WriteLn(f, '  ********************************************************************');
-      WriteLn(f, '-->');
-      WriteLn(f);
+      WriteLn(f, '<errors>');
+      WriteLn(f, '</errors>');
       end;
-    Writeln(F,'<!-- ', Result.ElementTypeName,' Visibility: ',VisibilityNames[AVisibility], ' -->');
-    WriteLn(f,'<element name="', Result.FullName, '">');
-    WriteLn(f, '<short></short>');
-    if Not WriteOnlyShort(Result) then
+    if not DisableSeealso then
       begin
-      WriteLn(f, '<descr>');
-      WriteLn(f, '</descr>');
-      if not (DisableErrors or IsTypeVarConst(Result)) then
-        begin
-        WriteLn(f, '<errors>');
-        WriteLn(f, '</errors>');
-        end;
-      if not DisableSeealso then
-        begin
-        WriteLn(f, '<seealso>');
-        WriteLn(f, '</seealso>');
-        end;
+      WriteLn(f, '<seealso>');
+      WriteLn(f, '</seealso>');
       end;
-    WriteLn(f, '</element>');
+    end;
+  WriteLn(f, '</element>');
+end;
+
+Procedure  TSkelEngine.DoWriteUnReferencedNodes(N : TDocNode; NodePath : String);
+
+begin
+  If (N<>Nil) then
+    begin
+    If (NodePath<>'') then
+      NodePath:=NodePath+'.';
+    DoWriteUnReferencedNodes(N.FirstChild,NodePath+N.Name);
+    While (N<>Nil) do
+      begin
+      if (N.RefCount=0) and (N.Node<>Nil) and (Not N.TopicNode) then
+        Writeln(stderr,Format(SNodeNotReferenced,[NodePath+N.Name]));
+      N:=N.NextSibling;
+      end;
     end;
 end;
 
+procedure TSkelEngine.WriteUnReferencedNodes;
+
+begin
+  DoWriteUnReferencedNodes(RootDocNode,'');
+end;
+
+Procedure TSkelEngine.WriteNodes(Var F : Text; AModule : TPasModule; List : TStrings);
+
+Var
+  P : TNodePair;
+  I : integer;
+  
+begin
+  WriteLn(f);
+  WriteLn(f, '<!--');
+  WriteLn(f, '  ====================================================================');
+  WriteLn(f, '    ', Amodule.Name);
+  WriteLn(f, '  ====================================================================');
+  WriteLn(f, '-->');
+  WriteLn(f);
+  WriteLn(f, '<module name="', AModule.Name, '">');
+  if not UpdateMode then
+    begin
+    WriteLn(f, '<short></short>');
+    WriteLn(f, '<descr>');
+    WriteLn(f, '</descr>');
+    end;
+  Try 
+    For I:=0 to List.Count-1 do
+      begin
+      P:=List.Objects[i] as TNodePair;
+      If (P.Element<>AModule) then
+        WriteElement(F,P.Element,P.DocNode);
+      end;  
+  Finally
+    WriteLn(f, '');
+    WriteLn(f, '</module> <!-- ', AModule.Name, ' -->');
+    WriteLn(f, '');
+  end;   
+end;
+
+Procedure TSkelEngine.DocumentFile(Var F : Text; Const AFileName,ATarget,ACPU : String);
+
+Var
+  Module : TPasModule;
+  I : Integer;
+  N : TDocNode;
+     
+begin
+  FNodeList:=TStringList.Create;
+  Try
+    FEmittedList:=TStringList.Create;
+    FEmittedList.Sorted:=True;
+    try
+      Module:=ParseSource(Self,AFileName,ATarget,ACPU);
+      If UpdateMode then
+        begin
+        N:=FindDocNode(Module);
+        If Assigned(N) then
+           N.IncRefCount;
+         end;
+      If SortNodes then  
+        FNodelist.Sorted:=True;   
+      WriteNodes(F,Module,FNodeList);  
+      If UpdateMode then
+        WriteUnReferencedNodes;
+    Finally
+      FEmittedList.Free;
+    end;  
+  Finally  
+    For I:=0 to FNodeList.Count-1 do
+      FNodeList.Objects[i].Free;
+    FNodeList.Free;  
+  end;  
+end;
+
+{ ---------------------------------------------------------------------
+  Main program. Document all units.    
+  ---------------------------------------------------------------------}
+  
+Function DocumentPackage(Const APackageName,AOutputName : String; InputFiles,DescrFiles : TStrings) : String;
+
+Var
+  F : Text;
+  I,J : Integer;
+  Engine: TSkelEngine;
+
+begin
+  Result:='';
+  Assign(f, AOutputName);
+  Rewrite(f);
+  Try
+    WriteLn(f, '<?xml version="1.0" encoding="ISO-8859-1"?>');
+    WriteLn(f, '<fpdoc-descriptions>');
+    WriteLn(f, '<package name="', APackageName, '">');
+    Try
+      I:=0;
+      While (Result='') And (I<InputFiles.Count) do
+        begin
+        Engine := TSkelEngine.Create;
+        Try
+          Engine.SetPackageName(APackageName);
+          if UpdateMode then
+            For J:=0 to DescrFiles.Count-1 do
+              Engine.AddDocFile(DescrFiles[J]);
+          Try    
+            Engine.DocumentFile(F,InputFiles[I],OSTarget,CPUTarget);
+          except
+            on E:Exception do
+            begin
+              WriteLn('Error while documenting: '+E.message);
+              Result:='Error while documenting: '+E.message;
+            end;
+          end;
+        Finally
+          Engine.Free;
+        end;
+        Inc(I);
+        end;
+    Finally
+      WriteLn(f, '</package>');
+      WriteLn(f, '</fpdoc-descriptions>');
+    end;
+  finally
+    Close(f);
+  end;
+end;
+
+{ ---------------------------------------------------------------------
+    Option management
+  ---------------------------------------------------------------------}
+  
+
+var  
+  InputFiles, 
+  DescrFiles : TStringList;
+  DocLang : String;
+  PackageName, 
+  OutputName: String;
 
 procedure InitOptions;
 begin
@@ -164,33 +442,10 @@ begin
 end;
 
 procedure FreeOptions;
+
 begin
   DescrFiles.Free;
   InputFiles.Free;
-end;
-
-Procedure Usage;
-
-begin
-  Writeln('Usage : ',ExtractFileName(Paramstr(0)),' [options]');
-  Writeln('Where [options] is one or more of :');
-  Writeln(' --descr=filename    Filename for update.');
-  Writeln(' --disable-arguments Do not create nodes for function arguments.');
-  Writeln(' --disable-errors    Do not create errors node.');
-  Writeln(' --disable-function-results');
-  Writeln('                     Do not create nodes for function arguments.');
-  Writeln(' --disable-private   Do not create nodes for class private fields.');
-  Writeln(' --disable-protected Do not create nodes for class protected fields.');
-  Writeln(' --disable-seealso   Do not create seealso node.');
-  Writeln(' --emit-class-separator');
-  Writeln('                     Emit descriptive comment between classes.');
-  Writeln(' --help              Emit help.');
-  Writeln(' --input=cmdline     Input file to create skeleton for.');
-  Writeln('                     Use options are as for compiler.');
-  Writeln(' --lang=language     Use selected language.');
-  Writeln(' --output=filename   Send output to file.');
-  Writeln(' --package=name      Specify package name (mandatory).');
-  Writeln(' --update            Update mode. Output only missing nodes.');
 end;
 
 procedure ParseOption(const s: String);
@@ -232,13 +487,19 @@ begin
     DisableSeealso := True
   else if s = '--disable-private' then
     DisablePrivate := True
+  else if s = '--disable-override' then
+    DisableOverride := True
   else if s = '--disable-protected' then
     begin
     DisableProtected := True;
     DisablePrivate :=True;
     end
-  else if s = '--emitclassseparator' then
+  else if (s = '--emitclassseparator') or (s='--emit-class-separator') then
     EmitClassSeparator := True
+  else if (s = '--emit-declaration') then
+    WriteDeclaration := True
+  else if (s = '--sort-nodes') then
+    SortNodes := True
   else
   begin
     i := Pos('=', s);
@@ -269,7 +530,7 @@ begin
   end;
 end;
 
-procedure ParseCommandLine;
+Function ParseCommandLine : Integer;
 
 Const
 {$IFDEF Unix}
@@ -281,7 +542,9 @@ Const
 var
   MOFilename: string;
   i: Integer;
+  
 begin
+  Result:=0;
   DocLang:='';
   for i := 1 to ParamCount do
     ParseOption(ParamStr(i));
@@ -295,127 +558,82 @@ begin
     // Translate internal documentation strings
     TranslateDocStrings(DocLang);
     end;
+  // Action is to create the XML skeleton
+  if (Length(PackageName) = 0) and (CmdLineAction<>ActionHelp) then
+    begin
+    WriteLn(SNoPackageNameProvided);
+    Result:=2;
+    end;
+  if DescrFiles.IndexOf(OutputName)<>-1 then
+    begin
+    Writeln(SOutputMustNotBeDescr);
+    Result:=3;
+    end;
 end;
 
-
-
-var
-  i,j: Integer;
-  Module: TPasModule;
+{ ---------------------------------------------------------------------
+  Usage  
+  ---------------------------------------------------------------------}
+  
+Procedure Usage;
 
 begin
-  InitOptions;
-  ParseCommandLine;
+  Writeln('Usage : ',ExtractFileName(Paramstr(0)),' [options]');
+  Writeln('Where [options] is one or more of :');
+  Writeln(' --descr=filename    Filename for update.');
+  Writeln(' --disable-arguments Do not create nodes for function arguments.');
+  Writeln(' --disable-errors    Do not create errors node.');
+  Writeln(' --disable-function-results');
+  Writeln('                     Do not create nodes for function arguments.');
+  Writeln(' --disable-override  Do not create nodes for override methods.');
+  Writeln(' --disable-private   Do not create nodes for class private fields.');
+  Writeln(' --disable-protected Do not create nodes for class protected fields.');
+  Writeln(' --disable-seealso   Do not create seealso node.');
+  Writeln(' --emit-class-separator');
+  Writeln('                     Emit descriptive comment between classes.');
+  Writeln(' --emit-declaration  Emit declaration for elements.');
+  Writeln(' --help              Emit help.');
+  Writeln(' --input=cmdline     Input file to create skeleton for.');
+  Writeln('                     Use options are as for compiler.');
+  Writeln(' --lang=language     Use selected language.');
+  Writeln(' --output=filename   Send output to file.');
+  Writeln(' --package=name      Specify package name (mandatory).');
+  Writeln(' --sort-nodes        Sort element nodes (not modules)');
+  Writeln(' --update            Update mode. Output only missing nodes.');
+end;
+
+{ ---------------------------------------------------------------------
+  Main Program  
+  ---------------------------------------------------------------------}
+  
+Procedure Run;
+  
+var
+  E: Integer;
+
+begin
   WriteLn(STitle);
+  WriteLn(Format(SVersion, [FPCVersion, FPCDate]));
   WriteLn(SCopyright);
-  WriteLn;
-  if CmdLineAction = actionHelp then
-    Usage
-  else
-    begin
-    // Action is to create the XML skeleton
-
-    if Length(PackageName) = 0 then
+  InitOptions;
+  Try
+    E:=ParseCommandLine;
+    If E<>0 then
+      Halt(E);
+    WriteLn;
+    if CmdLineAction = actionHelp then
+      Usage
+    else
       begin
-      WriteLn(SNoPackageNameProvided);
-      Halt(2);
+      DocumentPackage(PackageName,OutputName,InputFiles,DescrFiles);
+      WriteLn(SDone);
       end;
+  Finally  
+    FreeOptions;
+  end;  
+end;
 
-    if DescrFiles.IndexOf(OutputName)<>-1 then
-      begin
-      Writeln(SOutputMustNotBeDescr);
-      Halt(3)
-      end;
-
-    Assign(f, OutputName);
-    Rewrite(f);
-
-    WriteLn(f, '<?xml version="1.0" encoding="ISO8859-1"?>');
-    WriteLn(f, '<fpdoc-descriptions>');
-    WriteLn(f, '<package name="', PackageName, '">');
-
-    // Process all source files
-    for i := 0 to InputFiles.Count - 1 do
-    begin
-      Engine := TSkelEngine.Create;
-      try
-       try
-         Engine.SetPackageName(PackageName);
-         if UpdateMode then
-           For J:=0 to DescrFiles.Count-1 do
-             Engine.AddDocFile(DescrFiles[J]);
-         Module := ParseSource(Engine, InputFiles[i], OSTarget, CPUTarget);
-         WriteLn(f, '</module> <!-- ', Module.Name, ' -->');
-       except
-        on e:EFileNotFoundError do
-           begin
-             Writeln(StdErr,' file ', e.message, ' not found');
-             close(f);
-             Halt(1);
-           end;
-         end;
-      finally
-        Engine.Free;
-       end;
-    end;
-
-    WriteLn(f, '</package>');
-    WriteLn(f, '</fpdoc-descriptions>');
-
-    Close(f);
-    WriteLn(SDone);
-    end;
-
-  FreeOptions;
-
+Begin
+  Run;  
 end.
 
-
-{
-  $Log: makeskel.pp,v $
-  Revision 1.15  2005/02/14 17:13:39  peter
-    * truncate log
-
-  Revision 1.14  2004/11/15 18:00:18  michael
-  + Added help screen
-
-  Revision 1.13  2004/09/13 16:04:52  peter
-    * fix nested for-loop with same index
-
-  Revision 1.12  2004/08/29 15:32:41  michael
-  + More intelligent handling of nodes. Do not write unused nodes.
-
-  Revision 1.11  2004/08/28 18:18:59  michael
-  + Do not write descr nodes for module when updating
-
-  Revision 1.10  2004/08/28 18:15:14  michael
-  + Check whether outputfile not in inputfilenames
-
-  Revision 1.9  2004/08/28 18:04:06  michael
-  + Added update mode
-
-  Revision 1.8  2004/08/25 07:16:43  michael
-  + Improved translation handling
-
-  Revision 1.7  2004/08/24 14:48:25  michael
-  + Translate now called correctly...
-
-  Revision 1.6  2004/05/01 20:13:40  marco
-   * got fed up with exceptions on file not found.  Fileresolver now raises a
-        EFileNotFound error, and makeskel catches and exists gracefully
-
-  Revision 1.5  2003/11/28 12:51:37  sg
-  * Added support for source references
-
-  Revision 1.4  2003/09/02 13:26:47  mattias
-  MG: makeskel now ignores missing translation file
-
-  Revision 1.3  2003/05/07 16:31:32  sg
-  * Fixed a severe memory corruption problem on termination
-
-  Revision 1.2  2003/03/28 13:01:36  michael
-  + Patch from Charlie/iNQ to work with new scanner/parser
-
-  Revision 1.1  2003/03/17 23:03:20  michael
-  + Initial import in CVS
-}

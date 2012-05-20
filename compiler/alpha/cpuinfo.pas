@@ -1,5 +1,4 @@
 {
-    $Id: cpuinfo.pas,v 1.5 2005/01/20 16:38:45 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1998-2000 by the Free Pascal development team
 
@@ -47,8 +46,8 @@ Type
    pbestreal=^bestreal;
 
    { possible supported processors for this target }
-   tprocessors =
-      (no_processor,
+   tcputype =
+      (cpu_none,
        ClassEV7,
        ClassEV8
       );
@@ -57,7 +56,7 @@ Const
    { Size of native extended type }
    extended_size = 16;
    {# Size of a pointer                           }
-   sizeof(aint)  = 8;
+   aint_size  = 8;
    {# Size of a multimedia register               }
    mmreg_size = 8;
 

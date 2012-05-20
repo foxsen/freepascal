@@ -1,5 +1,4 @@
 {
-    $Id: stringl.inc,v 1.11 2005/04/05 21:05:31 peter Exp $
     This file is part of the Free Component Library (FCL)
     Copyright (c) 1999-2000 by the Free Pascal development team
 
@@ -11,6 +10,29 @@
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
  **********************************************************************}
+
+{****************************************************************************}
+{*                        TStringsEnumerator                                *}
+{****************************************************************************}
+
+constructor TStringsEnumerator.Create(AStrings: TStrings);
+begin
+  inherited Create;
+  FStrings := AStrings;
+  FPosition := -1;
+end;
+
+function TStringsEnumerator.GetCurrent: String;
+begin
+  Result := FStrings[FPosition];
+end;
+
+function TStringsEnumerator.MoveNext: Boolean;
+begin
+  Inc(FPosition);
+  Result := FPosition < FStrings.Count;
+end;
+
 {****************************************************************************}
 {*                             TStrings                                     *}
 {****************************************************************************}
@@ -53,9 +75,21 @@ begin
     FDelimiter:=',';
     FNameValueSeparator:='=';
     FSpecialCharsInited:=true;
+    FLBS:=DefaultTextLineBreakStyle;
     end;
 end;
 
+Function TStrings.GetLBS : TTextLineBreakStyle;
+begin
+  CheckSpecialChars;
+  Result:=FLBS;
+end;
+
+Procedure TStrings.SetLBS (AValue : TTextLineBreakStyle);
+begin
+  CheckSpecialChars;
+  FLBS:=AValue;
+end;
 
 procedure TStrings.SetDelimiter(c:Char);
 begin
@@ -70,7 +104,6 @@ begin
   FQuoteChar:=c;
 end;
 
-
 procedure TStrings.SetNameValueSeparator(c:Char);
 begin
   CheckSpecialChars;
@@ -82,18 +115,22 @@ function TStrings.GetCommaText: string;
 
 Var
   C1,C2 : Char;
+  FSD : Boolean;
 
 begin
   CheckSpecialChars;
+  FSD:=StrictDelimiter;
   C1:=Delimiter;
   C2:=QuoteChar;
   Delimiter:=',';
   QuoteChar:='"';
+  StrictDelimiter:=False;
   Try
     Result:=GetDelimitedText;
   Finally
     Delimiter:=C1;
     QuoteChar:=C2;
+    StrictDelimiter:=FSD;
   end;
 end;
 
@@ -103,25 +140,35 @@ Function TStrings.GetDelimitedText: string;
 Var
   I : integer;
   p : pchar;
+  c : set of char;
+  S : String;
+  
 begin
   CheckSpecialChars;
   result:='';
+  if StrictDelimiter then
+    c:=[#0,Delimiter]
+  else  
+    c:=[#0..' ',QuoteChar,Delimiter];
   For i:=0 to count-1 do
     begin
-    p:=pchar(strings[i]);
-    while not(p^ in [#0..' ',QuoteChar,Delimiter]) do
+    S:=Strings[i];
+    p:=pchar(S);
+    while not(p^ in c) do
      inc(p);
-    if p^<>#0 then
-     Result:=Result+QuoteString (Strings[I],QuoteChar)
+// strings in list may contain #0
+    if (p<>pchar(S)+length(S)) and not StrictDelimiter then
+      Result:=Result+QuoteString(S,QuoteChar)
     else
-     result:=result+strings[i];
-    if I<Count-1 then Result:=Result+Delimiter;
+      Result:=Result+S;
+    if I<Count-1 then 
+      Result:=Result+Delimiter;
     end;
-  If Length(Result)=0 then
+  If (Length(Result)=0) and (Count=1) then
     Result:=QuoteChar+QuoteChar;
 end;
 
-procedure TStrings.GetNameValue(Index : Integer; Var AName,AValue : String);
+procedure TStrings.GetNameValue(Index : Integer; Out AName,AValue : String);
 
 Var L : longint;
 
@@ -136,6 +183,18 @@ begin
     end
   else
     AName:='';
+end;
+
+function TStrings.ExtractName(const s:String):String;
+var
+  L: Longint;
+begin
+  CheckSpecialChars;
+  L:=Pos(FNameValueSeparator,S);
+  If L<>0 then
+    Result:=Copy(S,1,L-1)
+  else
+    Result:='';
 end;
 
 function TStrings.GetName(Index: Integer): string;
@@ -183,7 +242,6 @@ begin
     end;
 end;
 
-
 procedure TStrings.ReadData(Reader: TReader);
 begin
   Reader.ReadListBegin;
@@ -198,88 +256,81 @@ begin
   Reader.ReadListEnd;
 end;
 
-Function GetQuotedString (Var P : Pchar; QuoteChar : Char) : AnsiString;
-
-Var P1,L : Pchar;
-    ReplaceQuotes : boolean;
-
-begin
-  Result:='';
-  ReplaceQuotes := False;
-  P1:=P+1;
-  While P1^<>#0 do
-    begin
-      If (P1^=QuoteCHar) then
-       begin
-         if (P1[1]<>QuoteChar) then
-          break;
-         inc(p1);
-         ReplaceQuotes := True;
-       end;
-      inc(p1);
-    end;
-  // P1 points to last quote, or to #0;
-  P:=P+1;
-  If P1-P>0 then
-    begin
-    SetLength(Result,(P1-P));
-    L:=Pointer(Result);
-    Move (P^,L^,P1-P);
-    P:=P1+1;
-    end;
-  if ReplaceQuotes then
-    result := StringReplace (result, QuoteChar+QuoteChar,QuoteChar, [rfReplaceAll]);
-end;
-
-Function GetNextQuotedChar (var P : PChar; Var S : String; Delim,Quote : Char): Boolean;
-
-Var PS,L : PChar;
-
-begin
-  Result:=False;
-  S:='';
-  While (p^<>#0) and (byte(p^)<=byte(' ')) do
-   inc(p);
-  If P^=#0 then exit;
-  PS:=P;
-  If P^=Quote then
-   begin
-     S:=GetQuotedString(P,Quote);
-     While (p^<>#0) and (byte(p^)<=byte(' ')) do
-      inc(p);
-   end
-  else
-   begin
-     While (p^>' ') and (P^<>Delim) do
-      inc(p);
-     Setlength (S,P-PS);
-     L:=Pointer(S);
-     Move (PS^,L^,P-PS);
-   end;
-  if p^=Delim then
-   inc(p);
-  Result:=True;
-end;
 
 Procedure TStrings.SetDelimitedText(const AValue: string);
-
-Var
-  P : PChar;
-  S : String;
+var i,j:integer;
+    aNotFirst:boolean;
 begin
-  CheckSpecialChars;
-  BeginUpdate;
-  try
-    Clear;
-    P:=PChar(AValue);
-    if assigned(p) then
-     begin
-       While GetNextQuotedChar (P,S,FDelimiter,FQuoteChar) do
-        Add (S);
+ CheckSpecialChars;
+ BeginUpdate;
+
+ i:=1;
+ j:=1;
+ aNotFirst:=false;
+
+ try
+  Clear;
+  If StrictDelimiter then
+    begin
+    // Easier, faster loop.
+    While I<=Length(AValue) do
+      begin
+      If (AValue[I] in [FDelimiter,#0]) then
+        begin
+        Add(Copy(AValue,J,I-J));
+        J:=I+1;
+        end;
+      Inc(i);
+      end;
+    If (Length(AValue)>0) then
+      Add(Copy(AValue,J,I-J));  
+    end
+  else 
+    begin
+    while i<=length(AValue) do begin
+     // skip delimiter
+     if aNotFirst and (i<=length(AValue)) and (AValue[i]=FDelimiter) then inc(i);
+
+     // skip spaces
+     while (i<=length(AValue)) and (Ord(AValue[i])<=Ord(' ')) do inc(i);
+    
+     // read next string
+     if i<=length(AValue) then begin
+      if AValue[i]=FQuoteChar then begin
+       // next string is quoted
+       j:=i+1;
+       while (j<=length(AValue)) and
+             ( (AValue[j]<>FQuoteChar) or
+               ( (j+1<=length(AValue)) and (AValue[j+1]=FQuoteChar) ) ) do begin
+        if (j<=length(AValue)) and (AValue[j]=FQuoteChar) then inc(j,2)
+                                                          else inc(j);
+       end;
+       // j is position of closing quote
+       Add( StringReplace (Copy(AValue,i+1,j-i-1),
+                           FQuoteChar+FQuoteChar,FQuoteChar, [rfReplaceAll]));
+       i:=j+1;
+      end else begin
+       // next string is not quoted
+       j:=i;
+       while (j<=length(AValue)) and
+             (Ord(AValue[j])>Ord(' ')) and
+             (AValue[j]<>FDelimiter) do inc(j);
+       Add( Copy(AValue,i,j-i));
+       i:=j;
+      end;
+     end else begin
+      if aNotFirst then Add('');
      end;
-  finally
-    EndUpdate;
-  end;
+
+     // skip spaces
+     while (i<=length(AValue)) and (Ord(AValue[i])<=Ord(' ')) do inc(i);
+
+     aNotFirst:=true;
+    end;
+    end;
+ finally
+   EndUpdate;
+ end;
 end;
 
 Procedure TStrings.SetCommaText(const Value: string);
@@ -354,21 +405,13 @@ end;
 
 Procedure TStrings.Error(const Msg: string; Data: Integer);
 begin
-{$ifdef VER1_0}
-  Raise EStringListError.CreateFmt(Msg,[Data]) at longint(get_caller_addr(get_frame));
-{$else VER1_0}
   Raise EStringListError.CreateFmt(Msg,[Data]) at get_caller_addr(get_frame);
-{$endif VER1_0}
 end;
 
 
 Procedure TStrings.Error(const Msg: pstring; Data: Integer);
 begin
-{$ifdef VER1_0}
-  Raise EStringListError.CreateFmt(Msg^,[Data]) at longint(get_caller_addr(get_frame));
-{$else VER1_0}
   Raise EStringListError.CreateFmt(Msg^,[Data]) at get_caller_addr(get_frame);
-{$endif VER1_0}
 end;
 
 
@@ -390,22 +433,22 @@ end;
 
 Function TStrings.GetTextStr: string;
 
-Const
-{$ifdef Unix}
-  NewLineSize=1;
-{$else}
-  NewLineSize=2;
-{$endif}
-
 Var P : Pchar;
-    I,L : Longint;
-    S : String;
+    I,L,NLS : Longint;
+    S,NL : String;
 
 begin
+  CheckSpecialChars;
   // Determine needed place
+  Case FLBS of
+    tlbsLF   : NL:=#10;
+    tlbsCRLF : NL:=#13#10;
+    tlbsCR   : NL:=#13; 
+  end;
   L:=0;
+  NLS:=Length(NL);
   For I:=0 to count-1 do
-    L:=L+Length(Strings[I])+NewLineSize;
+    L:=L+Length(Strings[I])+NLS;
   Setlength(Result,L);
   P:=Pointer(Result);
   For i:=0 To count-1 do
@@ -415,13 +458,11 @@ begin
     if L<>0 then
       System.Move(Pointer(S)^,P^,L);
     P:=P+L;
-{$ifndef Unix}
-    p[0]:=#13;
-    p[1]:=#10;
-{$else}
-    p[0]:=#10;
-{$endif}
-    P:=P+NewLineSize;
+    For L:=1 to NLS do
+      begin
+      P^:=NL[L];
+      inc(P);
+      end;
     end;
 end;
 
@@ -453,11 +494,56 @@ begin
   // Empty.
 end;
 
+Function GetNextLine (Const Value : String; Var S : String; Var P : Integer) : Boolean;
+
+Var 
+  PS : PChar;
+  IP,L : Integer;
+  
+begin
+  L:=Length(Value);
+  S:='';
+  Result:=False;
+  If ((L-P)<0) then 
+    exit;
+  if ((L-P)=0) and (not (value[P] in [#10,#13])) Then
+    Begin
+      s:=value[P];
+      inc(P);
+      Exit(True);
+    End;
+  PS:=PChar(Value)+P-1;
+  IP:=P;
+  While ((L-P)>=0) and (not (PS^ in [#10,#13])) do 
+    begin
+    P:=P+1;
+    Inc(PS);
+    end;
+  SetLength (S,P-IP);
+  System.Move (Value[IP],Pointer(S)^,P-IP);
+  If (P<=L) and (Value[P]=#13) then 
+    Inc(P);
+  If (P<=L) and (Value[P]=#10) then
+    Inc(P); // Point to character after #10(#13)
+  Result:=True;
+end;
 
 Procedure TStrings.SetTextStr(const Value: string);
 
+Var
+  S : String;
+  P : Integer;
+
 begin
-  SetText(PChar(Value));
+  Try
+    beginUpdate;
+    Clear;
+    P:=1;
+    While GetNextLine (Value,S,P) do
+      Add(S);
+  finally
+    EndUpdate;
+  end;
 end;
 
 
@@ -517,23 +603,46 @@ begin
   end;
 end;
 
+Procedure TStrings.AddStrings(const TheStrings: array of string);
 
-
-Procedure TStrings.Assign(Source: TPersistent);
+Var Runner : longint;
 
 begin
-  Try
-    BeginUpdate;
-    If Source is TStrings then
-      begin
-      clear;
-      AddStrings(TStrings(Source));
-      exit;
-      end;
-    Inherited Assign(Source);
+  try
+    beginupdate;
+    if Count + High(TheStrings)+1 > Capacity then
+      Capacity := Count + High(TheStrings)+1;
+    For Runner:=Low(TheStrings) to High(TheStrings) do
+      self.Add(Thestrings[Runner]);
   finally
     EndUpdate;
   end;
+end;
+
+Procedure TStrings.Assign(Source: TPersistent);
+
+Var
+  S : TStrings;
+
+begin
+  If Source is TStrings then
+    begin
+    S:=TStrings(Source);
+    BeginUpdate;
+    Try
+      clear;
+      FSpecialCharsInited:=S.FSpecialCharsInited;
+      FQuoteChar:=S.FQuoteChar;
+      FDelimiter:=S.FDelimiter;
+      FNameValueSeparator:=S.FNameValueSeparator;
+      FLBS:=S.FLBS;
+      AddStrings(S);
+    finally
+      EndUpdate;
+    end;
+    end
+  else
+    Inherited Assign(Source);
 end;
 
 
@@ -541,8 +650,8 @@ end;
 Procedure TStrings.BeginUpdate;
 
 begin
+   if FUpdateCount = 0 then SetUpdateState(true);
    inc(FUpdateCount);
-   if FUpdateCount = 1 then SetUpdateState(true);
 end;
 
 
@@ -554,6 +663,17 @@ begin
      Dec(FUpdateCount);
   if FUpdateCount=0 then
     SetUpdateState(False);
+end;
+
+
+
+Function TStrings.Equals(Obj: TObject): Boolean;
+
+begin
+  if Obj is TStrings then
+    Result := Equals(TStrings(Obj))
+  else
+    Result := inherited Equals(Obj);
 end;
 
 
@@ -593,6 +713,11 @@ begin
   end;
 end;
 
+
+function TStrings.GetEnumerator: TStringsEnumerator;
+begin
+  Result:=TStringsEnumerator.Create(Self);
+end;
 
 
 Function TStrings.GetText: PChar;
@@ -656,9 +781,12 @@ Procedure TStrings.LoadFromFile(const FileName: string);
 Var
         TheStream : TFileStream;
 begin
-  TheStream:=TFileStream.Create(FileName,fmOpenRead);
-  LoadFromStream(TheStream);
-  TheStream.Free;
+  TheStream:=TFileStream.Create(FileName,fmOpenRead or fmShareDenyWrite);
+  try
+    LoadFromStream(TheStream);
+  finally
+    TheStream.Free;
+  end;
 end;
 
 
@@ -674,7 +802,7 @@ Const
   MaxGrow = 1 shl 29;
 
 Var
-  Buffer     : Pointer;
+  Buffer     : AnsiString;
   BytesRead,
   BufLen,
   I,BufDelta     : Longint;
@@ -682,21 +810,20 @@ begin
   // reread into a buffer
   try
     beginupdate;
-    Buffer:=Nil;
+    Buffer:='';
     BufLen:=0;
     I:=1;
     Repeat
       BufDelta:=BufSize*I;
-      ReAllocMem(Buffer,BufLen+BufDelta);
-      BytesRead:=Stream.Read((Buffer+BufLen)^,BufDelta);
+      SetLength(Buffer,BufLen+BufDelta);
+      BytesRead:=Stream.Read(Buffer[BufLen+1],BufDelta);
       inc(BufLen,BufDelta);
       If I<MaxGrow then
         I:=I shl 1;
     Until BytesRead<>BufDelta;
-    // Null-terminate !!
-    Pchar(Buffer)[BufLen-BufDelta+BytesRead]:=#0;
-    Text:=PChar(Buffer);
-    FreeMem(Buffer);
+    SetLength(Buffer, BufLen-BufDelta+BytesRead);
+    SetTextStr(Buffer);
+    SetLength(Buffer,0);
   finally
     EndUpdate;
   end;
@@ -724,8 +851,11 @@ Var TheStream : TFileStream;
 
 begin
   TheStream:=TFileStream.Create(FileName,fmCreate);
-  SaveToStream(TheStream);
-  TheStream.Free;
+  try
+    SaveToStream(TheStream);
+  finally
+    TheStream.Free;
+  end;
 end;
 
 
@@ -735,27 +865,11 @@ Var
   S : String;
 begin
   S:=Text;
-  Stream.Write(Pointer(S)^,Length(S));
+  if S = '' then Exit;
+  Stream.WriteBuffer(Pointer(S)^,Length(S));
 end;
 
 
-Function GetNextLine (Var P : Pchar; Var S : String) : Boolean;
-
-Var PS : PChar;
-
-begin
-  S:='';
-  Result:=False;
-  If P^=#0 then exit;
-  PS:=P;
-  While not (P^ in [#0,#10,#13]) do P:=P+1;
-  SetLength (S,P-PS);
-  System.Move (PS^,Pointer(S)^,P-PS);
-  If P^=#13 then P:=P+1;
-  If P^=#10 then
-    P:=P+1; // Point to character after #10(#13)
-  Result:=True;
-end;
 
 
 Procedure TStrings.SetText(TheText: PChar);
@@ -763,14 +877,11 @@ Procedure TStrings.SetText(TheText: PChar);
 Var S : String;
 
 begin
-  Try
-    beginUpdate;
-    Clear;
-    While GetNextLine (TheText,S) do
-    Add(S);
-  finally
-    EndUpdate;
-  end;
+  If TheText<>Nil then
+    S:=StrPas(TheText)
+  else
+    S:='';
+  SetTextStr(S);  
 end;
 
 
@@ -778,7 +889,7 @@ end;
 {*                             TStringList                                  *}
 {****************************************************************************}
 
-
+{$if defined(VER2_0) or not defined(FPC_TESTGENERICS)}
 
 Procedure TStringList.ExchangeItems(Index1, Index2: Integer);
 
@@ -797,46 +908,79 @@ end;
 
 Procedure TStringList.Grow;
 
-Var Extra : Longint;
+Var
+  NC : Integer;
 
 begin
-  If FCapacity>64 then
-    Extra:=FCapacity Div 4
-  Else If FCapacity>8 Then
-    Extra:=16
-  Else
-    Extra:=4;
-  SetCapacity(FCapacity+Extra);
+  NC:=FCapacity;
+  If NC>=256 then
+    NC:=NC+(NC Div 4)
+  else if NC=0 then
+    NC:=4
+  else
+    NC:=NC*4;
+  SetCapacity(NC);
 end;
 
+Procedure TStringList.InternalClear;
 
-
-Procedure TStringList.QuickSort(L, R: Integer; CompareFn: TStringListSortCompare);
-
-Var I,J, Pivot : Longint;
+Var
+  I: Integer;
 
 begin
-  Repeat
-    I:=L;
-    J:=R;
-    Pivot:=(L+R) div 2;
-    Repeat
-      While CompareFn(Self, I, Pivot)<0 do Inc(I);
-      While CompareFn(Self, J, Pivot)>0 do Dec(J);
-      If I<=J then
+  if FOwnsObjects then
+    begin
+      For I:=0 to FCount-1 do
         begin
-        ExchangeItems(I,J); // No check, indices are correct.
-        if Pivot=I then
-          Pivot:=J
-        else if Pivot=J then
-          Pivot := I;
-        Inc(I);
-        Dec(j);
+          Flist^[I].FString:='';
+          freeandnil(Flist^[i].FObject);
         end;
-    until I>J;
-    If L<J then QuickSort(L,J, CompareFn);
-    L:=I;
-  Until I>=R;
+    end
+  else
+    begin
+      For I:=0 to FCount-1 do
+        Flist^[I].FString:='';
+    end;
+  FCount:=0;
+  SetCapacity(0);
+end;
+
+Procedure TStringList.QuickSort(L, R: Integer; CompareFn: TStringListSortCompare);
+var
+  Pivot, vL, vR: Integer;
+begin
+  if R - L <= 1 then begin // a little bit of time saver
+    if L < R then
+      if CompareFn(Self, L, R) > 0 then
+        ExchangeItems(L, R);
+
+    Exit;
+  end;
+
+  vL := L;
+  vR := R;
+
+  Pivot := L + Random(R - L); // they say random is best
+
+  while vL < vR do begin
+    while (vL < Pivot) and (CompareFn(Self, vL, Pivot) <= 0) do
+      Inc(vL);
+
+    while (vR > Pivot) and (CompareFn(Self, vR, Pivot) > 0) do
+      Dec(vR);
+
+    ExchangeItems(vL, vR);
+
+    if Pivot = vL then // swap pivot if we just hit it from one side
+      Pivot := vR
+    else if Pivot = vR then
+      Pivot := vL;
+  end;
+
+  if Pivot - 1 >= L then
+    QuickSort(L, Pivot - 1, CompareFn);
+  if Pivot + 1 <= R then
+    QuickSort(Pivot + 1, R, CompareFn);
 end;
 
 
@@ -1019,16 +1163,8 @@ end;
 
 destructor TStringList.Destroy;
 
-Var I : Longint;
-
 begin
-  FOnChange:=Nil;
-  FOnChanging:=Nil;
-  // This will force a dereference. Can be done better...
-  For I:=0 to FCount-1 do
-    FList^[I].FString:='';
-  FCount:=0;
-  SetCapacity(0);
+  InternalClear;
   Inherited destroy;
 end;
 
@@ -1048,23 +1184,14 @@ begin
    InsertItem (Result,S);
 end;
 
-
-
 Procedure TStringList.Clear;
-
-Var I : longint;
 
 begin
   if FCount = 0 then Exit;
   Changing;
-  For I:=0 to FCount-1 do
-    Flist^[I].FString:='';
-  FCount:=0;
-  SetCapacity(0);
+  InternalClear;
   Changed;
 end;
-
-
 
 Procedure TStringList.Delete(Index: Integer);
 
@@ -1073,6 +1200,8 @@ begin
     Error(SlistINdexError,Index);
   Changing;
   Flist^[Index].FString:='';
+  if FOwnsObjects then
+    FreeAndNil(Flist^[Index].FObject);
   Dec(FCount);
   If Index<FCount then
     System.Move(Flist^[Index+1],
@@ -1116,35 +1245,32 @@ Function TStringList.DoCompareText(const s1,s2 : string) : PtrInt;
   end;
 
 
-Function TStringList.Find(const S: string; var Index: Integer): Boolean;
+Function TStringList.Find(const S: string; Out Index: Integer): Boolean;
 
-{ Searches for the first string <= S, returns True if exact match,
-  sets index to the index f the found string. }
-
-Var I,L,R,Temp : Longint;
-
+var
+  L, R, I: Integer;
+  CompareRes: PtrInt;
 begin
-  Result:=False;
+  Result := false;
   // Use binary search.
-  L:=0;
-  R:=FCount-1;
-  While L<=R do
-    begin
-    I:=(L+R) div 2;
-    Temp:=DoCompareText(FList^ [I].FString,S);
-    If Temp<0 then
-      L:=I+1
-    else
-      begin
-      R:=I-1;
-      If Temp=0 then
-        begin
-        Result:=True;
-        If Duplicates<>DupAccept then L:=I;
-        end;
+  L := 0;
+  R := Count - 1;
+  while (L<=R) do
+  begin
+    I := L + (R - L) div 2;
+    CompareRes := DoCompareText(S, Flist^[I].FString);
+    if (CompareRes>0) then
+      L := I+1
+    else begin
+      R := I-1;
+      if (CompareRes=0) then begin
+         Result := true;
+         if (Duplicates<>dupAccept) then
+            L := I; // forces end of while loop
       end;
     end;
-  Index:=L;
+  end;
+  Index := L;
 end;
 
 
@@ -1199,33 +1325,238 @@ begin
   CustomSort(@StringListAnsiCompare);
 end;
 
+{$else}
 
+{ generics based implementation of TStringList follows }
 
-{
-  $Log: stringl.inc,v $
-  Revision 1.11  2005/04/05 21:05:31  peter
-    * call initspecialchars if one of the specialchars is configured
-      for the first time
+function StringListAnsiCompare(List: TStringList; Index1, Index2: Integer): Integer;
+begin
+  Result := List.DoCompareText(List.Strings[Index1], List.Strings[Index2]);
+end;
 
-  Revision 1.10  2005/03/10 22:54:01  michael
-  + Patch from Marc Weustinc to init special chars
+constructor TStringList.Create;
+begin
+  inherited;
+  FOwnsObjects:=false;
+  FMap := TFPStrObjMap.Create;
+  FMap.OnPtrCompare := @MapPtrCompare;
+  FOnCompareText := @DefaultCompareText;
+  CheckSpecialChars;
+end;
 
-  Revision 1.9  2005/03/07 17:25:46  peter
-    * use separate boolean to initialize specialchars
+destructor TStringList.Destroy;
+begin
+  FMap.Free;
+  inherited;
+end;
 
-  Revision 1.8  2005/02/14 17:13:31  peter
-    * truncate log
+function TStringList.GetDuplicates: TDuplicates;
+begin
+  Result := FMap.Duplicates;
+end;
 
-  Revision 1.7  2005/02/05 22:03:49  michael
-  + Implemented DelimitedText, FDelimiter etc.
+function TStringList.GetSorted: boolean;
+begin
+  Result := FMap.Sorted;
+end;
 
-  Revision 1.6  2005/02/03 20:11:06  florian
-    + added case sensitivity to tstringlist
+procedure TStringList.SetDuplicates(NewDuplicates: TDuplicates);
+begin
+  FMap.Duplicates := NewDuplicates;
+end;
 
-  Revision 1.5  2005/02/03 18:42:42  florian
-    * some delphi compatibility fixes
+procedure TStringList.SetSorted(NewSorted: Boolean);
+begin
+  FMap.Sorted := NewSorted;
+end;
 
-  Revision 1.4  2005/02/01 21:49:05  florian
-    + tstrings.error for resourcestrings added which are a pstring
+procedure TStringList.Changed;
+begin
+  if FUpdateCount = 0 then
+   if Assigned(FOnChange) then
+     FOnChange(Self);
+end;
 
-}
+procedure TStringList.Changing;
+begin
+  if FUpdateCount = 0 then
+    if Assigned(FOnChanging) then
+      FOnChanging(Self);
+end;
+
+function TStringList.Get(Index: Integer): string;
+begin
+  Result := FMap.Keys[Index];
+end;
+
+function TStringList.GetCapacity: Integer;
+begin
+  Result := FMap.Capacity;
+end;
+
+function TStringList.GetCount: Integer;
+begin
+  Result := FMap.Count;
+end;
+
+function TStringList.GetObject(Index: Integer): TObject;
+begin
+  Result := FMap.Data[Index];
+end;
+
+procedure TStringList.Put(Index: Integer; const S: string);
+begin
+  Changing;
+  FMap.Keys[Index] := S;
+  Changed;
+end;
+
+procedure TStringList.PutObject(Index: Integer; AObject: TObject);
+begin
+  Changing;
+  FMap.Data[Index] := AObject;
+  Changed;
+end;
+
+procedure TStringList.SetCapacity(NewCapacity: Integer);
+begin
+  FMap.Capacity := NewCapacity;
+end;
+
+procedure TStringList.SetUpdateState(Updating: Boolean);
+begin
+  if Updating then
+    Changing
+  else
+    Changed
+end;
+
+function TStringList.Add(const S: string): Integer;
+begin
+  Result := FMap.Add(S);
+end;
+
+procedure TStringList.Clear;
+begin
+  if FMap.Count = 0 then exit;
+  Changing;
+  FMap.Clear;
+  Changed;
+end;
+
+procedure TStringList.Delete(Index: Integer);
+begin
+  if (Index < 0) or (Index >= FMap.Count) then
+    Error(SListIndexError, Index);
+  Changing;
+  FMap.Delete(Index);
+  Changed;
+end;
+
+procedure TStringList.Exchange(Index1, Index2: Integer);
+begin
+  if (Index1 < 0) or (Index1 >= FMap.Count) then
+    Error(SListIndexError, Index1);
+  if (Index2 < 0) or (Index2 >= FMap.Count) then
+    Error(SListIndexError, Index2);
+  Changing;
+  FMap.InternalExchange(Index1, Index2);
+  Changed;
+end;
+
+procedure TStringList.SetCaseSensitive(NewSensitive: Boolean);
+begin
+  if NewSensitive <> FCaseSensitive then
+  begin
+    FCaseSensitive := NewSensitive;
+    if Sorted then
+      Sort;
+  end;
+end;
+
+function TStringList.MapPtrCompare(Key1, Key2: Pointer): Integer;
+begin
+  Result := FOnCompareText(string(Key1^), string(Key2^));
+end;
+
+function TStringList.DefaultCompareText(const s1, s2: string): PtrInt;
+begin
+  if FCaseSensitive then
+    Result := AnsiCompareStr(s1, s2)
+  else
+    Result := AnsiCompareText(s1, s2);
+end;
+
+function TStringList.DoCompareText(const s1, s2: string): PtrInt;
+begin
+  Result := FOnCompareText(s1, s2);
+end;
+
+function TStringList.Find(const S: string; var Index: Integer): Boolean;
+begin
+  Result := FMap.Find(S, Index);
+end;
+
+function TStringList.IndexOf(const S: string): Integer;
+begin
+  Result := FMap.IndexOf(S);
+end;
+
+procedure TStringList.Insert(Index: Integer; const S: string);
+begin
+  if not Sorted and (0 <= Index) and (Index < FMap.Count) then
+    Changing;
+  FMap.InsertKey(Index, S);
+  Changed;
+end;
+
+procedure TStringList.QuickSort(L, R: Integer; CompareFn: TStringListSortCompare);
+var 
+  I, J, Pivot: Integer;
+begin
+  repeat
+    I := L;
+    J := R;
+    Pivot := (L + R) div 2;
+    repeat
+      while CompareFn(Self, I, Pivot) < 0 do Inc(I);
+      while CompareFn(Self, J, Pivot) > 0 do Dec(J);
+      if I <= J then
+      begin
+        FMap.InternalExchange(I, J); // No check, indices are correct.
+        if Pivot = I then
+          Pivot := J
+        else if Pivot = J then
+          Pivot := I;
+        Inc(I);
+        Dec(j);
+      end;
+    until I > J;
+    if L < J then 
+      QuickSort(L,J, CompareFn);
+    L := I;
+  until I >= R;
+end;
+
+procedure TStringList.CustomSort(CompareFn: TStringListSortCompare);
+begin
+  if not Sorted and (FMap.Count > 1) then
+  begin
+    Changing;
+    QuickSort(0, FMap.Count-1, CompareFn);
+    Changed;
+  end;
+end;
+
+procedure TStringList.Sort;
+begin
+  if not Sorted and (FMap.Count > 1) then
+  begin
+    Changing;
+    FMap.Sort;
+    Changed;
+  end;
+end;
+
+{$endif}
+

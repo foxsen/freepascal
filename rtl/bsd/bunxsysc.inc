@@ -1,5 +1,4 @@
 {
-    $Id: bunxsysc.inc,v 1.2 2005/02/14 17:13:21 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2002 by Marco van de Voort
 
@@ -38,7 +37,7 @@ Function FPSigPending(var nset: sigset_t):cint;
   signals is set in SSet
 }
 begin
-  FPsigpending:=do_syscall(syscall_nr_sigpending,longint(@nset));
+  FPsigpending:=do_syscall(syscall_nr_sigpending,TSysParam(@nset));
 end;
 
 function FPsigsuspend(const sigmask:sigset_t):cint;
@@ -48,8 +47,25 @@ function FPsigsuspend(const sigmask:sigset_t):cint;
 }
 
 begin
-  FPsigsuspend:= do_syscall(syscall_nr_sigsuspend,longint(@sigmask));
+{$ifdef OPENBSD}
+  { OpenBSD sigsuspend syscall wants a simple int as arg }
+  FPsigsuspend:= do_syscall(syscall_nr_sigsuspend,TSysParam(sigmask[0]));
+{$else}
+  FPsigsuspend:= do_syscall(syscall_nr_sigsuspend,TSysParam(@sigmask));
+{$endif}
 end;
+
+{$ifndef FPC_SYS_SIGTIMEDWAIT_UNAVAILABLE}
+function fpsigtimedwait(const sigset:TSigSet;info:Psiginfo;timeout:Ptimespec):cint;
+
+begin
+  FpSigTimedWait:=do_syscall(syscall_nr_sigtimedwait,
+                             Tsysparam(@sigset),
+                             Tsysparam(info),
+                             Tsysparam(timeout));
+end;
+{$endif ndef FPC_SYS_SIGTIMEDWAIT_UNAVAILABLE}
+
 
 Type // implementation side for now. Should move to BSD unit.
   ITimerVal= Record
@@ -64,13 +80,13 @@ Const   ITimer_Real    =0;
 Function SetITimer(Which : Longint;Const value : ItimerVal; var VarOValue:ItimerVal):Longint;
 
 Begin
-  SetItimer:=Do_Syscall(syscall_nr_setitimer,Which,Longint(@Value),longint(@varovalue));
+  SetItimer:=Do_Syscall(syscall_nr_setitimer,Which,TSysParam(@Value),TSysParam(@varovalue));
 End;
 
 Function GetITimer(Which : Longint;Var value : ItimerVal):Longint;
 
 Begin
-  GetItimer:=Do_Syscall(syscall_nr_getItimer,Which,Longint(@value));
+  GetItimer:=Do_Syscall(syscall_nr_getItimer,Which,TSysParam(@value));
 End;
 
 Function FPalarm(Seconds: cuint):cuint;
@@ -85,7 +101,7 @@ Begin
  it.it_value.tv_sec:=seconds;
  it.it_value.tv_usec:=0;
  If SetITimer(ITIMER_REAL,it,oitv)<0 Then
-   Exit(-1);
+   Exit(cuint(-1));
 
  if oitv.it_value.tv_usec<>0 Then
    Inc(oitv.it_value.tv_sec);
@@ -226,7 +242,7 @@ function FPwait(var stat_loc:cint): pid_t;
 }
 
 begin // actually a wait4() call with 4th arg 0.
- FPWait:=do_syscall(syscall_nr_WaitPID,WAIT_ANY,longint(@Stat_loc),0,0);
+ FPWait:=do_syscall(syscall_nr_WaitPID,WAIT_ANY,TSysParam(@Stat_loc),0,0);
 end;
 
 //function FPgetpid : pid_t;
@@ -282,7 +298,7 @@ end;
 function FPgetgroups(gidsetsize : cint; var grouplist:tgrparr): cint;
 
 begin
- FPgetgroups:=do_syscall(syscall_nr_getgroups,gidsetsize,longint(@grouplist));
+ FPgetgroups:=do_syscall(syscall_nr_getgroups,gidsetsize,TSysParam(@grouplist));
 end;
 
 function FPgetpgrp : pid_t;
@@ -295,6 +311,12 @@ function FPsetsid : pid_t;
 
 begin
  FPsetsid:=do_syscall(syscall_nr_setsid);
+end;
+
+function fpgetsid (pid:TPid): pid_t;
+
+begin
+ fpgetsid:=do_syscall(syscall_nr_getsid,TSysParam(pid));
 end;
 
 Function FPumask(cmask:mode_t):mode_t;
@@ -312,25 +334,25 @@ Function FPlink(existing:pchar;newone:pchar):cint;
   In effect, new will be the same file as old.
 }
 begin
-  FPLink:=Do_Syscall(syscall_nr_link,longint(existing),longint(newone));
+  FPLink:=Do_Syscall(syscall_nr_link,TSysParam(existing),TSysParam(newone));
 end;
 
 Function FPmkfifo(path:pchar;mode:mode_t):cint;
 
 begin
-  FPmkfifo:=do_syscall(syscall_nr_mkfifo,longint(path),longint(mode));
+  FPmkfifo:=do_syscall(syscall_nr_mkfifo,TSysParam(path),TSysParam(mode));
 end;
 
 Function FPchmod(path:pchar;mode:mode_t):cint;
 
 begin
-  FPchmod:=do_syscall(syscall_nr_chmod,longint(path),longint(mode));
+  FPchmod:=do_syscall(syscall_nr_chmod,TSysParam(path),TSysParam(mode));
 end;
 
 Function FPchown(path:pchar;owner:uid_t;group:gid_t):cint;
 
 begin
-  FPChOwn:=do_syscall(syscall_nr_chown,longint(path),longint(owner),longint(group));
+  FPChOwn:=do_syscall(syscall_nr_chown,TSysParam(path),TSysParam(owner),TSysParam(group));
 end;
 
 Function FPUtime(path:pchar;times:putimbuf):cint;
@@ -349,14 +371,39 @@ begin
     tv[1].tv_usec:=0;
     tvp:=@tv;
    end;
- FPutime:=do_syscall(syscall_nr_utimes,longint(path),longint(tvp));
+ FPutime:=do_syscall(syscall_nr_utimes,TSysParam(path),TSysParam(tvp));
 end;
+
+function __pipe_call(sysnr:TSysParam):TSysResult; {$ifdef cpui386}oldfpccall{$endif} external name 'FPC_DOSYS0';
 
 Function FPpipe(var fildes : tfildes):cint;
-
+{$ifndef freebsd}
 begin
- FPpipe:=do_syscall(syscall_nr_pipe,longint(@fildes));
+  fppipe:=do_syscall(syscall_nr_pipe,TSysParam(@fildes));
 end;
+{$else}
+var
+  a, b: cInt;
+begin
+  asm
+  {$ifdef CPUi386}
+    pushl syscall_nr_pipe
+    call __pipe_call
+    movl %eax, a
+    movl %edx, b
+  {$else}
+    movq syscall_nr_pipe, %rdi
+    call __pipe_call
+    movl %eax, a
+    movl %edx, b
+  {$endif}
+  end;
+
+  fpPipe := a; // eax is in a, no matter if it worked or not
+  fildes[0] := a;
+  fildes[1] := b;
+end;
+{$endif}
 
 function FPfcntl(fildes:cint;Cmd:cint;Arg:cint):cint;
 
@@ -367,7 +414,7 @@ end;
 function FPfcntl(fildes:cint;Cmd:cint;var Arg:flock):cint;
 
 begin
- FPfcntl:=do_syscall(syscall_nr_fcntl,fildes,cmd,longint(@arg));
+ FPfcntl:=do_syscall(syscall_nr_fcntl,fildes,cmd,TSysParam(@arg));
 end;
 
 function FPfcntl(fildes:cint;Cmd:cint):cint;
@@ -379,13 +426,13 @@ end;
 function FPexecve(path:pchar;argv:ppchar;envp:ppchar):cint;
 
 Begin
-  FPexecve:=do_syscall(syscall_nr_Execve,longint(path),longint(argv),longint(envp));
+  FPexecve:=do_syscall(syscall_nr_Execve,TSysParam(path),TSysParam(argv),TSysParam(envp));
 End;
 
 function FPexecv(path:pchar;argv:ppchar):cint;
 
 Begin
-  FPexecv:=do_syscall(syscall_nr_Execve,longint(path),longint(argv),longint(envp));
+  FPexecv:=do_syscall(syscall_nr_Execve,TSysParam(path),TSysParam(argv),TSysParam(envp));
 End;
 
 CONST RUSAGE_SELF       = 0;
@@ -394,7 +441,7 @@ CONST RUSAGE_SELF       = 0;
 function FPgetrusage(who:cint;var ru : rusage):cint;
 
 begin
- FPgetrusage:=do_syscall(syscall_nr_getrusage,longint(who),longint(@ru));
+ FPgetrusage:=do_syscall(syscall_nr_getrusage,longint(who),TSysParam(@ru));
 end;
 
 function FPtimes(var buffer : tms):clock_t;
@@ -423,7 +470,7 @@ begin
             exit(clock_t(-1));
         buffer.tms_cutime := CONVTCK(ru.ru_utime);
         buffer.tms_cstime := CONVTCK(ru.ru_stime);
-        if do_syscall(syscall_nr_gettimeofday,longint(@t),0)<>0 Then
+        if do_syscall(syscall_nr_gettimeofday,TSysParam(@t),0)<>0 Then
                     exit(clock_t(-1));
         FPtimes:=clock_t(CONVTCK(t));
 end;
@@ -435,7 +482,12 @@ Function fpSelect(N:cint;readfds,writefds,exceptfds:pfdSet;TimeOut:PTimeVal):cin
 }
 
 begin
- fpSelect:=do_syscall(syscall_nr_select,n,longint(readfds),longint(writefds),longint(exceptfds),longint(timeout));
+ fpSelect:=do_syscall(syscall_nr_select,n,TSysParam(readfds),TSysParam(writefds),TSysParam(exceptfds),TSysParam(timeout));
+end;
+
+function fpPoll(fds: ppollfd; nfds: cuint; timeout: clong): cint;
+begin
+  fpPoll:=do_syscall(syscall_nr_poll,tsysparam(fds),tsysparam(nfds),tsysparam(timeout));
 end;
 
 Function fpLstat(path:pchar;Info:pstat):cint;
@@ -445,15 +497,6 @@ Function fpLstat(path:pchar;Info:pstat):cint;
 
 begin
  fpLStat:=do_syscall(syscall_nr_lstat,TSysParam(path),TSysParam(info));
-end;
-
-Function fpLstat(Filename: ansistring;Info:pstat):cint;
-{
-  Get all information on a link (the link itself), and return it in info.
-}
-
-begin
- fpLStat:=do_syscall(syscall_nr_lstat,TSysParam(pchar(filename)),TSysParam(info));
 end;
 
 function fpNice(N:cint):cint;
@@ -534,12 +577,53 @@ begin
  fpsymlink:=do_syscall(syscall_nr_symlink,TSysParam(oldname),TSysParam(newname));
 end;
 
-{
- $Log: bunxsysc.inc,v $
- Revision 1.2  2005/02/14 17:13:21  peter
-   * truncate log
+function Fppread(fd: cint; buf: pchar; nbytes : size_t; offset:Toff): ssize_t; [public, alias : 'FPC_SYSC_PREAD'];
 
- Revision 1.1  2005/02/13 20:01:37  peter
-   * include file cleanup
+begin
 
-}
+ 	{$ifdef CPU64}
+	    Fppread:=do_syscall(syscall_nr_pread,Fd,TSysParam(buf),nbytes,TSysParam(OffSet));
+	{$else}
+           Fppread:=do_syscall(syscall_nr_pread,Fd,TSysParam(buf),nbytes,
+           {$ifdef 64bitfs}
+	     {$ifdef FPC_BIG_ENDIAN}    hi(offset),lo(offset){$endif}
+	     {$ifdef FPC_LITTLE_ENDIAN} lo(offset),hi(offset){$endif}
+           {$else}
+	     {$ifdef FPC_BIG_ENDIAN}    0,lo(offset){$endif}
+	     {$ifdef FPC_LITTLE_ENDIAN} lo(offset),0{$endif}
+	   {$endif}
+            );
+        {$endif}
+end;
+
+function Fppwrite(fd: cint;buf:pchar; nbytes : size_t; offset:Toff): ssize_t; [public, alias : 'FPC_SYSC_PWRITE'];
+
+begin
+ 	{$ifdef CPU64}
+           Fppwrite:=do_syscall(syscall_nr_pwrite,Fd,TSysParam(buf),nbytes,TSysParam(OffSet));
+	{$else}
+           Fppwrite:=do_syscall(syscall_nr_pwrite,Fd,TSysParam(buf),nbytes,
+	  // ,0  = possible alignment here.
+           {$ifdef 64bitfs}
+	     {$ifdef FPC_BIG_ENDIAN}    hi(offset),lo(offset){$endif}
+	     {$ifdef FPC_LITTLE_ENDIAN} lo(offset),hi(offset){$endif}
+           {$else}
+	     {$ifdef FPC_BIG_ENDIAN}    0,lo(offset){$endif}
+	     {$ifdef FPC_LITTLE_ENDIAN} lo(offset),0{$endif}
+	   {$endif}
+            );
+        {$endif}
+end;
+
+function Fpreadv(fd: cint; const iov : piovec; iovcnt : cint):ssize_t; [public, alias : 'FPC_SYSC_READV'];
+
+begin
+  Fpreadv:=do_syscall(syscall_nr_readv,Fd,TSysParam(iov),iovcnt);
+end;
+
+function Fpwritev(fd: cint; const iov : piovec; iovcnt : cint):ssize_t;  [public, alias : 'FPC_SYSC_WRITEV'];
+
+begin
+  Fpwritev:=do_syscall(syscall_nr_writev,Fd,TSysParam(iov),iovcnt);
+end;
+

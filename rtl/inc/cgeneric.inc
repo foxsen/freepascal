@@ -1,5 +1,4 @@
 {
-    $Id: cgeneric.inc,v 1.4 2005/02/14 17:13:22 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team.
 
@@ -22,10 +21,10 @@
 
 {$ifndef FPC_SYSTEM_HAS_MOVE}
 {$define FPC_SYSTEM_HAS_MOVE}
-procedure bcopy(const source;var dest;count:cardinal); cdecl; external 'c' name 'bcopy';
+procedure bcopy(const source;var dest;count:size_t); cdecl; external 'c' name 'bcopy';
 
 { we need this separate move declaration because we can't add a "public, alias" to the above }
-procedure Move(const source;var dest;count:longint); [public, alias: 'FPC_MOVE'];{$ifdef SYSTEMINLINE}inline;{$endif}
+procedure Move(const source;var dest;count:sizeint); [public, alias: 'FPC_MOVE'];{$ifdef SYSTEMINLINE}inline;{$endif}
 begin
   if count <= 0 then
     exit;
@@ -36,9 +35,9 @@ end;
 
 {$ifndef FPC_SYSTEM_HAS_FILLCHAR}
 {$define FPC_SYSTEM_HAS_FILLCHAR}
-procedure memset(var x; value: byte; count: cardinal); cdecl; external 'c';
+procedure memset(var x; value: byte; count: size_t); cdecl; external 'c';
 
-Procedure FillChar(var x;count: longint;value:byte);{$ifdef SYSTEMINLINE}inline;{$endif}
+Procedure FillChar(var x;count: sizeint;value:byte);{$ifdef SYSTEMINLINE}inline;{$endif}
 begin
   if count <= 0 then
     exit;
@@ -47,23 +46,12 @@ end;
 {$endif FPC_SYSTEM_HAS_FILLCHAR}
 
 
-{$ifndef FPC_SYSTEM_HAS_FILLBYTE}
-{$define FPC_SYSTEM_HAS_FILLBYTE}
-procedure FillByte (var x;count : longint;value : byte );{$ifdef SYSTEMINLINE}inline;{$endif}
-begin
-  if count <= 0 then
-    exit;
-  FillChar (X,Count,value);
-end;
-{$endif not FPC_SYSTEM_HAS_FILLBYTE}
+{$ifndef FPC_SYSTEM_HAS_INDEXBYTE}
+{$define FPC_SYSTEM_HAS_INDEXBYTE}
 
+function memchr(const buf; b: cint; len: size_t): pointer; cdecl; external 'c';
 
-{$ifndef FPC_SYSTEM_HAS_INDEXCHAR}
-{$define FPC_SYSTEM_HAS_INDEXCHAR}
-
-function memchr(const buf; b: longint; len: cardinal): pointer; cdecl; external 'c';
-
-function IndexChar(Const buf;len:longint;b:char):longint;
+function IndexByte(Const buf;len:sizeint;b:byte):sizeint;{$ifdef SYSTEMINLINE}inline;{$endif}
 var
   res: pointer;
 begin
@@ -72,29 +60,20 @@ begin
   { simulate assembler implementations behaviour, which is expected }
   { fpc_pchar_to_ansistr in astrings.inc (interpret values < 0 as   }
   { unsigned)                                                       }
-  res := memchr(buf,longint(b),cardinal(len));
+  res := memchr(buf,cint(b),size_t(sizeuint(len)));
   if (res <> nil) then
-    IndexChar := longint(res-@buf)
+    IndexByte := SizeInt(res-@buf)
   else
-    IndexChar := -1;
-end;
-{$endif not FPC_SYSTEM_HAS_INDEXCHAR}
-
-
-{$ifndef FPC_SYSTEM_HAS_INDEXBYTE}
-{$define FPC_SYSTEM_HAS_INDEXBYTE}
-function IndexByte(Const buf;len:longint;b:byte):longint;{$ifdef SYSTEMINLINE}inline;{$endif}
-begin
-  IndexByte:=IndexChar(buf,len,char(b));
+    IndexByte := -1;
 end;
 {$endif not FPC_SYSTEM_HAS_INDEXBYTE}
 
 
-{$ifndef FPC_SYSTEM_HAS_COMPARECHAR}
-{$define FPC_SYSTEM_HAS_COMPARECHAR}
-function memcmp_comparechar(Const buf1,buf2;len:cardinal):longint; cdecl; external 'c' name 'memcmp';
+{$ifndef FPC_SYSTEM_HAS_COMPAREBYTE}
+{$define FPC_SYSTEM_HAS_COMPAREBYTE}
+function memcmp_comparechar(Const buf1,buf2;len:size_t):cint; cdecl; external 'c' name 'memcmp';
 
-function CompareChar(Const buf1,buf2;len:longint):longint;
+function CompareByte(Const buf1,buf2;len:sizeint):sizeint;{$ifdef SYSTEMINLINE}inline;{$endif}
 var
   res: longint;
 begin
@@ -102,33 +81,24 @@ begin
     exit(0);
   res := memcmp_comparechar(buf1,buf2,len);
   if res < 0 then
-    CompareChar := -1
+    CompareByte := -1
   else if res > 0 then
-    CompareChar := 1
+    CompareByte := 1
   else
-    CompareChar := 0;
-end;
-{$endif not FPC_SYSTEM_HAS_COMPARECHAR}
-
-
-{$ifndef FPC_SYSTEM_HAS_COMPAREBYTE}
-{$define FPC_SYSTEM_HAS_COMPAREBYTE}
-function CompareByte(Const buf1,buf2;len:longint):longint;{$ifdef SYSTEMINLINE}inline;{$endif}
-begin
-  CompareByte := CompareChar(buf1,buf2,len);
+    CompareByte := 0;
 end;
 {$endif not FPC_SYSTEM_HAS_COMPAREBYTE}
 
 
 {$ifndef FPC_SYSTEM_HAS_COMPARECHAR0}
 {$define FPC_SYSTEM_HAS_COMPARECHAR0}
-function strncmp_comparechar0(Const buf1,buf2;len:cardinal):longint; cdecl; external 'c' name 'strncmp';
+function strncmp_comparechar0(Const buf1,buf2;len:size_t):longint; cdecl; external 'c' name 'strncmp';
 
-function CompareChar0(Const buf1,buf2;len:longint):longint;{$ifdef SYSTEMINLINE}inline;{$endif}
+function CompareChar0(Const buf1,buf2;len:sizeint):sizeint;{$ifdef SYSTEMINLINE}inline;{$endif}
 begin
   if len <= 0 then
     exit(0);
-  strncmp_comparechar0(buf1,buf2,len);
+  CompareChar0:=strncmp_comparechar0(buf1,buf2,len);
 end;
 
 {$endif not FPC_SYSTEM_HAS_COMPARECHAR0}
@@ -138,19 +108,16 @@ end;
 {$ifndef FPC_SYSTEM_HAS_FPC_PCHAR_LENGTH}
 {$define FPC_SYSTEM_HAS_FPC_PCHAR_LENGTH}
 
-function libc_pchar_length(p:pchar):cardinal; cdecl; external 'c' name 'strlen';
+function libc_pchar_length(p:pchar):size_t; cdecl; external 'c' name 'strlen';
 
-function fpc_pchar_length(p:pchar):longint;[public,alias:'FPC_PCHAR_LENGTH']; {$ifdef hascompilerproc} compilerproc; {$endif}
+function fpc_pchar_length(p:pchar):sizeint;[public,alias:'FPC_PCHAR_LENGTH']; compilerproc;
 begin
-  fpc_pchar_length:=libc_pchar_length(p);
+  if assigned(p) then
+    fpc_pchar_length:=libc_pchar_length(p)
+  else
+    fpc_pchar_length:=0;
 end;
 
 {$endif ndef FPC_SYSTEM_HAS_FPC_PCHAR_LENGTH}
 
 
-{
-  $Log: cgeneric.inc,v $
-  Revision 1.4  2005/02/14 17:13:22  peter
-    * truncate log
-
-}

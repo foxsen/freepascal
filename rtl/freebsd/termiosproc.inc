@@ -1,5 +1,4 @@
 {
-   $Id: termiosproc.inc,v 1.6 2005/02/14 17:13:22 peter Exp $
    This file is part of the Free Pascal run time library.
    (c) 2000-2003 by Marco van de Voort
    member of the Free Pascal development team.
@@ -19,7 +18,7 @@
                          IOCtl and Termios calls
 ******************************************************************************}
 
-Function TCGetAttr(fd:cint;var tios:TermIOS):cint;
+Function TCGetAttr(fd:cint;var tios:TermIOS):cint; {$ifdef VER2_0}inline;{$endif}
 begin
   TCGETAttr:=fpIoCtl(Fd,TIOCGETA,@tios);
 end;
@@ -27,9 +26,13 @@ end;
 
 Function TCSetAttr(fd:cint;OptAct:cint;const tios:TermIOS):cint;
 var
-  nr:cint;
+  nr: TIoCtlRequest;
 begin
   case OptAct of
+  {the three constants TIOCSETA, TIOCSETAW and TIOCSETAF are
+   unsigned values above $80000000, so that they give range check errors
+   on 32-bit systems 
+   Solved by using TIoCtlRequest type for FpIOCtl second parameter }
    TCSANOW   : nr:=TIOCSETA;
    TCSADRAIN : nr:=TIOCSETAW;
    TCSAFLUSH : nr:=TIOCSETAF;
@@ -44,13 +47,13 @@ begin
 end;
 
 
-Procedure CFSetISpeed(var tios:TermIOS;speed:Cardinal);
+Procedure CFSetISpeed(var tios:TermIOS;speed:Cardinal); {$ifdef VER2_0}inline;{$endif}
 begin
   tios.c_ispeed:=speed; {Probably the Bxxxx speed constants}
 end;
 
 
-Procedure CFSetOSpeed(var tios:TermIOS;speed:Cardinal);
+Procedure CFSetOSpeed(var tios:TermIOS;speed:Cardinal); {$ifdef VER2_0}inline;{$endif}
 begin
    tios.c_ospeed:=speed;
 end;
@@ -74,41 +77,87 @@ begin
    end;
 end;
 
-Function TCSendBreak(fd,duration:cint):cint;
+Function TCSendBreak(fd,duration:cint):cint; {$ifdef VER2_0}inline;{$endif}
+var
+    sleepytime : ttimeval;
 begin
-  TCSendBreak:=fpIOCtl(fd,TIOCSBRK,nil);
+ sleepytime.tv_sec := 0;
+ sleepytime.tv_usec := 400000;
+ if fpioctl(fd, TIOCSBRK, nil) = -1 then
+    exit(-1);
+ fpselect(0, nil, nil, nil, @sleepytime);
+ if fpioctl(fd, TIOCCBRK, nil) = -1 then
+   exit(-1);
+ TCSendBreak:=0;
 end;
 
-
-Function TCSetPGrp(fd,id:cint):cint;
+Function TCSetPGrp(fd,id:cint):cint; {$ifdef VER2_0}inline;{$endif}
 begin
   TCSetPGrp:=fpIOCtl(fd,TIOCSPGRP,pointer(id));
 end;
 
 
-Function TCGetPGrp(fd:cint;var id:cint):cint;
+Function TCGetPGrp(fd:cint;var id:cint):cint; {$ifdef VER2_0}inline;{$endif}
 begin
   TCGetPGrp:=fpIOCtl(fd,TIOCGPGRP,@id);
 end;
 
-Function TCDrain(fd:cint):cint;
+Function TCDrain(fd:cint):cint; {$ifdef VER2_0}inline;{$endif}
 begin
   TCDrain:=fpIOCtl(fd,TIOCDRAIN,nil); {Should set timeout to 1 first?}
 end;
 
+const 
+   _POSIX_VDISABLE = $ff;
 
-Function TCFlow(fd,act:cint):cint;
+Function TCFlow(fd,act:cint):cint; {$ifdef VER2_0}inline;{$endif}
+var
+  term:Termios;
+  c : cuchar;
+  tmp : cint;
 begin
     case act OF
      TCOOFF :  TCFlow:=fpIoctl(fd,TIOCSTOP,nil);
      TCOOn  :  TCFlow:=fpIOctl(Fd,TIOCStart,nil);
-     TCIOFF :  {N/I}
-    end;
+     TCION,
+     TCIOFF :  begin
+	         if tcgetattr(fd, term) = -1 then
+                        exit(-1);
+                 if act=TCIOFF then  
+                   tmp:=VSTOP
+                 else
+                   tmp:=VSTART;
+                 c:=term.c_cc[tmp];
+                 if (c <> _POSIX_VDISABLE) and 
+			(fpwrite(fd, c, sizeof(c)) = -1) then
+                   exit (-1);
+                TCFlow:=0;
+              end;
+          else
+            begin
+              errno := esysEINVAL;
+              exit(-1);
+            end;
+      end;
 end;
 
-Function TCFlush(fd,qsel:cint):cint;
+const FREAD  = 1; // marked "BSD visible"
+      FWRITE = 2;
+
+Function TCFlush(fd,qsel:cint):cint;  {$ifdef VER2_0}inline;{$endif}
+var comval : cint;
 begin
-  TCFlush:=fpIOCtl(fd,TIOCFLUSH,pointer(qsel));
+  case qsel of
+     TCIFlush  : comval:=FREAD;
+     TCOFlush  : comval:=FWRITE;
+     TCIOFlush : comval:=FREAD or FWRITE;
+    else
+     begin
+       errno:=ESysEINVAL;
+       exit(-1);
+     end;
+   end;
+  TCFlush:=fpIOCtl(fd,TIOCFLUSH,pointer(@comval));
 end;
 
 Function IsATTY (Handle:cint):cint;
@@ -118,11 +167,11 @@ Function IsATTY (Handle:cint):cint;
 var
   t : Termios;
 begin
- IsAtty:=TCGetAttr(Handle,t);
+ IsAtty:=ord(TCGetAttr(Handle,t) <> -1);
 end;
 
 
-Function IsATTY(var f: text):cint;
+Function IsATTY(var f: text):cint; {$ifdef VER2_0}inline;{$endif}
 {
   Idem as previous, only now for text variables.
 }
@@ -130,9 +179,3 @@ begin
   IsATTY:=IsaTTY(textrec(f).handle);
 end;
 
-{
-   $Log: termiosproc.inc,v $
-   Revision 1.6  2005/02/14 17:13:22  peter
-     * truncate log
-
-}

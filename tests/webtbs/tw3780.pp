@@ -1,6 +1,9 @@
+{ %KNOWNCOMPILEERROR }
+{Test disabled because mode gpc is disabled.}
+
 { Source provided for Free Pascal Bug Report 3780 }
-{ Submitted by "Adriaan van Os" on  2005-03-13 }
-{ e-mail: fpc@microbizz.nl }
+{ Submitted by "Adriaan van Os" on  20050313 }
+{ email: fpc@microbizz.nl }
 {$mode gpc}
 program func;
 

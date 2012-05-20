@@ -1,5 +1,4 @@
 {
-    $Id: widestr.pas,v 1.17 2005/02/14 17:13:09 peter Exp $
     Copyright (c) 2000-2002 by Florian Klaempfl
 
     This unit contains basic functions for unicode support in the
@@ -24,11 +23,12 @@
 }
 unit widestr;
 
+{$i fpcdefs.inc}
+
   interface
 
     uses
-       charset,globtype
-       ;
+       {$if FPC_FULLVERSION<20700}ccharset{$else}charset{$endif},globtype;
 
 
     type
@@ -42,7 +42,7 @@ unit widestr;
           maxlen,len : SizeInt;
        end;
 
-    procedure initwidestring(var r : pcompilerwidestring);
+    procedure initwidestring(out r : pcompilerwidestring);
     procedure donewidestring(var r : pcompilerwidestring);
     procedure setlengthwidestring(r : pcompilerwidestring;l : SizeInt);
     function getlengthwidestring(r : pcompilerwidestring) : SizeInt;
@@ -52,19 +52,28 @@ unit widestr;
     procedure copywidestring(s,d : pcompilerwidestring);
     function asciichar2unicode(c : char) : tcompilerwidechar;
     function unicode2asciichar(c : tcompilerwidechar) : char;
-    procedure ascii2unicode(p : pchar;l : SizeInt;r : pcompilerwidestring);
-    procedure unicode2ascii(r : pcompilerwidestring;p : pchar);
+    procedure ascii2unicode(p : pchar;l : SizeInt;cp : tstringencoding;r : pcompilerwidestring;codepagetranslation : boolean = true);
+    procedure unicode2ascii(r : pcompilerwidestring;p : pchar;cp : tstringencoding);
+    function hasnonasciichars(const p: pcompilerwidestring): boolean;
     function getcharwidestring(r : pcompilerwidestring;l : SizeInt) : tcompilerwidechar;
     function cpavailable(const s : string) : boolean;
+    function cpavailable(cp : word) : boolean;
+    procedure changecodepage(
+      s : pchar; l : SizeInt; scp : tstringencoding;
+      d : pchar; dcp : tstringencoding
+    );
+    function codepagebyname(const s : string) : tstringencoding;
 
   implementation
 
     uses
-       cp8859_1,cp850,cp437,
-       globals;
+      cp8859_1,cp850,cp437,cp1252,
+      { cyrillic code pages }
+      cp1251,cp866,cp8859_5,
+      globals,cutils;
 
 
-    procedure initwidestring(var r : pcompilerwidestring);
+    procedure initwidestring(out r : pcompilerwidestring);
 
       begin
          new(r);
@@ -94,7 +103,7 @@ unit widestr;
          getlengthwidestring:=r^.len;
       end;
 
-    procedure setlengthwidestring(r : pcompilerwidestring;l : SizeInt);
+    procedure growwidestring(r : pcompilerwidestring;l : SizeInt);
 
       begin
          if r^.maxlen>=l then
@@ -103,29 +112,37 @@ unit widestr;
            reallocmem(r^.data,sizeof(tcompilerwidechar)*l)
          else
            getmem(r^.data,sizeof(tcompilerwidechar)*l);
+         r^.maxlen:=l;
+      end;
+
+    procedure setlengthwidestring(r : pcompilerwidestring;l : SizeInt);
+
+      begin
+         r^.len:=l;
+         if l>r^.maxlen then
+           growwidestring(r,l);
       end;
 
     procedure concatwidestringchar(r : pcompilerwidestring;c : tcompilerwidechar);
 
       begin
          if r^.len>=r^.maxlen then
-           setlengthwidestring(r,r^.len+16);
+           growwidestring(r,r^.len+16);
          r^.data[r^.len]:=c;
          inc(r^.len);
       end;
 
     procedure concatwidestrings(s1,s2 : pcompilerwidestring);
       begin
-         setlengthwidestring(s1,s1^.len+s2^.len);
-         inc(s1^.len,s2^.len);
+         growwidestring(s1,s1^.len+s2^.len);
          move(s2^.data^,s1^.data[s1^.len],s2^.len*sizeof(tcompilerwidechar));
+         inc(s1^.len,s2^.len);
       end;
 
     procedure copywidestring(s,d : pcompilerwidestring);
 
       begin
          setlengthwidestring(d,s^.len);
-         d^.len:=s^.len;
          move(s^.data^,d^.data^,s^.len*sizeof(tcompilerwidechar));
       end;
 
@@ -152,58 +169,88 @@ unit widestr;
       var
          m : punicodemap;
       begin
-         m:=getmap(aktsourcecodepage);
-         asciichar2unicode:=getunicode(c,m);
+         if (current_settings.sourcecodepage <> CP_UTF8) then
+           begin
+             m:=getmap(current_settings.sourcecodepage);
+             asciichar2unicode:=getunicode(c,m);
+           end
+         else
+           result:=tcompilerwidechar(c);
       end;
 
     function unicode2asciichar(c : tcompilerwidechar) : char;
-
+      {begin
+        if word(c)<128 then
+          unicode2asciichar:=char(word(c))
+         else
+          unicode2asciichar:='?';
+      end;}
       begin
-        {$ifdef fpc}{$warning todo}{$endif}
-        unicode2asciichar:=#0;
+         Result := getascii(c,getmap(current_settings.sourcecodepage))[1];
       end;
 
-    procedure ascii2unicode(p : pchar;l : SizeInt;r : pcompilerwidestring);
+    procedure ascii2unicode(p : pchar;l : SizeInt;cp : tstringencoding;r : pcompilerwidestring;codepagetranslation : boolean = true);
       var
          source : pchar;
          dest   : tcompilerwidecharptr;
          i      : SizeInt;
          m      : punicodemap;
       begin
-         m:=getmap(aktsourcecodepage);
+         m:=getmap(cp);
          setlengthwidestring(r,l);
          source:=p;
-         r^.len:=l;
          dest:=tcompilerwidecharptr(r^.data);
-         for i:=1 to l do
+         if (current_settings.sourcecodepage <> CP_UTF8) and
+            codepagetranslation then
            begin
-              dest^:=getunicode(source^,m);
-              inc(dest);
-              inc(source);
+             for i:=1 to l do
+                begin
+                  dest^:=getunicode(source^,m);
+                  inc(dest);
+                  inc(source);
+                end;
+           end
+         else
+           begin
+             for i:=1 to l do
+                begin
+                  dest^:=tcompilerwidechar(source^);
+                  inc(dest);
+                  inc(source);
+                end;
            end;
       end;
 
-    procedure unicode2ascii(r : pcompilerwidestring;p:pchar);
-(*
+    procedure unicode2ascii(r : pcompilerwidestring;p:pchar;cp : tstringencoding);
       var
-         m : punicodemap;
-         i : longint;
-
+        m : punicodemap;
+        source : tcompilerwidecharptr;
+        dest   : pchar;
+        i      : longint;
       begin
-         m:=getmap(aktsourcecodepage);
-         { should be a very good estimation :) }
-         setlengthwidestring(r,length(s));
+        if (cp = 0) or (cp=CP_NONE) then
+          m:=getmap(current_settings.sourcecodepage)
+        else
+          m:=getmap(cp);
          // !!!! MBCS
-         for i:=1 to length(s) do
-           begin
-           end;
+        source:=tcompilerwidecharptr(r^.data);
+        dest:=p;
+        for i:=1 to r^.len do
+         begin
+           dest^ := getascii(source^,m)[1];
+           inc(dest);
+           inc(source);
+         end;
       end;
-*)
+(*
       var
         source : tcompilerwidecharptr;
         dest   : pchar;
         i      : longint;
       begin
+        { This routine must work the same as the
+          the routine in the RTL to have the same compile time (for constant strings)
+          and runtime conversion (for variables) }
         source:=tcompilerwidecharptr(r^.data);
         dest:=p;
         for i:=1 to r^.len do
@@ -211,22 +258,70 @@ unit widestr;
            if word(source^)<128 then
             dest^:=char(word(source^))
            else
-            dest^:=' ';
+            dest^:='?';
            inc(dest);
            inc(source);
          end;
+      end;
+*)
+
+    function hasnonasciichars(const p: pcompilerwidestring): boolean;
+      var
+        source : tcompilerwidecharptr;
+        i      : longint;
+      begin
+        source:=tcompilerwidecharptr(p^.data);
+        result:=true;
+        for i:=1 to p^.len do
+          begin
+            if word(source^)>=128 then
+              exit;
+            inc(source);
+          end;
+        result:=false;
       end;
 
 
     function cpavailable(const s : string) : boolean;
       begin
-          cpavailable:=mappingavailable(s);
+          cpavailable:=mappingavailable(lower(s));
+      end;
+
+    function cpavailable(cp : word) : boolean;
+      begin
+          cpavailable:=mappingavailable(cp);
+      end;
+
+    procedure changecodepage(
+      s : pchar; l : SizeInt; scp : tstringencoding;
+      d : pchar; dcp : tstringencoding
+    );
+      var
+        ms, md : punicodemap;
+        source : pchar;
+        dest   : pchar;
+        i      : longint;
+      begin
+        ms:=getmap(scp);
+        md:=getmap(dcp);
+        source:=s;
+        dest:=d;
+        for i:=1 to l do
+         begin
+           dest^ := getascii(getunicode(source^,ms),md)[1];
+           inc(dest);
+           inc(source);
+         end;
+      end;
+
+    function codepagebyname(const s : string) : tstringencoding;
+      var
+        p : punicodemap;
+      begin
+        Result:=0;
+        p:=getmap(s);
+        if (p<>nil) then
+          Result:=p^.cp;
       end;
 
 end.
-{
-  $Log: widestr.pas,v $
-  Revision 1.17  2005/02/14 17:13:09  peter
-    * truncate log
-
-}

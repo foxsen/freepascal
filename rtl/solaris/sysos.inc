@@ -1,5 +1,4 @@
 {
-    $Id: sysos.inc,v 1.2 2005/02/13 22:13:20 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2001 by Free Pascal development team
 
@@ -21,10 +20,9 @@ const clib = 'c';
 type libcint=longint;
      plibcint=^libcint;
 
-function geterrnolocation: Plibcint; cdecl;external clib name'__errno_location';
+function geterrnolocation: Plibcint; cdecl;external clib name '___errno';
 
 function geterrno:libcint; [public, alias: 'FPC_SYS_GETERRNO'];
-
 begin
  geterrno:=geterrnolocation^;
 end;
@@ -42,6 +40,7 @@ end;
 
 {$Linklib c}
 {$i oscdeclh.inc}
+{$i oscdecl.inc}
 
 {*****************************************************************************
                             Error conversion
@@ -102,24 +101,4 @@ begin
                 (handle=StdErrorHandle);
 end;
 
-{
-   $Log: sysos.inc,v $
-   Revision 1.2  2005/02/13 22:13:20  peter
-     * get solaris back in shape
-
-   Revision 1.1  2005/02/10 17:30:54  peter
-     * renamed to solaris
-
-   Revision 1.1  2005/02/07 22:17:26  peter
-     * updated for 1.9.x unix rtl
-
-   Revision 1.2  2005/02/06 13:06:20  peter
-     * moved file and dir functions to sysfile/sysdir
-     * win32 thread in systemunit
-
-   Revision 1.1  2005/02/06 11:20:52  peter
-     * threading in system unit
-     * removed systhrds unit
-
-}
 

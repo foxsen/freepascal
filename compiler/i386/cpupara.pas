@@ -1,11 +1,10 @@
 {
-    $Id: cpupara.pas,v 1.68 2005/02/15 19:16:04 peter Exp $
     Copyright (c) 2002 by Florian Klaempfl
 
     Generates the argument location information for i386
 
     This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published bymethodpointer
+    it under the terms of the GNU General Public License as published by
     the Free Software Foundation; either version 2 of the License, or
     (at your option) any later version.
 
@@ -28,7 +27,7 @@ unit cpupara;
 
     uses
        globtype,
-       aasmtai,cpubase,cgbase,
+       aasmtai,aasmdata,cpubase,cgbase,cgutils,
        symconst,symtype,symsym,symdef,
        parabase,paramgr;
 
@@ -49,7 +48,8 @@ unit cpupara;
           procedure getintparaloc(calloption : tproccalloption; nr : longint;var cgpara:TCGPara);override;
           function create_paraloc_info(p : tabstractprocdef; side: tcallercallee):longint;override;
           function create_varargs_paraloc_info(p : tabstractprocdef; varargspara:tvarargsparalist):longint;override;
-          procedure createtempparaloc(list: taasmoutput;calloption : tproccalloption;parasym : tparavarsym;var cgpara:TCGPara);override;
+          procedure createtempparaloc(list: TAsmList;calloption : tproccalloption;parasym : tparavarsym;can_use_final_stack_loc : boolean;var cgpara:TCGPara);override;
+          function get_funcretloc(p : tabstractprocdef; side: tcallercallee; def: tdef): TCGPara;override;
        private
           procedure create_funcretloc_info(p : tabstractprocdef; side: tcallercallee);
           procedure create_stdcall_paraloc_info(p : tabstractprocdef; side: tcallercallee;paras:tparalist;var parasize:longint);
@@ -62,8 +62,8 @@ unit cpupara;
     uses
        cutils,
        systems,verbose,
-       defutil,
-       cgutils;
+       symtable,
+       defutil;
 
       const
         parasupregs : array[0..2] of tsuperregister = (RS_EAX,RS_EDX,RS_ECX);
@@ -94,21 +94,53 @@ unit cpupara;
 
 
     function ti386paramanager.ret_in_param(def : tdef;calloption : tproccalloption) : boolean;
+      var
+        size: longint;
       begin
+        if (tf_safecall_exceptions in target_info.flags) and
+           (calloption=pocall_safecall) then
+          begin
+            result:=true;
+            exit;
+          end;
         case target_info.system of
           system_i386_win32 :
             begin
-              case def.deftype of
+              case def.typ of
                 recorddef :
                   begin
                     { Win32 GCC returns small records in the FUNCTION_RETURN_REG.
                       For stdcall we follow delphi instead of GCC }
                     if (calloption in [pocall_cdecl,pocall_cppdecl]) and
+                       (def.size>0) and
                        (def.size<=8) then
                      begin
                        result:=false;
                        exit;
                      end;
+                  end;
+              end;
+            end;
+          system_i386_darwin,
+          system_i386_iphonesim :
+            begin
+              case def.typ of
+                recorddef :
+                  begin
+                    size := def.size;
+                    if (size > 0) and
+                       (size <= 8) and
+                       { only if size is a power of 2 }
+                       ((size and (size-1)) = 0) then
+                      begin
+                        result := false;
+                        exit;
+                      end;
+                  end;
+                procvardef:
+                  begin
+                    result:=false;
+                    exit;
                   end;
               end;
             end;
@@ -120,51 +152,53 @@ unit cpupara;
     function ti386paramanager.push_addr_param(varspez:tvarspez;def : tdef;calloption : tproccalloption) : boolean;
       begin
         result:=false;
-        { var,out always require address }
-        if varspez in [vs_var,vs_out] then
+        { var,out,constref always require address }
+        if varspez in [vs_var,vs_out,vs_constref] then
           begin
             result:=true;
             exit;
           end;
         { Only vs_const, vs_value here }
-        case def.deftype of
+        case def.typ of
           variantdef :
             begin
-              { Win32 stdcall passes small records on the stack for call by
-                value }
-              if (target_info.system=system_i386_win32) and
-                 (calloption=pocall_stdcall) and
-                 (varspez=vs_value) and
-                 (def.size<=16) then
-                result:=false
+              { variants are small enough to be passed by value except if
+                required by the windows api
+
+                variants are somethings very delphi/windows specific so do it like
+                windows/delphi (FK)
+              }
+              if ((target_info.system=system_i386_win32) and
+                 (calloption in [pocall_stdcall,pocall_safecall]) and
+                 (varspez=vs_const)) or
+                 (calloption=pocall_register) then
+                result:=true
+              else
+                result:=false;
             end;
           formaldef :
             result:=true;
           recorddef :
             begin
-              { Win32 stdcall passes small records on the stack for call by
-                value }
+              { Delphi stdcall passes records on the stack for call by value }
               if (target_info.system=system_i386_win32) and
                  (calloption=pocall_stdcall) and
-                 (varspez=vs_value) and
-                 (def.size<=16) then
+                 (varspez=vs_value) then
                 result:=false
               else
-                result:=not(calloption in [pocall_cdecl,pocall_cppdecl]) and (def.size>sizeof(aint));
+                result:=
+                  (not(calloption in (cdecl_pocalls+[pocall_mwpascal])) and
+                   (def.size>sizeof(aint))) or
+                  (((calloption = pocall_mwpascal) or (target_info.system=system_i386_wince)) and
+                   (varspez=vs_const));
             end;
           arraydef :
             begin
-              { Win32 stdcall passes arrays on the stack for call by
-                value }
-              if (target_info.system=system_i386_win32) and
-                 (calloption=pocall_stdcall) and
-                 (varspez=vs_value) and
-                 (tarraydef(def).highrange>=tarraydef(def).lowrange) then
-                result:=false
-              else
-              { array of const values are pushed on the stack }
-                if (calloption in [pocall_cdecl,pocall_cppdecl]) then
-                  result:=not is_array_of_const(def)
+              { array of const values are pushed on the stack as
+                well as dyn. arrays }
+              if (calloption in cdecl_pocalls) then
+                result:=not(is_array_of_const(def) or
+                        is_dynamic_array(def))
               else
                 begin
                   result:=(
@@ -179,11 +213,11 @@ unit cpupara;
           objectdef :
             result:=is_object(def);
           stringdef :
-            result:=not(calloption in [pocall_cdecl,pocall_cppdecl]) and (tstringdef(def).string_typ in [st_shortstring,st_longstring]);
+            result:= (tstringdef(def).stringtype in [st_shortstring,st_longstring]);
           procvardef :
-            result:=not(calloption in [pocall_cdecl,pocall_cppdecl]) and (po_methodpointer in tprocvardef(def).procoptions);
+            result:=not(calloption in cdecl_pocalls) and not tprocvardef(def).is_addressonly;
           setdef :
-            result:=not(calloption in [pocall_cdecl,pocall_cppdecl]) and (tsetdef(def).settype<>smallset);
+            result:=not(calloption in cdecl_pocalls) and (not is_smallset(def));
         end;
       end;
 
@@ -207,19 +241,12 @@ unit cpupara;
         case calloption of
           pocall_internproc :
             result:=[];
-          pocall_compilerproc :
-            begin
-              if pocall_default=pocall_oldfpccall then
-                result:=[RS_EAX,RS_EDX,RS_ECX,RS_ESI,RS_EDI,RS_EBX]
-              else
-                result:=[RS_EAX,RS_EDX,RS_ECX];
-            end;
-          pocall_inline,
           pocall_register,
           pocall_safecall,
           pocall_stdcall,
           pocall_cdecl,
-          pocall_cppdecl :
+          pocall_cppdecl,
+          pocall_mwpascal :
             result:=[RS_EAX,RS_EDX,RS_ECX];
           pocall_far16,
           pocall_pascal,
@@ -248,8 +275,8 @@ unit cpupara;
         paraloc : pcgparalocation;
       begin
         cgpara.reset;
-        cgpara.size:=OS_INT;
-        cgpara.intsize:=tcgsize2size[OS_INT];
+        cgpara.size:=OS_ADDR;
+        cgpara.intsize:=sizeof(pint);
         cgpara.alignment:=get_para_align(calloption);
         paraloc:=cgpara.add_location;
         with paraloc^ do
@@ -257,7 +284,7 @@ unit cpupara;
            size:=OS_INT;
            if calloption=pocall_register then
              begin
-               if (nr<=high(parasupregs)+1) then
+               if (nr<=length(parasupregs)) then
                  begin
                    if nr=0 then
                      internalerror(200309271);
@@ -268,7 +295,8 @@ unit cpupara;
                  begin
                    loc:=LOC_REFERENCE;
                    reference.index:=NR_STACK_POINTER_REG;
-                   reference.offset:=sizeof(aint)*nr;
+                   { the previous parameters didn't take up room in memory }
+                   reference.offset:=sizeof(aint)*(nr-length(parasupregs)-1)
                  end;
              end
            else
@@ -282,62 +310,108 @@ unit cpupara;
 
 
     procedure ti386paramanager.create_funcretloc_info(p : tabstractprocdef; side: tcallercallee);
+      begin
+        p.funcretloc[side]:=get_funcretloc(p,side,p.returndef);
+      end;
+
+
+    function  ti386paramanager.get_funcretloc(p : tabstractprocdef; side: tcallercallee; def: tdef): TCGPara;
       var
         retcgsize  : tcgsize;
+        paraloc : pcgparalocation;
+        sym: tfieldvarsym;
       begin
+        result.init;
+        result.alignment:=get_para_align(p.proccalloption);
+        { void has no location }
+        if is_void(def) then
+          begin
+            paraloc:=result.add_location;
+            result.size:=OS_NO;
+            result.intsize:=0;
+            paraloc^.size:=OS_NO;
+            paraloc^.loc:=LOC_VOID;
+            exit;
+          end;
+        { on darwin/i386, if a record has only one field and that field is a
+          single or double, it has to be returned like a single/double }
+        if (target_info.system in [system_i386_darwin,system_i386_iphonesim]) and
+           ((def.typ=recorddef) or
+            is_object(def)) and
+           tabstractrecordsymtable(tabstractrecorddef(def).symtable).has_single_field(sym) and
+           (sym.vardef.typ=floatdef) and
+           (tfloatdef(sym.vardef).floattype in [s32real,s64real]) then
+          def:=sym.vardef;
         { Constructors return self instead of a boolean }
         if (p.proctypeoption=potype_constructor) then
-          retcgsize:=OS_ADDR
-        else
-          retcgsize:=def_cgsize(p.rettype.def);
-
-        location_reset(p.funcretloc[side],LOC_INVALID,OS_NO);
-        { void has no location }
-        if is_void(p.rettype.def) then
           begin
-            location_reset(p.funcretloc[side],LOC_VOID,OS_NO);
+            retcgsize:=OS_ADDR;
+            result.intsize:=sizeof(pint);
+          end
+        else
+          begin
+            retcgsize:=def_cgsize(def);
+            { darwin/x86 requires that results < sizeof(aint) are sign/ }
+            { zero extended to sizeof(aint)                             }
+            if (target_info.system in [system_i386_darwin,system_i386_iphonesim]) and
+               (side=calleeside) and
+               (result.intsize>0) and
+               (result.intsize<sizeof(aint)) then
+              begin
+                result.intsize:=sizeof(aint);
+                retcgsize:=OS_SINT;
+              end
+            else
+              result.intsize:=def.size;
+          end;
+        result.size:=retcgsize;
+        { Return is passed as var parameter }
+        if ret_in_param(def,p.proccalloption) then
+          begin
+            paraloc:=result.add_location;
+            paraloc^.loc:=LOC_REFERENCE;
+            paraloc^.size:=retcgsize;
             exit;
           end;
         { Return in FPU register? }
-        if p.rettype.def.deftype=floatdef then
+        if def.typ=floatdef then
           begin
-            p.funcretloc[side].loc:=LOC_FPUREGISTER;
-            p.funcretloc[side].register:=NR_FPU_RESULT_REG;
-            p.funcretloc[side].size:=retcgsize;
+            paraloc:=result.add_location;
+            paraloc^.loc:=LOC_FPUREGISTER;
+            paraloc^.register:=NR_FPU_RESULT_REG;
+            paraloc^.size:=retcgsize;
           end
         else
-         { Return in register? }
-         if not ret_in_param(p.rettype.def,p.proccalloption) then
+         { Return in register }
           begin
+            paraloc:=result.add_location;
+            paraloc^.loc:=LOC_REGISTER;
             if retcgsize in [OS_64,OS_S64] then
              begin
                { low 32bits }
-               p.funcretloc[side].loc:=LOC_REGISTER;
-               p.funcretloc[side].size:=OS_64;
                if side=callerside then
-                 p.funcretloc[side].register64.reglo:=NR_FUNCTION_RESULT64_LOW_REG
+                 paraloc^.register:=NR_FUNCTION_RESULT64_LOW_REG
                else
-                 p.funcretloc[side].register64.reglo:=NR_FUNCTION_RETURN64_LOW_REG;
+                 paraloc^.register:=NR_FUNCTION_RETURN64_LOW_REG;
+               paraloc^.size:=OS_32;
+
                { high 32bits }
+               paraloc:=result.add_location;
+               paraloc^.loc:=LOC_REGISTER;
                if side=callerside then
-                 p.funcretloc[side].register64.reghi:=NR_FUNCTION_RESULT64_HIGH_REG
+                 paraloc^.register:=NR_FUNCTION_RESULT64_HIGH_REG
                else
-                 p.funcretloc[side].register64.reghi:=NR_FUNCTION_RETURN64_HIGH_REG;
+                 paraloc^.register:=NR_FUNCTION_RETURN64_HIGH_REG;
+               paraloc^.size:=OS_32;
              end
             else
              begin
-               p.funcretloc[side].loc:=LOC_REGISTER;
-               p.funcretloc[side].size:=retcgsize;
+               paraloc^.size:=retcgsize;
                if side=callerside then
-                 p.funcretloc[side].register:=newreg(R_INTREGISTER,RS_FUNCTION_RESULT_REG,cgsize2subreg(retcgsize))
+                 paraloc^.register:=newreg(R_INTREGISTER,RS_FUNCTION_RESULT_REG,cgsize2subreg(R_INTREGISTER,retcgsize))
                else
-                 p.funcretloc[side].register:=newreg(R_INTREGISTER,RS_FUNCTION_RETURN_REG,cgsize2subreg(retcgsize));
+                 paraloc^.register:=newreg(R_INTREGISTER,RS_FUNCTION_RETURN_REG,cgsize2subreg(R_INTREGISTER,retcgsize));
              end;
-          end
-        else
-          begin
-            p.funcretloc[side].loc:=LOC_REFERENCE;
-            p.funcretloc[side].size:=retcgsize;
           end;
       end;
 
@@ -369,10 +443,15 @@ unit cpupara;
           That means for pushes the para with the
           highest offset (see para3) needs to be pushed first
         }
-        for i:=0 to paras.count-1 do
+        if p.proccalloption in pushleftright_pocalls then
+          i:=paras.count-1
+        else
+          i:=0;
+        while ((p.proccalloption in pushleftright_pocalls) and (i>=0)) or
+              (not(p.proccalloption in pushleftright_pocalls) and (i<=paras.count-1)) do
           begin
             hp:=tparavarsym(paras[i]);
-            pushaddr:=push_addr_param(hp.varspez,hp.vartype.def,p.proccalloption);
+            pushaddr:=push_addr_param(hp.varspez,hp.vardef,p.proccalloption);
             if pushaddr then
               begin
                 paralen:=sizeof(aint);
@@ -380,15 +459,27 @@ unit cpupara;
               end
             else
               begin
-                paralen:=push_size(hp.varspez,hp.vartype.def,p.proccalloption);
-                paracgsize:=def_cgsize(hp.vartype.def);
+                paralen:=push_size(hp.varspez,hp.vardef,p.proccalloption);
+                { darwin/x86 requires that parameters < sizeof(aint) are sign/ }
+                { zero extended to sizeof(aint)                                }
+                if (target_info.system in [system_i386_darwin,system_i386_iphonesim]) and
+                   (side = callerside) and
+                   (paralen > 0) and
+                   (paralen < sizeof(aint)) then
+                  begin
+                    paralen := sizeof(aint);
+                    paracgsize:=OS_SINT;
+                  end
+                else
+                  paracgsize:=def_cgsize(hp.vardef);
               end;
             hp.paraloc[side].reset;
             hp.paraloc[side].size:=paracgsize;
             hp.paraloc[side].intsize:=paralen;
             hp.paraloc[side].Alignment:=paraalign;
             { Copy to stack? }
-            if paracgsize=OS_NO then
+            if (paracgsize=OS_NO) or
+               (use_fixed_stack) then
               begin
                 paraloc:=hp.paraloc[side].add_location;
                 paraloc^.loc:=LOC_REFERENCE;
@@ -398,6 +489,13 @@ unit cpupara;
                 else
                   paraloc^.reference.index:=NR_FRAME_POINTER_REG;
                 varalign:=used_align(size_2_align(paralen),paraalign,paraalign);
+
+                { don't let push_size return 16, because then we can    }
+                { read past the end of the heap since the value is only }
+                { 10 bytes long (JM)                                    }
+                if (paracgsize = OS_F80) and
+                   (target_info.system in [system_i386_darwin,system_i386_iphonesim]) then
+                  paralen:=16;
                 paraloc^.reference.offset:=parasize;
                 if side=calleeside then
                   inc(paraloc^.reference.offset,target_info.first_parm_offset);
@@ -409,26 +507,44 @@ unit cpupara;
                   internalerror(200501163);
                 while (paralen>0) do
                   begin
-                    { We can allocate at maximum 32 bits per location }
-                    if paralen>sizeof(aint) then
-                      l:=sizeof(aint)
-                    else
-                      l:=paralen;
                     paraloc:=hp.paraloc[side].add_location;
                     paraloc^.loc:=LOC_REFERENCE;
-                    paraloc^.size:=int_cgsize(l);
-                    if side=callerside then
+                    { single and double need a single location }
+                    if (paracgsize in [OS_F64,OS_F32]) then
+                      begin
+                        paraloc^.size:=paracgsize;
+                        l:=paralen;
+                      end
+                    else
+                      begin
+                        { We can allocate at maximum 32 bits per location }
+                        if paralen>sizeof(aint) then
+                          l:=sizeof(aint)
+                        else
+                          l:=paralen;
+                        paraloc^.size:=int_cgsize(l);
+                      end;
+                    if (side=callerside) or
+                       (po_nostackframe in p.procoptions) then
                       paraloc^.reference.index:=NR_STACK_POINTER_REG
                     else
                       paraloc^.reference.index:=NR_FRAME_POINTER_REG;
                     varalign:=used_align(size_2_align(l),paraalign,paraalign);
                     paraloc^.reference.offset:=parasize;
                     if side=calleeside then
-                      inc(paraloc^.reference.offset,target_info.first_parm_offset);
+                      if not(po_nostackframe in p.procoptions) then
+                        inc(paraloc^.reference.offset,target_info.first_parm_offset)
+                      else
+                        { return addres }
+                        inc(paraloc^.reference.offset,4);
                     parasize:=align(parasize+l,varalign);
                     dec(paralen,l);
                   end;
               end;
+            if p.proccalloption in pushleftright_pocalls then
+              dec(i)
+            else
+              inc(i);
           end;
       end;
 
@@ -445,94 +561,147 @@ unit cpupara;
         varalign : longint;
         pushaddr : boolean;
         paraalign : shortint;
+        pass : byte;
       begin
+        if paras.count=0 then
+          exit;
         paraalign:=get_para_align(p.proccalloption);
-        { Register parameters are assigned from left to right }
-        for i:=0 to paras.count-1 do
-          begin
-            hp:=tparavarsym(paras[i]);
-            pushaddr:=push_addr_param(hp.varspez,hp.vartype.def,p.proccalloption);
-            if pushaddr then
-              begin
-                paralen:=sizeof(aint);
-                paracgsize:=OS_ADDR;
-              end
-            else
-              begin
-                paralen:=push_size(hp.varspez,hp.vartype.def,p.proccalloption);
-                paracgsize:=def_cgsize(hp.vartype.def);
-              end;
-            hp.paraloc[side].reset;
-            hp.paraloc[side].size:=paracgsize;
-            hp.paraloc[side].intsize:=paralen;
-            hp.paraloc[side].Alignment:=paraalign;
-            {
-              EAX
-              EDX
-              ECX
-              Stack
-              Stack
 
-              64bit values,floats,arrays and records are always
-              on the stack.
-            }
-            if (parareg<=high(parasupregs)) and
-               (paralen<=sizeof(aint)) and
-               (
-                not(hp.vartype.def.deftype in [floatdef,recorddef,arraydef]) or
-                pushaddr
-               ) then
-              begin
-                paraloc:=hp.paraloc[side].add_location;
-                paraloc^.size:=paracgsize;
-                paraloc^.loc:=LOC_REGISTER;
-                paraloc^.register:=newreg(R_INTREGISTER,parasupregs[parareg],cgsize2subreg(paracgsize));
-                inc(parareg);
-              end
+        { clean up here so we can later detect properly if a parameter has been
+          assigned or not
+        }
+        for i:=0 to paras.count-1 do
+          tparavarsym(paras[i]).paraloc[side].reset;
+        { Register parameters are assigned from left to right,
+          stack parameters from right to left so assign first the
+          register parameters in a first pass, in the second
+          pass all unhandled parameters are done }
+        for pass:=1 to 2 do
+          begin
+            if pass=1 then
+              i:=0
             else
+              i:=paras.count-1;
+            while true do
               begin
-                { Copy to stack? }
-                if paracgsize=OS_NO then
+                hp:=tparavarsym(paras[i]);
+                if not(assigned(hp.paraloc[side].location)) then
                   begin
-                    paraloc:=hp.paraloc[side].add_location;
-                    paraloc^.loc:=LOC_REFERENCE;
-                    paraloc^.size:=paracgsize;
-                    if side=callerside then
-                      paraloc^.reference.index:=NR_STACK_POINTER_REG
-                    else
-                      paraloc^.reference.index:=NR_FRAME_POINTER_REG;
-                    varalign:=used_align(size_2_align(paralen),paraalign,paraalign);
-                    paraloc^.reference.offset:=parasize;
-                    if side=calleeside then
-                      inc(paraloc^.reference.offset,target_info.first_parm_offset);
-                    parasize:=align(parasize+paralen,varalign);
-                  end
-                else
-                  begin
-                    if paralen=0 then
-                      internalerror(200501163);
-                    while (paralen>0) do
+
+                    pushaddr:=push_addr_param(hp.varspez,hp.vardef,p.proccalloption);
+                    if pushaddr then
                       begin
-                        { We can allocate at maximum 32 bits per location }
-                        if paralen>sizeof(aint) then
-                          l:=sizeof(aint)
-                        else
-                          l:=paralen;
-                        paraloc:=hp.paraloc[side].add_location;
-                        paraloc^.loc:=LOC_REFERENCE;
-                        paraloc^.size:=int_cgsize(l);
-                        if side=callerside then
-                          paraloc^.reference.index:=NR_STACK_POINTER_REG
-                        else
-                          paraloc^.reference.index:=NR_FRAME_POINTER_REG;
-                        varalign:=used_align(size_2_align(l),paraalign,paraalign);
-                        paraloc^.reference.offset:=parasize;
-                        if side=calleeside then
-                          inc(paraloc^.reference.offset,target_info.first_parm_offset);
-                        parasize:=align(parasize+l,varalign);
-                        dec(paralen,l);
+                        paralen:=sizeof(aint);
+                        paracgsize:=OS_ADDR;
+                      end
+                    else
+                      begin
+                        paralen:=push_size(hp.varspez,hp.vardef,p.proccalloption);
+                        paracgsize:=def_cgsize(hp.vardef);
                       end;
+                    hp.paraloc[side].size:=paracgsize;
+                    hp.paraloc[side].intsize:=paralen;
+                    hp.paraloc[side].Alignment:=paraalign;
+                    {
+                      EAX
+                      EDX
+                      ECX
+                      Stack
+                      Stack
+
+                      64bit values,floats,arrays and records are always
+                      on the stack.
+
+                      In case of po_delphi_nested_cc, the parent frame pointer
+                      is also always passed on the stack.
+                    }
+                    if (parareg<=high(parasupregs)) and
+                       (paralen<=sizeof(aint)) and
+                       (not(hp.vardef.typ in [floatdef,recorddef,arraydef]) or
+                        pushaddr) and
+                       (not(vo_is_parentfp in hp.varoptions) or
+                        not(po_delphi_nested_cc in p.procoptions)) then
+                      begin
+                        if pass=1 then
+                          begin
+                            paraloc:=hp.paraloc[side].add_location;
+                            paraloc^.size:=paracgsize;
+                            paraloc^.loc:=LOC_REGISTER;
+                            paraloc^.register:=newreg(R_INTREGISTER,parasupregs[parareg],cgsize2subreg(R_INTREGISTER,paracgsize));
+                            inc(parareg);
+                          end;
+                      end
+                    else
+                      if pass=2 then
+                        begin
+                          { Copy to stack? }
+                          if (use_fixed_stack) or
+                             (paracgsize=OS_NO) then
+                            begin
+                              paraloc:=hp.paraloc[side].add_location;
+                              paraloc^.loc:=LOC_REFERENCE;
+                              paraloc^.size:=paracgsize;
+                              if side=callerside then
+                                paraloc^.reference.index:=NR_STACK_POINTER_REG
+                              else
+                                paraloc^.reference.index:=NR_FRAME_POINTER_REG;
+                              varalign:=used_align(size_2_align(paralen),paraalign,paraalign);
+                              paraloc^.reference.offset:=parasize;
+                              if side=calleeside then
+                                inc(paraloc^.reference.offset,target_info.first_parm_offset);
+                              parasize:=align(parasize+paralen,varalign);
+                            end
+                          else
+                            begin
+                              if paralen=0 then
+                                internalerror(200501163);
+                              while (paralen>0) do
+                                begin
+                                  paraloc:=hp.paraloc[side].add_location;
+                                  paraloc^.loc:=LOC_REFERENCE;
+                                  { Extended and double need a single location }
+                                  if (paracgsize in [OS_F64,OS_F32]) then
+                                    begin
+                                      paraloc^.size:=paracgsize;
+                                      l:=paralen;
+                                    end
+                                  else
+                                    begin
+                                      { We can allocate at maximum 32 bits per location }
+                                      if paralen>sizeof(aint) then
+                                        l:=sizeof(aint)
+                                      else
+                                        l:=paralen;
+                                      paraloc^.size:=int_cgsize(l);
+                                    end;
+                                  if side=callerside then
+                                    paraloc^.reference.index:=NR_STACK_POINTER_REG
+                                  else
+                                    paraloc^.reference.index:=NR_FRAME_POINTER_REG;
+                                  varalign:=used_align(size_2_align(l),paraalign,paraalign);
+                                  paraloc^.reference.offset:=parasize;
+                                  if side=calleeside then
+                                    inc(paraloc^.reference.offset,target_info.first_parm_offset);
+                                  parasize:=align(parasize+l,varalign);
+                                  dec(paralen,l);
+                                end;
+                            end;
+                        end;
                   end;
+                case pass of
+                  1:
+                    begin
+                      if i=paras.count-1 then
+                        break;
+                      inc(i);
+                    end;
+                  2:
+                    begin
+                      if i=0 then
+                        break;
+                      dec(i);
+                    end;
+                end;
               end;
           end;
       end;
@@ -548,15 +717,15 @@ unit cpupara;
         case p.proccalloption of
           pocall_register :
             create_register_paraloc_info(p,side,p.paras,parareg,parasize);
-          pocall_inline,
-          pocall_compilerproc,
           pocall_internproc :
             begin
               { Use default calling }
+{$warnings off}
               if (pocall_default=pocall_register) then
                 create_register_paraloc_info(p,side,p.paras,parareg,parasize)
               else
                 create_stdcall_paraloc_info(p,side,p.paras,parasize);
+{$warnings on}
             end;
           else
             create_stdcall_paraloc_info(p,side,p.paras,parasize);
@@ -579,48 +748,16 @@ unit cpupara;
       end;
 
 
-    procedure ti386paramanager.createtempparaloc(list: taasmoutput;calloption : tproccalloption;parasym : tparavarsym;var cgpara:TCGPara);
-      var
-        paraloc : pcgparalocation;
+    procedure ti386paramanager.createtempparaloc(list: TAsmList;calloption : tproccalloption;parasym : tparavarsym;can_use_final_stack_loc : boolean;var cgpara:TCGPara);
       begin
-        paraloc:=parasym.paraloc[callerside].location;
-        { No need for temps when value is pushed }
-        if assigned(paraloc) and
-           (paraloc^.loc=LOC_REFERENCE) and
-           (paraloc^.reference.index=NR_STACK_POINTER_REG) then
-          duplicateparaloc(list,calloption,parasym,cgpara)
-        else
-          inherited createtempparaloc(list,calloption,parasym,cgpara);
+        { Never a need for temps when value is pushed (calls inside parameters
+          will simply allocate even more stack space for their parameters) }
+        if not(use_fixed_stack) then
+          can_use_final_stack_loc:=true;
+        inherited createtempparaloc(list,calloption,parasym,can_use_final_stack_loc,cgpara);
       end;
 
 
 begin
    paramanager:=ti386paramanager.create;
 end.
-{
-  $Log: cpupara.pas,v $
-  Revision 1.68  2005/02/15 19:16:04  peter
-    * fix passing of 64bit values when using -Or
-
-  Revision 1.67  2005/02/14 19:42:02  peter
-  win32 stdcall fixes needed for tw3650
-
-  Revision 1.66  2005/02/14 17:13:09  peter
-    * truncate log
-
-  Revision 1.65  2005/02/03 20:04:49  peter
-    * push_addr_param must be defined per target
-
-  Revision 1.64  2005/01/30 11:03:22  peter
-    * revert last commit
-
-  Revision 1.62  2005/01/18 22:19:20  peter
-    * multiple location support for i386 a_param_ref
-    * remove a_param_copy_ref for i386
-
-  Revision 1.61  2005/01/10 21:50:05  jonas
-    + support for passing records in registers under darwin
-    * tcgpara now also has an intsize field, which contains the size in
-      bytes of the whole parameter
-
-}

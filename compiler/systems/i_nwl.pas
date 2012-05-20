@@ -1,5 +1,4 @@
 {
-    $Id: i_nwl.pas,v 1.5 2005/03/20 22:36:45 olle Exp $
     Copyright (c) 1998-2004 by Peter Vreman
 
     This unit implements support information structures for Netware (libc) modules
@@ -22,6 +21,8 @@
 { This unit implements support information structures for Netware libc modules. }
 unit i_nwl;
 
+{$i fpcdefs.inc}
+
   interface
 
     uses
@@ -33,7 +34,7 @@ unit i_nwl;
             system       : system_i386_netwlibc;
             name         : 'Netware for i386(libc)';
             shortname    : 'Netwlibc';
-            flags        : [];
+            flags        : [tf_smartlink_library];
             cpu          : cpu_i386;
             unit_env     : 'NETWLIBCUNITS';
             extradefines : 'NETWARE;NETWARE_LIBC';
@@ -55,17 +56,18 @@ unit i_nwl;
             staticClibext : '.a';
             staticClibprefix : '';
             sharedClibprefix : '';
-            p_ext_support : false;
+            importlibprefix : 'imp';
+            importlibext : '.a';
             Cprefix      : '';
             newline      : #13#10;
             dirsep       : '/';
-            files_case_relevent : false;
             assem        : as_i386_elf32;
             assemextern  : as_gas;
             link         : nil;
             linkextern   : nil;
             ar           : ar_gnu_ar;
             res          : res_none;
+            dbg          : dbg_stabs;
             script       : script_unix;
             endian       : endian_little;
             alignment    :
@@ -85,8 +87,7 @@ unit i_nwl;
               );
             first_parm_offset : 8;
             stacksize    : 16384;
-            DllScanSupported:false;
-            use_function_relative_addresses : true
+            abi : abi_default
           );
 
   implementation
@@ -98,13 +99,3 @@ initialization
   {$endif netwlibc}
 {$endif CPU86}
 end.
-{
-  $Log: i_nwl.pas,v $
-  Revision 1.5  2005/03/20 22:36:45  olle
-    * Cleaned up handling of source file extension.
-    + Added support for .p extension for macos and darwin
-
-  Revision 1.4  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

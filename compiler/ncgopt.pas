@@ -1,5 +1,4 @@
 {
-    $Id: ncgopt.pas,v 1.18 2005/02/14 17:13:06 peter Exp $
     Copyright (c) 1998-2003 by Jonas Maebe
 
     This unit implements the generic implementation of optimized nodes
@@ -29,9 +28,9 @@ uses node, nopt;
 
 type
   tcgaddsstringcharoptnode = class(taddsstringcharoptnode)
-     function det_resulttype: tnode; override;
+     function pass_typecheck: tnode; override;
      function pass_1: tnode; override;
-     procedure pass_2; override;
+     procedure pass_generate_code; override;
   end;
 
 
@@ -41,7 +40,7 @@ uses
   globtype,globals,
   pass_1,defutil,htypechk,
   symdef,paramgr,
-  aasmbase,aasmtai,
+  aasmbase,aasmtai,aasmdata,
   ncnv, ncon, pass_2,
   cgbase, cpubase,
   tgobj, cgobj, cgutils,ncgutil;
@@ -51,18 +50,18 @@ uses
                              TCGADDOPTNODE
 *****************************************************************************}
 
-function tcgaddsstringcharoptnode.det_resulttype: tnode;
+function tcgaddsstringcharoptnode.pass_typecheck: tnode;
 begin
-  det_resulttype := nil;
-  resulttypepass(left);
-  resulttypepass(right);
+  pass_typecheck := nil;
+  typecheckpass(left);
+  typecheckpass(right);
   if codegenerror then
     exit;
   { update the curmaxlen field (before converting to a string!) }
   updatecurmaxlen;
-  if not is_shortstring(left.resulttype.def) then
+  if not is_shortstring(left.resultdef) then
     inserttypeconv(left,cshortstringtype);
-  resulttype:=left.resulttype;
+  resultdef:=left.resultdef;
 end;
 
 
@@ -74,15 +73,10 @@ begin
   if codegenerror then
     exit;
   expectloc:=LOC_REFERENCE;
-  if not is_constcharnode(right) then
-    { it's not sure we need the register, but we can't know it here yet }
-    calcregisters(self,2,0,0)
-  else
-    calcregisters(self,1,0,0);
 end;
 
 
-procedure tcgaddsstringcharoptnode.pass_2;
+procedure tcgaddsstringcharoptnode.pass_generate_code;
 var
   l: tasmlabel;
   href,href2 :  treference;
@@ -91,17 +85,16 @@ var
   len : integer;
 begin
   { first, we have to more or less replicate some code from }
-  { ti386addnode.pass_2                                     }
+  { ti386addnode.pass_generate_code                                     }
   secondpass(left);
   if not(tg.istemp(left.location.reference) and
-         (tg.sizeoftemp(exprasmlist,left.location.reference) = 256)) and
-     not(nf_use_strconcat in flags) then
+         (tg.sizeoftemp(current_asmdata.CurrAsmList,left.location.reference) = 256)) then
     begin
-       tg.Gettemp(exprasmlist,256,tt_normal,href);
-       cg.g_copyshortstring(exprasmlist,left.location.reference,href,255);
-       location_freetemp(exprasmlist,left.location);
+       tg.gethltemp(current_asmdata.CurrAsmList,cshortstringtype,256,tt_normal,href);
+       cg.g_copyshortstring(current_asmdata.CurrAsmList,left.location.reference,href,255);
+       location_freetemp(current_asmdata.CurrAsmList,left.location);
        { return temp reference }
-       location_reset(left.location,LOC_REFERENCE,def_cgsize(resulttype.def));
+       location_reset_ref(left.location,LOC_REFERENCE,def_cgsize(resultdef),1);
        left.location.reference:=href;
     end;
   secondpass(right);
@@ -117,31 +110,31 @@ begin
     if right.location.loc in [LOC_REFERENCE,LOC_CREFERENCE] then
       begin
         { get register for the char }
-        hreg := cg.getintregister(exprasmlist,OS_8);
-        cg.a_load_ref_reg(exprasmlist,OS_8,OS_8,right.location.reference,hreg);
+        hreg := cg.getintregister(current_asmdata.CurrAsmList,OS_8);
+        cg.a_load_ref_reg(current_asmdata.CurrAsmList,OS_8,OS_8,right.location.reference,hreg);
         { I don't think a temp char exists, but it won't hurt (JM) }
-        tg.ungetiftemp(exprasmlist,right.location.reference);
+        tg.ungetiftemp(current_asmdata.CurrAsmList,right.location.reference);
       end
     else hreg := right.location.register;
 
   { load the current string length }
-  lengthreg := cg.getintregister(exprasmlist,OS_INT);
-  cg.a_load_ref_reg(exprasmlist,OS_8,OS_INT,left.location.reference,lengthreg);
+  lengthreg := cg.getintregister(current_asmdata.CurrAsmList,OS_INT);
+  cg.a_load_ref_reg(current_asmdata.CurrAsmList,OS_8,OS_INT,left.location.reference,lengthreg);
 
   { do we have to check the length ? }
   if tg.istemp(left.location.reference) then
     checklength := curmaxlen = 255
   else
-    checklength := curmaxlen >= tstringdef(left.resulttype.def).len;
+    checklength := curmaxlen >= tstringdef(left.resultdef).len;
   if checklength then
     begin
       { is it already maximal? }
-      objectlibrary.getlabel(l);
+      current_asmdata.getjumplabel(l);
       if tg.istemp(left.location.reference) then
         len:=255
       else
-        len:=tstringdef(left.resulttype.def).len;
-      cg.a_cmp_const_reg_label(exprasmlist,OS_INT,OC_EQ,len,lengthreg,l)
+        len:=tstringdef(left.resultdef).len;
+      cg.a_cmp_const_reg_label(current_asmdata.CurrAsmList,OS_INT,OC_EQ,len,lengthreg,l)
     end;
 
   { no, so increase the length and add the new character }
@@ -156,7 +149,7 @@ begin
       { they're not free, so add the base reg to       }
       { the string length (since the index can         }
       { have a scalefactor) and use lengthreg as base  }
-      cg.a_op_reg_reg(exprasmlist,OP_ADD,OS_INT,href2.base,lengthreg);
+      cg.a_op_reg_reg(current_asmdata.CurrAsmList,OP_ADD,OS_INT,href2.base,lengthreg);
       href2.base := lengthreg;
     end
   else
@@ -177,26 +170,19 @@ begin
     begin
       { no new_reference(href2) because it's only }
       { used once (JM)                            }
-      cg.a_load_reg_ref(exprasmlist,OS_8,OS_8,hreg,href2);
+      cg.a_load_reg_ref(current_asmdata.CurrAsmList,OS_8,OS_8,hreg,href2);
     end
   else
-    cg.a_load_const_ref(exprasmlist,OS_8,tordconstnode(right).value,href2);
-  lengthreg:=cg.makeregsize(exprasmlist,lengthreg,OS_8);
+    cg.a_load_const_ref(current_asmdata.CurrAsmList,OS_8,tordconstnode(right).value.svalue,href2);
+  lengthreg:=cg.makeregsize(current_asmdata.CurrAsmList,lengthreg,OS_8);
   { increase the string length }
-  cg.a_op_const_reg(exprasmlist,OP_ADD,OS_8,1,lengthreg);
-  cg.a_load_reg_ref(exprasmlist,OS_8,OS_8,lengthreg,left.location.reference);
+  cg.a_op_const_reg(current_asmdata.CurrAsmList,OP_ADD,OS_8,1,lengthreg);
+  cg.a_load_reg_ref(current_asmdata.CurrAsmList,OS_8,OS_8,lengthreg,left.location.reference);
   if checklength then
-    cg.a_label(exprasmlist,l);
+    cg.a_label(current_asmdata.CurrAsmList,l);
   location_copy(location,left.location);
 end;
 
 begin
   caddsstringcharoptnode := tcgaddsstringcharoptnode;
 end.
-
-{
-  $Log: ncgopt.pas,v $
-  Revision 1.18  2005/02/14 17:13:06  peter
-    * truncate log
-
-}

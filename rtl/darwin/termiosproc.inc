@@ -1,5 +1,4 @@
 {
-    $Id: termiosproc.inc,v 1.5 2005/02/14 17:13:22 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Peter Vreman
     member of the Free Pascal development team.
@@ -19,14 +18,14 @@
                          IOCtl and Termios calls
 ******************************************************************************}
 
-Function TCGetAttr(fd:cint;var tios:TermIOS):cint;
+Function TCGetAttr(fd:cint;var tios:TermIOS):cint; {$ifdef VER2_0}inline;{$endif}
 begin
   TCGETAttr:=fpIoCtl(Fd,TIOCGETA,@tios);
 end;
 
 Function TCSetAttr(fd:cint;OptAct:cint;const tios:TermIOS):cint;
 var
-  nr:cint;
+  nr:culong;
 begin
   case OptAct of
    TCSANOW   : nr:=TIOCSETA;
@@ -42,13 +41,13 @@ begin
   TCSetAttr:=fpIOCtl(fd,nr,@Tios);
 end;
 
-Procedure CFSetISpeed(var tios:TermIOS;speed:Cardinal);
+Procedure CFSetISpeed(var tios:TermIOS;speed:Cardinal); {$ifdef VER2_0}inline;{$endif}
 begin
   tios.c_ispeed:=speed; {Probably the Bxxxx speed constants}
 end;
 
 
-Procedure CFSetOSpeed(var tios:TermIOS;speed:Cardinal);
+Procedure CFSetOSpeed(var tios:TermIOS;speed:Cardinal); {$ifdef VER2_0}inline;{$endif}
 begin
    tios.c_ospeed:=speed;
 end;
@@ -78,41 +77,53 @@ end;
 //Procedure CFSetOSpeed(var tios:TermIOS;speed:Cardinal); cdecl; external 'c' name 'cfsetospeed';
 //Procedure CFMakeRaw(var tios:TermIOS); cdecl; external 'c' name 'cfmakeraw';
 
-Function TCSendBreak(fd,duration:cint):cint;
+function real_tcsendbreak(fd,duration: cint): cint; cdecl; external name 'tcsendbreak';
+
+Function TCSendBreak(fd,duration:cint):cint;{$ifdef VER2_0}inline;{$endif}
 begin
-  TCSendBreak:=fpIOCtl(fd,TIOCSBRK,nil);
+  TCSendBreak:=real_tcsendbreak(fd,duration);
 end;
 
 
-Function TCSetPGrp(fd,id:cint):cint;
+function real_tcsetpgrp(fd: cint; pgrp: pid_t): cint; cdecl; external name 'tcsetpgrp';
+
+Function TCSetPGrp(fd,id:cint):cint;{$ifdef VER2_0}inline;{$endif}
 begin
-  TCSetPGrp:=fpIOCtl(fd,TIOCSPGRP,pointer(id));
+  TCSetPGrp:=real_tcsetpgrp(fd,id);;
 end;
 
 
-Function TCGetPGrp(fd:cint;var id:cint):cint;
+Function TCGetPGrp(fd:cint;var id:cint):cint;{$ifdef VER2_0}inline;{$endif}
+var
+  pid: pid_t;
 begin
-  TCGetPGrp:=fpIOCtl(fd,TIOCGPGRP,@id);
+  if isatty(fd)=0 then
+    exit(-1);
+  TCGetPGrp:=fpIOCtl(fd,TIOCGPGRP,@pid);
+  if TCGetPGrp>=0 then
+    id:=pid;
 end;
 
-Function TCDrain(fd:cint):cint;
+function real_tcdrain(fd: cint): cint; cdecl; external name 'tcdrain';
+
+Function TCDrain(fd:cint):cint;{$ifdef VER2_0}inline;{$endif}
 begin
   TCDrain:=fpIOCtl(fd,TIOCDRAIN,nil); {Should set timeout to 1 first?}
 end;
 
 
-Function TCFlow(fd,act:cint):cint;
+function real_tcflow(fd,act:cint): cint; cdecl; external name 'tcflow';
+
+Function TCFlow(fd,act:cint):cint; {$ifdef VER2_0}inline;{$endif}
 begin
-    case act OF
-     TCOOFF :  TCFlow:=fpIoctl(fd,TIOCSTOP,nil);
-     TCOOn  :  TCFlow:=fpIOctl(Fd,TIOCStart,nil);
-     TCIOFF :  {N/I}
-    end;
+  TCFlow:=real_tcflow(fd,act);
 end;
 
-Function TCFlush(fd,qsel:cint):cint;
+function real_tcflush(fd,qsel: cint): cint; cdecl; external name 'tcflush';
+
+Function TCFlush(fd,qsel:cint):cint;  {$ifdef VER2_0}inline;{$endif}
 begin
-  TCFlush:=fpIOCtl(fd,TIOCFLUSH,pointer(qsel));
+  TCFlush:=real_tcflush(fd,qsel);
 end;
 
 Function IsATTY (Handle:cint):cint;
@@ -122,11 +133,11 @@ Function IsATTY (Handle:cint):cint;
 var
   t : Termios;
 begin
- IsAtty:=TCGetAttr(Handle,t);
+ IsAtty:=ord(TCGetAttr(Handle,t) <> -1);
 end;
 
 
-Function IsATTY(var f: text):cint;
+Function IsATTY(var f: text):cint;  {$ifdef VER2_0}inline;{$endif}
 {
   Idem as previous, only now for text variables.
 }
@@ -134,9 +145,3 @@ begin
   IsATTY:=IsaTTY(textrec(f).handle);
 end;
 
-{
-   $Log: termiosproc.inc,v $
-   Revision 1.5  2005/02/14 17:13:22  peter
-     * truncate log
-
-}

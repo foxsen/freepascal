@@ -1,5 +1,4 @@
 {
-    $Id: systhrd.inc,v 1.1 2005/02/06 16:57:18 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2002 by Peter Vreman,
     member of the Free Pascal development team.
@@ -26,7 +25,7 @@ const
  pag_Guard = 8;
  pag_Commit = $10;
  obj_Tile = $40;
- sem_Indefinite_Wait = -1;
+ sem_Indefinite_Wait = cardinal (-1);
  dtSuspended = 1;
  dtStack_Commited = 2;
 
@@ -75,7 +74,6 @@ function DosExitCritSec:cardinal; cdecl; external 'DOSCALLS' index 233;
                              Threadvar support
 *****************************************************************************}
 
-{$ifdef HASTHREADVAR}
 const
  ThreadVarBlockSize: dword = 0;
 
@@ -129,7 +127,6 @@ end;
         fpc_threadvar_relocate_proc := @SysRelocateThreadvar;
       end;
 
-{$endif HASTHREADVAR}
 
 
 {*****************************************************************************
@@ -149,58 +146,3 @@ procedure SysEnterCriticalSection(var cs : TRTLCriticalSection);
 
 procedure SysLeaveCriticalSection(var cs : TRTLCriticalSection);
   external 'kernel32' name 'LeaveCriticalSection';
-
-
-{*****************************************************************************
-                           Heap Mutex Protection
-*****************************************************************************}
-
-    var
-      HeapMutex : TRTLCriticalSection;
-
-    procedure OS2HeapMutexInit;
-      begin
-         SysInitCriticalSection(heapmutex);
-      end;
-
-    procedure OS2HeapMutexDone;
-      begin
-         SysDoneCriticalSection(heapmutex);
-      end;
-
-    procedure OS2HeapMutexLock;
-      begin
-         SysEnterCriticalSection(heapmutex);
-      end;
-
-    procedure OS2HeapMutexUnlock;
-      begin
-         SysLeaveCriticalSection(heapmutex);
-      end;
-
-    const
-      OS2MemoryMutexManager : TMemoryMutexManager = (
-        MutexInit : @OS2HeapMutexInit;
-        MutexDone : @OS2HeapMutexDone;
-        MutexLock : @OS2HeapMutexLock;
-        MutexUnlock : @OS2HeapMutexUnlock;
-      );
-
-    procedure InitSystemThreads;
-      begin
-        SetNoThreadManager;
-        SetMemoryMutexManager(OS2MemoryMutexManager);
-      end;
-
-
-{
-  $Log: systhrd.inc,v $
-  Revision 1.1  2005/02/06 16:57:18  peter
-    * threads for go32v2,os,emx,netware
-
-  Revision 1.1  2005/02/06 13:06:20  peter
-    * moved file and dir functions to sysfile/sysdir
-    * win32 thread in systemunit
-
-}
-

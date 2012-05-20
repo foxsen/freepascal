@@ -1,5 +1,4 @@
 {
-    $Id: setjumph.inc,v 1.2 2005/02/14 17:13:21 peter Exp $
 
     This file is part of the Free Pascal run time library.
     Copyright (c) 2003 by the Free Pascal development team.
@@ -17,17 +16,14 @@
 
 type
    jmp_buf = packed record
+{$if defined(FPUVFPV2) or defined(FPUVFPV3) or defined(FPUVFPV3_D16)}
+      d8,d9,d10,d11,d12,d13,d14,d15: double;
+{$endif}
       v1,v2,v3,v4,v5,v6,sl,fp,sp,pc : dword;
    end;
    pjmp_buf = ^jmp_buf;
 
-function setjmp(var S : jmp_buf) : longint;
-procedure longjmp(var S : jmp_buf;value : longint);
+function setjmp(var S : jmp_buf) : longint;[external name 'FPC_SETJMP'];
+procedure longjmp(var S : jmp_buf;value : longint);[external name 'FPC_LONGJMP'];
 
 
-{
-  $Log: setjumph.inc,v $
-  Revision 1.2  2005/02/14 17:13:21  peter
-    * truncate log
-
-}

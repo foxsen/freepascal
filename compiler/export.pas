@@ -1,5 +1,4 @@
 {
-    $Id: export.pas,v 1.23 2005/02/14 17:13:06 peter Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl
 
     This unit implements an uniform export object
@@ -29,8 +28,8 @@ interface
 uses
   cutils,cclasses,
   systems,
-  symtype,
-  aasmbase;
+  symtype,symdef,symsym,
+  aasmbase,aasmdata;
 
 const
    { export options }
@@ -42,7 +41,7 @@ type
    texported_item = class(TLinkedListItem)
       sym : tsym;
       index : longint;
-      name : pstring;
+      name : pshortstring;
       options : word;
       is_var : boolean;
       constructor create;
@@ -52,18 +51,35 @@ type
    texportlib=class
    private
       notsupmsg : boolean;
+      finitname,
+      ffininame  : string;
       procedure NotSupported;
    public
-      edatalabel : tasmlabel;
       constructor Create;virtual;
       destructor Destroy;override;
       procedure preparelib(const s : string);virtual;
       procedure exportprocedure(hp : texported_item);virtual;
       procedure exportvar(hp : texported_item);virtual;
       procedure generatelib;virtual;
+      procedure setinitname(list: TAsmList; const s: string); virtual;
+      procedure setfininame(list: TAsmList; const s: string); virtual;
+      
+      property initname: string read finitname;
+      property fininame: string read ffininame;
    end;
 
    TExportLibClass=class of TExportLib;
+
+
+  procedure exportprocsym(sym: tsym; const s : string; index: longint; options: word);
+  procedure exportvarsym(sym: tsym; const s : string; index: longint; options: word);
+  { to export symbols not directly related to a tsym (e.g., the Objective-C
+    rtti) }
+  procedure exportname(const s : string; options: word);
+
+  procedure exportallprocdefnames(sym: tprocsym; pd: tprocdef; options: word);
+  procedure exportallprocsymnames(ps: tprocsym; options: word);
+
 
 var
   CExportLib : array[tsystem] of TExportLibClass;
@@ -77,6 +93,69 @@ implementation
 
 uses
   verbose,globals;
+
+{****************************************************************************
+                           TExported_procedure
+****************************************************************************}
+
+procedure exportprocsym(sym: tsym; const s : string; index: longint; options: word);
+  var
+    hp : texported_item;
+  begin
+    hp:=texported_item.create;
+    hp.name:=stringdup(s);
+    hp.sym:=sym;
+    hp.options:=options or eo_name;
+    hp.index:=index;
+    exportlib.exportprocedure(hp);
+  end;
+
+
+procedure exportvarsym(sym: tsym; const s : string; index: longint; options: word);
+  var
+    hp : texported_item;
+  begin
+    hp:=texported_item.create;
+    hp.name:=stringdup(s);
+    hp.sym:=sym;
+    hp.is_var:=true;
+    hp.options:=options or eo_name;
+    hp.index:=index;
+    exportlib.exportvar(hp);
+  end;
+
+
+procedure exportname(const s : string; options: word);
+  begin
+    exportvarsym(nil,s,0,options);
+  end;
+
+
+  procedure exportallprocdefnames(sym: tprocsym; pd: tprocdef; options: word);
+    var
+      item: TCmdStrListItem;
+    begin
+      exportprocsym(sym,pd.mangledname,0,options);
+      { walk through all aliases }
+      item:=TCmdStrListItem(pd.aliasnames.first);
+      while assigned(item) do
+        begin
+          { avoid duplicate entries, sometimes aliasnames contains the mangledname }
+          if item.str<>pd.mangledname then
+            exportprocsym(sym,item.str,0,options);
+          item:=TCmdStrListItem(item.next);
+        end;
+    end;
+    
+
+  procedure exportallprocsymnames(ps: tprocsym; options: word);
+    var
+      i: longint;
+    begin
+      for i:= 0 to ps.ProcdefList.Count-1 do
+        exportallprocdefnames(ps,tprocdef(ps.ProcdefList[i]),options);
+    end;
+
 
 {****************************************************************************
                            TExported_procedure
@@ -107,7 +186,6 @@ end;
 constructor texportlib.Create;
 begin
   notsupmsg:=false;
-  edatalabel:=nil;
 end;
 
 
@@ -151,6 +229,17 @@ begin
 end;
 
 
+procedure texportlib.setinitname(list: TAsmList; const s: string);
+begin
+  finitname:=s;
+end;
+
+
+procedure texportlib.setfininame(list: TAsmList; const s: string);
+begin
+  ffininame:=s;
+end;
+
 {*****************************************************************************
                                  Init/Done
 *****************************************************************************}
@@ -178,9 +267,3 @@ end;
 
 
 end.
-{
-  $Log: export.pas,v $
-  Revision 1.23  2005/02/14 17:13:06  peter
-    * truncate log
-
-}

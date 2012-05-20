@@ -1,5 +1,4 @@
 {
-    $Id: rabase.pas,v 1.5 2005/02/14 17:13:07 peter Exp $
     Copyright (c) 1998-2003 by Peter Vreman, Florian Klaempfl and Carl Eric Codere
 
     Basic stuff for assembler readers
@@ -33,7 +32,7 @@ unit rabase;
     type
        tbaseasmreader = class
          constructor create;virtual;
-         { the real return type is taasmoutput, but this would introduce too much unit circles }
+         { the real return type is TAsmList, but this would introduce too much unit circles }
          function Assemble: tlinkedlist;virtual;abstract;
        end;
        tcbaseasmreader = class of tbaseasmreader;
@@ -41,7 +40,7 @@ unit rabase;
        pasmmodeinfo = ^tasmmodeinfo;
        tasmmodeinfo = record
           id    : tasmmode;
-          idtxt : string[8];
+          idtxt : string[12];
           casmreader : tcbaseasmreader;
        end;
 
@@ -76,8 +75,10 @@ unit rabase;
         ht : tasmmode;
       begin
         result:=false;
-        { this should be case insensitive !! PM }
         hs:=upper(s);
+        { Support Default as an alias for Standard }
+        if hs='DEFAULT' then
+          hs:='STANDARD';
         for ht:=low(tasmmode) to high(tasmmode) do
          if assigned(asmmodeinfos[ht]) and
             (asmmodeinfos[ht]^.idtxt=hs) then
@@ -104,9 +105,3 @@ finalization
       asmmodeinfos[asmmode]:=nil;
     end;
 end.
-{
-  $Log: rabase.pas,v $
-  Revision 1.5  2005/02/14 17:13:07  peter
-    * truncate log
-
-}

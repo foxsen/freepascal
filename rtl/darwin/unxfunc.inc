@@ -1,5 +1,4 @@
 {
-    $Id: unxfunc.inc,v 1.3 2005/03/25 22:53:39 jonas Exp $
     This file is part of the Free Component Library (FCL)
     Copyright (c) 1999-2000 by Peter Vreman
 
@@ -19,9 +18,11 @@
 Function PClose(Var F:file) : cint;
 var
   pl : ^cint;
-
+  res: cint;
 begin
-  fpclose(filerec(F).Handle);
+  repeat
+    res:=fpclose(filerec(F).Handle);
+  until (res<>-1) or (fpgeterrno<>ESysEINTR);
 { closed our side, Now wait for the other - this appears to be needed ?? }
   pl:=@(filerec(f).userdata[2]);
   pclose := WaitProcess(pl^);
@@ -29,10 +30,12 @@ end;
 
 Function PClose(Var F:text) :cint;
 var
-  pl  : ^longint;
-
+  pl  : ^cint;
+  res : cint;
 begin
-  fpclose(Textrec(F).Handle);
+  repeat
+    res:=fpclose(Textrec(F).Handle);
+  until (res<>-1) or (fpgeterrno<>ESysEINTR);
 { closed our side, Now wait for the other - this appears to be needed ?? }
   pl:=@(textrec(f).userdata[2]);
   pclose:= WaitProcess(pl^);
@@ -59,19 +62,3 @@ begin
 end;
 
 
-{
-  $Log: unxfunc.inc,v $
-  Revision 1.3  2005/03/25 22:53:39  jonas
-    * fixed several warnings and notes about unused variables (mainly) or
-      uninitialised use of variables/function results (a few)
-
-  Revision 1.2  2005/02/14 17:13:22  peter
-    * truncate log
-
-  Revision 1.1  2005/02/13 21:47:56  peter
-    * include file cleanup part 2
-
-  Revision 1.1  2005/02/13 20:01:37  peter
-    * include file cleanup
-
-}

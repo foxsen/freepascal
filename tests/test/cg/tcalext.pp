@@ -19,11 +19,15 @@
 
 {$ifndef USE_PASCAL_OBJECT}
 {$MODE OBJFPC}
-{$STATIC ON}
 {$R+}
-uses strings;
+uses strings,ctypes;
 {$L ctest.o}
 {$endif USE_PASCAL_OBJECT}
+
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+{$define test_longdouble}
+{$endif}
+
 { Use C alignment of records }
 {$PACKRECORDS C}
 const
@@ -73,7 +77,7 @@ end;
   int64_array = array [0..1] of int64;
   single_array = array [0..1] of single;
   double_array = array [0..1] of double;
-  extended_array = array [0..1] of extended;
+  clongdouble_array = array [0..1] of clongdouble;
 
 
 { simple parameter passing }
@@ -86,7 +90,7 @@ procedure test_param_s32(x: longint); cdecl; external;
 procedure test_param_s64(x: int64); cdecl; external;
 procedure test_param_float(x : single); cdecl; external;
 procedure test_param_double(x: double); cdecl; external;
-procedure test_param_longdouble(x: extended); cdecl; external;
+procedure test_param_longdouble(x: clongdouble); cdecl; external;
 procedure test_param_var_u8(var x: byte); cdecl; external;
 
 { array parameter passing }
@@ -99,7 +103,7 @@ procedure test_array_param_s32(x: longint_array); cdecl; external;
 procedure test_array_param_s64(x: int64_array); cdecl; external;
 procedure test_array_param_float(x : single_array); cdecl; external;
 procedure test_array_param_double(x: double_array); cdecl; external;
-procedure test_array_param_longdouble(x: extended_array); cdecl; external;
+procedure test_array_param_longdouble(x: clongdouble_array); cdecl; external;
 
 { mixed parameter passing }
 procedure test_param_mixed_u16(z: byte; x : word; y :byte); cdecl; external;
@@ -107,7 +111,7 @@ procedure test_param_mixed_u32(z: byte; x: cardinal; y: byte); cdecl; external;
 procedure test_param_mixed_s64(z: byte; x: int64; y: byte); cdecl; external;
 procedure test_param_mixed_float(x: single; y: byte); cdecl; external;
 procedure test_param_mixed_double(x: double; y: byte); cdecl; external;
-procedure test_param_mixed_long_double(x: extended; y: byte); cdecl; external;
+procedure test_param_mixed_long_double(x: clongdouble; y: byte); cdecl; external;
 procedure test_param_mixed_var_u8(var x: byte;y:byte); cdecl; external;
 { structure parameter testing }
 procedure test_param_struct_tiny(buffer :   _1BYTE_); cdecl; external;
@@ -132,7 +136,7 @@ function test_function_s64: int64; cdecl; external;
 function test_function_pchar: pchar; cdecl; external;
 function test_function_float : single; cdecl; external;
 function test_function_double : double; cdecl; external;
-function test_function_longdouble: extended; cdecl; external;
+function test_function_longdouble: clongdouble; cdecl; external;
 function test_function_tiny_struct : _1byte_; cdecl; external;
 function test_function_small_struct : _3byte_; cdecl; external;
 function test_function_small_struct_s : _3byte_s; cdecl; external;
@@ -154,7 +158,7 @@ var
  global_s64bit : int64; cvar; external;
  global_float : single; cvar;external;
  global_double : double; cvar;external;
- global_long_double : extended; cvar; external;
+ global_long_double : clongdouble; cvar; external;
  value_u8bit : byte;
  value_s16bit : smallint;
  value_s32bit : longint;
@@ -174,7 +178,7 @@ var
  array_u64bit : array [0..1] of qword;
  array_float : array [0..1] of single;
  array_double : array [0..1] of double;
- array_long_double : array [0..1] of extended;
+ array_long_double : array [0..1] of clongdouble;
 
  procedure clear_globals;
   begin
@@ -204,6 +208,8 @@ var
     value_long_double := 0.0;
   end;
 
+{ in sub procedure to detect stack corruption when exiting }
+procedure dotest;
 const
   has_errors : boolean = false;
 
@@ -297,6 +303,7 @@ begin
   if trunc(global_double) <> trunc(RESULT_DOUBLE) then
     failed := true;
 
+{$ifdef test_longdouble}
   clear_values;
   clear_globals;
 
@@ -304,6 +311,7 @@ begin
   test_param_longdouble(value_long_double);
   if trunc(global_long_double) <> trunc(RESULT_LONGDOUBLE) then
     failed := true;
+{$endif}
 
   { var parameter testing }
   clear_values;
@@ -395,19 +403,12 @@ begin
   clear_values;
   clear_globals;
 
+{$ifdef test_longdouble}
   array_long_double[1] := RESULT_LONGDOUBLE;
   test_array_param_longdouble(array_long_double);
   if trunc(global_long_double) <> trunc(RESULT_LONGDOUBLE) then
-    begin
-{$ifdef cpui386}
-      if sizeof(global_long_double)=10 then
-        begin
-          { Known issue, ignore tcalext2 contains that test }
-        end
-      else
-{$endif cpui386}
-        failed := true;
-    end;
+    failed := true;
+{$endif test_longdouble}
 
   If failed then
    fail
@@ -475,6 +476,7 @@ begin
     WriteLn('Passed!');
 
   Write('External mixed parameter testing with floating values...');
+  failed := false;
 
   clear_values;
   clear_globals;
@@ -490,6 +492,7 @@ begin
   clear_values;
   clear_globals;
 
+{$ifdef test_longdouble}
   value_u8bit := RESULT_U8BIT;
   value_long_double := RESULT_LONGDOUBLE;
   test_param_mixed_long_double(value_long_double, value_u8bit);
@@ -497,6 +500,7 @@ begin
     failed := true;
   if global_u8bit <> RESULT_U8BIT then
     failed := true;
+{$endif}
 
   If failed then
    fail
@@ -504,7 +508,6 @@ begin
     WriteLn('Passed!');
 
   Write('External struct parameter testing...');
-
   failed := false;
 
   clear_values;
@@ -570,7 +573,6 @@ begin
 
 
   Write('External mixed struct/byte parameter testing...');
-
   failed := false;
 
   clear_values;
@@ -692,6 +694,7 @@ begin
 
   Write('pchar function result testing...');
   failed := false;
+  
   { verify if the contents both strings are equal }
   pc := test_function_pchar;
   if strcomp(pc, RESULT_PCHAR) <> 0 then
@@ -718,12 +721,14 @@ begin
   if trunc(value_double) <> trunc(RESULT_DOUBLE) then
     failed := true;
 
+{$ifdef test_longdouble}
   clear_values;
   clear_globals;
 
   value_long_double := test_function_longdouble;
   if trunc(value_long_double) <> trunc(RESULT_LONGDOUBLE) then
     failed := true;
+{$endif}
 
   clear_values;
   clear_globals;
@@ -734,6 +739,7 @@ begin
     WriteLn('Passed!');
 
   Write('Function result testing for struct...');
+  failed := false;
 
   tinystruct := test_function_tiny_struct;
   if tinystruct.u8 <> RESULT_U8BIT then
@@ -772,11 +778,8 @@ begin
 
   if has_errors then
     Halt(1);
+end;
+
+begin
+  dotest;
 end.
-
-{
-  $Log: tcalext.pp,v $
-  Revision 1.11  2005/02/14 17:13:36  peter
-    * truncate log
-
-}

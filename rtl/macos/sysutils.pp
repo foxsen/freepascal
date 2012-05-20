@@ -1,5 +1,4 @@
 {
-    $Id: sysutils.pp,v 1.7 2005/02/26 14:38:14 florian Exp $
 
     This file is part of the Free Pascal run time library.
     Copyright (c) 2004-2005 by Olle Raab
@@ -22,6 +21,7 @@ unit sysutils;
 interface
 
 {$MODE objfpc}
+{$modeswitch out}
 { force ansistrings }
 {$H+}
 
@@ -51,6 +51,12 @@ implementation
 
 uses
   Dos, Sysconst; // For some included files.
+
+{$DEFINE FPC_FEXPAND_VOLUMES}
+{$DEFINE FPC_FEXPAND_NO_DEFAULT_PATHS}
+{$DEFINE FPC_FEXPAND_DRIVESEP_IS_ROOT}
+{$DEFINE FPC_FEXPAND_NO_DOTS_UPDIR}
+{$DEFINE FPC_FEXPAND_NO_CURDIR}
 
 { Include platform independent implementation part }
 {$i sysutils.inc}
@@ -87,7 +93,23 @@ begin
 end;
 
 
-Function FileCreate (Const FileName : String;Mode : Longint) : Longint;
+Function FileCreate (Const FileName : String;Rights : Longint) : Longint;
+
+Var LinuxFlags : longint;
+
+BEGIN
+  (* TODO fix
+  LinuxFlags:=0;
+  Case (Mode and 3) of
+    0 : LinuxFlags:=LinuxFlags or Open_RdOnly;
+    1 : LinuxFlags:=LinuxFlags or Open_WrOnly;
+    2 : LinuxFlags:=LinuxFlags or Open_RdWr;
+  end;
+  FileCreate:=fdOpen(FileName,LinuxFlags or Open_Creat or Open_Trunc);
+  *)
+end;
+
+Function FileCreate (Const FileName : String;ShareMode : Longint; Rights : Longint) : Longint;
 
 Var LinuxFlags : longint;
 
@@ -104,7 +126,7 @@ BEGIN
 end;
 
 
-Function FileRead (Handle : Longint; Var Buffer; Count : longint) : Longint;
+Function FileRead (Handle : Longint; out Buffer; Count : longint) : Longint;
 
 begin
   (* TODO fix
@@ -131,7 +153,7 @@ begin
 end;
 
 
-Function FileSeek (Handle : Longint; FOffset,Origin : Int64) : Int64;
+Function FileSeek (Handle : Longint; FOffset: Int64; Origin : Longint) : Int64;
 
 begin
   (* TODO fix
@@ -149,7 +171,7 @@ begin
   *)
 end;
 
-Function FileTruncate (Handle,Size: Longint) : boolean;
+Function FileTruncate (Handle: THandle; Size: Int64) : boolean;
 
 begin
   (* TODO fix
@@ -317,7 +339,7 @@ begin
 end;
 
 
-Function FindFirst (Const Path : String; Attr : Longint; Var Rslt : TSearchRec) : Longint;
+Function FindFirst (Const Path : String; Attr : Longint; out Rslt : TSearchRec) : Longint;
   var
     s: Str255;
 
@@ -656,7 +678,7 @@ begin
   Result:='';
 end;
 
-function ExecuteProcess(Const Path: AnsiString; Const ComLine: AnsiString):integer;
+function ExecuteProcess(Const Path: AnsiString; Const ComLine: AnsiString;Flags:TExecuteFlags=[]):integer;
 var
   s: AnsiString;
   wdpath: AnsiString;
@@ -691,7 +713,7 @@ Begin
     Result := 0;
 End;
 
-function ExecuteProcess(Const Path: AnsiString; Const ComLine: Array Of AnsiString):integer;
+function ExecuteProcess(Const Path: AnsiString; Const ComLine: Array Of AnsiString;Flags:TExecuteFlags=[]):integer;
 begin
 end;
 
@@ -716,17 +738,3 @@ Initialization
 Finalization
   DoneExceptions;
 end.
-
-{
-  $Log: sysutils.pp,v $
-  Revision 1.7  2005/02/26 14:38:14  florian
-    + SysLocale
-
-  Revision 1.6  2005/02/14 17:13:30  peter
-    * truncate log
-
-  Revision 1.5  2005/01/24 18:28:58  olle
-    + a tiny bit of support for macos
-    + warning that this is under construction
-
-}

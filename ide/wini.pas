@@ -1,5 +1,4 @@
 {
-    $Id: wini.pas,v 1.6 2005/02/14 17:13:19 peter Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 1998 by B‚rczi G bor
 
@@ -89,6 +88,15 @@ implementation
 uses
   WUtils;
 
+{$IFOPT Q+}
+  {$Q-}
+  {$DEFINE REENABLE_Q}
+{$ENDIF}
+{$IFOPT R+}
+  {$R-}
+  {$DEFINE REENABLE_R}
+{$ENDIF}
+
 function CalcHash(const s: String): Cardinal;
 var
   i: integer;
@@ -97,6 +105,13 @@ begin
   for i := 1 to Length(s) do
     CalcHash := CalcHash shl 9 - CalcHash shl 4 + Ord(S[I]);
 end;
+
+{$IFDEF REENABLE_Q}
+  {$Q+}
+{$ENDIF}
+{$IFDEF REENABLE_R}
+  {$R+}
+{$ENDIF}
 
 constructor TINIEntry.Init(const ALine: string);
 begin
@@ -507,9 +522,3 @@ end;
 
 
 END.
-{
-  $Log: wini.pas,v $
-  Revision 1.6  2005/02/14 17:13:19  peter
-    * truncate log
-
-}

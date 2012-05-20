@@ -1,5 +1,4 @@
 {
-    $Id: printer.pp,v 1.8 2005/02/14 17:13:31 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Michael Van Canneyt,
     member of the Free Pascal development team.
@@ -77,7 +76,7 @@ Var
 
 Procedure PrintAndDelete (f:string);
 var
-  i,j  : longint;
+  i: pid_t;
   p,pp : ppchar;
 begin
   f:=f+#0;
@@ -100,14 +99,13 @@ begin
      pp^:=nil;
      fpExecve(lpr,p,envp);
      { In trouble here ! }
-     halt(128)
+     fpexit(127)
    end
   else
    begin
    { We're in the parent. }
-     fpwaitpid (i,@j,0);
-     if j<>0 then
-      exit;
+     if waitprocess(i)<>0 then
+       exit;
    { Erase the file }
      fpUnlink(f);
    end;
@@ -124,7 +122,7 @@ end;
 
 Procedure OpenLstFile ( Var F : Text);
 var
-  i : longint;
+  i : cint;
 begin
 {$IFDEF PRINTERDEBUG}
   writeln ('Printer : In OpenLstFile');
@@ -132,7 +130,9 @@ begin
  If textrec(f).mode <> fmoutput then
   exit;
  textrec(f).userdata[15]:=0; { set Zero length flag }
- i:=fpOpen(StrPas(textrec(f).name),(Open_WrOnly or Open_Creat), 438);
+ repeat
+   i:=fpOpen(StrPas(textrec(f).name),(Open_WrOnly or Open_Creat), 438);
+ until (i<>-1) or (fpgeterrno<>ESysEINTR);
  if i<0 then
   textrec(f).mode:=fmclosed
  else
@@ -142,11 +142,15 @@ end;
 
 
 Procedure CloseLstFile ( Var F : Text);
+var
+  res: cint;
 begin
 {$IFDEF PRINTERDEBUG}
   writeln ('Printer : In CloseLstFile');
 {$ENDIF}
-  fpclose (textrec(f).handle);
+  repeat
+    res:=fpclose (textrec(f).handle);
+  until (res<>-1) or (fpgeterrno<>ESysEINTR);
 { In case length is zero, don't print : lpr would give an error }
   if (textrec(f).userdata[15]=0) and (textrec(f).userdata[16]=P_TOF) then
    begin
@@ -162,6 +166,8 @@ end;
 
 
 Procedure InOutLstFile ( Var F : text);
+var
+  res: cint;
 begin
 {$IFDEF PRINTERDEBUG}
   writeln ('Printer : In InOutLstFile');
@@ -170,7 +176,9 @@ begin
    exit;
   if textrec(f).bufpos<>0 then
    textrec(f).userdata[15]:=1; { Set it is not empty. Important when closing !!}
-  fpwrite(textrec(f).handle,textrec(f).bufptr^,textrec(f).bufpos);
+  repeat
+    res:=fpwrite(textrec(f).handle,textrec(f).bufptr^,textrec(f).bufpos);
+  until (res<>-1) or (fpgeterrno<>ESysEINTR);
   textrec(f).bufpos:=0;
 end;
 
@@ -238,11 +246,3 @@ begin
   SetPrinterExit;
   Lpr := '/usr/bin/lpr';
 end.
-
-
-{
-  $Log: printer.pp,v $
-  Revision 1.8  2005/02/14 17:13:31  peter
-    * truncate log
-
-}

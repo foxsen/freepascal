@@ -1,5 +1,4 @@
 {
-    $Id: tgobj.pas,v 1.51 2005/02/14 17:13:09 peter Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl
 
     This unit implements the base object for temp. generator
@@ -37,7 +36,7 @@ unit tgobj;
       globals,globtype,
       symtype,
       cpubase,cpuinfo,cgbase,cgutils,
-      aasmbase,aasmtai;
+      aasmbase,aasmtai,aasmdata;
 
     type
       ptemprecord = ^ttemprecord;
@@ -57,11 +56,12 @@ unit tgobj;
 
        {# Generates temporary variables }
        ttgobj = class
-       private
+       protected
           { contains all free temps using nextfree links }
           tempfreelist  : ptemprecord;
-          function alloctemp(list: taasmoutput; size,alignment : longint; temptype : ttemptype; def:tdef) : longint;
-          procedure freetemp(list: taasmoutput; pos:longint;temptypes:ttemptypeset);
+          function alloctemp(list: TAsmList; size,alignment : longint; temptype : ttemptype; def:tdef) : longint; virtual;
+          procedure freetemp(list: TAsmList; pos:longint;temptypes:ttemptypeset);
+          procedure gettempinternal(list: TAsmList; size, alignment : longint;temptype:ttemptype;def: tdef;out ref : treference);
        public
           { contains all temps }
           templist      : ptemprecord;
@@ -69,7 +69,7 @@ unit tgobj;
           firsttemp,
           lasttemp      : longint;
           direction : shortint;
-          constructor create;
+          constructor create;virtual;reintroduce;
           {# Clear and free the complete linked list of temporary memory
              locations. The list is set to nil.}
           procedure resettempgen;
@@ -79,14 +79,23 @@ unit tgobj;
 
              @param(l start offset where temps will start in stack)
           }
-          procedure setfirsttemp(l : longint);
+          procedure setfirsttemp(l : longint); virtual;
 
-          procedure gettemp(list: taasmoutput; size : longint;temptype:ttemptype;var ref : treference);
-          procedure gettemptyped(list: taasmoutput; def:tdef;temptype:ttemptype;var ref : treference);
-          procedure ungettemp(list: taasmoutput; const ref : treference);
+          { version of gettemp that is compatible with hlcg-based targets;
+            always use in common code, only use gettemp in cgobj and
+            architecture-specific backends.
 
-          function sizeoftemp(list: taasmoutput; const ref: treference): longint;
-          function changetemptype(list: taasmoutput; const ref:treference;temptype:ttemptype):boolean;
+            the forcesize parameter is so that it can be used for defs that
+            don't have an inherent size (e.g., array of const) }
+          procedure gethltemp(list: TAsmList; def: tdef; forcesize: aint; temptype: ttemptype; out ref: treference); virtual;
+          procedure gethltemptyped(list: TAsmList; def: tdef; temptype: ttemptype; out ref: treference); virtual;
+          procedure gettemp(list: TAsmList; size, alignment : longint;temptype:ttemptype;out ref : treference);
+          procedure gettemptyped(list: TAsmList; def:tdef;temptype:ttemptype;out ref : treference);
+          procedure ungettemp(list: TAsmList; const ref : treference);
+
+          function sizeoftemp(list: TAsmList; const ref: treference): longint;
+          function changetemptype(list: TAsmList; const ref:treference;temptype:ttemptype):boolean;
+          function gettypeoftemp(const ref:treference): ttemptype;
 
           {# Returns TRUE if the reference ref is allocated in temporary volatile memory space,
              otherwise returns FALSE.
@@ -98,17 +107,20 @@ unit tgobj;
              The freed space can later be reallocated and reused. If this reference
              is not in the temporary memory, it is simply not freed.
           }
-          procedure ungetiftemp(list: taasmoutput; const ref : treference);
+          procedure ungetiftemp(list: TAsmList; const ref : treference);
 
           { Allocate space for a local }
-          procedure getlocal(list: taasmoutput; size : longint;def:tdef;var ref : treference);
-          procedure UnGetLocal(list: taasmoutput; const ref : treference);
+          procedure getlocal(list: TAsmList; size : longint;def:tdef;var ref : treference);
+          procedure getlocal(list: TAsmList; size : longint; alignment : shortint; def:tdef;var ref : treference); virtual;
+          procedure UnGetLocal(list: TAsmList; const ref : treference);
        end;
+       ttgobjclass = class of ttgobj;
 
      var
        tg: ttgobj;
+       tgobjclass: ttgobjclass = ttgobj;
 
-    procedure location_freetemp(list:taasmoutput; const l : tlocation);
+    procedure location_freetemp(list:TAsmList; const l : tlocation);
 
 
 implementation
@@ -116,25 +128,28 @@ implementation
     uses
        cutils,
        systems,verbose,
-       procinfo
+       procinfo,
+       symconst
        ;
 
 
     const
-      FreeTempTypes = [tt_free,tt_freenoreuse];
+      FreeTempTypes = [tt_free,tt_freenoreuse,tt_freeregallocator];
 
 {$ifdef EXTDEBUG}
       TempTypeStr : array[ttemptype] of string[18] = (
           '<none>',
           'free','normal','persistant',
-          'noreuse','freenoreuse'
+          'noreuse','freenoreuse',
+          'regallocator','freeregallocator'
       );
 {$endif EXTDEBUG}
 
       Used2Free : array[ttemptype] of ttemptype = (
         tt_none,
         tt_none,tt_free,tt_free,
-        tt_freenoreuse,tt_none
+        tt_freenoreuse,tt_none,
+        tt_freeregallocator,tt_none
       );
 
 
@@ -142,7 +157,7 @@ implementation
                                     Helpers
 *****************************************************************************}
 
-    procedure location_freetemp(list:taasmoutput; const l : tlocation);
+    procedure location_freetemp(list:TAsmList; const l : tlocation);
       begin
         if (l.loc in [LOC_REFERENCE,LOC_CREFERENCE]) then
          tg.ungetiftemp(list,l.reference);
@@ -159,25 +174,18 @@ implementation
        tempfreelist:=nil;
        templist:=nil;
        { we could create a new child class for this but I don't if it is worth the effort (FK) }
-{$ifdef powerpc}
+{$if defined(powerpc) or defined(powerpc64) or defined(avr) or defined(jvm)}
        direction:=1;
-{$else powerpc}
+{$else}
        direction:=-1;
-{$endif powerpc}
+{$endif}
      end;
 
 
     procedure ttgobj.resettempgen;
       var
          hp : ptemprecord;
-{$ifdef EXTDEBUG}
-         currpos,
-         lastpos : longint;
-{$endif EXTDEBUG}
       begin
-{$ifdef EXTDEBUG}
-        lastpos:=lasttemp;
-{$endif EXTDEBUG}
         { Clear the old templist }
         while assigned(templist) do
          begin
@@ -189,21 +197,6 @@ implementation
                        ' from pos '+tostr(templist^.posinfo.line)+':'+tostr(templist^.posinfo.column)+
                        ' not freed at the end of the procedure');
              end;
-           if direction=1 then
-             currpos:=templist^.pos+templist^.size
-           else
-             currpos:=templist^.pos;
-           if currpos<>lastpos then
-             begin
-               Comment(V_Warning,'tgobj: (ResetTempgen) temp at pos '+tostr(templist^.pos)+
-                       ' with size '+tostr(templist^.size)+' and type '+TempTypeStr[templist^.temptype]+
-                       ' from pos '+tostr(templist^.posinfo.line)+':'+tostr(templist^.posinfo.column)+
-                       ' was expected at position '+tostr(lastpos));
-             end;
-           if direction=1 then
-             lastpos:=templist^.pos
-           else
-             lastpos:=templist^.pos+templist^.size;
 {$endif EXTDEBUG}
            hp:=templist;
            templist:=hp^.next;
@@ -231,19 +224,21 @@ implementation
       end;
 
 
-    function ttgobj.AllocTemp(list: taasmoutput; size,alignment : longint; temptype : ttemptype;def : tdef) : longint;
+    function ttgobj.AllocTemp(list: TAsmList; size,alignment : longint; temptype : ttemptype;def : tdef) : longint;
       var
          tl,htl,
          bestslot,bestprev,
          hprev,hp : ptemprecord;
-         bestsize : longint;
          freetype : ttemptype;
+         bestatend,
+         fitatbegin,
+         fitatend : boolean;
       begin
          AllocTemp:=0;
          bestprev:=nil;
          bestslot:=nil;
          tl:=nil;
-         bestsize:=0;
+         bestatend:=false;
 
          if size=0 then
           begin
@@ -278,23 +273,56 @@ implementation
                if (hp^.temptype=freetype) and
                   (hp^.def=def) and
                   (hp^.size>=size) and
-                  (hp^.pos=align(hp^.pos,alignment)) then
+                  ((hp^.pos=align(hp^.pos,alignment)) or
+                   (hp^.pos+hp^.size-size = align(hp^.pos+hp^.size-size,alignment))) then
                 begin
                   { Slot is the same size then leave immediatly }
                   if (hp^.size=size) then
                    begin
                      bestprev:=hprev;
                      bestslot:=hp;
-                     bestsize:=size;
                      break;
                    end
                   else
                    begin
-                     if (bestsize=0) or (hp^.size<bestsize) then
+                     { we can fit a smaller block either at the begin or at }
+                     { the end of a block. For direction=-1 we prefer the   }
+                     { end, for direction=1 we prefer the begin (i.e.,      }
+                     { always closest to the source). We also try to use    }
+                     { the block with the worst possible alignment that     }
+                     { still suffices. And we pick the block which will     }
+                     { have the best alignmenment after this new block is   }
+                     { substracted from it.                                 }
+                     fitatend:=(hp^.pos+hp^.size-size)=align(hp^.pos+hp^.size-size,alignment);
+                     fitatbegin:=hp^.pos=align(hp^.pos,alignment);
+                     if assigned(bestslot) then
+                       begin
+                         fitatend:=fitatend and
+                           ((not bestatend and
+                             (direction=-1)) or
+                            (bestatend and
+                             isbetteralignedthan(abs(bestslot^.pos+hp^.size-size),abs(hp^.pos+hp^.size-size),current_settings.alignment.localalignmax)));
+                         fitatbegin:=fitatbegin and
+                           (not bestatend or
+                            (direction=1)) and
+                           isbetteralignedthan(abs(hp^.pos+size),abs(bestslot^.pos+size),current_settings.alignment.localalignmax);
+                       end;
+                     if fitatend and
+                        fitatbegin then
+                       if isbetteralignedthan(abs(hp^.pos+hp^.size-size),abs(hp^.pos+size),current_settings.alignment.localalignmax) then
+                         fitatbegin:=false
+                       else if isbetteralignedthan(abs(hp^.pos+size),abs(hp^.pos+hp^.size-size),current_settings.alignment.localalignmax) then
+                         fitatend:=false
+                       else if (direction=1) then
+                         fitatend:=false
+                       else
+                         fitatbegin:=false;
+                     if fitatend or
+                        fitatbegin then
                       begin
                         bestprev:=hprev;
                         bestslot:=hp;
-                        bestsize:=hp^.size;
+                        bestatend:=fitatend;
                       end;
                    end;
                 end;
@@ -305,7 +333,7 @@ implementation
          { Reuse an old temp ? }
          if assigned(bestslot) then
           begin
-            if bestsize=size then
+            if bestslot^.size=size then
              begin
                tl:=bestslot;
                { Remove from the tempfreelist }
@@ -326,7 +354,8 @@ implementation
                  For direction=1 we can use tl for the new block. For direction=-1 we
                  will be reusing bestslot and resize the new block, that means we need
                  to swap the pointers }
-               if direction=-1 then
+               if (direction=-1) xor
+                  bestatend then
                  begin
                    htl:=tl;
                    tl:=bestslot;
@@ -337,12 +366,17 @@ implementation
                    else
                      tempfreelist:=bestslot;
                  end;
+
+               if not bestatend then
+                 inc(bestslot^.pos,size)
+               else
+                 inc(tl^.pos,tl^.size-size);
+
                { Create new block and resize the old block }
                tl^.size:=size;
                tl^.nextfree:=nil;
                { Resize the old block }
                dec(bestslot^.size,size);
-               inc(bestslot^.pos,size);
              end;
             tl^.temptype:=temptype;
             tl^.def:=def;
@@ -350,11 +384,6 @@ implementation
           end
          else
           begin
-            { create a new temp, we need to allocate at least a minimum of
-              4 bytes, else we get two temps at the same position resulting
-              in problems when finding the corresponding temprecord }
-            if size<4 then
-             size:=4;
             { now we can create the templist entry }
             new(tl);
             tl^.temptype:=temptype;
@@ -378,7 +407,7 @@ implementation
             templist:=tl;
           end;
 {$ifdef EXTDEBUG}
-         tl^.posinfo:=aktfilepos;
+         tl^.posinfo:=current_filepos;
          if assigned(tl^.def) then
            list.concat(tai_tempalloc.allocinfo(tl^.pos,tl^.size,'allocated with type '+TempTypeStr[tl^.temptype]+' for def '+tl^.def.typename))
          else
@@ -390,7 +419,7 @@ implementation
       end;
 
 
-    procedure ttgobj.FreeTemp(list: taasmoutput; pos:longint;temptypes:ttemptypeset);
+    procedure ttgobj.FreeTemp(list: TAsmList; pos:longint;temptypes:ttemptypeset);
       var
          hp,hnext,hprev,hprevfree : ptemprecord;
       begin
@@ -475,31 +504,42 @@ implementation
       end;
 
 
-    procedure ttgobj.gettemp(list: taasmoutput; size : longint;temptype:ttemptype;var ref : treference);
-      var
-        varalign : longint;
+    procedure ttgobj.gethltemp(list: TAsmList; def: tdef; forcesize: aint; temptype: ttemptype; out ref: treference);
       begin
-        varalign:=size_2_align(size);
-        varalign:=used_align(varalign,aktalignment.localalignmin,aktalignment.localalignmax);
-        { can't use reference_reset_base, because that will let tgobj depend
-          on cgobj (PFV) }
-        fillchar(ref,sizeof(ref),0);
-        ref.base:=current_procinfo.framepointer;
-        ref.offset:=alloctemp(list,size,varalign,temptype,nil);
+        gettemp(list,forcesize,def.alignment,temptype,ref);
       end;
 
 
-    procedure ttgobj.gettemptyped(list: taasmoutput; def:tdef;temptype:ttemptype;var ref : treference);
-      var
-        varalign : longint;
+    procedure ttgobj.gethltemptyped(list: TAsmList; def: tdef; temptype: ttemptype; out ref: treference);
       begin
-        varalign:=def.alignment;
-        varalign:=used_align(varalign,aktalignment.localalignmin,aktalignment.localalignmax);
+        gettemptyped(list,def,temptype,ref);
+      end;
+
+
+
+    procedure ttgobj.gettemp(list: TAsmList; size, alignment : longint;temptype:ttemptype;out ref : treference);
+      begin
+        gettempinternal(list,size,alignment,temptype,nil,ref);
+      end;
+
+
+    procedure ttgobj.gettempinternal(list: TAsmList; size, alignment : longint;temptype:ttemptype;def: tdef;out ref : treference);
+      var
+        varalign : shortint;
+      begin
+        varalign:=used_align(alignment,current_settings.alignment.localalignmin,current_settings.alignment.localalignmax);
         { can't use reference_reset_base, because that will let tgobj depend
           on cgobj (PFV) }
         fillchar(ref,sizeof(ref),0);
         ref.base:=current_procinfo.framepointer;
-        ref.offset:=alloctemp(list,def.size,varalign,temptype,def);
+        ref.offset:=alloctemp(list,size,varalign,temptype,def);
+        ref.alignment:=varalign;
+      end;
+
+
+    procedure ttgobj.gettemptyped(list: TAsmList; def:tdef;temptype:ttemptype;out ref : treference);
+      begin
+        gettempinternal(list,def.size,def.alignment,temptype,def,ref);
       end;
 
 
@@ -523,7 +563,7 @@ implementation
       end;
 
 
-    function ttgobj.sizeoftemp(list: taasmoutput; const ref: treference): longint;
+    function ttgobj.sizeoftemp(list: TAsmList; const ref: treference): longint;
       var
          hp : ptemprecord;
       begin
@@ -545,7 +585,7 @@ implementation
       end;
 
 
-    function ttgobj.ChangeTempType(list: taasmoutput; const ref:treference;temptype:ttemptype):boolean;
+    function ttgobj.changetemptype(list: tasmList; const ref:treference; temptype:ttemptype):boolean;
       var
         hp : ptemprecord;
       begin
@@ -586,43 +626,61 @@ implementation
       end;
 
 
-    procedure ttgobj.UnGetTemp(list: taasmoutput; const ref : treference);
+    function ttgobj.gettypeoftemp(const ref:treference): ttemptype;
+      var
+        hp : ptemprecord;
       begin
-        FreeTemp(list,ref.offset,[tt_normal,tt_noreuse,tt_persistent]);
+         hp:=templist;
+         while assigned(hp) do
+          begin
+            if (hp^.pos=ref.offset) then
+             begin
+               if hp^.temptype<>tt_free then
+                 result:=hp^.temptype
+               else
+                 internalerror(2007020810);
+               exit;
+             end;
+            hp:=hp^.next;
+          end;
+        result:=tt_none;
       end;
 
 
-    procedure ttgobj.UnGetIfTemp(list: taasmoutput; const ref : treference);
+    procedure ttgobj.UnGetTemp(list: TAsmList; const ref : treference);
+      begin
+        FreeTemp(list,ref.offset,[tt_normal,tt_noreuse,tt_persistent,tt_regallocator]);
+      end;
+
+
+    procedure ttgobj.UnGetIfTemp(list: TAsmList; const ref : treference);
       begin
         if istemp(ref) then
           FreeTemp(list,ref.offset,[tt_normal]);
       end;
 
 
-    procedure ttgobj.getlocal(list: taasmoutput; size : longint;def:tdef;var ref : treference);
-      var
-        varalign : longint;
+    procedure ttgobj.getlocal(list: TAsmList; size : longint;def:tdef;var ref : treference);
       begin
-        varalign:=def.alignment;
-        varalign:=used_align(varalign,aktalignment.localalignmin,aktalignment.localalignmax);
+        getlocal(list, size, def.alignment, def, ref);
+      end;
+
+
+    procedure ttgobj.getlocal(list: TAsmList; size : longint; alignment : shortint; def:tdef;var ref : treference);
+      begin
+        alignment:=used_align(alignment,current_settings.alignment.localalignmin,current_settings.alignment.localalignmax);
         { can't use reference_reset_base, because that will let tgobj depend
           on cgobj (PFV) }
         fillchar(ref,sizeof(ref),0);
         ref.base:=current_procinfo.framepointer;
-        ref.offset:=alloctemp(list,size,varalign,tt_persistent,nil);
+        ref.offset:=alloctemp(list,size,alignment,tt_persistent,nil);
+        ref.alignment:=alignment;
       end;
 
 
-    procedure ttgobj.UnGetLocal(list: taasmoutput; const ref : treference);
+    procedure ttgobj.UnGetLocal(list: TAsmList; const ref : treference);
       begin
         FreeTemp(list,ref.offset,[tt_persistent]);
       end;
 
-
 end.
-{
-  $Log: tgobj.pas,v $
-  Revision 1.51  2005/02/14 17:13:09  peter
-    * truncate log
-
-}

@@ -1,5 +1,4 @@
 {
-    $Id: aoptcs.pas,v 1.10 2005/02/14 17:13:06 peter Exp $
     Copyright (c) 1998-2002 by Jonas Maebe, member of the Free Pascal
     Development Team
 
@@ -127,10 +126,10 @@ Begin
       Begin
         If OldOp.ref^.base <> R_NO Then
           AddReg(OldOp.ref^.base, NewOp.ref^.base);
-{$ifdef RefsHaveIndexReg}
+{$ifdef cpurefshaveindexreg}
         If OldOp.ref^.index <> R_NO Then
           AddReg(OldOp.ref^.index, NewOp.ref^.index);
-{$endif RefsHaveIndexReg}
+{$endif cpurefshaveindexreg}
       End;
   End;
 End;
@@ -185,9 +184,9 @@ Begin
     RefsEquivalent := (OldRef.Offset+OldRef.OffsetFixup =
                          NewRef.Offset+NewRef.OffsetFixup) And
                       RegsEquivalent(OldRef.Base, NewRef.Base, OpAct)
-{$ifdef RefsHaveindexReg}
+{$ifdef cpurefshaveindexreg}
                       And RegsEquivalent(OldRef.Index, NewRef.Index, OpAct)
-{$endif RefsHaveIndexReg}
+{$endif cpurefshaveindexreg}
 {$ifdef RefsHaveScale}
                       And (OldRef.ScaleFactor = NewRef.ScaleFactor)
 {$endif RefsHaveScale}
@@ -253,10 +252,10 @@ Begin
                     If Not(Base in [ProcInfo.FramePointer, R_NO, STACK_POINTER_REG])
 { it won't do any harm if the register is already in RegsLoadedForRef }
                       Then RegsLoadedForRef := RegsLoadedForRef + [Base];
-{$ifdef RefsHaveIndexReg}
+{$ifdef cpurefshaveindexreg}
                     If Not(Index in [ProcInfo.FramePointer, R_NO, STACK_POINTER_REG])
                       Then RegsLoadedForRef := RegsLoadedForRef + [Index];
-{$endif RefsHaveIndexReg}
+{$endif cpurefshaveindexreg}
                   End;
 { add the registers from the reference (.oper[Src]) to the RegInfo, all }
 { registers from the reference are the same in the old and in the new   }
@@ -291,7 +290,7 @@ Begin
                       Writeln(std_reg2str[base], ' added');
 {$endif csdebug}
                     end;
-{$Ifdef RefsHaveIndexReg}
+{$Ifdef cpurefshaveindexreg}
                 If Not(Index in [ProcInfo.FramePointer,
                                  RegMaxSize(PInstr(NewP)^.oper[LoadDst].reg),
                                  R_NO,StackPtr])
@@ -302,7 +301,7 @@ Begin
                       Writeln(std_reg2str[index], ' added');
 {$endif csdebug}
                     end;
-{$endif RefsHaveIndexReg}
+{$endif cpurefshaveindexreg}
               End;
 
 { now, remove the destination register of the load from the                 }
@@ -679,7 +678,7 @@ Begin
 { insert a marker noting that for the following instructions no PPaiProp's }
 { (containing optimizer info) have been generated, so GetNext/             }
 { LastInstruction will ignore them (it will use the original instructions) }
-                        hp3 := New(Pai_Marker,Init(NoPropInfoStart));
+                        hp3 := New(Pai_Marker,Init(mark_NoPropInfoStart));
                         InsertLLItem(Pai(Current^.Previous), Current, hp3);
 { Prev is used to get the contents of the registers before the sequence }
                         GetLastInstruction(Current, Prev);
@@ -744,7 +743,7 @@ Begin
 
                           End;
 { the end of the area where instructions without optimizer info can occur }
-                        hp3 := New(Pai_Marker,Init(NoPropInfoEnd));
+                        hp3 := New(Pai_Marker,Init(mark_NoPropInfoEnd));
                         InsertLLItem(AsmL, Pai(Current^.Previous), Current, hp3);
 { if we found an instruction sequence that needs complete re-evaluation, }
 { process it                                                             }
@@ -847,10 +846,3 @@ End;
 
 
 End.
-
-{
-  $Log: aoptcs.pas,v $
-  Revision 1.10  2005/02/14 17:13:06  peter
-    * truncate log
-
-}

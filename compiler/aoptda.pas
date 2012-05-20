@@ -1,5 +1,4 @@
 {
-    $Id: aoptda.pas,v 1.10 2005/02/14 17:13:06 peter Exp $
     Copyright (c) 1998-2002 by Jonas Maebe, member of the Free Pascal
     Development Team
 
@@ -30,28 +29,28 @@ Unit aoptda;
 
     uses
       cpubase,cgbase,
-      aasmbase,aasmtai,aasmcpu,
+      aasmbase,aasmtai,aasmdata,aasmcpu,
       aoptcpub, aoptbase;
 
     Type
       TAOptDFA = class
         { uses the same constructor as TAoptCpu = constructor from TAoptObj }
 
+        { How many instructions are between the current instruction and the }
+        { last one that modified the register                               }
+        InstrSinceLastMod: TInstrSinceLastMod;
+
         { gathers the information regarding the contents of every register }
         { at the end of every instruction                                  }
         Procedure DoDFA;
 
         { handles the processor dependent dataflow analizing               }
-        Procedure CpuDFA(p: PInstr); Virtual;
-
-        { How many instructions are between the current instruction and the }
-        { last one that modified the register                               }
-        InstrSinceLastMod: TInstrSinceLastMod;
+        Procedure CpuDFA(p: PInstr); Virtual; Abstract;
 
         { convert a TInsChange value into the corresponding register }
         //!!!!!!!!!! Function TCh2Reg(Ch: TInsChange): TRegister; Virtual;
         { returns whether the instruction P reads from register Reg }
-        Function RegReadByInstr(Reg: TRegister; p: tai): Boolean; Virtual;
+        Function RegReadByInstr(Reg: TRegister; p: tai): Boolean; Virtual; Abstract;
       End;
 
   Implementation
@@ -63,13 +62,15 @@ Unit aoptda;
     { Analyzes the Data Flow of an assembler list. Analyses the reg contents     }
     { for the instructions between blockstart and blockend. Returns the last pai }
     { which has been processed                                                   }
+    {
     Var
         CurProp: TPaiProp;
         UsedRegs: TUsedRegs;
         p, hp, NewBlockStart : tai;
         TmpReg: TRegister;
+    }
     Begin
-    {!!!!!!!!!!
+    (*!!!!!!!!!!
       p := BlockStart;
       UsedRegs.Create;
       UsedRegs.Update(p);
@@ -98,9 +99,7 @@ Unit aoptda;
             ait_label:
               If (Pai_label(p)^.l^.is_used) Then
                 CurProp^.DestroyAllRegs(InstrSinceLastMod);
-    {$ifdef GDB}
-            ait_stabs, ait_stabn, ait_stab_function_name:;
-    {$endif GDB}
+            ait_stab, ait_force_line, ait_function_name:;
             ait_instruction:
               if not(PInstr(p)^.is_jmp) then
                 begin
@@ -160,34 +159,7 @@ Unit aoptda;
     {      Inc(InstrCnt);}
           GetNextInstruction(p, p);
         End;
-    }
+    *)
     End;
-
-    Procedure TAoptDFA.CpuDFA(p: PInstr);
-    Begin
-      Abstract;
-    End;
-
-  {!!!!!!!
-    Function TAOptDFA.TCh2Reg(Ch: TInsChange): TRegister;
-    Begin
-      TCh2Reg:=R_NO;
-      Abstract;
-    End;
-  }
-
-    Function TAOptDFA.RegReadByInstr(Reg: TRegister; p: tai): Boolean;
-    Begin
-      RegReadByInstr:=false;
-      Abstract;
-    End;
-
 
 End.
-
-{
-  $Log: aoptda.pas,v $
-  Revision 1.10  2005/02/14 17:13:06  peter
-    * truncate log
-
-}

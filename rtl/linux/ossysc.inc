@@ -1,5 +1,4 @@
 {
-    $Id: ossysc.inc,v 1.36 2005/02/14 17:13:30 peter Exp $
     Copyright (c) 2002 by Marco van de Voort
 
     The base Linux syscalls required to implement the system unit. These
@@ -20,11 +19,28 @@
                      --- Main:The System Call Self ---
 *****************************************************************************}
 
-function Fptime(tloc:pTime): TTime; [public, alias : 'FPC_SYSC_TIME'];
+function Fptime(tloc:pTime_t): Time_t; [public, alias : 'FPC_SYSC_TIME'];
+{$ifdef FPC_USEGETTIMEOFDAY}
+VAR tv     : timeval;
+    tz     : timezone;
+    retval : longint;
 
 begin
-  Fptime:=do_syscall(syscall_nr_time,TSysParam(tloc));
+  Retval:=do_syscall(syscall_nr_gettimeofday,TSysParam(@tv),TSysParam(@tz));
+  If retval=-1 then
+   Fptime:=-1
+  else
+   Begin
+   If Assigned(tloc) Then
+     TLoc^:=tv.tv_sec;
+    Fptime:=tv.tv_sec;
+   End;
 End;
+{$else FPC_USEGETTIMEOFDAY}
+begin
+  Fptime:=do_syscall(syscall_nr_time,TSysParam(tloc));
+end;
+{$endif FPC_USEGETTIMEOFDAY}
 
 {*****************************************************************************
                --- File:File handling related calls ---
@@ -33,7 +49,7 @@ End;
 function Fpopen(path: pchar; flags : cint; mode: mode_t):cint; [public, alias : 'FPC_SYSC_OPEN'];
 
 Begin
- Fpopen:=do_syscall(syscall_nr_open,TSysParam(path),TSysParam(flags),TSysParam(mode));
+ Fpopen:=do_syscall(syscall_nr_open,TSysParam(path),TSysParam(flags or O_LARGEFILE),TSysParam(mode));
 End;
 
 function Fpclose(fd : cint): cint; [public, alias : 'FPC_SYSC_CLOSE'];
@@ -43,12 +59,16 @@ begin
 end;
 
 function Fplseek(fd : cint; offset : off_t; whence : cint): off_t; [public, alias : 'FPC_SYSC_LSEEK'];
-{
-Must be adapted/overloaded for 64-bit support, but that is a different call under
-Linux?
-}
 begin
-  Fplseek:=do_syscall(syscall_nr_lseek,tsysparam(fd),tsysparam(offset),tsysparam(whence));
+{$if defined(cpu64)}
+  result:=do_syscall(syscall_nr_lseek,tsysparam(fd),tsysparam(offset),tsysparam(whence));
+{$else}
+  if do_syscall(syscall_nr__llseek,tsysparam(fd),
+//      {$ifdef FPC_ABI_EABI}      0,  { align parameters as required with dummy } {$endif FPC_ABI_EABI}
+      tsysparam(hi(offset)),tsysparam(lo(offset)),
+      tsysparam(@result), tsysparam(whence)) = -1 then
+    result:=off_t(-1);
+{$endif}
 end;
 
 function Fpread(fd: cint; buf: pchar; nbytes : size_t): ssize_t; [public, alias : 'FPC_SYSC_READ'];
@@ -62,7 +82,19 @@ function Fpwrite(fd: cint;buf:pchar; nbytes : size_t): ssize_t; [public, alias :
 begin
  Fpwrite:=do_syscall(syscall_nr_write,Fd,TSysParam(buf),nbytes);
 end;
+{
+function Fppread(fd: cint; buf: pchar; nbytes : size_t; offset:Toff): ssize_t; [public, alias : 'FPC_SYSC_PREAD'];
+   !! check 64 bit off_t sycall
+begin
+  Fpread:=do_syscall(syscall_nr_pread,Fd,TSysParam(buf),nbytes,offset);
+end;
 
+function Fppwrite(fd: cint;buf:pchar; nbytes : size_t; offset:Toff): ssize_t; [public, alias : 'FPC_SYSC_PWRITE'];
+   !! check 64 bit off_t sycall
+begin
+ Fpwrite:=do_syscall(syscall_nr_pwrite,Fd,TSysParam(buf),nbytes,offset);
+end;
+}
 function Fpunlink(path: pchar): cint; [public, alias : 'FPC_SYSC_UNLINK'];
 
 begin
@@ -75,12 +107,15 @@ begin
   Fprename:=do_syscall(syscall_nr_rename,TSysParam(old),TSysParam(newpath));
 end;
 
-function Fpstat(path: pchar; var buf : stat):cint; [public, alias : 'FPC_SYSC_STAT'];
+function Fpstat(path: pchar; var buf: stat):cint; [public, alias : 'FPC_SYSC_STAT'];
 
 begin
- Fpstat:=do_syscall(syscall_nr_stat,TSysParam(path),TSysParam(@buf));
+{$if defined(cpu64)}
+  Fpstat:=do_syscall(syscall_nr_stat,TSysParam(path),TSysParam(@buf));
+{$else}
+  Fpstat:=do_syscall(syscall_nr_stat64,TSysParam(path),TSysParam(@buf));
+{$endif}
 end;
-
 
 {*****************************************************************************
                --- Directory:Directory related calls ---
@@ -128,7 +163,7 @@ begin
   new(ptr);
   if ptr=nil then
    exit;
-  getmem(ptr^.dd_buf,sizeof(dirent));
+  new(ptr^.dd_buf);
   if ptr^.dd_buf=nil then
    exit;
   ptr^.dd_fd:=fd;
@@ -143,7 +178,7 @@ function Fpclosedir(dirp : pdir): cint; [public, alias : 'FPC_SYSC_CLOSEDIR'];
 
 begin
   Fpclosedir:=Fpclose(dirp^.dd_fd);
-  freemem(dirp^.dd_buf,sizeof(dirent));
+  dispose(dirp^.dd_buf);
   dispose(dirp);
 end;
 
@@ -154,7 +189,7 @@ begin
   repeat
     if dirp^.dd_nextoff >= dirp^.dd_size then
       begin
-        bytes := do_SysCall(SysCall_nr_getdents,TSysParam(dirp^.dd_fd),TSysParam(dirp^.dd_buf),TSysParam(dirp^.dd_max));
+        bytes := do_SysCall(SysCall_nr_getdents64,TSysParam(dirp^.dd_fd),TSysParam(dirp^.dd_buf),TSysParam(dirp^.dd_max));
         if bytes <= 0 then
           begin
             fpreaddir := nil;
@@ -163,7 +198,7 @@ begin
         dirp^.dd_size := bytes;
         dirp^.dd_nextoff := 0;
       end;
-    dp := pdirent(ptrint(dirp^.dd_buf)+dirp^.dd_nextoff);
+    dp := Pdirent(ptruint(dirp^.dd_buf)+dirp^.dd_nextoff);
     inc(dirp^.dd_nextoff,dp^.d_reclen);
     inc(dirp^.dd_loc,dp^.d_reclen);
   until dp^.d_fileno <> 0; // Don't show deleted files
@@ -178,7 +213,7 @@ end;
 procedure Fpexit(status : cint); [public, alias : 'FPC_SYSC_EXIT'];
 
 begin
-  do_syscall(syscall_nr_exit,status);
+  do_syscall(syscall_nr_exit_group,status);
 end;
 
 {
@@ -197,8 +232,65 @@ asm
 end;
 {$endif cpusparc}
 
+{$if defined(cpui386) or defined(cpuarm) or defined(cpux86_64)}
+  {$define NEED_USER_TRAMPOLINE}
+{$endif}
+{$if defined(cpui386) or defined(cpuarm)}
+  {$define NEED_USER_TRAMPOLINE_RT_DIFFERENT}
+{$endif}
 
-function Fpsigaction(sig: cint; act : psigactionrec; oact : psigactionrec): cint; [public, alias : 'FPC_SYSC_SIGACTION'];
+{$ifdef NEED_USER_TRAMPOLINE}
+
+procedure linux_restore; cdecl; nostackframe; assembler;
+{$ifdef cpuarm}
+asm
+{$ifdef FPC_ABI_EABI}
+  mov r7, syscall_nr_sigreturn
+  swi #0x0
+{$else}
+  swi syscall_nr_sigreturn
+{$endif}
+end;
+{$endif}
+{$ifdef cpui386}
+asm
+  popl %eax
+  movl $syscall_nr_sigreturn, %eax
+  int $0x80
+end;
+{$endif}
+{$ifdef cpux86_64}
+asm
+  movq $syscall_nr_rt_sigreturn, %rax
+  syscall
+end;
+{$endif}
+
+{$endif}
+
+{$ifdef NEED_USER_TRAMPOLINE_RT_DIFFERENT}
+
+procedure linux_restore_rt; cdecl; nostackframe; assembler;
+{$ifdef cpuarm}
+asm
+{$ifdef FPC_ABI_EABI}
+  mov r7, syscall_nr_rt_sigreturn
+  swi #0x0
+{$else}
+  swi syscall_nr_rt_sigreturn
+{$endif}
+end;
+{$endif}
+{$ifdef cpui386}
+asm
+  movl $syscall_nr_rt_sigreturn, %eax
+  int $0x80
+end;
+{$endif}
+
+{$endif}
+
+function Fpsigaction(sig: cint; new_action, old_action: psigactionrec): cint; [public, alias : 'FPC_SYSC_SIGACTION'];
 {
   Change action of process upon receipt of a signal.
   Signum specifies the signal (all except SigKill and SigStop).
@@ -208,9 +300,25 @@ function Fpsigaction(sig: cint; act : psigactionrec; oact : psigactionrec): cint
 begin
 {$ifdef cpusparc}
   { Sparc has an extra stub parameter }
-  Fpsigaction:=do_syscall(syscall_nr_rt_sigaction,TSysParam(sig),TSysParam(act),TSysParam(oact),TSysParam(PtrInt(@Fprt_sigreturn_stub)-8),TSysParam(8));
+  Fpsigaction:=do_syscall(syscall_nr_rt_sigaction,TSysParam(sig),TSysParam(new_action),TSysParam(old_action),TSysParam(ptruint(@Fprt_sigreturn_stub)-8),TSysParam(8));
 {$else cpusparc}
-  Fpsigaction:=do_syscall(syscall_nr_rt_sigaction,TSysParam(sig),TSysParam(act),TSysParam(oact),TSysParam(8));
+{$ifdef NEED_USER_TRAMPOLINE}
+  if new_action <> nil then
+  begin
+    // a different stack (SA_ONSTACK) requires sa_restorer field
+    if (new_action^.sa_flags and (SA_RESTORER or SA_ONSTACK)) = 0 then
+    begin
+      new_action^.sa_flags := new_action^.sa_flags or SA_RESTORER;
+{$ifdef NEED_USER_TRAMPOLINE_RT_DIFFERENT}
+      if (new_action^.sa_flags and SA_SIGINFO) <> 0 then
+        new_action^.sa_restorer := @linux_restore_rt
+      else
+{$endif}
+        new_action^.sa_restorer := @linux_restore;
+    end;
+  end;
+{$endif}
+  Fpsigaction:=do_syscall(syscall_nr_rt_sigaction,TSysParam(sig),TSysParam(new_action),TSysParam(old_action),TSysParam(8));
 {$endif cpusparc}
 end;
 
@@ -220,13 +328,25 @@ function Fpftruncate(fd : cint; flength : off_t): cint; [public, alias : 'FPC_SY
 doesn't have the returnvalue 64-bit problem)}
 
 begin
+{$if defined(cpu64)}
  Fpftruncate:=Do_syscall(syscall_nr_ftruncate,TSysParam(fd),TSysParam(flength));
+{$else}
+ Fpftruncate:=Do_syscall(syscall_nr_ftruncate64,TSysParam(fd),
+   {$ifdef FPC_ABI_EABI}      0,  { align parameters as required with dummy } {$endif FPC_ABI_EABI}
+   {$ifdef FPC_BIG_ENDIAN}    tsysparam(hi(flength)),tsysparam(lo(flength)){$endif}
+   {$ifdef FPC_LITTLE_ENDIAN} tsysparam(lo(flength)),tsysparam(hi(flength)){$endif}
+   );
+{$endif}
 end;
 
 function Fpfstat(fd : cint; var sb : stat): cint;  [public, alias : 'FPC_SYSC_FSTAT'];
 
 begin
+{$if defined(cpu64)}
   FpFStat:=do_SysCall(syscall_nr_fstat,TSysParam(fd),TSysParam(@sb));
+{$else}
+  FpFStat:=do_SysCall(syscall_nr_fstat64,TSysParam(fd),TSysParam(@sb));
+{$endif}
 end;
 
 
@@ -275,19 +395,6 @@ Begin
   do_syscall(syscall_nr_Execve,TSysParam(path),TSysParam(Argv),TSysParam(envp));
 End;
 }
-
-{$ifdef CPUARM}
-{$define WAIT4}
-{$endif CPUARM}
-
-{$ifdef CPUx86_64}
-{$define WAIT4}
-{$endif CPUx86_64}
-
-{$ifdef CPUSPARC}
-{$define WAIT4}
-{$endif CPUSPARC}
-
 
 function Fpwaitpid(pid : pid_t; stat_loc : pcint; options: cint): pid_t; [public, alias : 'FPC_SYSC_WAITPID'];
 {
@@ -359,7 +466,7 @@ end;
 
 
 type
-  tmmapargs = packed record
+  tmmapargs = record
     address : TSysParam;
     size    : TSysParam;
     prot    : TSysParam;
@@ -367,20 +474,6 @@ type
     fd      : TSysParam;
     offset  : TSysParam;
   end;
-
-
-{$ifdef cpui386}
-{$define OLDMMAP}
-{$endif cpui386}
-
-{$ifdef cpum68k}
-{$define OLDMMAP}
-{$endif cpum68k}
-
-{$ifdef cpuarm}
-{$define OLDMMAP}
-{$endif cpuarm}
-
 
 Function Fpmmap(adr:pointer;len:size_t;prot:cint;flags:cint;fd:cint;off:off_t):pointer;  [public, alias : 'FPC_SYSC_MMAP'];
 // OFF_T procedure, and returns a pointer, NOT cint.
@@ -398,10 +491,19 @@ begin
   Fpmmap:=pointer(do_syscall(syscall_nr_mmap,TSysParam(@MMapArgs)));
 end;
 {$else OLDMMAP}
+{$ifdef MMAP2}
 begin
-  Fpmmap:= pointer(do_syscall(syscall_nr_mmap,TSysParam(adr),TSysParam(len),
-    TSysParam(prot),TSysParam(flags),TSysParam(fd),TSysParam(off)));
+  {$message warning need mmap64 syscall, hi(off) not used}
+  Fpmmap:= pointer(do_syscall(syscall_nr_mmap2,TSysParam(adr),TSysParam(len),
+    TSysParam(prot),TSysParam(flags),TSysParam(fd),TSysParam(lo(off))));
 end;
+{$else MMAP2}
+begin
+  {$message warning need mmap64 syscall, hi(off) not used}
+  Fpmmap:= pointer(do_syscall(syscall_nr_mmap,TSysParam(adr),TSysParam(len),
+    TSysParam(prot),TSysParam(flags),TSysParam(fd),TSysParam(lo(off))));
+end;
+{$endif MMAP2}
 {$endif OLDMMAP}
 
 
@@ -421,7 +523,7 @@ end;
 // prototype is cint __P(cint,culong,....)
 // actual meaning of return value depends on request.
 
-Function FpIOCtl(fd:cint;request:culong;Data: Pointer):cint;  [public, alias : 'FPC_SYSC_IOCTL'];
+Function FpIOCtl(fd:cint;request:TIOCtlRequest;Data: Pointer):cint;  [public, alias : 'FPC_SYSC_IOCTL'];
 // This was missing here, instead hardcoded in Do_IsDevice
 begin
   FpIOCtl:=do_SysCall(syscall_nr_ioctl,tsysparam(fd),tsysparam(Request),TSysParam(data));
@@ -459,14 +561,16 @@ begin
   FPsigprocmask:=do_syscall(syscall_nr_rt_sigprocmask,TSysParam(how),TSysParam(nset),TSysParam(oset),TSysParam(8));
 end;
 
-
 Function FpNanoSleep(req : ptimespec;rem : ptimespec):cint; [public, alias : 'FPC_SYSC_NANOSLEEP'];
 begin
   FpNanoSleep:=Do_SysCall(syscall_nr_nanosleep,TSysParam(req),TSysParam(rem));
 end;
 
-// The following belongs here, but this should be researched more.
-// function Fpgetcwd(pt:pchar; _size:size_t):pchar;[public, alias :'FPC_SYSC_GETCWD'];
+function fpgetcwd(path : pchar; siz:tsize):pchar;  [public, alias : 'FPC_SYSC_GETCWD'];
+
+begin
+  fpgetcwd:=pchar(Do_Syscall(Syscall_nr_getcwd,TSysParam(Path),TSysParam(siz)));
+end;
 
 function fpgettimeofday(tp: ptimeval;tzp:ptimezone):cint; [public, alias: 'FPC_SYSC_GETTIMEOFDAY'];
 
@@ -474,24 +578,37 @@ begin
  fpgettimeofday:=do_syscall(syscall_nr_gettimeofday,TSysParam(tp),TSysParam(tzp));
 end;
 
-{
- $Log: ossysc.inc,v $
- Revision 1.36  2005/02/14 17:13:30  peter
-   * truncate log
 
- Revision 1.35  2005/02/13 21:47:56  peter
-   * include file cleanup part 2
+function FpGetRLimit(resource : cInt; rlim : PRLimit) : cInt; [public, alias : 'FPC_SYSC_GETRLIMIT'];
+begin
+{$ifndef NO_SYSCALL_GETRLIMIT}
+  FpGetRLimit := do_syscall(syscall_nr_getrlimit,
+    TSysParam(resource), TSysParam(rlim));
+{$else}
+  FpGetRLimit := do_syscall(syscall_nr_ugetrlimit,
+    TSysParam(resource), TSysParam(rlim));
+{$endif}
+end;
 
- Revision 1.34  2005/02/13 20:01:38  peter
-   * include file cleanup
 
- Revision 1.33  2005/02/06 12:16:52  peter
-   * bsd thread updates
+{$ifdef HAS_UGETRLIMIT}
+function fpugetrlimit(resource : cInt; rlim : PRLimit) : cInt;
+begin
+  FpUGetRLimit := do_syscall(syscall_nr_ugetrlimit,
+    TSysParam(resource), TSysParam(rlim));
+end;
+{$endif}
 
- Revision 1.32  2005/01/31 20:13:24  peter
-   * rt_sigaction for all cpus
+{$if defined(cpupowerpc)}
+{ fpprctl() call }
+function fpprctl(option : cint; const arg : ptruint) : cint;
+begin
+  fpprctl := do_syscall(syscall_nr_prctl, option, arg);
+end;
+{$endif}
 
- Revision 1.31  2005/01/31 19:22:48  peter
-   * i386 also needs rtsignal
+function FpSetRLimit(Resource:cint;rlim:PRLimit):cint; [public, alias : 'FPC_SYSC_SETRLIMIT'];
+begin
+  fpsetrlimit:=do_syscall(syscall_nr_setrlimit,TSysParam(Resource),TSysParam(rlim));
+end;
 
-}

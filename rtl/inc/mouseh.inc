@@ -1,5 +1,4 @@
 {
-    $Id: mouseh.inc,v 1.4 2005/02/14 17:13:25 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team
 
@@ -105,9 +104,3 @@ Procedure SetMouseDriver(Const Driver : TMouseDriver);
 Procedure GetMouseDriver(Var Driver : TMouseDriver);
 { Returns the currently active mouse driver }
 
-{
-  $Log: mouseh.inc,v $
-  Revision 1.4  2005/02/14 17:13:25  peter
-    * truncate log
-
-}

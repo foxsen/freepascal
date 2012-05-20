@@ -1,5 +1,4 @@
 {
-    $Id: video.inc,v 1.8 2005/02/14 17:13:30 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team
 
@@ -77,14 +76,16 @@ begin
     end;
 end;
 
+(*
 Procedure AssignVideoBuf (OldCols, OldRows : Word);
 
 Var NewVideoBuf,NewOldVideoBuf : PVideoBuf;
-    S,I,C,R,NewVideoBufSize : Integer;
+    I,C,R,NewVideoBufSize : longint;
+    s:word;
 
 begin
-  S:=SizeOf(TVideoCell);
-  NewVideoBufSize:=ScreenWidth*ScreenHeight*S;
+  S:=sizeOf(TVideoCell);
+  NewVideoBufSize:=ScreenWidth*ScreenHeight*s;
   GetMem(NewVideoBuf,NewVideoBufSize);
   GetMem(NewOldVideoBuf,NewVideoBufSize);
   // Move contents of old videobuffers to new if there are any.
@@ -109,20 +110,58 @@ begin
   VideoBuf:=NewVideoBuf;
   OldVideoBuf:=NewOldVideoBuf;
 end;
+*)
+Procedure AssignVideoBuf (OldCols, OldRows : Word);
+
+var NewVideoBuf,NewOldVideoBuf:PVideoBuf;
+    old_rowstart,new_rowstart:word;
+    NewVideoBufSize : longint;
+
+begin
+  NewVideoBufSize:=ScreenWidth*ScreenHeight*sizeof(TVideoCell);
+  GetMem(NewVideoBuf,NewVideoBufSize);
+  GetMem(NewOldVideoBuf,NewVideoBufSize);
+  {Move contents of old videobuffers to new if there are any.}
+  if VideoBuf<>nil then
+    begin
+      if ScreenWidth<OldCols then
+        OldCols:=ScreenWidth;
+      if ScreenHeight<OldRows then
+        OldRows:=ScreenHeight;
+      old_rowstart:=0;
+      new_rowstart:=0;
+      while oldrows>0 do
+        begin
+          move(VideoBuf^[old_rowstart],NewVideoBuf^[new_rowstart],OldCols*sizeof(TVideoCell));
+          move(OldVideoBuf^[old_rowstart],NewOldVideoBuf^[new_rowstart],OldCols*sizeof(TVideoCell));
+          inc(old_rowstart,OldCols);
+          inc(new_rowstart,ScreenWidth);
+          dec(OldRows);
+        end;
+    end;
+  FreeVideoBuf;
+  { FreeVideoBuf sets VideoBufSize to 0 }
+  VideoBufSize:=NewVideoBufSize;
+  VideoBuf:=NewVideoBuf;
+  OldVideoBuf:=NewOldVideoBuf;
+end;
 
 Procedure InitVideo;
 
 begin
-  If Not VideoInitialized then
+  if not VideoInitialized then
     begin
-    If Assigned(CurrentVideoDriver.InitDriver) then
-      CurrentVideoDriver.InitDriver;
-    VideoInitialized:=True;
-    if NextVideoModeSet then
-      SetVideoMode(NextVideoMode)
-    else
-    AssignVideoBuf(0,0);
-    ClearScreen;
+      if Assigned(CurrentVideoDriver.InitDriver) then
+        CurrentVideoDriver.InitDriver;
+      if errorcode=viook then
+        begin
+          VideoInitialized:=true;
+          if NextVideoModeSet then
+            SetVideoMode(NextVideoMode)
+          else
+            AssignVideoBuf(0,0);
+          ClearScreen;
+        end;
     end;
 end;
 
@@ -214,20 +253,20 @@ begin
     exit;
   If VideoInitialized then
     begin
-  OldC:=ScreenWidth;
-  OldR:=ScreenHeight;
-  If Assigned(CurrentVideoDriver.SetVideoMode) then
-    SetVideoMode:=CurrentVideoDriver.SetVideoMode(Mode)
-  else
-    SetVideoMode:=False;
-  // Assign buffer
-  If SetVideoMode then
-    AssignVideoBuf(OldC,Oldr);
+      OldC:=ScreenWidth;
+      OldR:=ScreenHeight;
+      If Assigned(CurrentVideoDriver.SetVideoMode) then
+        SetVideoMode:=CurrentVideoDriver.SetVideoMode(Mode)
+      else
+        SetVideoMode:=False;
+      // Assign buffer
+      If SetVideoMode then
+        AssignVideoBuf(OldC,Oldr);
     end
   else
     begin
-    NextVideoMode:=Mode;
-    NextVideoModeSet:=true;
+      NextVideoMode:=Mode;
+      NextVideoModeSet:=true;
     end;
 end;
 
@@ -261,10 +300,4 @@ begin
   DefaultErrorHandler := errAbort; { return error code }
 end;
 
-{
-  $Log: video.inc,v $
-  Revision 1.8  2005/02/14 17:13:30  peter
-    * truncate log
-
-}
 

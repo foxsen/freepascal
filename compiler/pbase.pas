@@ -1,5 +1,4 @@
 {
-    $Id: pbase.pas,v 1.31 2005/02/14 17:13:07 peter Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl
 
     Contains some helper routines for the parser
@@ -28,7 +27,7 @@ interface
 
     uses
        cutils,cclasses,
-       tokens,globals,
+       tokens,globtype,
        symconst,symbase,symtype,symdef,symsym,symtable
        ;
 
@@ -43,6 +42,9 @@ interface
        { true, if we are parsing arguments }
        in_args : boolean = false;
 
+       { true, if we are parsing arguments allowing named parameters }
+       named_args_allowed : boolean = false;
+
        { true, if we got an @ to get the address }
        got_addrn  : boolean = false;
 
@@ -53,15 +55,14 @@ interface
        { for operators }
        optoken : ttoken;
 
-       { symtable were unit references are stored }
-       refsymtable : tsymtable;
-
        { true, if only routine headers should be parsed }
        parse_only : boolean;
 
-       { true, if we should ignore an equal in const x : 1..2=2 }
-       ignore_equal : boolean;
+       { true, if we found a name for a named arg }
+       found_arg_name : boolean;
 
+       { true, if we are parsing generic declaration }
+       parse_generic : boolean;
 
     procedure identifier_not_found(const s:string);
 
@@ -84,11 +85,12 @@ interface
     { reads a list of identifiers into a string list }
     { consume a symbol, if not found give an error and
       and return an errorsym }
-    function consume_sym(var srsym:tsym;var srsymtable:tsymtable):boolean;
+    function consume_sym(var srsym:tsym;var srsymtable:TSymtable):boolean;
+    function consume_sym_orgid(var srsym:tsym;var srsymtable:TSymtable;var s : string):boolean;
 
-    function try_consume_hintdirective(var symopt:tsymoptions):boolean;
+    function try_consume_unitsym(var srsym:tsym;var srsymtable:TSymtable;var tokentoconsume:ttoken;consume_id:boolean):boolean;
 
-    procedure check_hints(const srsym: tsym);
+    function try_consume_hintdirective(var symopt:tsymoptions; var deprecatedmsg:pshortstring):boolean;
 
     { just for an accurate position of the end of a procedure (PM) }
     var
@@ -98,7 +100,7 @@ interface
 implementation
 
     uses
-       globtype,scanner,systems,verbose;
+       globals,htypechk,scanner,systems,verbose,fmodule;
 
 {****************************************************************************
                                Token Parsing
@@ -109,19 +111,12 @@ implementation
          Message1(sym_e_id_not_found,s);
          { show a fatal that you need -S2 or -Sd, but only
            if we just parsed the a token that has m_class }
-         if not(m_class in aktmodeswitches) and
+         if not(m_class in current_settings.modeswitches) and
             (Upper(s)=pattern) and
             (tokeninfo^[idtoken].keyword=m_class) then
            Message(parser_f_need_objfpc_or_delphi_mode);
        end;
 
-
-{ Unused:
-    function tokenstring(i : ttoken):string;
-      begin
-        tokenstring:=tokeninfo^[i].str;
-      end;
-}
 
     { consumes token i, write error if token is different }
     procedure consume(i : ttoken);
@@ -134,8 +129,8 @@ implementation
         else
           begin
             if token=_END then
-              last_endtoken_filepos:=akttokenpos;
-            current_scanner.readtoken;
+              last_endtoken_filepos:=current_tokenpos;
+            current_scanner.readtoken(true);
           end;
       end;
 
@@ -147,8 +142,8 @@ implementation
          begin
            try_to_consume:=true;
            if token=_END then
-            last_endtoken_filepos:=akttokenpos;
-           current_scanner.readtoken;
+            last_endtoken_filepos:=current_tokenpos;
+           current_scanner.readtoken(true);
          end;
       end;
 
@@ -177,71 +172,180 @@ implementation
 
     { check if a symbol contains the hint directive, and if so gives out a hint
       if required.
+
+      If this code is changed, it's likly that consume_sym_orgid and factor_read_id
+      must be changed as well (FK)
     }
-    procedure check_hints(const srsym: tsym);
-     begin
-       if not assigned(srsym) then
-         exit;
-       if sp_hint_deprecated in srsym.symoptions then
-         Message1(sym_w_deprecated_symbol,srsym.realname);
-       if sp_hint_platform in srsym.symoptions then
-         Message1(sym_w_non_portable_symbol,srsym.realname);
-       if sp_hint_unimplemented in srsym.symoptions then
-         Message1(sym_w_non_implemented_symbol,srsym.realname);
-     end;
-
-
-
-    function consume_sym(var srsym:tsym;var srsymtable:tsymtable):boolean;
+    function consume_sym(var srsym:tsym;var srsymtable:TSymtable):boolean;
+      var
+        t : ttoken;
       begin
         { first check for identifier }
         if token<>_ID then
-         begin
-           consume(_ID);
-           srsym:=generrorsym;
-           srsymtable:=nil;
-           consume_sym:=false;
-           exit;
-         end;
+          begin
+            consume(_ID);
+            srsym:=generrorsym;
+            srsymtable:=nil;
+            result:=false;
+            exit;
+          end;
         searchsym(pattern,srsym,srsymtable);
-        check_hints(srsym);
-        if assigned(srsym) then
-         begin
-           if (srsym.typ=unitsym) then
-            begin
-              if not(srsym.owner.symtabletype in [staticsymtable,globalsymtable]) then
-                internalerror(200501154);
-              { only allow unit.symbol access if the name was
-                found in the current module }
-              if srsym.owner.iscurrentunit then
-               begin
-                 consume(_ID);
-                 consume(_POINT);
-                 srsymtable:=tunitsym(srsym).unitsymtable;
-                 srsym:=searchsymonlyin(srsymtable,pattern);
-               end
-              else
-               srsym:=nil;
-            end;
-         end;
+        { handle unit specification like System.Writeln }
+        try_consume_unitsym(srsym,srsymtable,t,true);
         { if nothing found give error and return errorsym }
-        if srsym=nil then
-         begin
-           identifier_not_found(orgpattern);
-           srsym:=generrorsym;
-           srsymtable:=nil;
-         end;
-        consume(_ID);
-        consume_sym:=assigned(srsym);
+        if assigned(srsym) then
+          check_hints(srsym,srsym.symoptions,srsym.deprecatedmsg)
+        else
+          begin
+            identifier_not_found(orgpattern);
+            srsym:=generrorsym;
+            srsymtable:=nil;
+          end;
+        consume(t);
+        result:=assigned(srsym);
       end;
 
 
-    function try_consume_hintdirective(var symopt:tsymoptions):boolean;
+    { check if a symbol contains the hint directive, and if so gives out a hint
+      if required and returns the id with it's original casing
+    }
+    function consume_sym_orgid(var srsym:tsym;var srsymtable:TSymtable;var s : string):boolean;
+      var
+        t : ttoken;
+      begin
+        { first check for identifier }
+        if token<>_ID then
+          begin
+            consume(_ID);
+            srsym:=generrorsym;
+            srsymtable:=nil;
+            result:=false;
+            exit;
+          end;
+        searchsym(pattern,srsym,srsymtable);
+        { handle unit specification like System.Writeln }
+        try_consume_unitsym(srsym,srsymtable,t,true);
+        { if nothing found give error and return errorsym }
+        if assigned(srsym) then
+          check_hints(srsym,srsym.symoptions,srsym.deprecatedmsg)
+        else
+          begin
+            identifier_not_found(orgpattern);
+            srsym:=generrorsym;
+            srsymtable:=nil;
+          end;
+        s:=orgpattern;
+        consume(t);
+        result:=assigned(srsym);
+      end;
+
+
+    function try_consume_unitsym(var srsym:tsym;var srsymtable:TSymtable;var tokentoconsume:ttoken;consume_id:boolean):boolean;
+      var
+        hmodule: tmodule;
+        ns:ansistring;
+        nssym:tsym;
+      begin
+        result:=false;
+        tokentoconsume:=_ID;
+
+        if assigned(srsym) and (srsym.typ in [unitsym,namespacesym]) then
+          begin
+            if not(srsym.owner.symtabletype in [staticsymtable,globalsymtable]) then
+              internalerror(200501154);
+            { only allow unit.symbol access if the name was
+              found in the current module
+              we can use iscurrentunit because generic specializations does not
+              change current_unit variable }
+            hmodule:=find_module_from_symtable(srsym.Owner);
+            if not Assigned(hmodule) then
+              internalerror(201001120);
+            if hmodule.unit_index=current_filepos.moduleindex then
+              begin
+                if consume_id then
+                  consume(_ID);
+                consume(_POINT);
+                if srsym.typ=namespacesym then
+                  begin
+                    ns:=srsym.name;
+                    nssym:=srsym;
+                    while assigned(srsym) and (srsym.typ=namespacesym) do
+                      begin
+                        { we have a namespace. the next identifier should be either a namespace or a unit }
+                        searchsym_in_module(hmodule,ns+'.'+pattern,srsym,srsymtable);
+                        if assigned(srsym) and (srsym.typ in [namespacesym,unitsym]) then
+                          begin
+                            ns:=ns+'.'+pattern;
+                            nssym:=srsym;
+                            consume(_ID);
+                            consume(_POINT);
+                          end;
+                      end;
+                    { check if there is a hidden unit with this pattern in the namespace }
+                    if not assigned(srsym) and
+                       assigned(nssym) and (nssym.typ=namespacesym) and assigned(tnamespacesym(nssym).unitsym) then
+                      srsym:=tnamespacesym(nssym).unitsym;
+                    if assigned(srsym) and (srsym.typ<>unitsym) then
+                      internalerror(201108260);
+                    if not assigned(srsym) then
+                      begin
+                        result:=true;
+                        srsymtable:=nil;
+                        exit;
+                      end;
+                  end;
+                case token of
+                  _ID:
+                    { system.char? (char=widechar comes from the implicit
+                      uuchar unit -> override) }
+                    if (pattern='CHAR') and
+                       (tmodule(tunitsym(srsym).module).globalsymtable=systemunit) then
+                      begin
+                        if m_default_unicodestring in current_settings.modeswitches then
+                          searchsym_in_module(tunitsym(srsym).module,'WIDECHAR',srsym,srsymtable)
+                        else
+                          searchsym_in_module(tunitsym(srsym).module,'ANSICHAR',srsym,srsymtable)
+                      end
+                    else
+                      searchsym_in_module(tunitsym(srsym).module,pattern,srsym,srsymtable);
+                  _STRING:
+                    begin
+                      { system.string? }
+                      if tmodule(tunitsym(srsym).module).globalsymtable=systemunit then
+                        begin
+                          if cs_refcountedstrings in current_settings.localswitches then
+                            begin
+                              if m_default_unicodestring in current_settings.modeswitches then
+                                searchsym_in_module(tunitsym(srsym).module,'UNICODESTRING',srsym,srsymtable)
+                              else
+                                searchsym_in_module(tunitsym(srsym).module,'ANSISTRING',srsym,srsymtable)
+                            end
+                          else
+                            searchsym_in_module(tunitsym(srsym).module,'SHORTSTRING',srsym,srsymtable);
+                          tokentoconsume:=_STRING;
+                        end;
+                    end
+                  end;
+              end
+            else
+              begin
+                srsym:=nil;
+                srsymtable:=nil;
+              end;
+            result:=true;
+          end;
+      end;
+
+
+    function try_consume_hintdirective(var symopt:tsymoptions; var deprecatedmsg:pshortstring):boolean;
+      var
+        last_is_deprecated:boolean;
       begin
         try_consume_hintdirective:=false;
-        if not(m_hintdirective in aktmodeswitches) then
+        if not(m_hintdirective in current_settings.modeswitches) then
          exit;
         repeat
+          last_is_deprecated:=false;
           case idtoken of
             _LIBRARY :
               begin
@@ -251,6 +355,12 @@ implementation
             _DEPRECATED :
               begin
                 include(symopt,sp_hint_deprecated);
+                try_consume_hintdirective:=true;
+                last_is_deprecated:=true;
+              end;
+            _EXPERIMENTAL :
+              begin
+                include(symopt,sp_hint_experimental);
                 try_consume_hintdirective:=true;
               end;
             _PLATFORM :
@@ -267,17 +377,19 @@ implementation
               break;
           end;
           consume(Token);
+          { handle deprecated message }
+          if ((token=_CSTRING) or (token=_CCHAR)) and last_is_deprecated then
+            begin
+              if deprecatedmsg<>nil then
+                internalerror(200910181);
+              if token=_CSTRING then
+                deprecatedmsg:=stringdup(cstringpattern)
+              else
+                deprecatedmsg:=stringdup(pattern);
+              consume(token);
+              include(symopt,sp_has_deprecated_msg);
+            end;
         until false;
       end;
 
 end.
-{
-  $Log: pbase.pas,v $
-  Revision 1.31  2005/02/14 17:13:07  peter
-    * truncate log
-
-  Revision 1.30  2005/01/19 22:19:41  peter
-    * unit mapping rewrite
-    * new derefmap added
-
-}

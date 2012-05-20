@@ -1,5 +1,4 @@
 {
-    $Id: fptools.pas,v 1.7 2005/02/14 17:13:18 peter Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 1998 by Berczi Gabor
 
@@ -150,6 +149,9 @@ const
      LongestTool : sw_integer = 0;
 
 procedure RegisterFPTools;
+{$ifdef DEBUG}
+Procedure FpToolsDebugMessage(AFileName, AText : string; ALine, APos : string;nrline,nrpos:sw_word);
+{$endif DEBUG}
 
 implementation
 
@@ -157,7 +159,7 @@ uses Dos,
      FVConsts,
      App,MsgBox,
      WConsts,WUtils,WINI,
-     FPConst,FPString,FPVars,FPUtils;
+     FPConst,FPVars,FPUtils;
 
 {$ifndef NOOBJREG}
 const
@@ -175,6 +177,35 @@ const
   );
 {$endif}
 
+{$ifdef useresstrings}
+resourcestring
+{$else}
+const
+{$endif}
+      dialog_tools = 'Tools';
+      dialog_modifynewtool = 'Modify/New Tool';
+      dialog_programarguments = 'Program Arguments';
+      dialog_messages = 'Messages';
+      msg_errorparsingparametersatpos = ^C'Error parsing parameters line at line position %d.';
+      msg_cantinstallmoretools = ^C'Can''t install more tools...';
+      msg_requiredparametermissingin = 'Required parameter missing in [%s]';
+      msg_requiredpropertymissingin = 'Required property missing in [%s]';
+      msg_unknowntypein = 'Unknown type in [%s]';
+      msg_propertymissingin = '%s property missing in [%s]';
+      msg_invaliditemsin = 'Invalid number of items in [%s]';
+      label_tools_programtitles = '~P~rogram titles';
+      label_toolprop_title = '~T~itle';
+      label_toolprop_programpath = 'Program ~p~ath';
+      label_toolprop_commandline = 'Command ~l~ine';
+      label_enterprogramargument = '~E~nter program argument';
+
+      { standard button texts }
+      button_OK          = 'O~K~';
+      button_Cancel      = 'Cancel';
+      button_New         = '~N~ew';
+      button_Edit        = '~E~dit';
+      button_Delete      = '~D~elete';
+
 type
     THotKeyDef = record
       Name     : string[12];
@@ -182,7 +213,7 @@ type
     end;
 
 const
-     HotKeys : array[0..9] of THotKeyDef =
+     HotKeys : array[0..11] of THotKeyDef =
       ( (Name : '~U~nassigned' ; KeyCode : kbNoKey   ),
         (Name : 'Shift+F~2~'   ; KeyCode : kbShiftF2 ),
         (Name : 'Shift+F~3~'   ; KeyCode : kbShiftF3 ),
@@ -192,7 +223,9 @@ const
         (Name : 'Shift+F~7~'   ; KeyCode : kbShiftF7 ),
         (Name : 'Shift+F~8~'   ; KeyCode : kbShiftF8 ),
         (Name : 'Shift+F~9~'   ; KeyCode : kbShiftF9 ),
-        (Name : 'Shift+F~1~0'  ; KeyCode : kbShiftF10));
+        (Name : 'Shift+F1~0~'  ; KeyCode : kbShiftF10),
+        (Name : 'Shift+F1~1~'  ; KeyCode : kbShiftF11),
+        (Name : 'Shift+~F~12'  ; KeyCode : kbShiftF12));
 
      Tools     : PToolCollection = nil;
      AbortTool : boolean         = false;
@@ -688,7 +721,7 @@ var
   OK: boolean;
   _IS: PINISection;
 
-  procedure ProcessSection(Sec: PINISection);{$ifndef FPC}far;{$endif}
+  procedure ProcessSection(Sec: PINISection);
   var P1,P2: TPoint;
       Typ: string;
       Count: sw_integer;
@@ -1296,6 +1329,7 @@ var Pass: sw_integer;
 begin
   W:=FirstEditorWindow;
   Err:=0;
+  AbortTool:=false;
   for Pass:=0 to 3 do
     begin
       ParseParams(Pass);
@@ -1333,7 +1367,11 @@ begin
   OK:=(S<>nil) and (S^.Status=stOK);
   if OK then S^.Read(Sign,SizeOf(Sign));
   OK:=OK and (Sign=MsgFilterSign);
-  Done:=false; InFileName:=false; InReference:=false;
+  Done:=false;
+  InFileName:=false;
+  InReference:=false;
+  FileName:='';
+  Line:='';
   while OK and (Done=false) do
     begin
       S^.Read(C,SizeOf(C));
@@ -1377,7 +1415,7 @@ begin
 end;
 
 procedure DoneToolTempFiles;
-procedure DeleteIt(P: PString); {$ifndef FPC}far;{$endif}
+procedure DeleteIt(P: PString);
 begin
   DeleteFile(GetStr(P));
 end;
@@ -1614,10 +1652,14 @@ begin
 {$endif}
 end;
 
-END.
-{
-  $Log: fptools.pas,v $
-  Revision 1.7  2005/02/14 17:13:18  peter
-    * truncate log
+{$ifdef DEBUG}
+Procedure FpToolsDebugMessage(AFileName, AText : string; ALine, APos :string ;nrline,nrpos:sw_word);
+begin
+  AddToolMessage(AFileName,AText,nrline,nrPos);
+  UpdateToolMessages;
+end;
 
-}
+begin
+  DebugMessageS:=@FpToolsDebugMessage;
+{$endif DEBUG}
+END.

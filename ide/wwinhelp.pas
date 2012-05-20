@@ -1,5 +1,4 @@
 {
-    $Id: wwinhelp.pas,v 1.7 2005/02/14 17:13:19 peter Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 2000 by Berczi Gabor
 
@@ -1283,7 +1282,7 @@ begin
     Dec(RemSize,CurFrag); Inc(CurOfs,CurFrag);
   end;
 end;
-function SearchTopicStart(P: PTopicEnumData): boolean; {$ifndef FPC}far;{$endif}
+function SearchTopicStart(P: PTopicEnumData): boolean;
 begin
   case P^.TL.RecordType of
     $02 : TopicStartPos:=P^.TopicPos;
@@ -1291,7 +1290,7 @@ begin
   GotIt:=(P^.TL.RecordType in [$20,$23]) and (P^.TopicOfs<=BlockOfs) and (BlockOfs<P^.TopicOfs+P^.LinkData2Size);
   SearchTopicStart:=not GotIt;
 end;
-function RenderTopicProc(P: PTopicEnumData): boolean; {$ifndef FPC}far;{$endif}
+function RenderTopicProc(P: PTopicEnumData): boolean;
 var LinkData1Ofs: longint;
     LinkData2Ofs: longint;
 function ReadUCHAR: byte;
@@ -1474,6 +1473,7 @@ begin
         for I:=10 to 14 do
           if (Flags and (1 shl I))<>0 then
             ReadUCHAR;
+{
         if (TH.NonScrollRgnOfs<>-1) then
           if (P^.TopicPos=(TH.ScrollRgnOfs and $3fff)) then
             begin
@@ -1481,6 +1481,7 @@ begin
               EmitText(CharStr('Ä',80));
               EmitText(hscLineBreak);
             end;
+}
         while (LinkData2Ofs<P^.LinkData2Size) do
         begin
           LinkOfs:=-1;
@@ -1512,11 +1513,11 @@ begin
                     begin
                       if LastEmittedChar<>ord(hscLineBreak) then
                         EmitText(hscLineBreak);
-                      EmitDebugText('[tag0x'+IntToHex(Cmd,2)+']');
+                      EmitDebugText('[tag0x'+hexstr(Cmd,2)+']');
                     end;
               $80 : begin
                       FontNumber:=ReadSHORT;
-                      EmitDebugText('[font'+IntToStr(FontNumber)+']');
+                      EmitDebugText('[font'+inttostr(FontNumber)+']');
                     end;
               $81 : {LineBreak}
                     begin
@@ -1615,7 +1616,7 @@ begin
                         AddLinkToTopic(T,ID,LinkOfs);
                       end;
                     end;
-              else EmitDebugText('[tag0x'+IntToHex(Cmd,2)+']');
+              else EmitDebugText('[tag0x'+hexstr(Cmd,2)+']');
             end;
           end;
           if SLen>0 then
@@ -1664,7 +1665,7 @@ begin
   inherited Done;
 end;
 
-function CreateProc(const FileName,Param: string;Index : longint): PHelpFile; {$ifndef FPC}far;{$endif}
+function CreateProc(const FileName,Param: string;Index : longint): PHelpFile;
 begin
   CreateProc:=New(PWinHelpFile, Init(FileName,Index));
 end;
@@ -1675,9 +1676,3 @@ begin
 end;
 
 END.
-{
-  $Log: wwinhelp.pas,v $
-  Revision 1.7  2005/02/14 17:13:19  peter
-    * truncate log
-
-}

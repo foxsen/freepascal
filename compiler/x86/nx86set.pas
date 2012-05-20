@@ -1,5 +1,4 @@
 {
-    $Id: nx86set.pas,v 1.9 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl
 
     Generate x86 assembler for in/case nodes
@@ -27,28 +26,209 @@ unit nx86set;
 interface
 
     uses
-       node,nset,pass_1,ncgset;
+      globtype,
+      node,nset,pass_1,ncgset;
 
     type
-
        tx86innode = class(tinnode)
-          procedure pass_2;override;
-          function pass_1 : tnode;override;
+         procedure pass_generate_code;override;
+         function pass_1 : tnode;override;
        end;
 
+      tx86casenode = class(tcgcasenode)
+         function  has_jumptable : boolean;override;
+         procedure genjumptable(hp : pcaselabel;min_,max_ : aint);override;
+         procedure genlinearlist(hp : pcaselabel);override;
+      end;
 
 implementation
 
     uses
-      globtype,systems,
+      systems,constexp,
       verbose,globals,
       symconst,symdef,defutil,
-      aasmbase,aasmtai,aasmcpu,
+      aasmbase,aasmtai,aasmdata,aasmcpu,
       cgbase,pass_2,tgobj,
       ncon,
       cpubase,
-      cga,cgobj,cgutils,ncgutil,
-      cgx86;
+      cga,cgobj,hlcgobj,cgutils,ncgutil,
+      cgx86,
+      procinfo;
+
+{*****************************************************************************
+                                  TX86CASENODE
+*****************************************************************************}
+
+    function tx86casenode.has_jumptable : boolean;
+      begin
+{$ifdef i386}
+        has_jumptable:=true;
+{$else}
+        has_jumptable:=false;
+{$endif}
+      end;
+
+
+    procedure tx86casenode.genjumptable(hp : pcaselabel;min_,max_ : aint);
+      var
+        table : tasmlabel;
+        last : TConstExprInt;
+        indexreg : tregister;
+        href : treference;
+        jtlist: tasmlist;
+        sectype: TAsmSectiontype;
+        opcgsize: tcgsize;
+
+        procedure genitem(list:TAsmList;t : pcaselabel);
+          var
+            i : aint;
+          begin
+            if assigned(t^.less) then
+              genitem(list,t^.less);
+            { fill possible hole }
+            i:=last.svalue+1;
+            while i<=t^._low.svalue-1 do
+              begin
+                list.concat(Tai_const.Create_sym(elselabel));
+                inc(i);
+              end;
+            i:=t^._low.svalue;
+            while i<=t^._high.svalue do
+              begin
+                list.concat(Tai_const.Create_sym(blocklabel(t^.blockid)));
+                inc(i);
+              end;
+            last:=t^._high;
+            if assigned(t^.greater) then
+              genitem(list,t^.greater);
+          end;
+
+      begin
+        last:=min_;
+        opcgsize:=def_cgsize(opsize);
+        if not(jumptable_no_range) then
+          begin
+             { a <= x <= b <-> unsigned(x-a) <= (b-a) }
+             cg.a_op_const_reg(current_asmdata.CurrAsmList,OP_SUB,opcgsize,aint(min_),hregister);
+             { case expr greater than max_ => goto elselabel }
+             cg.a_cmp_const_reg_label(current_asmdata.CurrAsmList,opcgsize,OC_A,aint(max_)-aint(min_),hregister,elselabel);
+             min_:=0;
+          end;
+        current_asmdata.getdatalabel(table);
+        { make it a 32bit register }
+        indexreg:=cg.makeregsize(current_asmdata.CurrAsmList,hregister,OS_INT);
+        cg.a_load_reg_reg(current_asmdata.CurrAsmList,opcgsize,OS_INT,hregister,indexreg);
+        { create reference }
+        reference_reset_symbol(href,table,0,sizeof(pint));
+        href.offset:=(-aint(min_))*sizeof(aint);
+        href.index:=indexreg;
+        href.scalefactor:=sizeof(aint);
+        emit_ref(A_JMP,S_NO,href);
+        { generate jump table }
+        if (target_info.system in [system_i386_darwin,system_i386_iphonesim]) then
+          begin
+            jtlist:=current_asmdata.asmlists[al_const];
+            sectype:=sec_rodata;
+          end
+        else
+          begin
+            jtlist:=current_procinfo.aktlocaldata;
+            sectype:=sec_data;
+          end;
+        new_section(jtlist,sectype,current_procinfo.procdef.mangledname,sizeof(aint));
+        jtlist.concat(Tai_label.Create(table));
+        genitem(jtlist,hp);
+      end;
+
+    procedure tx86casenode.genlinearlist(hp : pcaselabel);
+      var
+        first : boolean;
+        lastrange : boolean;
+        last : TConstExprInt;
+        cond_lt,cond_le : tresflags;
+        opcgsize: tcgsize;
+
+        procedure genitem(t : pcaselabel);
+          begin
+             if assigned(t^.less) then
+               genitem(t^.less);
+             { need we to test the first value }
+             if first and (t^._low>get_min_value(left.resultdef)) then
+               begin
+                 cg.a_cmp_const_reg_label(current_asmdata.CurrAsmList,opcgsize,jmp_lt,aint(t^._low.svalue),hregister,elselabel);
+               end;
+             if t^._low=t^._high then
+               begin
+                  if t^._low-last=0 then
+                    cg.a_cmp_const_reg_label(current_asmdata.CurrAsmList, opcgsize, OC_EQ,0,hregister,blocklabel(t^.blockid))
+                  else
+                    begin
+                      cg.a_op_const_reg(current_asmdata.CurrAsmList, OP_SUB, opcgsize, aint(t^._low.svalue-last.svalue), hregister);
+                      cg.a_jmp_flags(current_asmdata.CurrAsmList,F_E,blocklabel(t^.blockid));
+                    end;
+                  last:=t^._low;
+                  lastrange:=false;
+               end
+             else
+               begin
+                  { it begins with the smallest label, if the value }
+                  { is even smaller then jump immediately to the    }
+                  { ELSE-label                                }
+                  if first then
+                    begin
+                       { have we to ajust the first value ? }
+                       if (t^._low>get_min_value(left.resultdef)) or (get_min_value(left.resultdef)<>0) then
+                         cg.a_op_const_reg(current_asmdata.CurrAsmList, OP_SUB, opcgsize, aint(t^._low.svalue), hregister);
+                    end
+                  else
+                    begin
+                      { if there is no unused label between the last and the }
+                      { present label then the lower limit can be checked    }
+                      { immediately. else check the range in between:       }
+
+                      cg.a_op_const_reg(current_asmdata.CurrAsmList, OP_SUB, opcgsize, aint(t^._low.svalue-last.svalue), hregister);
+                      { no jump necessary here if the new range starts at }
+                      { at the value following the previous one           }
+                      if ((t^._low-last) <> 1) or
+                         (not lastrange) then
+                        cg.a_jmp_flags(current_asmdata.CurrAsmList,cond_lt,elselabel);
+                    end;
+                  {we need to use A_SUB, because A_DEC does not set the correct flags, therefor
+                   using a_op_const_reg(OP_SUB) is not possible }
+                  emit_const_reg(A_SUB,TCGSize2OpSize[opcgsize],aint(t^._high.svalue-t^._low.svalue),hregister);
+                  cg.a_jmp_flags(current_asmdata.CurrAsmList,cond_le,blocklabel(t^.blockid));
+                  last:=t^._high;
+                  lastrange:=true;
+               end;
+             first:=false;
+             if assigned(t^.greater) then
+               genitem(t^.greater);
+          end;
+
+        begin
+           opcgsize:=def_cgsize(opsize);
+           if with_sign then
+             begin
+                cond_lt:=F_L;
+                cond_le:=F_LE;
+             end
+           else
+              begin
+                cond_lt:=F_B;
+                cond_le:=F_BE;
+             end;
+           { do we need to generate cmps? }
+           if (with_sign and (min_label<0)) then
+             genlinearcmplist(hp)
+           else
+             begin
+                last:=0;
+                lastrange:=false;
+                first:=true;
+                genitem(hp);
+                cg.a_jmp_always(current_asmdata.CurrAsmList,elselabel);
+             end;
+        end;
 
 {*****************************************************************************
                               TX86INNODE
@@ -64,34 +244,28 @@ implementation
          firstpass(left);
          if codegenerror then
            exit;
-
-         left_right_max;
-         { a smallset needs maybe an misc. register }
-         if (left.nodetype<>ordconstn) and
-            not(right.location.loc in [LOC_CREGISTER,LOC_REGISTER]) and
-            (right.registersint<1) then
-           inc(registersint);
       end;
 
-
-
-    procedure tx86innode.pass_2;
+    procedure tx86innode.pass_generate_code;
        type
          Tsetpart=record
            range : boolean;      {Part is a range.}
            start,stop : byte;    {Start/stop when range; Stop=element when an element.}
          end;
        var
-         genjumps,
-         use_small,
-         ranges     : boolean;
          hreg,hreg2,
          pleftreg   : tregister;
          opsize     : tcgsize;
+         opdef      : torddef;
+         orgopsize  : tcgsize;
          setparts   : array[1..8] of Tsetpart;
-         i,numparts : byte;
+         setbase    : aint;
          adjustment : longint;
          l,l2       : tasmlabel;
+         i,numparts : byte;
+         genjumps,
+         use_small,
+         ranges     : boolean;
 {$ifdef CORRECT_SET_IN_FPC}
          AM         : tasmop;
 {$endif CORRECT_SET_IN_FPC}
@@ -105,7 +279,7 @@ implementation
                 {The expression...
                     if expr in []
                  ...is allways false. It should be optimized away in the
-                 resulttype pass, and thus never occur here. Since we
+                 resultdef pass, and thus never occur here. Since we
                  do generate wrong code for it, do internalerror.}
                 internalerror(2002072301);
              analizeset:=false;
@@ -115,7 +289,7 @@ implementation
              { Lots of comparisions take a lot of time, so do not allow
                too much comparisions. 8 comparisions are, however, still
                smalller than emitting the set }
-             if cs_littlesize in aktglobalswitches then
+             if cs_opt_size in current_settings.optimizerswitches then
                maxcompares:=8
              else
                maxcompares:=5;
@@ -145,12 +319,6 @@ implementation
                      setparts[numparts].start:=setparts[numparts].stop;
                      setparts[numparts].stop:=i;
                      ranges := true;
-                     { there's only one compare per range anymore. Only a }
-                     { sub is added, but that's much faster than a        }
-                     { cmp/jcc combo so neglect its effect                }
-{                     inc(compares);
-                     if compares>maxcompares then
-                      exit; }
                    end
                   else
                    begin
@@ -163,20 +331,25 @@ implementation
 
        begin
          { We check first if we can generate jumps, this can be done
-           because the resulttype.def is already set in firstpass }
+           because the resultdef is already set in firstpass }
 
          { check if we can use smallset operation using btl which is limited
-           to 32 bits, the left side may also not contain higher values !! }
-         use_small:=(tsetdef(right.resulttype.def).settype=smallset) and
-                    ((left.resulttype.def.deftype=orddef) and (torddef(left.resulttype.def).high<=32) or
-                     (left.resulttype.def.deftype=enumdef) and (tenumdef(left.resulttype.def).max<=32));
+           to 32 bits, the left side may also not contain higher values or be signed !! }
+         use_small:=is_smallset(right.resultdef) and
+                    not is_signed(left.resultdef) and
+                    ((left.resultdef.typ=orddef) and (torddef(left.resultdef).high.svalue<32) or
+                     (left.resultdef.typ=enumdef) and (tenumdef(left.resultdef).max<32));
 
          { Can we generate jumps? Possible for all types of sets }
          genjumps:=(right.nodetype=setconstn) and
                    analizeset(tsetconstnode(right).value_set,use_small);
          { calculate both operators }
          { the complex one first }
-         firstcomplex(self);
+         { not in case of genjumps, because then we don't secondpass    }
+         { right at all (so we have to make sure that "right" really is }
+         { "right" and not "swapped left" in that case)                 }
+         if not(genjumps) then
+           firstcomplex(self);
          secondpass(left);
          { Only process the right if we are not generating jumps }
          if not genjumps then
@@ -187,8 +360,19 @@ implementation
           exit;
 
          { ofcourse not commutative }
-         if nf_swaped in flags then
+         if nf_swapped in flags then
           swapleftright;
+
+         orgopsize := def_cgsize(left.resultdef);
+         opsize := OS_32;
+         if is_signed(left.resultdef) then
+           opsize := tcgsize(ord(opsize)+(ord(OS_S8)-ord(OS_8)));
+         opdef:=hlcg.tcgsize2orddef(opsize);
+
+         if not(left.location.loc in [LOC_REGISTER,LOC_CREGISTER,LOC_REFERENCE,LOC_CREFERENCE,LOC_CONSTANT]) then
+           hlcg.location_force_reg(current_asmdata.CurrAsmList,left.location,left.resultdef,opdef,true);
+         if (right.location.loc in [LOC_SUBSETREG,LOC_CSUBSETREG]) then
+           hlcg.location_force_reg(current_asmdata.CurrAsmList,right.location,left.resultdef,opdef,true);
 
          if genjumps then
           begin
@@ -196,35 +380,9 @@ implementation
               separately instead of using the SET_IN_BYTE procedure.
               To do: Build in support for LOC_JUMP }
 
-            opsize := def_cgsize(left.resulttype.def);
-            { If register is used, use only lower 8 bits }
-            if left.location.loc in [LOC_REGISTER,LOC_CREGISTER] then
-             begin
-               { for ranges we always need a 32bit register, because then we }
-               { use the register as base in a reference (JM)                }
-               if ranges then
-                 begin
-                   pleftreg:=cg.makeregsize(exprasmlist,left.location.register,OS_INT);
-                   cg.a_load_reg_reg(exprasmlist,left.location.size,OS_INT,left.location.register,pleftreg);
-                   if opsize<>OS_INT then
-                     cg.a_op_const_reg(exprasmlist,OP_AND,OS_INT,255,pleftreg);
-                   opsize:=OS_INT;
-                 end
-               else
-                 { otherwise simply use the lower 8 bits (no "and" }
-                 { necessary this way) (JM)                        }
-                 begin
-                   pleftreg:=cg.makeregsize(exprasmlist,left.location.register,OS_8);
-                   opsize := OS_8;
-                 end;
-             end
-            else
-             begin
-               { load the value in a register }
-               pleftreg:=cg.getintregister(exprasmlist,OS_32);
-               opsize:=OS_32;
-               cg.a_load_ref_reg(exprasmlist,OS_8,OS_32,left.location.reference,pleftreg);
-             end;
+            { load and zero or sign extend as necessary }
+            hlcg.location_force_reg(current_asmdata.CurrAsmList,left.location,left.resultdef,opdef,false);
+            pleftreg:=left.location.register;
 
             { Get a label to jump to the end }
             location_reset(location,LOC_FLAGS,OS_NO);
@@ -236,7 +394,7 @@ implementation
             else
               location.resflags:=F_E;
 
-            objectlibrary.getlabel(l);
+            current_asmdata.getjumplabel(l);
 
             { how much have we already substracted from the x in the }
             { "x in [y..z]" expression                               }
@@ -247,19 +405,15 @@ implementation
               { use fact that a <= x <= b <=> cardinal(x-a) <= cardinal(b-a) }
               begin
                 { is the range different from all legal values? }
-                if (setparts[i].stop-setparts[i].start <> 255) then
+                if (setparts[i].stop-setparts[i].start <> 255) or not (orgopsize = OS_8) then
                   begin
                     { yes, is the lower bound <> 0? }
                     if (setparts[i].start <> 0) then
                       begin
-                        if (left.location.loc = LOC_CREGISTER) then
-                          begin
-                            hreg:=cg.getintregister(exprasmlist,OS_INT);
-                            cg.a_load_reg_reg(exprasmlist,opsize,OS_INT,pleftreg,hreg);
-                            pleftreg:=hreg;
-                            opsize:=OS_INT;
-                          end;
-                        cg.a_op_const_reg(exprasmlist,OP_SUB,opsize,setparts[i].start-adjustment,pleftreg);
+                        hlcg.location_force_reg(current_asmdata.CurrAsmList,left.location,left.resultdef,opdef,false);
+                        hreg:=left.location.register;
+                        pleftreg:=hreg;
+                        cg.a_op_const_reg(current_asmdata.CurrAsmList,OP_SUB,opsize,setparts[i].start-adjustment,pleftreg);
                       end;
 
                     { new total value substracted from x:           }
@@ -270,59 +424,60 @@ implementation
                     { we need a carry in case the element is in the range }
                     { (this will never overflow since we check at the     }
                     { beginning whether stop-start <> 255)                }
-                    cg.a_cmp_const_reg_label(exprasmlist,opsize,OC_B,setparts[i].stop-setparts[i].start+1,pleftreg,l);
+                    cg.a_cmp_const_reg_label(current_asmdata.CurrAsmList,opsize,OC_B,setparts[i].stop-setparts[i].start+1,pleftreg,l);
                   end
                 else
                   { if setparts[i].start = 0 and setparts[i].stop = 255,  }
                   { it's always true since "in" is only allowed for bytes }
                   begin
-                    exprasmlist.concat(taicpu.op_none(A_STC,S_NO));
-                    cg.a_jmp_always(exprasmlist,l);
+                    current_asmdata.CurrAsmList.concat(taicpu.op_none(A_STC,S_NO));
+                    cg.a_jmp_always(current_asmdata.CurrAsmList,l);
                   end;
               end
              else
               begin
                 { Emit code to check if left is an element }
-                exprasmlist.concat(taicpu.op_const_reg(A_CMP,TCGSize2OpSize[opsize],setparts[i].stop-adjustment,
+                current_asmdata.CurrAsmList.concat(taicpu.op_const_reg(A_CMP,TCGSize2OpSize[opsize],setparts[i].stop-adjustment,
                   pleftreg));
                 { Result should be in carry flag when ranges are used }
                 if ranges then
-                  exprasmlist.concat(taicpu.op_none(A_STC,S_NO));
+                  current_asmdata.CurrAsmList.concat(taicpu.op_none(A_STC,S_NO));
                 { If found, jump to end }
-                cg.a_jmp_flags(exprasmlist,F_E,l);
+                cg.a_jmp_flags(current_asmdata.CurrAsmList,F_E,l);
               end;
              if ranges and
                 { if the last one was a range, the carry flag is already }
                 { set appropriately                                      }
                 not(setparts[numparts].range) then
-               exprasmlist.concat(taicpu.op_none(A_CLC,S_NO));
+                  current_asmdata.CurrAsmList.concat(taicpu.op_none(A_CLC,S_NO));
              { To compensate for not doing a second pass }
              right.location.reference.symbol:=nil;
              { Now place the end label }
-             cg.a_label(exprasmlist,l);
+             cg.a_label(current_asmdata.CurrAsmList,l);
           end
          else
           begin
             location_reset(location,LOC_FLAGS,OS_NO);
+            setbase:=tsetdef(right.resultdef).setbase;
 
             { We will now generated code to check the set itself, no jmps,
               handle smallsets separate, because it allows faster checks }
             if use_small then
              begin
-               if left.nodetype=ordconstn then
+               if left.location.loc=LOC_CONSTANT then
                 begin
                   location.resflags:=F_NE;
                   case right.location.loc of
                     LOC_REGISTER,
                     LOC_CREGISTER:
                       begin
-                         emit_const_reg(A_TEST,S_L,
-                           1 shl (tordconstnode(left).value and 31),right.location.register);
+                         emit_const_reg(A_TEST,TCGSize2OpSize[right.location.size],
+                           1 shl ((left.location.value-setbase) and 31),right.location.register);
                       end;
                     LOC_REFERENCE,
                     LOC_CREFERENCE :
                       begin
-                        emit_const_ref(A_TEST,S_L,1 shl (tordconstnode(left).value and 31),
+                        emit_const_ref(A_TEST,TCGSize2OpSize[right.location.size],1 shl ((left.location.value-setbase) and 31),
                            right.location.reference);
                       end;
                     else
@@ -331,22 +486,12 @@ implementation
                 end
                else
                 begin
-                  case left.location.loc of
-                     LOC_REGISTER,
-                     LOC_CREGISTER:
-                       begin
-                          hreg:=cg.makeregsize(exprasmlist,left.location.register,OS_32);
-                          cg.a_load_reg_reg(exprasmlist,left.location.size,OS_32,left.location.register,hreg);
-                       end;
-                  else
-                    begin
-                      { the set element isn't never samller than a byte
-                        and because it's a small set we need only 5 bits
-                        but 8 bits are easier to load                    }
-                      hreg:=cg.getintregister(exprasmlist,OS_32);
-                      cg.a_load_ref_reg(exprasmlist,OS_8,OS_32,left.location.reference,hreg);
-                    end;
-                  end;
+                  hlcg.location_force_reg(current_asmdata.CurrAsmList,left.location,left.resultdef,u32inttype,true);
+                  register_maybe_adjust_setbase(current_asmdata.CurrAsmList,left.location,setbase);
+                  if (tcgsize2size[right.location.size] < 4) or
+                     (right.location.loc = LOC_CONSTANT) then
+                    hlcg.location_force_reg(current_asmdata.CurrAsmList,right.location,right.resultdef,u32inttype,true);
+                  hreg:=left.location.register;
 
                   case right.location.loc of
                     LOC_REGISTER,
@@ -354,14 +499,6 @@ implementation
                       begin
                         emit_reg_reg(A_BT,S_L,hreg,right.location.register);
                       end;
-                     LOC_CONSTANT :
-                       begin
-                         { We have to load the value into a register because
-                            btl does not accept values only refs or regs (PFV) }
-                         hreg2:=cg.getintregister(exprasmlist,OS_32);
-                         cg.a_load_const_reg(exprasmlist,OS_32,right.location.value,hreg2);
-                         emit_reg_reg(A_BT,S_L,hreg,hreg2);
-                       end;
                      LOC_CREFERENCE,
                      LOC_REFERENCE :
                        begin
@@ -378,92 +515,141 @@ implementation
                if right.location.loc=LOC_CONSTANT then
                 begin
                   location.resflags:=F_C;
-                  objectlibrary.getlabel(l);
-                  objectlibrary.getlabel(l2);
+                  current_asmdata.getjumplabel(l);
+                  current_asmdata.getjumplabel(l2);
 
                   { load constants to a register }
-                  if left.nodetype=ordconstn then
-                    location_force_reg(exprasmlist,left.location,OS_INT,true);
+                  if (left.location.loc=LOC_CONSTANT) or
+                     (setbase<>0) then
+                    begin
+                      hlcg.location_force_reg(current_asmdata.CurrAsmList,left.location,left.resultdef,opdef,true);
+                      register_maybe_adjust_setbase(current_asmdata.CurrAsmList,left.location,setbase);
+                    end;
 
                   case left.location.loc of
                      LOC_REGISTER,
                      LOC_CREGISTER:
                        begin
-                          hreg:=cg.makeregsize(exprasmlist,left.location.register,OS_32);
-                          cg.a_load_reg_reg(exprasmlist,left.location.size,OS_32,left.location.register,hreg);
-                          cg.a_cmp_const_reg_label(exprasmlist,OS_32,OC_BE,31,hreg,l);
+                          hreg:=cg.makeregsize(current_asmdata.CurrAsmList,left.location.register,opsize);
+                          cg.a_load_reg_reg(current_asmdata.CurrAsmList,left.location.size,opsize,left.location.register,hreg);
+                          cg.a_cmp_const_reg_label(current_asmdata.CurrAsmList,opsize,OC_BE,31,hreg,l);
                           { reset carry flag }
-                          exprasmlist.concat(taicpu.op_none(A_CLC,S_NO));
-                          cg.a_jmp_always(exprasmlist,l2);
-                          cg.a_label(exprasmlist,l);
+                          current_asmdata.CurrAsmList.concat(taicpu.op_none(A_CLC,S_NO));
+                          cg.a_jmp_always(current_asmdata.CurrAsmList,l2);
+                          cg.a_label(current_asmdata.CurrAsmList,l);
                           { We have to load the value into a register because
                             btl does not accept values only refs or regs (PFV) }
-                          hreg2:=cg.getintregister(exprasmlist,OS_32);
-                          cg.a_load_const_reg(exprasmlist,OS_32,right.location.value,hreg2);
+                          hreg2:=cg.getintregister(current_asmdata.CurrAsmList,OS_32);
+                          cg.a_load_const_reg(current_asmdata.CurrAsmList,OS_32,right.location.value,hreg2);
                           emit_reg_reg(A_BT,S_L,hreg,hreg2);
                        end;
-                  else
-                    begin
-{$ifdef CORRECT_SET_IN_FPC}
-                          if m_tp in aktmodeswitches then
-                            begin
-                              {***WARNING only correct if
-                                reference is 32 bits (PM) *****}
-                               emit_const_ref(A_CMP,S_L,31,reference_copy(left.location.reference));
-                            end
-                          else
-{$endif CORRECT_SET_IN_FPC}
-                            begin
-                               emit_const_ref(A_CMP,S_B,31,left.location.reference);
-                            end;
-                       cg.a_jmp_flags(exprasmlist,F_BE,l);
-                       { reset carry flag }
-                       exprasmlist.concat(taicpu.op_none(A_CLC,S_NO));
-                       cg.a_jmp_always(exprasmlist,l2);
-                       cg.a_label(exprasmlist,l);
-                       hreg:=cg.getintregister(exprasmlist,OS_32);
-                       cg.a_load_ref_reg(exprasmlist,OS_32,OS_32,left.location.reference,hreg);
-                       { We have to load the value into a register because
-                         btl does not accept values only refs or regs (PFV) }
-                       hreg2:=cg.getintregister(exprasmlist,OS_32);
-                       cg.a_load_const_reg(exprasmlist,OS_32,right.location.value,hreg2);
-                       emit_reg_reg(A_BT,S_L,hreg,hreg2);
-                    end;
+                     else
+                       begin
+                          emit_const_ref(A_CMP,TCGSize2OpSize[orgopsize],31,left.location.reference);
+                          cg.a_jmp_flags(current_asmdata.CurrAsmList,F_BE,l);
+                          { reset carry flag }
+                          current_asmdata.CurrAsmList.concat(taicpu.op_none(A_CLC,S_NO));
+                          cg.a_jmp_always(current_asmdata.CurrAsmList,l2);
+                          cg.a_label(current_asmdata.CurrAsmList,l);
+                          hreg:=cg.getintregister(current_asmdata.CurrAsmList,OS_32);
+                          cg.a_load_ref_reg(current_asmdata.CurrAsmList,OS_32,OS_32,left.location.reference,hreg);
+                          { We have to load the value into a register because
+                            btl does not accept values only refs or regs (PFV) }
+                          hreg2:=cg.getintregister(current_asmdata.CurrAsmList,OS_32);
+                          cg.a_load_const_reg(current_asmdata.CurrAsmList,OS_32,right.location.value,hreg2);
+                          emit_reg_reg(A_BT,S_L,hreg,hreg2);
+                       end;
                   end;
-                  cg.a_label(exprasmlist,l2);
+                  cg.a_label(current_asmdata.CurrAsmList,l2);
                 end { of right.location.loc=LOC_CONSTANT }
                { do search in a normal set which could have >32 elementsm
-                 but also used if the left side contains higher values > 32 }
-               else if left.nodetype=ordconstn then
+                 but also used if the left side contains values > 32 or < 0 }
+               else if left.location.loc=LOC_CONSTANT then
                 begin
+                  if (left.location.value<setbase) or (((left.location.value-setbase) shr 3) >= right.resultdef.size) then
+                    {should be caught earlier }
+                    internalerror(2007020201);
+
                   location.resflags:=F_NE;
-                  inc(right.location.reference.offset,tordconstnode(left).value shr 3);
-                  emit_const_ref(A_TEST,S_B,1 shl (tordconstnode(left).value and 7),right.location.reference);
+                  case right.location.loc of
+                    LOC_REFERENCE,LOC_CREFERENCE:
+                      begin
+                        inc(right.location.reference.offset,(left.location.value-setbase) shr 3);
+                        emit_const_ref(A_TEST,S_B,1 shl (left.location.value and 7),right.location.reference);
+                      end;
+                    LOC_REGISTER,LOC_CREGISTER:
+                      begin
+                        emit_const_reg(A_TEST,TCGSize2OpSize[right.location.size],1 shl (left.location.value-setbase),right.location.register);
+                      end;
+                    else
+                      internalerror(2007051901);
+                  end;
                 end
                else
                 begin
-                  if (left.location.loc=LOC_REGISTER) then
-                    pleftreg:=cg.makeregsize(exprasmlist,left.location.register,OS_32)
+                  hlcg.location_force_reg(current_asmdata.CurrAsmList,left.location,left.resultdef,opdef,false);
+                  register_maybe_adjust_setbase(current_asmdata.CurrAsmList,left.location,setbase);
+                  if (right.location.loc in [LOC_REGISTER,LOC_CREGISTER]) then
+                    hlcg.location_force_reg(current_asmdata.CurrAsmList,right.location,right.resultdef,opdef,true);
+                  pleftreg:=left.location.register;
+
+                  if (opsize >= OS_S8) or { = if signed }
+                     ((left.resultdef.typ=orddef) and
+                      ((torddef(left.resultdef).low < int64(tsetdef(right.resultdef).setbase)) or
+                       (torddef(left.resultdef).high > int64(tsetdef(right.resultdef).setmax)))) or
+                     ((left.resultdef.typ=enumdef) and
+                      ((tenumdef(left.resultdef).min < aint(tsetdef(right.resultdef).setbase)) or
+                       (tenumdef(left.resultdef).max > aint(tsetdef(right.resultdef).setmax)))) then
+                   begin
+
+                    { we have to check if the value is < 0 or > setmax }
+
+                    current_asmdata.getjumplabel(l);
+                    current_asmdata.getjumplabel(l2);
+
+                    { BE will be false for negative values }
+                    cg.a_cmp_const_reg_label(current_asmdata.CurrAsmList,opsize,OC_BE,tsetdef(right.resultdef).setmax-tsetdef(right.resultdef).setbase,pleftreg,l);
+                    { reset carry flag }
+                    current_asmdata.CurrAsmList.concat(taicpu.op_none(A_CLC,S_NO));
+                    cg.a_jmp_always(current_asmdata.CurrAsmList,l2);
+
+                    cg.a_label(current_asmdata.CurrAsmList,l);
+
+                    pleftreg:=left.location.register;
+                    case right.location.loc of
+                      LOC_REGISTER, LOC_CREGISTER :
+                        emit_reg_reg(A_BT,S_L,pleftreg,right.location.register);
+                      LOC_CREFERENCE, LOC_REFERENCE :
+                        emit_reg_ref(A_BT,S_L,pleftreg,right.location.reference);
+                    else
+                      internalerror(2007020301);
+                    end;
+
+                    cg.a_label(current_asmdata.CurrAsmList,l2);
+
+                    location.resflags:=F_C;
+
+                   end
                   else
-                    pleftreg:=cg.getintregister(exprasmlist,OS_32);
-                  cg.a_load_loc_reg(exprasmlist,OS_32,left.location,pleftreg);
-                  location_freetemp(exprasmlist,left.location);
-                  emit_reg_ref(A_BT,S_L,pleftreg,right.location.reference);
-                  { tg.ungetiftemp(exprasmlist,right.location.reference) happens below }
-                  location.resflags:=F_C;
+                   begin
+                      case right.location.loc of
+                        LOC_REGISTER, LOC_CREGISTER :
+                          emit_reg_reg(A_BT,S_L,pleftreg,right.location.register);
+                        LOC_CREFERENCE, LOC_REFERENCE :
+                          emit_reg_ref(A_BT,S_L,pleftreg,right.location.reference);
+                      else
+                        internalerror(2007020302);
+                      end;
+                      location.resflags:=F_C;
+                   end;
                 end;
              end;
           end;
           if not genjumps then
-            location_freetemp(exprasmlist,right.location);
+            location_freetemp(current_asmdata.CurrAsmList,right.location);
        end;
 
 begin
    cinnode:=tx86innode;
+   ccasenode:=tx86casenode;
 end.
-{
-  $Log: nx86set.pas,v $
-  Revision 1.9  2005/02/14 17:13:10  peter
-    * truncate log
-
- }

@@ -1,5 +1,4 @@
 {
-    $Id: dwriter.pp,v 1.6 2005/02/14 17:13:39 peter Exp $
 
     FPDoc  -  Free Pascal Documentation Tool
     Copyright (C) 2000 - 2003 by
@@ -46,7 +45,7 @@ resourcestring
 
   SErrDescrTagUnknown = 'Warning: Unknown tag "%s" in description';
   SErrUnknownEntityReference = 'Warning: Unknown entity reference "&%s;" found';
-  SErrUnknownLinkID = 'Warning: Target ID of <link> is unknown: "%s"';
+  SErrUnknownLinkID = 'Warning: Target ID of <link> in unit "%s" is unknown: "%s"';
   SErrUnknownPrintShortID = 'Warning: Target ID of <printshort> is unknown: "%s"';
   SErrUnknownLink = 'Could not resolve link to "%s"';
   SErralreadyRegistered = 'Class for output format "%s" already registered';
@@ -56,24 +55,32 @@ type
   // Phony element for pas pages.
 
   TTopicElement = Class(TPaselement)
-    Constructor Create(const AName: String; AParent: TPasElement); override;
-    Destructor Destroy; override;
     TopicNode : TDocNode;
     Previous,
     Next : TPasElement;
     Subtopics : TList;
+    Constructor Create(const AName: String; AParent: TPasElement); override;
+    Destructor Destroy; override;
   end;
 
+  TWriterLogEvent = Procedure(Sender : TObject; Const Msg : String) of object;
+  TWriterNoteEvent = Procedure(Sender : TObject; Note : TDomElement; Var EmitNote : Boolean) of object;
+  
   { TFPDocWriter }
 
   TFPDocWriter = class
   private
+    FEmitNotes: Boolean;
     FEngine  : TFPDocEngine;
     FPackage : TPasPackage;
-
     FTopics  : TList;
+    FImgExt : String;
+    FBeforeEmitNote : TWriterNoteEvent;
+    procedure ConvertURL(AContext: TPasElement; El: TDOMElement);
+    
   protected
-
+    Procedure DoLog(Const Msg : String);
+    Procedure DoLog(Const Fmt : String; Args : Array of const);
     procedure Warning(AContext: TPasElement; const AMsg: String);
     procedure Warning(AContext: TPasElement; const AMsg: String;
       const Args: array of const);
@@ -84,6 +91,7 @@ type
     function IsDescrNodeEmpty(Node: TDOMNode): Boolean;
     function IsExtShort(Node: TDOMNode): Boolean;
     function ConvertShort(AContext: TPasElement; El: TDOMElement): Boolean;
+    function ConvertNotes(AContext: TPasElement; El: TDOMElement): Boolean; virtual;
     function ConvertBaseShort(AContext: TPasElement; Node: TDOMNode): Boolean;
     procedure ConvertBaseShortList(AContext: TPasElement; Node: TDOMNode;
       MayBeEmpty: Boolean);
@@ -97,7 +105,10 @@ type
       Node: TDOMNode);
     function ConvertSimpleBlock(AContext: TPasElement; Node: TDOMNode): Boolean;
     Function FindTopicElement(Node : TDocNode): TTopicElement;
+    Procedure ConvertImage(El : TDomElement);
 
+    Procedure DescrEmitNotesHeader(AContext : TPasElement); virtual;
+    Procedure DescrEmitNotesFooter(AContext : TPasElement); virtual;
     procedure DescrWriteText(const AText: DOMString); virtual; abstract;
     procedure DescrBeginBold; virtual; abstract;
     procedure DescrEndBold; virtual; abstract;
@@ -105,11 +116,14 @@ type
     procedure DescrEndItalic; virtual; abstract;
     procedure DescrBeginEmph; virtual; abstract;
     procedure DescrEndEmph; virtual; abstract;
+    procedure DescrWriteImageEl(const AFileName, ACaption,ALinkName : DOMString); virtual; 
     procedure DescrWriteFileEl(const AText: DOMString); virtual; abstract;
     procedure DescrWriteKeywordEl(const AText: DOMString); virtual; abstract;
     procedure DescrWriteVarEl(const AText: DOMString); virtual; abstract;
     procedure DescrBeginLink(const AId: DOMString); virtual; abstract;
     procedure DescrEndLink; virtual; abstract;
+    procedure DescrBeginURL(const AURL: DOMString); virtual; abstract;
+    procedure DescrEndURL; virtual; abstract;
     procedure DescrWriteLinebreak; virtual; abstract;
     procedure DescrBeginParagraph; virtual; abstract;
     procedure DescrEndParagraph; virtual; abstract;
@@ -149,17 +163,21 @@ type
     property Engine : TFPDocEngine read FEngine;
     Property Package : TPasPackage read FPackage;
     Property Topics : TList Read FTopics;
+    Property ImageExtension : String Read FImgExt Write FImgExt;
     // Should return True if option was succesfully interpreted.
     Function InterpretOption(Const Cmd,Arg : String) : Boolean; Virtual;
+    Class Function FileNameExtension : String; virtual;
     Class Procedure Usage(List : TStrings); virtual;
     procedure WriteDoc; virtual; Abstract;
-    procedure WriteDescr(Element: TPasElement);
+    Function WriteDescr(Element: TPasElement) : TDocNode;
     procedure WriteDescr(Element: TPasElement; DocNode: TDocNode);
     procedure WriteDescr(AContext: TPasElement; DescrNode: TDOMElement); virtual;
     Procedure FPDocError(Msg : String);
     Procedure FPDocError(Fmt : String; Args : Array of Const);
     Function  ShowMember(M : TPasElement) : boolean;
     Procedure GetMethodList(ClassDecl: TPasClassType; List : TStringList);
+    Property EmitNotes : Boolean Read FEmitNotes Write FEmitNotes;
+    Property BeforeEmitNote : TWriterNoteEvent Read FBeforeEmitNote Write FBeforeEmitNote;
   end;
 
   TFPDocWriterClass = Class of TFPDocWriter;
@@ -279,6 +297,25 @@ begin
       List.Add(FName+'='+FDescription);
 end;
 
+function IsWhitespaceNode(Node: TDOMText): Boolean;
+var
+  I,L: Integer;
+  S: DOMString;
+  P : PWideChar;
+  
+begin
+  S := Node.Data;
+  Result := True;
+  I:=0;
+  L:=Length(S);
+  P:=PWideChar(S);
+  While Result and (I<L) do
+    begin
+    Result:=P^ in [#32,#10,#9,#13];
+    Inc(P);
+    Inc(I);
+    end;
+end;
 
 
 { ---------------------------------------------------------------------
@@ -302,6 +339,7 @@ begin
   FEngine  := AEngine;
   FPackage := APackage;
   FTopics:=Tlist.Create;
+  FImgExt:='.png';
 end;
 
 destructor TFPDocWriter.Destroy;
@@ -316,12 +354,18 @@ begin
   Inherited;
 end;
 
-function TFPDocWriter.InterpretOption(Const Cmd,Arg : String): Boolean;
+function TFPDocWriter.InterpretOption(const Cmd, Arg: String): Boolean;
 begin
   Result:=False;
 end;
 
-Class procedure TFPDocWriter.Usage(List: TStrings);
+class function TFPDocWriter.FileNameExtension: String;
+begin
+//Override in linear writers with the expected extension.
+  Result := ''; //Output must not contain an extension.
+end;
+
+class procedure TFPDocWriter.Usage(List: TStrings);
 begin
   // Do nothing.
 end;
@@ -342,13 +386,21 @@ begin
     end;
 end;
 
+procedure TFPDocWriter.DescrWriteImageEl(const AFileName, ACaption,
+  ALinkName: DOMString);
+
+begin
+  DoLog('%s : No support for images yet: %s (caption: "%s")',[ClassName,AFileName,ACaption]);
+end;
+
 { ---------------------------------------------------------------------
   Generic documentation node conversion
   ---------------------------------------------------------------------}
 
 function IsContentNodeType(Node: TDOMNode): Boolean;
 begin
-  Result := (Node.NodeType = ELEMENT_NODE) or (Node.NodeType = TEXT_NODE) or
+  Result := (Node.NodeType = ELEMENT_NODE) or 
+    ((Node.NodeType = TEXT_NODE) and not IsWhitespaceNode(TDOMText(Node))) or
     (Node.NodeType = ENTITY_REFERENCE_NODE);
 end;
 
@@ -356,9 +408,9 @@ end;
 procedure TFPDocWriter.Warning(AContext: TPasElement; const AMsg: String);
 begin
   if (AContext<>nil) then
-    WriteLn('[', AContext.PathName, '] ', AMsg)
+    DoLog('[%s] %s',[AContext.PathName,AMsg])
   else
-    WriteLn('[<no context>] ', AMsg);
+    DoLog('[<no context>] %s', [AMsg]);
 end;
 
 procedure TFPDocWriter.Warning(AContext: TPasElement; const AMsg: String;
@@ -399,6 +451,7 @@ begin
     if Node.NodeType = ELEMENT_NODE then
       if (Node.NodeName <> 'br') and
          (Node.NodeName <> 'link') and
+         (Node.NodeName <> 'url') and
          (Node.NodeName <> 'b') and
          (Node.NodeName <> 'file') and
          (Node.NodeName <> 'i') and
@@ -428,6 +481,8 @@ begin
   begin
     if (Node.NodeType = ELEMENT_NODE) and (Node.NodeName = 'link') then
       ConvertLink(AContext, TDOMElement(Node))
+    else if (Node.NodeType = ELEMENT_NODE) and (Node.NodeName = 'url') then
+      ConvertURL(AContext, TDOMElement(Node))
     else
       if not ConvertBaseShort(AContext, Node) then
         exit;
@@ -436,12 +491,58 @@ begin
   Result := True;
 end;
 
+function TFPDocWriter.ConvertNotes(AContext: TPasElement; El: TDOMElement
+  ): Boolean;
+
+Var
+  L : TFPList;
+  N : TDomNode;
+  I : Integer;
+  B : Boolean;
+
+begin
+  Result:=Assigned(El) and EmitNotes;
+  If Not Result then
+    exit;
+  L:=TFPList.Create;
+  try
+    N:=El.FirstChild;
+    While Assigned(N) do
+      begin
+      If (N.NodeType=ELEMENT_NODE) and (N.NodeName='note') then
+        begin
+        B:=True;
+        if Assigned(FBeforeEmitNote) then
+          FBeforeEmitNote(Self,TDomElement(N),B);
+        If B then
+          L.Add(N);
+        end;
+      N:=N.NextSibling;
+      end;
+    Result:=L.Count>0;
+    If Not Result then
+      exit;
+    DescrEmitNotesHeader(AContext);
+    DescrBeginUnorderedList;
+    For i:=0 to L.Count-1 do
+      begin
+      DescrBeginListItem;
+      ConvertExtShortOrNonSectionBlocks(AContext, TDOMNode(L[i]).FirstChild);
+      DescrEndListItem;
+      end;
+    DescrEndUnorderedList;
+    DescrEmitNotesFooter(AContext);
+  finally
+    L.Free;
+  end;
+end;
+
 function TFPDocWriter.ConvertBaseShort(AContext: TPasElement;
   Node: TDOMNode): Boolean;
 
   function ConvertText: DOMString;
   var
-    s: String;
+    s: DOMString;
     i: Integer;
   begin
     if Node.NodeType = TEXT_NODE then
@@ -567,6 +668,27 @@ begin
   DescrEndLink;
 end;
 
+procedure TFPDocWriter.ConvertURL(AContext: TPasElement; El: TDOMElement);
+begin
+  DescrBeginURL(El['href']);
+  if not IsDescrNodeEmpty(El) then
+    ConvertBaseShortList(AContext, El, True)
+  else
+    DescrWriteText(El['href']);
+  DescrEndURL;
+end;
+
+procedure TFPDocWriter.DoLog(const Msg: String);
+begin
+  If Assigned(FEngine.OnLog) then
+    FEngine.OnLog(Self,Msg);
+end;
+
+procedure TFPDocWriter.DoLog(const Fmt: String; Args: array of const);
+begin
+  DoLog(Format(Fmt,Args));
+end;
+
 function TFPDocWriter.ConvertExtShort(AContext: TPasElement;
   Node: TDOMNode): Boolean;
 begin
@@ -576,6 +698,8 @@ begin
   begin
     if (Node.NodeType = ELEMENT_NODE) and (Node.NodeName = 'link') then
       ConvertLink(AContext, TDOMElement(Node))
+    else if (Node.NodeType = ELEMENT_NODE) and (Node.NodeName = 'url') then
+      ConvertURL(AContext, TDOMElement(Node))
     else if (Node.NodeType = ELEMENT_NODE) and (Node.NodeName = 'br') then
       DescrWriteLinebreak
     else
@@ -772,7 +896,10 @@ function TFPDocWriter.ConvertNonSectionBlock(AContext: TPasElement;
 begin
   if Node.NodeType <> ELEMENT_NODE then
   begin
-    Result := Node.NodeType = COMMENT_NODE;
+    if Node.NodeType = TEXT_NODE then
+	  Result := IsWhitespaceNode(TDOMText(Node))
+	else  
+      Result := Node.NodeType = COMMENT_NODE;
     exit;
   end;
   if Node.NodeName = 'remark' then
@@ -810,7 +937,7 @@ function TFPDocWriter.ConvertSimpleBlock(AContext: TPasElement;
     Empty := True;
     while Assigned(Node) do
     begin
-      if (Node.NodeType = TEXT_NODE) or (Node.NodeType = ENTITY_REFERENCE_NODE)
+      if ((Node.NodeType = TEXT_NODE) and not IsWhitespaceNode(TDOMText(Node))) or (Node.NodeType = ENTITY_REFERENCE_NODE)
         then
         Warning(AContext, SErrInvalidListContent)
       else if Node.NodeType = ELEMENT_NODE then
@@ -837,7 +964,7 @@ function TFPDocWriter.ConvertSimpleBlock(AContext: TPasElement;
     ExpectDTNext := True;
     while Assigned(Node) do
     begin
-      if (Node.NodeType = TEXT_NODE) or (Node.NodeType = ENTITY_REFERENCE_NODE)
+      if ((Node.NodeType = TEXT_NODE) and not IsWhitespaceNode(TDOMText(Node))) or (Node.NodeType = ENTITY_REFERENCE_NODE)
         then
         Warning(AContext, SErrInvalidListContent)
       else if Node.NodeType = ELEMENT_NODE then
@@ -900,7 +1027,7 @@ var
 begin
   if Node.NodeType <> ELEMENT_NODE then
   begin
-    Result := False;
+    Result := (Node.NodeType = TEXT_NODE) and IsWhitespaceNode(TDOMText(Node));
     exit;
   end;
   if Node.NodeName = 'p' then
@@ -949,9 +1076,43 @@ begin
     ConvertDefinitionList;
     DescrEndDefinitionList;
     Result := True;
-  end else
+  end else if Node.NodeName = 'img' then
+  begin
+    begin
+    ConvertImage(Node as TDomElement);
+    Result:=True;
+    end;
+  end else  
     Result := False;
 end;
+
+Procedure TFPDocWriter.ConvertImage(El : TDomElement);
+
+Var
+  FN,Cap,LinkName : DOMString;
+
+begin
+  FN:=El['file'];
+  Cap:=El['caption'];
+  LinkName:=El['name'];
+  FN:=ChangeFileExt(FN,ImageExtension);
+  DescrWriteImageEl(FN,Cap,LinkName);
+end;
+
+procedure TFPDocWriter.DescrEmitNotesHeader(AContext: TPasElement);
+begin
+  DescrWriteLinebreak;
+  DescrBeginBold;
+  DescrWriteText(SDocNotes);
+  DescrEndBold;
+  DescrWriteLinebreak;
+end;
+
+procedure TFPDocWriter.DescrEmitNotesFooter(AContext: TPasElement);
+begin
+  DescrWriteLinebreak;
+end;
+
 
 Constructor TTopicElement.Create(const AName: String; AParent: TPasElement);
 
@@ -968,10 +1129,11 @@ begin
   Inherited;
 end;
 
-procedure TFPDocWriter.WriteDescr(Element: TPasElement);
+Function TFPDocWriter.WriteDescr(Element: TPasElement) : TDocNode;
 
 begin
-  WriteDescr(ELement,Engine.FindDocNode(Element));
+  Result:=Engine.FindDocNode(Element);
+  WriteDescr(ELement,Result);
 end;
 
 procedure TFPDocWriter.WriteDescr(Element: TPasElement; DocNode: TDocNode);
@@ -1032,49 +1194,3 @@ initialization
 finalization
   DoneWriterList;
 end.
-
-
-{
-  $Log: dwriter.pp,v $
-  Revision 1.6  2005/02/14 17:13:39  peter
-    * truncate log
-
-  Revision 1.5  2005/01/14 17:55:07  michael
-  + Added unix man page output; Implemented usage
-
-  Revision 1.4  2005/01/12 21:11:41  michael
-  + New structure for writers. Implemented TXT writer
-
-  Revision 1.3  2004/08/28 18:05:17  michael
-  + Check for non-nil context
-
-  Revision 1.2  2004/06/06 10:53:02  michael
-  + Added Topic support
-
-  Revision 1.1  2003/03/17 23:03:20  michael
-  + Initial import in CVS
-
-  Revision 1.9  2003/03/13 22:02:13  sg
-  * New version with many bugfixes and our own parser (now independent of the
-    compiler source)
-
-  Revision 1.8  2002/05/24 00:13:22  sg
-  * much improved new version, including many linking and output fixes
-
-  Revision 1.7  2002/03/12 10:58:36  sg
-  * reworked linking engine and internal structure
-
-  Revision 1.6  2001/07/27 10:21:42  sg
-  * Just a new, improved version ;)
-    (detailed changelogs will be provided again with the next commits)
-
-  Revision 1.5  2000/11/13 00:18:42  sg
-  * Comments within descriptions should be ignored now in all cases
-
-  Revision 1.4  2000/11/11 23:53:56  sg
-  * Added <pre> tag (with unified handling of <pre> and <code>)
-
-  Revision 1.3  2000/10/30 21:19:59  sg
-  * Changed syntax highlighting attribute in 'code' element from
-    'highlight' to 'highlighter'
-}

@@ -1,3 +1,5 @@
+{ %cpu=i386,powerpc}
+{ %target=linux,win32,go32v2,os2,beos,haiku,morphos }
 { %opt=-ghcl }
 
 { Source provided for Free Pascal Bug Report 3348 }
@@ -19,6 +21,7 @@ end;
 var
  ar1: integerarty;
 begin
+ HaltOnNotReleased := true;
  ar1:= nil;
  proc(ar1); // checkpointer error (nil!)
 end.

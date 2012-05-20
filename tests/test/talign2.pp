@@ -3,18 +3,26 @@
 { This verifies if the strings are
   correctly aligned, normally the generated assembler
   should be verified manually.
+
+  I consider this test as flawed, or is there a reason, why a
+  shortstring should be aligned to pointer boundaries? (FK)
 }
 program talign2;
 
 {$ifdef fpc}
 {$mode objfpc}
-  {$ifndef ver1_0}
-    {$define haswidestring}
-  {$endif}
+{$define haswidestring}
 {$else}
   {$ifndef ver70}
     {$define haswidestring}
   {$endif}
+{$endif}
+
+{$ifdef fpc}
+{$ifdef unix}
+uses
+  cwstring;
+{$endif}
 {$endif}
 
 
@@ -50,15 +58,10 @@ begin
   test((ptruint(pt) mod sizeof(pointer))=0);
 {$ifdef haswidestring}
   pt:=pchar(widestr);
+{$ifdef FPC_WINLIKEWIDESTRING}
+  test((ptruint(pt) mod 4)=0);
+{$else FPC_WINLIKEWIDESTRING}
   test((ptruint(pt) mod sizeof(pointer))=0);
+{$endif FPC_WINLIKEWIDESTRING}
 {$endif}
 end.
-{
-   $Log: talign2.pp,v $
-   Revision 1.5  2005/02/14 17:13:35  peter
-     * truncate log
-
-   Revision 1.4  2005/01/04 20:30:09  olle
-     - removed unnecessary mode switch
-
-}

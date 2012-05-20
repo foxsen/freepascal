@@ -1,3 +1,8 @@
+{ %skiptarget=aix }
+
+{ this kills one of the make-processes when executed during a testsuite
+  run on AIX/ppc64 }
+
 { Source provided for Free Pascal Bug Report 2494 }
 { Submitted by "Alan Mead" on  2003-05-17 }
 { e-mail: cubrewer@yahoo.com }
@@ -15,7 +20,7 @@ type
 
 var p:pointer;
   l : ^longarray;
-  size, storage : longint;
+  size, storage : ptruint;
   i,j:longint;
   done:boolean;
   mem : sizeint;
@@ -25,8 +30,10 @@ begin
   done := false;
   size := 40000000;
   repeat
-    size := round(size * 1.1);
+    size := size+(size div 10);
     storage := size * sizeof(real);
+    if storage>2000000000{$ifdef CPU64}*2000000000{$endif CPU64} then
+      storage:=2000000000{$ifdef CPU64}*2000000000{$endif CPU64};
     writeln('size=',size,' (storage=',storage,')');
     getmem(l,storage);
     if (l=nil) then
@@ -37,9 +44,8 @@ begin
     else
       begin
         writeln('getmem() was successful');
-        freemem(l,storage);
+//        freemem(l,storage);
       end;
   until (done);
   domem(mem);
 end.
-

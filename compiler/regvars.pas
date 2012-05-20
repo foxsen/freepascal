@@ -1,5 +1,4 @@
 {
-    $Id: regvars.pas,v 1.83 2005/02/14 17:13:07 peter Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl and Jonas Maebe
 
     This unit handles register variable allocation
@@ -27,28 +26,28 @@ unit regvars;
 interface
 
     uses
-       aasmbase,aasmtai,aasmcpu,
+       aasmbase,aasmtai,aasmdata,aasmcpu,
        node,
        symsym,
        cpubase, cgbase, tgobj;
 
 {$ifdef OLDREGVARS}
     procedure assign_regvars(p: tnode);
-    procedure load_regvars(asml: TAAsmoutput; p: tnode);
-    procedure cleanup_regvars(asml: TAAsmoutput);
-    procedure store_regvar(asml: TAAsmoutput; reg: tregister);
-    procedure load_regvar(asml: TAAsmoutput; vsym: tvarsym);
-    procedure load_regvar_reg(asml: TAAsmoutput; reg: tregister);
-    procedure load_all_regvars(asml: TAAsmoutput);
-    procedure free_regvars(list: taasmoutput);
-{    procedure translate_regvars(list: taasmoutput); }
+    procedure load_regvars(asml: TAsmList; p: tnode);
+    procedure cleanup_regvars(asml: TAsmList);
+    procedure store_regvar(asml: TAsmList; reg: tregister);
+    procedure load_regvar(asml: TAsmList; vsym: tvarsym);
+    procedure load_regvar_reg(asml: TAsmList; reg: tregister);
+    procedure load_all_regvars(asml: TAsmList);
+    procedure free_regvars(list: TAsmList);
+{    procedure translate_regvars(list: TAsmList); }
 {$endif OLDREGVARS}
 
 {$ifdef i386}
 (*
-    procedure sync_regvars_other(list1, list2: taasmoutput; const regvarsloaded1,
+    procedure sync_regvars_other(list1, list2: TAsmList; const regvarsloaded1,
       regvarsloaded2: regvarother_booleanarray);
-    procedure sync_regvars_int(list1, list2: taasmoutput; const regvarsloaded1,
+    procedure sync_regvars_int(list1, list2: TAsmList; const regvarsloaded1,
       regvarsloaded2: Tsuperregisterset);
 *)
 {$endif i386}
@@ -70,9 +69,9 @@ implementation
       begin
          parasym:=pboolean(arg)^;
          if (tsym(p).typ=varsym) and ((tvarsym(p).varregable <> vr_none) or
-             ((tvarsym(p).varspez in [vs_var,vs_const,vs_out]) and
-              paramanager.push_addr_param(tvarsym(p).varspez,tvarsym(p).vartype.def,current_procinfo.procdef.proccalloption))) and
-            not tvarsym(p).vartype.def.needs_inittable then
+             ((tvarsym(p).varspez in [vs_var,vs_const,vs_out,vs_constref]) and
+              paramanager.push_addr_param(tvarsym(p).varspez,tvarsym(p).vardef,current_procinfo.procdef.proccalloption))) and
+            not tvarsym(p).vardef.needs_inittable then
            begin
               j:=tvarsym(p).refs;
               { walk through all momentary register variables }
@@ -146,10 +145,10 @@ implementation
       { max. optimizations     }
       { only if no asm is used }
       { and no try statement   }
-      if (cs_regvars in aktglobalswitches) and
+      if (cs_opt_regvar in current_settings.optimizerswitches) and
         { we have to store regvars back to memory in this case (the nested }
         { procedures can access the variables of the parent)               }
-        (tcgprocinfo(current_procinfo).nestedprocs.count = 0) and
+        (not current_procinfo.has_nestedprocs) and
          not(pi_has_assembler_block in current_procinfo.flags) and
          not(pi_uses_exceptions in current_procinfo.flags) then
         begin
@@ -185,21 +184,21 @@ implementation
                       { unused                                }
 
                       { call by reference/const ? }
-                      if paramanager.push_addr_param(tvarsym(regvarinfo^.regvars[i]).varspez,tvarsym(regvarinfo^.regvars[i]).vartype.def,current_procinfo.procdef.proccalloption) then
+                      if paramanager.push_addr_param(tvarsym(regvarinfo^.regvars[i]).varspez,tvarsym(regvarinfo^.regvars[i]).vardef,current_procinfo.procdef.proccalloption) then
                         siz:=OS_32
                       else
-                       if (tvarsym(regvarinfo^.regvars[i]).vartype.def.deftype in [orddef,enumdef]) and
-                          (tvarsym(regvarinfo^.regvars[i]).vartype.def.size=1) then
+                       if (tvarsym(regvarinfo^.regvars[i]).vardef.typ in [orddef,enumdef]) and
+                          (tvarsym(regvarinfo^.regvars[i]).vardef.size=1) then
                         siz:=OS_8
                       else
-                       if (tvarsym(regvarinfo^.regvars[i]).vartype.def.deftype in [orddef,enumdef]) and
-                          (tvarsym(regvarinfo^.regvars[i]).vartype.def.size=2) then
+                       if (tvarsym(regvarinfo^.regvars[i]).vardef.typ in [orddef,enumdef]) and
+                          (tvarsym(regvarinfo^.regvars[i]).vardef.size=2) then
                         siz:=OS_16
                       else
                         siz:=OS_32;
 
                       { allocate a register for this regvar }
-                      tvarsym(regvarinfo^.regvars[i]).localloc.register:=cg.getintregister(exprasmlist,siz);
+                      tvarsym(regvarinfo^.regvars[i]).localloc.register:=cg.getintregister(current_asmdata.CurrAsmList,siz);
                       tvarsym(regvarinfo^.regvars[i]).localloc.loc:=LOC_REGISTER;
                       { and make sure it can't be freed }
 {                      rg.makeregvarint(getsupreg(regvarinfo^.regvars[i].localloc.register));}
@@ -230,7 +229,7 @@ implementation
                 { in non leaf procedures we must be very careful }
                 { with assigning registers                       }
 {$ifdef i386}
-                if aktmaxfpuregisters=-1 then
+                if current_settings.maxfpuregisters=-1 then
                   begin
                    if (pi_do_call in current_procinfo.flags) then
                      begin
@@ -247,7 +246,7 @@ implementation
                   end
                 else
                   begin
-                    for i:=aktmaxfpuregisters+1 to maxfpuvarregs do
+                    for i:=current_settings.maxfpuregisters+1 to maxfpuvarregs do
                       regvarinfo^.fpuregvars[i]:=nil;
                   end;
 {$endif i386}
@@ -264,7 +263,7 @@ implementation
 {$ifdef x86_64}
 {$endif x86_64}
                        begin
-                         tvarsym(regvarinfo^.fpuregvars[i]).localloc.register:=cg.getfpuregister(exprasmlist,OS_F64);
+                         tvarsym(regvarinfo^.fpuregvars[i]).localloc.register:=cg.getfpuregister(current_asmdata.CurrAsmList,OS_F64);
                          tvarsym(regvarinfo^.fpuregvars[i]).localloc.loc:=LOC_FPUREGISTER;
 {                         rg.makeregvarother(regvarinfo^.fpuregvars[i].localloc.register);}
                        end;
@@ -277,7 +276,7 @@ implementation
 
 
 
-    procedure store_regvar(asml: TAAsmoutput; reg: tregister);
+    procedure store_regvar(asml: TAsmList; reg: tregister);
     var
       i: longint;
       cgsize : tcgsize;
@@ -299,7 +298,7 @@ implementation
             if assigned(regvarinfo^.regvars[i]) and
                (getsupreg(tvarsym(regvarinfo^.regvars[i]).localloc.register)=supreg) then
               begin
-                {$warning fixme regvar_loaded_int}
+                { TODO: fixme regvar_loaded_int}
 (*                if supreg in rg.regvar_loaded_int then
                   begin
                     vsym := tvarsym(regvarinfo^.regvars[i]);
@@ -307,9 +306,9 @@ implementation
                     { possible that it's been modified  (JM)                  }
                     if not(vsym.varspez in [vs_const,vs_var,vs_out]) then
                       begin
-{$warning FIXME Check vsym.localloc for regvars}
+{ TODO: FIXME Check vsym.localloc for regvars}
 //                        reference_reset_base(hr,current_procinfo.framepointer,vsym.adjusted_address);
-                        cgsize:=def_cgsize(vsym.vartype.def);
+                        cgsize:=def_cgsize(vsym.vardef);
                         cg.a_load_reg_ref(asml,cgsize,cgsize,vsym.localloc.register,hr);
                       end;
                     asml.concat(tai_regalloc.dealloc(vsym.localloc.register));
@@ -324,7 +323,7 @@ implementation
           for i := 1 to maxvarregs do
             if assigned(regvarinfo^.regvars[i]) then
               begin
-                {$warning fixme regvars}
+                { TODO: fixme regvars}
 (*
                 r:=rg.makeregsize(regvarinfo^.regvars[i].localloc.register,OS_INT);
                 if (r = reg) then
@@ -337,9 +336,9 @@ implementation
                         { possible that it's been modified  (JM)                  }
                         if not(vsym.varspez in [vs_const,vs_var,vs_out]) then
                           begin
-{$warning FIXME Check vsym.localloc for regvars}
+{ TODO: FIXME Check vsym.localloc for regvars}
 //                            reference_reset_base(hr,current_procinfo.framepointer,vsym.adjusted_address);
-                            cgsize:=def_cgsize(vsym.vartype.def);
+                            cgsize:=def_cgsize(vsym.vardef);
                             cg.a_load_reg_ref(asml,cgsize,cgsize,vsym.localloc.register,hr);
                           end;
                         asml.concat(tai_regalloc.dealloc(vsym.localloc.register));
@@ -353,7 +352,7 @@ implementation
 {$endif i386}
     end;
 
-    procedure load_regvar(asml: TAAsmoutput; vsym: tvarsym);
+    procedure load_regvar(asml: TAsmList; vsym: tvarsym);
     var
       hr: treference;
       opsize: tcgsize;
@@ -365,7 +364,7 @@ implementation
       exit;
 {$endif i386}
       reg:=vsym.localloc.register;
-      {$warning fixme regvars}
+      { TODO: fixme regvars}
 (*
       if getregtype(reg)=R_INTREGISTER then
         begin
@@ -373,12 +372,12 @@ implementation
           if not(getsupreg(reg) in rg.regvar_loaded_int) then
             begin
               asml.concat(tai_regalloc.alloc(reg));
-{$warning FIXME Check vsym.localloc for regvars}
+{ TODO: FIXME Check vsym.localloc for regvars}
 //              reference_reset_base(hr,current_procinfo.framepointer,vsym.adjusted_address);
-              if paramanager.push_addr_param(vsym.varspez,vsym.vartype.def,current_procinfo.procdef.proccalloption) then
+              if paramanager.push_addr_param(vsym.varspez,vsym.vardef,current_procinfo.procdef.proccalloption) then
                 opsize := OS_ADDR
               else
-                opsize := def_cgsize(vsym.vartype.def);
+                opsize := def_cgsize(vsym.vardef);
               cg.a_load_ref_reg(asml,opsize,opsize,hr,reg);
               include(rg.regvar_loaded_int,getsupreg(reg));
             end;
@@ -390,12 +389,12 @@ implementation
           if not rg.regvar_loaded_other[regidx] then
             begin
               asml.concat(tai_regalloc.alloc(reg));
-{$warning FIXME Check vsym.localloc for regvars}
+{ TODO: FIXME Check vsym.localloc for regvars}
 //              reference_reset_base(hr,current_procinfo.framepointer,vsym.adjusted_address);
-              if paramanager.push_addr_param(vsym.varspez,vsym.vartype.def,current_procinfo.procdef.proccalloption) then
+              if paramanager.push_addr_param(vsym.varspez,vsym.vardef,current_procinfo.procdef.proccalloption) then
                 opsize := OS_ADDR
               else
-                opsize := def_cgsize(vsym.vartype.def);
+                opsize := def_cgsize(vsym.vardef);
               cg.a_load_ref_reg(asml,opsize,opsize,hr,reg);
               rg.regvar_loaded_other[regidx] := true;
             end;
@@ -403,7 +402,7 @@ implementation
 *)
     end;
 
-    procedure load_regvar_reg(asml: TAAsmoutput; reg: tregister);
+    procedure load_regvar_reg(asml: TAsmList; reg: tregister);
     var
       i: longint;
       regvarinfo: pregvarinfo;
@@ -433,7 +432,7 @@ implementation
 }
     end;
 
-    procedure load_all_regvars(asml: TAAsmoutput);
+    procedure load_all_regvars(asml: TAsmList);
 {
     var
       i: longint;
@@ -451,12 +450,12 @@ implementation
     end;
 
 
-    procedure load_regvars(asml: TAAsmoutput; p: tnode);
+    procedure load_regvars(asml: TAsmList; p: tnode);
     var
       i: longint;
       regvarinfo: pregvarinfo;
     begin
-      if (cs_regvars in aktglobalswitches) and
+      if (cs_opt_regvar in current_settings.optimizerswitches) and
          not(pi_has_assembler_block in current_procinfo.flags) and
          not(pi_uses_exceptions in current_procinfo.flags) then
         begin
@@ -470,7 +469,7 @@ implementation
                 begin
 {$ifdef i386}
                   { reserve place on the FPU stack }
-                  {$warning fixme fpustack}
+                  { TODO: fixme fpustack}
 (*
                   regvarinfo^.fpuregvars[i].localloc.register:=trgcpu(rg).correct_fpuregister(NR_ST0,i-1);
 *)
@@ -480,7 +479,7 @@ implementation
             end;
 {$ifdef i386}
           if assigned(p) then
-            if cs_asm_source in aktglobalswitches then
+            if cs_asm_source in current_settings.globalswitches then
               asml.insert(tai_comment.Create(strpnew(tostr(p.registersfpu)+
               ' registers on FPU stack used by temp. expressions')));
 {$endif i386}
@@ -489,7 +488,7 @@ implementation
             begin
                if assigned(regvarinfo^.fpuregvars[i]) then
                  begin
-                    if cs_asm_source in aktglobalswitches then
+                    if cs_asm_source in current_settings.globalswitches then
                       asml.insert(tai_comment.Create(strpnew(regvarinfo^.fpuregvars[i].name+
                         ' with weight '+tostr(regvarinfo^.fpuregvars[i].refs)+' assigned to register '+
                         std_regname(regvarinfo^.fpuregvars[i].localloc.register))));
@@ -498,7 +497,7 @@ implementation
                         tostr(regvarinfo^.fpuregvars[i].refs),regvarinfo^.fpuregvars[i].name);
                  end;
             end;
-          if cs_asm_source in aktglobalswitches then
+          if cs_asm_source in current_settings.globalswitches then
             asml.insert(tai_comment.Create(strpnew('Register variable assignment:')));
 }
         end;
@@ -506,7 +505,7 @@ implementation
 
 {$ifdef i386}
 (*
-    procedure sync_regvars_other(list1, list2: taasmoutput; const regvarsloaded1,
+    procedure sync_regvars_other(list1, list2: TAsmList; const regvarsloaded1,
       regvarsloaded2: regvarother_booleanarray);
     var
       counter: tregisterindex;
@@ -524,7 +523,7 @@ implementation
     end;
 
 
-    procedure sync_regvars_int(list1, list2: taasmoutput; const regvarsloaded1,
+    procedure sync_regvars_int(list1, list2: TAsmList; const regvarsloaded1,
       regvarsloaded2: Tsuperregisterset);
     var
       i : longint;
@@ -546,7 +545,7 @@ implementation
 {$endif i386}
 
 
-    procedure cleanup_regvars(asml: TAAsmoutput);
+    procedure cleanup_regvars(asml: TAsmList);
     var
       i: longint;
       reg : tregister;
@@ -555,7 +554,7 @@ implementation
       { can happen when inlining assembler procedures (JM) }
       if not assigned(current_procinfo.procdef.regvarinfo) then
         exit;
-      if (cs_regvars in aktglobalswitches) and
+      if (cs_opt_regvar in current_settings.optimizerswitches) and
          not(pi_has_assembler_block in current_procinfo.flags) and
          not(pi_uses_exceptions in current_procinfo.flags) then
         with pregvarinfo(current_procinfo.procdef.regvarinfo)^ do
@@ -579,7 +578,7 @@ implementation
                     begin
                       reg:=cg.makeregsize(reg,OS_INT);
                       regidx:=findreg_by_number(reg);
-                      {$warning fixme regvar dealloc}
+                      { TODO: fixme regvar dealloc}
 {
                       if (rg.regvar_loaded_other[regidx]) then
                        asml.concat(tai_regalloc.dealloc(reg));
@@ -597,7 +596,7 @@ implementation
       stabs generation. It could still be useful to generate the "var X is
       assigned to register Y with weight ZZZ" messages though
 
-    procedure translate_regvars(list: taasmoutput);
+    procedure translate_regvars(list: TAsmList);
       var
         i: longint;
         r: tregister;
@@ -611,7 +610,7 @@ implementation
                 begin
                   cg.rg[R_INTREGISTER].translate_register(tvarsym(regvars[i]).localloc.register);
                   r:=tvarsym(regvars[i]).localloc.register;
-                  if cs_asm_source in aktglobalswitches then
+                  if cs_asm_source in current_settings.globalswitches then
                    list.insert(tai_comment.Create(strpnew(tvarsym(regvars[i]).name+
                     ' with weight '+tostr(tvarsym(regvars[i]).refs)+' assigned to register '+
                     std_regname(r))));
@@ -623,7 +622,7 @@ implementation
                 begin
                   cg.rg[R_FPUREGISTER].translate_register(tvarsym(regvars[i]).localloc.register);
                   r:=tvarsym(fpuregvars[i]).localloc.register;
-                  if cs_asm_source in aktglobalswitches then
+                  if cs_asm_source in current_settings.globalswitches then
                    list.insert(tai_comment.Create(strpnew(tvarsym(fpuregvars[i]).name+
                     ' with weight '+tostr(tvarsym(fpuregvars[i]).refs)+' assigned to register '+
                     std_regname(r))));
@@ -634,7 +633,7 @@ implementation
       end;
 }
 
-    procedure free_regvars(list: taasmoutput);
+    procedure free_regvars(list: TAsmList);
       var
         i: longint;
         reg: tregister;
@@ -665,10 +664,3 @@ implementation
 
 
 end.
-
-{
-  $Log: regvars.pas,v $
-  Revision 1.83  2005/02/14 17:13:07  peter
-    * truncate log
-
-}

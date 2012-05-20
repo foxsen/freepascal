@@ -1,5 +1,4 @@
 {
-    $Id: sysos.inc,v 1.4 2005/02/13 21:47:56 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2001 by Free Pascal development team
 
@@ -60,11 +59,7 @@ begin
 end;
 
 {$else}
-{$ifdef ver1_0}
-Var
-{$else}
 threadvar
-{$endif}
       Errno : longint;
 
 function geterrno:longint; [public, alias: 'FPC_SYS_GETERRNO'];
@@ -89,6 +84,7 @@ end;
 {$ifdef FPC_USE_LIBC}
   {$Linklib c}
   {$i oscdeclh.inc}
+  {$i oscdecl.inc}
 {$else}
   {$I syscallh.inc}
   {$I syscall.inc}
@@ -162,7 +158,7 @@ Function Do_IsDevice(Handle:Longint):boolean;
   data is function-dependent.
 }
 CONST
-  IOCtl_TCGETS=$5401;
+  IOCtl_TCGETS=$40000000+$2C7400+ 19;
 var
   Data : array[0..255] of byte; {Large enough for termios info}
 begin
@@ -171,20 +167,4 @@ end;
 
 
 
-{
-   $Log: sysos.inc,v $
-   Revision 1.4  2005/02/13 21:47:56  peter
-     * include file cleanup part 2
-
-   Revision 1.3  2005/02/07 22:04:55  peter
-     * moved to unix
-
-   Revision 1.2  2005/02/06 13:06:20  peter
-     * moved file and dir functions to sysfile/sysdir
-     * win32 thread in systemunit
-
-   Revision 1.1  2005/02/06 12:16:52  peter
-     * bsd thread updates
-
-}
 

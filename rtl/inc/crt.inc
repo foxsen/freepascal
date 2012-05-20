@@ -1,5 +1,4 @@
 {
-    $Id: crt.inc,v 1.3 2005/05/14 15:01:49 hajny Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1998 - 2005 by the Free Pascal development team.
 
@@ -16,7 +15,11 @@
 
  **********************************************************************}
 
-procedure GotoXY (X: byte; Y: byte);
+var
+  ScanCode: byte;
+  SpecialKey: boolean;
+
+procedure GotoXY (X: tcrtcoord; Y: tcrtcoord);
 begin
  GotoXY32 (X, Y);
 end;
@@ -26,7 +29,7 @@ begin
  Window32 (X1, Y1, X2, Y2);
 end;
 
-function WhereX: byte;
+function WhereX: tcrtcoord;
 var
  X1: dword;
 begin
@@ -37,7 +40,7 @@ begin
   WhereX := X1;
 end;
 
-function WhereY: byte;
+function WhereY: tcrtcoord;
 var
  Y1: dword;
 begin
@@ -197,11 +200,7 @@ begin
 end;
 
 
-{$ifdef HASTHREADVAR}
 threadvar
-{$else HASTHREADVAR}
-var
-{$endif HASTHREADVAR}
  CurrX, CurrY: dword;
 
 
@@ -386,6 +385,31 @@ end;
 {$ENDIF HAS_NOSOUND}
 
 
+var
+  PrevCtrlBreakHandler: TCtrlBreakHandler;
+
+
+function CrtCtrlBreakHandler (CtrlBreak: boolean): boolean;
+begin
+(* Earlier registered handlers (e.g. FreeVision) have priority. *)
+  if Assigned (PrevCtrlBreakHandler) then
+    if PrevCtrlBreakHandler (CtrlBreak) then
+      begin
+        CrtCtrlBreakHandler := true;
+        Exit;
+      end;
+(* If Ctrl-Break was pressed, either ignore it or allow default processing. *)
+  if CtrlBreak then
+    CrtCtrlBreakHandler := not (CheckBreak)
+  else (* Ctrl-C pressed *)
+    begin
+      if not (SpecialKey) and (ScanCode = 0) then
+        ScanCode := 3;
+      CrtCtrlBreakHandler := true;
+    end;
+end;
+
+
 procedure CrtInit;
 (* Common part of unit initialization. *)
 begin
@@ -401,23 +425,14 @@ begin
   WindMax := WindMax or $FF00
  else
   WindMax := WindMax or (WindMaxY shl 8);
- ExtKeyCode := #0;
+ ScanCode := 0;
+ SpecialKey := false;
  AssignCrt (Input);
  Reset (Input);
  AssignCrt (Output);
  Rewrite (Output);
+ PrevCtrlBreakHandler := SysSetCtrlBreakHandler (@CrtCtrlBreakHandler);
+ if PrevCtrlBreakHandler = TCtrlBreakHandler (pointer (-1)) then
+   PrevCtrlBreakHandler := nil;
+ CheckBreak := true;
 end;
-
-{
-  $Log: crt.inc,v $
-  Revision 1.3  2005/05/14 15:01:49  hajny
-    * TextMode parameter type changed to word for TP/BP compatibility
-
-  Revision 1.2  2005/05/14 14:58:41  hajny
-    * TextMode parameter type changed temporarily not to break other platforms
-
-  Revision 1.1  2005/05/14 14:32:55  hajny
-    + basis for common platform independent implementation of Crt
-
-
-}

@@ -1,5 +1,4 @@
 {
-    $Id: collect.inc,v 1.8 2005/03/03 22:15:32 florian Exp $
     This file is part of the Free Component Library (FCL)
     Copyright (c) 1999-2000 by the Free Pascal development team
 
@@ -43,7 +42,7 @@ end;
 procedure TCollectionItem.Changed(AllItems: Boolean);
 
 begin
- If (FCollection<>Nil) then
+ If (FCollection<>Nil) and (FCollection.UpdateCount=0) then
   begin
   If AllItems then
     FCollection.Update(Nil)
@@ -119,40 +118,80 @@ begin
 end;
 
 {****************************************************************************}
+{*                          TCollectionEnumerator                           *}
+{****************************************************************************}
+
+constructor TCollectionEnumerator.Create(ACollection: TCollection);
+begin
+  inherited Create;
+  FCollection := ACollection;
+  FPosition := -1;
+end;
+
+function TCollectionEnumerator.GetCurrent: TCollectionItem;
+begin
+  Result := FCollection.Items[FPosition];
+end;
+
+function TCollectionEnumerator.MoveNext: Boolean;
+begin
+  Inc(FPosition);
+  Result := FPosition < FCollection.Count;
+end;
+
+
+{****************************************************************************}
 {*                             TCollection                                  *}
 {****************************************************************************}
 
 function TCollection.Owner: TPersistent;
 begin
-        result:=getowner;
+  result:=getowner;
 end;
 
 
 function TCollection.GetCount: Integer;
 
 begin
-  If Assigned(FItems) Then
-    Result:=FItems.Count
-  else
-    Result:=0;
+  Result:=FItems.Count;
 end;
 
 
 Procedure TCollection.SetPropName;
 
+Var
+  TheOwner : TPersistent;
+  PropList : PPropList;
+  I, PropCount : Integer;
+
 begin
-  //!! Should be replaced by the proper routines.
   FPropName:='';
+  TheOwner:=GetOwner;
+  if (TheOwner=Nil) Or (TheOwner.Classinfo=Nil) Then Exit;
+  // get information from the owner RTTI
+  PropCount:=GetPropList(TheOwner, PropList);
+  Try
+    For I:=0 To PropCount-1 Do
+      If (PropList^[i]^.PropType^.Kind=tkClass) And
+         (GetObjectProp(TheOwner, PropList^[i], ClassType)=Self) Then
+        Begin
+          FPropName:=PropList^[i]^.Name;
+          Exit;
+        End;
+  Finally
+    FreeMem(PropList);
+  End;
 end;
 
 
 function TCollection.GetPropName: string;
 
-Var TheOWner : TPersistent;
+Var
+  TheOwner : TPersistent;
 
 begin
   Result:=FPropNAme;
-  TheOWner:=GetOwner;
+  TheOwner:=GetOwner;
   If (Result<>'') or (TheOwner=Nil) Or (TheOwner.Classinfo=Nil) then exit;
   SetPropName;
   Result:=FPropName;
@@ -173,9 +212,15 @@ end;
 
 
 procedure TCollection.RemoveItem(Item: TCollectionItem);
+
+Var
+  I : Integer;
+
 begin
-        Notify(Item,cnExtracting);
-  FItems.Remove(Pointer(Item));
+  Notify(Item,cnExtracting);
+  I:=FItems.IndexOfItem(Item,fromEnd);
+  If (I<>-1) then
+    FItems.Delete(I);
   Item.FCollection:=Nil;
   Changed;
 end;
@@ -199,23 +244,26 @@ begin
 end;
 
 
-function TCollection.GetNamePath: string;
-Var
-        OwnerName,ThePropName : String;
+function TCollection.GetEnumerator: TCollectionEnumerator;
 begin
-  Result:=ClassName;
-  If GetOwner=Nil then Exit;
-  OwnerName:=GetOwner.GetNamePath;
-  If OwnerName='' then Exit;
-  ThePropName:=PropName;
-  if ThePropName='' then exit;
-  Result:=OwnerName+'.'+PropName;
+  Result := TCollectionEnumerator.Create(Self);
+end;
+
+
+function TCollection.GetNamePath: string;
+var o : TPersistent;
+begin
+  o:=getowner;
+  if assigned(o) and (propname<>'') then 
+     result:=o.getnamepath+'.'+propname
+   else
+     result:=classname;
 end;
 
 
 procedure TCollection.Changed;
 begin
-        if FUpdateCount=0 then
+  if FUpdateCount=0 then
     Update(Nil);
 end;
 
@@ -247,13 +295,14 @@ constructor TCollection.Create(AItemClass: TCollectionItemClass);
 begin
   inherited create;
   FItemClass:=AItemClass;
-  FItems:=TList.Create;
+  FItems:=TFpList.Create;
 end;
 
 
 destructor TCollection.Destroy;
 begin
-  If Assigned(FItems) Then Clear;
+  BeginUpdate; // Prevent OnChange
+  DoClear;
   FItems.Free;
   Inherited Destroy;
 end;
@@ -282,22 +331,34 @@ end;
 
 procedure TCollection.BeginUpdate;
 begin
-        inc(FUpdateCount);
+  inc(FUpdateCount);
 end;
 
 
 procedure TCollection.Clear;
 begin
-  If Assigned(FItems) then
-    While FItems.Count>0 do TCollectionItem(FItems.Last).Free;
+  if FItems.Count=0 then
+    exit; // Prevent Changed
+  BeginUpdate;
+  try
+    DoClear;
+  finally
+    EndUpdate;
+  end;    
+end;
+
+
+procedure TCollection.DoClear;
+begin
+  While FItems.Count>0 do TCollectionItem(FItems.Last).Free;
 end;
 
 
 procedure TCollection.EndUpdate;
 begin
-        dec(FUpdateCount);
-        if FUpdateCount=0 then
-          Changed;
+  dec(FUpdateCount);
+  if FUpdateCount=0 then
+    Changed;
 end;
 
 
@@ -305,20 +366,23 @@ function TCollection.FindItemID(ID: Integer): TCollectionItem;
 Var
           I : Longint;
 begin
-  Result:=Nil;
   For I:=0 to Fitems.Count-1 do
    begin
      Result:=TCollectionItem(FItems.items[I]);
      If Result.Id=Id then
        exit;
    end;
+  Result:=Nil;
 end;
 
 
 procedure TCollection.Delete(Index: Integer);
+Var
+  Item : TCollectionItem;
 begin
-  Notify(TCollectionItem(FItems[Index]),cnDeleting);
-  TCollectionItem(FItems[Index]).Free;
+  Item:=TCollectionItem(FItems[Index]);
+  Notify(Item,cnDeleting);
+  Item.Free;
 end;
 
 
@@ -331,6 +395,23 @@ end;
 
 procedure TCollection.Notify(Item: TCollectionItem;Action: TCollectionNotification);
 begin
+end;
+
+procedure TCollection.Sort(Const Compare : TCollectionSortCompare);
+
+begin
+  BeginUpdate;
+  try
+    FItems.Sort(TListSortCompare(Compare));
+  Finally
+    EndUpdate;
+  end;
+end;
+
+procedure TCollection.Exchange(Const Index1, index2: integer);
+
+begin
+  FItems.Exchange(Index1,Index2);
 end;
 
 
@@ -357,24 +438,3 @@ end;
 
 
 
-{
-  $Log: collect.inc,v $
-  Revision 1.8  2005/03/03 22:15:32  florian
-    + tcollection.insert implementation
-
-  Revision 1.7  2005/02/14 17:13:31  peter
-    * truncate log
-
-  Revision 1.6  2005/02/03 19:10:16  florian
-    + tcollection.owner
-
-  Revision 1.5  2005/02/02 20:22:15  florian
-    + TCollection nofication mechanisms added
-
-  Revision 1.4  2005/02/01 21:32:55  florian
-    + tcollection.updatecount support added
-
-  Revision 1.3  2005/02/01 08:41:08  michael
-  + Added TCollection.Delete
-
-}

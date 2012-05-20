@@ -1,5 +1,4 @@
 {
-    $Id: dynlibs.inc,v 1.3 2005/02/14 17:13:31 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team
 
@@ -21,10 +20,19 @@
   ---------------------------------------------------------------------}
 
 Type
-  TLibHandle = Pointer;
+  { using PtrInt here is compliant with the other platforms }
+  TLibHandle = PtrInt;
 
 Const
-  NilHandle = Nil;
+  NilHandle = TLibHandle(0);
+// these are for easier crossplatform construction of dll names in dynloading libs.
+{$if defined(Darwin)}
+  SharedSuffix = 'dylib';
+{$elseif defined(aix)}
+  SharedSuffix = 'a';
+{$else}
+  SharedSuffix = 'so';
+{$endif}
 
 {$else}
 
@@ -34,13 +42,28 @@ Const
 
 uses dl;
 
-Function LoadLibrary(Name : AnsiString) : TLibHandle;
-
+Function LoadLibrary(const Name : AnsiString) : TLibHandle;
+{$ifdef aix}
+var
+  MemberName: AnsiString;
+{$endif}
 begin
-  Result:=dlopen(Pchar(Name),RTLD_LAZY);
+{$ifndef aix}
+  Result:=TLibHandle(dlopen(Pchar(Name),RTLD_LAZY));
+{$else aix}
+  { in aix, most shared libraries are static libraries (archives) that contain
+    a single object: shr.o for 32 bit, shr_64.o for 64 bit. You have to specify
+    this object file explicitly via the RTLD_MEMBER member flag }
+{$ifdef cpu64}
+  MemberName:=Name+'(shr_64.o)';
+{$else cpu64}
+  MemberName:=Name+'(shr.o)';
+{$endif cpu64}
+  Result:=TLibHandle(dlopen(Pchar(MemberName),RTLD_LAZY or RTLD_MEMBER));
+{$endif aix}
 end;
 
-Function GetProcedureAddress(Lib : TLibHandle; ProcName : AnsiString) : Pointer;
+Function GetProcedureAddress(Lib : TLibHandle; const ProcName : AnsiString) : Pointer;
 
 begin
   Result:=dlsym(lib,pchar(ProcName));
@@ -54,9 +77,3 @@ end;
 
 {$endif}
 
-{
-  $Log: dynlibs.inc,v $
-  Revision 1.3  2005/02/14 17:13:31  peter
-    * truncate log
-
-}

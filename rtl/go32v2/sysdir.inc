@@ -1,5 +1,4 @@
 {
-    $Id: sysdir.inc,v 1.2 2005/02/14 17:13:22 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Florian Klaempfl and Pavel Ozerski
     member of the Free Pascal development team.
@@ -19,21 +18,18 @@
                            Directory Handling
 *****************************************************************************}
 
-procedure DosDir(func:byte;const s:string);
+procedure DosDir(func:byte;s:pchar;len:integer);
 var
-  buffer : array[0..255] of char;
   regs   : trealregs;
 begin
-  move(s[1],buffer,length(s));
-  buffer[length(s)]:=#0;
-  AllowSlash(pchar(@buffer));
+  DoDirSeparators(s);
   { True DOS does not like backslashes at end
     Win95 DOS accepts this !!
     but "\" and "c:\" should still be kept and accepted hopefully PM }
-  if (length(s)>0) and (buffer[length(s)-1]='\') and
-     Not ((length(s)=1) or ((length(s)=3) and (s[2]=':'))) then
-    buffer[length(s)-1]:=#0;
-  syscopytodos(longint(@buffer),length(s)+1);
+  if (len>0) and (s[len-1]='\') and
+     Not ((len=1) or ((len=3) and (s[1]=':'))) then
+    s[len-1]:=#0;
+  syscopytodos(longint(s),len+1);
   regs.realedx:=tb_offset;
   regs.realds:=tb_segment;
   if LFNSupport then
@@ -45,35 +41,32 @@ begin
    GetInOutRes(lo(regs.realeax));
 end;
 
-
-procedure mkdir(const s : string);[IOCheck];
+Procedure MkDir(s: pchar;len:sizeuint);[IOCheck, public, alias : 'FPC_SYS_MKDIR'];
 begin
-  If (s='') or (InOutRes <> 0) then
+ If not assigned(s) or (len=0) or (InOutRes <> 0) then
    exit;
-  DosDir($39,s);
+  DosDir($39,s,len);
 end;
 
-
-procedure rmdir(const s : string);[IOCheck];
+Procedure RmDir(s: pchar;len:sizeuint);[IOCheck, public, alias : 'FPC_SYS_RMDIR'];
 begin
-  if (s = '.' ) then
+  if (len=1) and (s[0] = '.' ) then
     InOutRes := 16;
-  If (s='') or (InOutRes <> 0) then
+  If not assigned(s) or (len=0) or (InOutRes <> 0) then
    exit;
-  DosDir($3a,s);
+  DosDir($3a,s,len);
 end;
 
-
-procedure chdir(const s : string);[IOCheck];
+Procedure ChDir(s: pchar;len:sizeuint);[IOCheck, public, alias : 'FPC_SYS_CHDIR'];
 var
   regs : trealregs;
 begin
-  If (s='') or (InOutRes <> 0) then
+  If not assigned(s) or (len=0) or (InOutRes <> 0) then
    exit;
 { First handle Drive changes }
-  if (length(s)>=2) and (s[2]=':') then
+  if (len>=2) and (s[1]=':') then
    begin
-     regs.realedx:=(ord(s[1]) and (not 32))-ord('A');
+     regs.realedx:=(ord(s[0]) and (not 32))-ord('A');
      regs.realeax:=$0e00;
      sysrealintr($21,regs);
      regs.realeax:=$1900;
@@ -85,13 +78,12 @@ begin
       end;
      { DosDir($3b,'c:') give Path not found error on
        pure DOS PM }
-     if length(s)=2 then
+     if len=2 then
        exit;
    end;
 { do the normal dos chdir }
-  DosDir($3b,s);
+  DosDir($3b,s,len);
 end;
-
 
 procedure GetDir (DriveNr: byte; var Dir: ShortString);
 var
@@ -119,8 +111,8 @@ begin
   i:=0;
   while (temp[i]<>#0) do
    begin
-     if temp[i]='/' then
-      temp[i]:='\';
+     if temp[i] in AllowDirectorySeparators then
+       temp[i]:=DirectorySeparator;
      dir[i+4]:=temp[i];
      inc(i);
    end;
@@ -128,7 +120,7 @@ begin
   dir[3]:='\';
   dir[0]:=char(i+3);
 { upcase the string }
-  if not FileNameCaseSensitive then
+  if not FileNameCasePreserving then
    dir:=upcase(dir);
   if drivenr<>0 then   { Drive was supplied. We know it }
    dir[1]:=char(65+drivenr-1)
@@ -145,16 +137,3 @@ end;
 
 
 
-{
-  $Log: sysdir.inc,v $
-  Revision 1.2  2005/02/14 17:13:22  peter
-    * truncate log
-
-  Revision 1.1  2005/02/06 16:57:18  peter
-    * threads for go32v2,os,emx,netware
-
-  Revision 1.1  2005/02/06 13:06:20  peter
-    * moved file and dir functions to sysfile/sysdir
-    * win32 thread in systemunit
-
-}

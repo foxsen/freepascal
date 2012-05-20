@@ -1,5 +1,4 @@
 {
-    $Id: i_beos.pas,v 1.8 2005/03/20 22:36:45 olle Exp $
     Copyright (c) 1998-2002 by Peter Vreman
 
     This unit implements support information structures for BeOS
@@ -22,6 +21,8 @@
 { This unit implements support information structures for BeOS. }
 unit i_beos;
 
+{$i fpcdefs.inc}
+
   interface
 
     uses
@@ -33,7 +34,8 @@ unit i_beos;
             system       : system_i386_BeOS;
             name         : 'Beos for i386';
             shortname    : 'Beos';
-            flags        : [tf_under_development,tf_needs_symbol_size];
+            flags        : [tf_under_development,tf_needs_symbol_size,tf_files_case_sensitive,
+                            tf_smartlink_sections, tf_smartlink_library];
             cpu          : cpu_i386;
             unit_env     : 'BEOSUNITS';
             extradefines : 'UNIX;HASUNIX';
@@ -55,17 +57,18 @@ unit i_beos;
             staticClibext : '.a';
             staticClibprefix : 'lib';
             sharedClibprefix : 'lib';
-            p_ext_support : false;
+            importlibprefix : 'libimp';
+            importlibext : '.a';
             Cprefix      : '';
             newline      : #10;
             dirsep       : '/';
-            files_case_relevent : true;
-            assem        : as_gas;
+            assem        : as_i386_elf32;
             assemextern  : as_gas;
             link         : nil;
             linkextern   : nil;
             ar           : ar_gnu_ar;
             res          : res_none;
+            dbg          : dbg_stabs;
             script       : script_unix;
             endian       : endian_little;
             alignment    :
@@ -84,9 +87,18 @@ unit i_beos;
                 maxCrecordalign : 4
               );
             first_parm_offset : 8;
-            stacksize    : 8192;
-            DllScanSupported:false;
-            use_function_relative_addresses : true
+            { Stack size used to be 256 K under BeOS. So, it was the value 
+              used in previous version of FPC for BeOS (but lost in the road 
+              to 2.* ;-).
+              According to buildtools/gcc/gcc/config/i386/beos-elf.h in the 
+              Haiku's repository, this value was increased to 1Mb since r4.1b3.
+              Under R5, this value is even greater. listarea report a default 
+              size of 16 Mb for the user stack of the main thread.
+              People who still use BeOS nowadays should use R5 (or Haiku), 
+              so i use this new value.  
+            }
+            stacksize    : 16 * 1024 * 1024;
+            abi : abi_default
           );
 
   implementation
@@ -94,17 +106,9 @@ unit i_beos;
 initialization
 {$ifdef cpu86}
   {$ifdef beos}
-    set_source_info(system_i386_beos_info);
+    {$ifndef haiku}
+      set_source_info(system_i386_beos_info);
+    {$endif haiku}
   {$endif beos}
 {$endif cpu86}
 end.
-{
-  $Log: i_beos.pas,v $
-  Revision 1.8  2005/03/20 22:36:45  olle
-    * Cleaned up handling of source file extension.
-    + Added support for .p extension for macos and darwin
-
-  Revision 1.7  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

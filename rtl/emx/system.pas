@@ -1,5 +1,4 @@
 {
- $Id: system.pas,v 1.36 2005/05/12 20:29:04 michael Exp $
  ****************************************************************************
 
     This file is part of the Free Pascal run time library.
@@ -16,16 +15,12 @@
 
 ****************************************************************************}
 
-unit {$ifdef VER1_0}sysemx{$else}System{$endif};
+unit System;
 
 interface
 
 {Link the startup code.}
-{$ifdef VER1_0}
- {$l prt1.oo2}
-{$else}
- {$l prt1.o}
-{$endif}
+{$l prt1.o}
 
 {$I systemh.inc}
 
@@ -34,10 +29,14 @@ const
 { LFNSupport is defined separately below!!! }
  DirectorySeparator = '\';
  DriveSeparator = ':';
+ ExtensionSeparator = '.';
  PathSeparator = ';';
-{ FileNameCaseSensitive is defined separately below!!! }
+ AllowDirectorySeparators : set of char = ['\','/'];
+ AllowDriveSeparators : set of char = [':'];
+{ FileNameCaseSensitive and FileNameCasePreserving are defined separately below!!! }
  maxExitCode = 255;
  MaxPathLen = 256;
+ AllFilesMask = '*';
 
 type    Tos=(osDOS,osOS2,osDPMI);
 
@@ -86,6 +85,7 @@ const   UnusedHandle=-1;
 
         LFNSupport: boolean = true;
         FileNameCaseSensitive: boolean = false;
+        FileNameCasePreserving: boolean = false;
         CtrlZMarksEOF: boolean = true; (* #26 is considered as end of file *)
 
         sLineBreak = LineEnding;
@@ -421,11 +421,7 @@ begin
 end;
 
 
-{$ifdef HASTHREADVAR}
 threadvar
-{$else HASTHREADVAR}
-var
-{$endif HASTHREADVAR}
   DefaultCreator: ShortString;
   DefaultFileType: ShortString;
 
@@ -453,6 +449,11 @@ begin
                                                  else GetFileHandleCount := L2;
 end;
 
+function CheckInitialStkLen (StkLen: SizeUInt): SizeUInt;
+begin
+  CheckInitialStkLen := StkLen;
+end;
+
 var TIB: PThreadInfoBlock;
     PIB: PProcessInfoBlock;
 
@@ -460,7 +461,6 @@ const
  FatalHeap: array [0..33] of char = 'FATAL: Cannot initialize heap!!'#13#10'$';
 
 begin
-    IsLibrary := FALSE;
     {Determine the operating system we are running on.}
 {$ASMMODE INTEL}
     asm
@@ -535,38 +535,52 @@ begin
             begin
                 stackbottom:=pointer(heap_brk);     {In DOS mode, heap_brk is
                                                      also the stack bottom.}
+                StackTop := StackBottom + InitialStkLen;
+{$WARNING To be checked/corrected!}
                 ApplicationType := 1;   (* Running under DOS. *)
                 IsConsole := true;
-                ProcessID := 1;
+                asm
+                    mov ax, 7F05h
+                    call syscall
+                    mov ProcessID, eax
+                end ['eax'];
                 ThreadID := 1;
             end;
         osOS2:
             begin
                 DosGetInfoBlocks (@TIB, @PIB);
                 StackBottom := pointer (TIB^.Stack);
+                StackTop := TIB^.StackLimit;
                 Environment := pointer (PIB^.Env);
                 ApplicationType := PIB^.ProcType;
                 ProcessID := PIB^.PID;
                 ThreadID := TIB^.TIB2^.TID;
                 IsConsole := ApplicationType <> 3;
+                FileNameCasePreserving := true;
             end;
         osDPMI:
             begin
                 stackbottom:=nil;   {Not sure how to get it, but seems to be
                                      always zero.}
+                StackTop := StackBottom + InitialStkLen;
+{$WARNING To be checked/corrected!}
                 ApplicationType := 1;   (* Running under DOS. *)
                 IsConsole := true;
-                ProcessID := 1;
                 ThreadID := 1;
             end;
     end;
     exitproc:=nil;
+    StackLength := CheckInitialStkLen (InitialStkLen);
 
     {Initialize the heap.}
     initheap;
 
     { ... and exceptions }
     SysInitExceptions;
+
+{$ifdef HASWIDESTRING}
+    InitUnicodeStringManager;
+{$endif HASWIDESTRING}
 
     { ... and I/O }
     SysInitStdIO;
@@ -576,9 +590,7 @@ begin
 
     InitSystemThreads;
 
-{$ifdef HASVARIANT}
-    initvariantmanager;
-{$endif HASVARIANT}
+    InitVariantManager;
 
     if os_Mode in [osDOS,osDPMI] then
         DosEnvInit;
@@ -590,18 +602,3 @@ begin
  {$ENDIF CONTHEAP}
 {$ENDIF DUMPGROW}
 end.
-{
-  $Log: system.pas,v $
-  Revision 1.36  2005/05/12 20:29:04  michael
-  + Added maxpathlen constant (maximum length of filename path)
-
-  Revision 1.35  2005/04/03 21:10:59  hajny
-    * EOF_CTRLZ conditional define replaced with CtrlZMarksEOF, #26 handling made more consistent (fix for bug 2453)
-
-  Revision 1.34  2005/02/14 17:13:22  peter
-    * truncate log
-
-  Revision 1.33  2005/02/06 16:57:18  peter
-    * threads for go32v2,os,emx,netware
-
-}

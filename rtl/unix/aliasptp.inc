@@ -1,5 +1,4 @@
 {
-    $Id: aliasptp.inc,v 1.4 2005/02/14 17:13:31 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2004 by Marco van de Voort
     Member of the Free Pascal development team
@@ -24,6 +23,7 @@ type
     pDev     = UnixType.pDev;
     gid_t    = UnixType.gid_t;
     TGid     = UnixType.TGid;
+    TIOCtlRequest = UnixType.TIOCtlRequest;
     pGid     = UnixType.pGid;
     ino_t    = UnixType.ino_t;
     TIno     = UnixType.TIno;
@@ -43,6 +43,7 @@ type
     size_t   = UnixType.size_t;
     TSize    = UnixType.TSize;
     pSize    = UnixType.pSize;
+    pSize_t  = UnixType.pSize_t;
     ssize_t  = UnixType.ssize_t;
     TsSize   = UnixType.TsSize;
     psSize   = UnixType.psSize;
@@ -67,10 +68,13 @@ type
     timespec = UnixType.timespec;
     ptimespec= UnixType.ptimespec;
     Ttimespec= UnixType.Ttimespec;
+    
     pthread_mutex_t   = UnixType.pthread_mutex_t;
     pthread_cond_t    = UnixType.pthread_cond_t;
     pthread_t         = UnixType.pthread_t;
+
     tstatfs  = UnixType.TStatFs;
+    pstatfs  = UnixType.PStatFs;
 
 CONST
     ARG_MAX       = UnixType.ARG_MAX;
@@ -80,9 +84,7 @@ CONST
     SIG_MAXSIG    = UnixType.SIG_MAXSIG;
 //   wordsinsigset = UnixType.wordsinsigset;
 
-{
-  $Log: aliasptp.inc,v $
-  Revision 1.4  2005/02/14 17:13:31  peter
-    * truncate log
+    PRIO_PROCESS  = UnixType.PRIO_PROCESS;
+    PRIO_PGRP	  = UnixType.PRIO_PGRP;
+    PRIO_USER	  = UnixType.PRIO_USER;
 
-}

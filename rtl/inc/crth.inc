@@ -1,5 +1,4 @@
 {
-    $Id: crth.inc,v 1.5 2005/05/15 12:44:14 hajny Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team.
 
@@ -57,31 +56,33 @@ var
   CheckEOF: Boolean;      { Enable Ctrl-Z }
   DirectVideo: Boolean;   { Enable direct video addressing }
   CheckSnow: Boolean;     { Enable snow filtering }
-{$ifdef ver1_0}
-const
-{$endif}
   LastMode: Word = 3;         { Current text mode }
   TextAttr: Byte = $07;         { Current text attribute }
   WindMin: Word  = $0;          { Window upper left coordinates }
   WindMax: Word  = $184f;          { Window lower right coordinates }
-{$ifdef ver1_0}
-var
-{$endif}
   { FPC Specific for large screen support }
   WindMinX : DWord;
   WindMaxX : DWord;
   WindMinY : DWord;
   WindMaxY : DWord      ;
 
+type
+  { all crt unit coordinates are 1-based }
+  tcrtcoord = 1..255;
+
 { Interface procedures }
 procedure AssignCrt(var F: Text);
 function KeyPressed: Boolean;
 function ReadKey: Char;
 procedure TextMode (Mode: word);
+{ Window parameters not changed to tcrtcoord, because the window() procedure
+  does nothing if (x1 > x2) or (y1 > y2), and some people may set x2 or y2
+  to 0 if they don't want it to do anything (JM)
+}
 procedure Window(X1,Y1,X2,Y2: Byte);
-procedure GotoXY(X,Y: Byte);
-function WhereX: Byte;
-function WhereY: Byte;
+procedure GotoXY(X,Y: tcrtcoord);
+function WhereX: tcrtcoord;
+function WhereY: tcrtcoord;
 procedure ClrScr;
 procedure ClrEol;
 procedure InsLine;
@@ -100,12 +101,3 @@ procedure cursoron;
 procedure cursoroff;
 procedure cursorbig;
 
-{
-  $Log: crth.inc,v $
-  Revision 1.5  2005/05/15 12:44:14  hajny
-    * TextMode parameter type changed to word for TP/BP compatibility
-
-  Revision 1.4  2005/02/14 17:13:22  peter
-    * truncate log
-
-}

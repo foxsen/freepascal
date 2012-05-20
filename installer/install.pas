@@ -1,5 +1,4 @@
 {
-    $Id: install.pas,v 1.29 2005/02/14 17:13:19 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1993-98 by Florian Klaempfl
     member of the Free Pascal development team
@@ -86,20 +85,20 @@ program install;
      commands,
      HelpCtx,
 {$ENDIF}
-     unzip,ziptypes,
+     unzip51g,ziptypes,
 {$IFDEF DLL}
      unzipdll,
 {$ENDIF}
      app,dialogs,views,menus,msgbox,colortxt,tabs,scroll,
-     WHTMLScn;
+     WHTMLScn,insthelp;
 
   const
-     installerversion='1.0.8';
-     installercopyright='Copyright (c) 1993-2004 Florian Klaempfl';
+     installerversion='2.7.1';
+     installercopyright='Copyright (c) 1993-2011 Florian Klaempfl';
 
 
-     maxpacks=30;
-     maxpackages=20;
+     maxpacks=20;
+     maxpackages=40;
      maxdefcfgs=1024;
 
      HTMLIndexExt = '.htx';
@@ -202,6 +201,7 @@ program install;
 
      tapp = object(tapplication)
          procedure initmenubar;virtual;
+         procedure initstatusline;virtual;
          procedure handleevent(var event : tevent);virtual;
          procedure do_installdialog;
          procedure readcfg(const fn:string);
@@ -276,6 +276,15 @@ program install;
       halt(1);
     end;
 
+
+  procedure WriteLog (const S: string);
+    begin
+      if CreateLog then
+        begin
+          WriteLn (Log, S);
+          Flush (Log);
+        end;
+    end;
 
   function packagemask(i:longint):longint;
     begin
@@ -450,63 +459,6 @@ program install;
        if (D [0] <> #0) and (D [byte (D [0])] = '\') then Dec (D [0]);
        GetProgDir := D;
     end;
-
-  function RTrim(const S: string): string;
-  var
-    i : longint;
-  begin
-    i:=length(s);
-    while (i>0) and (s[i]=' ') do
-     dec(i);
-    RTrim:=Copy(s,1,i);
-  end;
-
-  function LTrim(const S: string): string;
-  var
-    i : longint;
-  begin
-    i:=1;
-    while (i<length(s)) and (s[i]=' ') do
-     inc(i);
-    LTrim:=Copy(s,i,255);
-  end;
-
-  function Trim(const S: string): string;
-  begin
-    Trim:=RTrim(LTrim(S));
-  end;
-
-  function CompareText(S1, S2: string): integer;
-  var R: integer;
-  begin
-    S1:=Upcase(S1);
-    S2:=Upcase(S2);
-    if S1<S2 then R:=-1 else
-    if S1>S2 then R:= 1 else
-    R:=0;
-    CompareText:=R;
-  end;
-
-  function ExtOf(const S: string): string;
-  var D: DirStr; E: ExtStr; N: NameStr;
-  begin
-    FSplit(S,D,N,E);
-    ExtOf:=E;
-  end;
-
-  function DirAndNameOf(const S: string): string;
-  var D: DirStr; E: ExtStr; N: NameStr;
-  begin
-    FSplit(S,D,N,E);
-    DirAndNameOf:=D+N;
-  end;
-
-  function DirOf(const S: string): string;
-  var D: DirStr; E: ExtStr; N: NameStr;
-  begin
-    FSplit(S,D,N,E);
-    DirOf:=D;
-  end;
 
   function GetZipErrorInfo(error : longint) : string;
   var
@@ -788,8 +740,7 @@ program install;
          begin
             messagebox('File "'+s+'" missing for the selected installation. '+
                        'Installation hasn''t been completed.',nil,mferror+mfokbutton);
-            if CreateLog then
-              WriteLn (Log, 'File "' + S +
+            WriteLog ('File "' + S +
                                    '" missing for the selected installation!');
             errorhalt;
          end;
@@ -801,8 +752,7 @@ program install;
  {$ENDIF FPC}
 {$ENDIF DLL}
 
-       if CreateLog then
-         WriteLn (Log, 'Unpacking ' + AllFiles + ' from '
+       WriteLog ('Unpacking ' + AllFiles + ' from '
                                    + StartPath + DirSep + S + ' to ' + ToPath);
        repeat
          fn:=startpath+DirSep+s+#0;
@@ -813,7 +763,10 @@ program install;
          if (UnzipErr <> 0) and (UnzipErr <> 1) then
            begin
               if CreateLog then
-                WriteLn (Log, 'Error ', UnzipErr, ' while unpacking!');
+                begin
+                  WriteLn (Log, 'Error ', UnzipErr, ' while unpacking!');
+                  Flush (Log);
+                end;
               s:=GetZipErrorInfo(UnzipErr);
               { Str(UnzipErr,s);}
               st2:='';
@@ -829,12 +782,9 @@ program install;
                         islfn:=true;
                       if islfn then
                         begin
-                          if CreateLog then
-                            begin
-                              WriteLn (Log, 'Error while extracting ' +
-                             CurrentFile + ' because of missing LFN support,');
-                              WriteLn (Log, '  skipping rest of ZIP file.');
-                            end;
+                          WriteLog ('Error while extracting ' +
+                           CurrentFile + ' because of missing LFN support,' +
+                           LineEnding + '  skipping rest of ZIP file.');
                           messagebox('Error while extracting '+currentfile+
                             #13#3'because of missing lfn support'+
                             #13#3'skipping rest of zipfile '+s
@@ -848,7 +798,7 @@ program install;
                     st2:=' Disk full?';
                 end;
               if CreateLog then
-                WriteLn (Log, 'Error (' + S + ') while extracting.' + ST2);
+                WriteLog ('Error (' + S + ') while extracting.' + ST2);
               if messagebox('Error (' + S + ') while extracting.'+st2+#13+
                             #13#3'Try again?',nil,mferror+mfyesbutton+mfnobutton)=cmYes then
                again:=true
@@ -881,6 +831,7 @@ program install;
       WLibPath: boolean;
     const
       EMXName: array [1..4] of char = 'EMX'#0;
+      BFD2EName: array [1..6] of char = 'BFD2E'#0;
 {$ENDIF}
     begin
       if haside then
@@ -921,17 +872,27 @@ program install;
        begin
          WLibPath := false;
          DosFreeModule (Handle);
-       end
-      else
-       begin
+         if DosLoadModule (@ErrPath, SizeOf (ErrPath), @BFD2EName, Handle) = 0 then
+          begin
+           WLibPath := false;
+           DosFreeModule (Handle);
+          end
+         else
+          begin
+           WLibPath := true;
+           Inc (YB, 2);
+          end;
+        end
+       else
+        begin
          WLibPath := true;
          Inc (YB, 2);
-       end;
+        end;
   {$ENDIF}
 {$ENDIF}
 
       R.Assign(6, 6, 74, YB);
-      inherited init(r,'Installation Successful.');
+      inherited init(r,'Installation successful.');
       Options:=Options or ofCentered;
 
 {$IFNDEF UNIX}
@@ -942,29 +903,31 @@ program install;
          insert(P);
        end;
 
+  {$IFDEF OS2}
+      if WLibPath then
+       begin
+         if WPath then
+          S := 'and your LIBPATH with ''' + S
+         else
+          S := 'Extend your LIBPATH with ''' + S;
+         System.Delete (S, Length (S) - 6, 7);
+         S := S + 'dll''';
+         R.Assign (2, YB - 14, 64, YB - 12);
+         P := New (PStaticText, Init (R, S));
+         Insert (P);
+       end;
+  {$ELSE OS2}
       if MixedCasePath then
        begin
          R.Assign(2, 5, 64, 6);
          P:=new(pstatictext,init(r,'You need to use setpath.bat file if you want to use Makefiles'));
          insert(P);
        end;
-
-  {$IFDEF OS2}
-      if WLibPath then
-       begin
-         if WPath then
-          S := 'and your LIBPATH with ''' + S + '\dll'''
-         else
-          S := 'Extend your LIBPATH with ''' + S + '\dll''';
-         R.Assign (2, YB - 14, 64, YB - 12);
-         P := New (PStaticText, Init (R, S));
-         Insert (P);
-       end;
-  {$ENDIF}
+  {$ENDIF OS2}
 {$ENDIF}
 
       R.Assign(2, YB - 13, 64, YB - 12);
-      P:=new(pstatictext,init(r,'To compile files enter fpc [file]'''));
+      P:=new(pstatictext,init(r,'To compile files enter ''fpc [file]'''));
       insert(P);
 
       if haside then
@@ -1136,29 +1099,35 @@ program install;
                            packmask[j]:=packmask[j] or packagemask(i);
                            enabmask[j]:=enabmask[j] or packagemask(i);
                            firstitem[j]:=i-1;
-                           if createlog then
-                             writeln(log,'Checking lfn usage for ',zipfile,' ... no lfn');
+                           WriteLog ('Checking lfn usage for ' + zipfile + ' ... no lfn');
                         end
                       else
                         begin
                            items[j]:=newsitem(package[i].name+' (requires LFN support)',items[j]);
                            enabmask[j]:=enabmask[j] or packagemask(i);
                            firstitem[j]:=i-1;
-                           if createlog then
-                             writeln(log,'Checking lfn usage for ',zipfile,' ... uses lfn');
+                           WriteLog ('Checking lfn usage for ' + zipfile + ' ... uses lfn');
                         end;
                    end
                  else
 {$endif MAYBE_LFN}
                    begin
-                      items[j]:=newsitem(package[i].name+diskspacestr(package[i].diskspace),items[j]);
+                      items[j]:=newsitem(package[i].name+diskspacestr(package[i].diskspace)
+{$ifdef DEBUG}
+                                         +' ('+dotstr(i)+')'
+{$endif DEBUG}
+                                         ,items[j]);
                       packmask[j]:=packmask[j] or packagemask(i);
                       enabmask[j]:=enabmask[j] or packagemask(i);
                       firstitem[j]:=i-1;
                    end;
                end
               else
-               items[j]:=newsitem(package[i].name,items[j]);
+               items[j]:=newsitem(package[i].name
+{$ifdef DEBUG}
+                          +' ('+dotstr(i)+')'
+{$endif DEBUG}
+                           ,items[j]);
             end;
          end;
 
@@ -1171,7 +1140,7 @@ program install;
         begin
           messagebox('No components found to install, aborting.',nil,mferror+mfokbutton);
           if CreateLog then
-            WriteLn (Log, 'No components found to install, aborting.');
+            WriteLog ('No components found to install, aborting.');
           errorhalt;
         end;
 
@@ -1231,7 +1200,10 @@ program install;
          if (sbr.b.y-sbr.a.y)<cfg.pack[j].packages then
           begin
             sbsbr.assign(sbr.b.x,sbr.a.y,sbr.b.x+1,sbr.b.y);
-            New(sbsb, init(sbsbr));
+            sbsb:=CreateIdScrollBar (sbsbr.a.x, sbsbr.a.y,sbsbr.b.y-sbsbr.a.y,j,false);
+            sbsb^.SetRange(0,cfg.pack[j].packages-(sbsbr.b.y-sbsbr.a.y)-1);
+            sbsb^.SetStep(5,1);
+            //New(sbsb, init(sbsbr));
           end
          else
            sbsb:=nil;
@@ -1377,15 +1349,18 @@ end;
                          begin
                           ASpace := package[i].diskspace;
                           if ASpace = -1 then
+                            begin
                               MessageBox ('File ' + package[i].zip +
                                             ' is probably corrupted!', nil,
-                                                        mferror + mfokbutton)
+                                                        mferror + mfokbutton);
+                              WriteLog ('File ' + package[i].zip +
+                                            ' is probably corrupted!');
+                            end
                               else Inc (DSize, ASpace);
                          end;
                        end;
                     end;
-                  if CreateLog then
-                    WriteLn (Log, 'Diskspace needed: ',DotStr(DSize),' Kb');
+                  WriteLog ('Diskspace needed: ' + DotStr (DSize) + ' Kb');
 
                   S := FExpand (Data.BasePath);
                   if S [Length (S)] = DirSep then
@@ -1394,8 +1369,7 @@ end;
                   { -1 means that the drive is invalid }
                   if Space=-1 then
                     begin
-                     if CreateLog then
-                       WriteLn (Log, 'The drive '+S[1]+': is not valid');
+                     WriteLog ('The drive ' + S [1] + ': is not valid');
                      if messagebox('The drive '+S[1]+': is not valid. Do you ' +
                                    'want to change the installation path?',nil,
                                    mferror+mfyesbutton+mfnobutton) = cmYes then
@@ -1403,8 +1377,8 @@ end;
                       Space:=0;
                     end;
                   Space := Space shr 10;
-                  if CreateLog then
-                    WriteLn (Log, 'Free space on drive '+S[1]+': ',DotStr(Space),' Kb');
+                  WriteLog ('Free space on drive ' + S [1] + ': ' +
+                                                       DotStr (Space) + ' Kb');
 
                   if Space < DSize then
                    S := 'is not '
@@ -1536,8 +1510,7 @@ end;
           begin
             params[0]:=@fn;
             messagebox('File %s not found!',@params,mferror+mfokbutton);
-            if CreateLog then
-                WriteLn (Log, 'File "' + fn + '" not found!');
+            WriteLog ('File "' + fn + '" not found!');
             errorhalt;
           end;
        end;
@@ -1852,6 +1825,22 @@ end;
     end;
 
 
+  procedure tapp.initstatusline;
+    var
+       R: TRect;
+    begin
+      GetExtent(R);
+      R.A.Y := R.B.Y - 1;
+      //R.B.X := R.B.X - 2;
+      New(StatusLine,
+        Init(R,
+          NewStatusDef(0, $EFFF,nil,nil
+          )
+        )
+      );
+    end;
+
+
   procedure tapp.handleevent(var event : tevent);
     begin
        inherited handleevent(event);
@@ -1957,11 +1946,37 @@ begin
   writeln('  -h   displays this help');
 end;
 
+var
+  OldExit: pointer;
+
+procedure NewExit;
+begin
+ ExitProc := OldExit;
+ if CreateLog then
+  begin
+{$I-}
+   if ErrorAddr <> nil then
+    begin
+     WriteLn (Log, 'Installer crashed with RTE ', ExitCode);
+     Close (Log);
+    end
+   else
+    if ExitCode <> 0 then
+     begin
+      WriteLn (Log, 'Installer ended with non-zero exit code ', ExitCode);
+      Close (Log);
+     end
+{$I+}
+  end;
+end;
+
 
 var
    i : longint;
-   vm : tvideomode;
+{   vm : tvideomode;}
 begin
+   OldExit := ExitProc;
+   ExitProc := @NewExit;
    { register objects for help streaming }
    RegisterWHTMLScan;
 {$IFDEF OS2}
@@ -2014,7 +2029,7 @@ begin
         rewrite(log);
 {$ifdef MAYBE_LFN}
         if not(locallfnsupport) then
-          writeln(log,'OS doesn''t have LFN support');
+          WriteLog ('OS doesn''t have LFN support');
 {$endif}
      end;
    getdir(0,startpath);
@@ -2024,11 +2039,11 @@ begin
    fillchar(data, SizeOf(data), 0);
 
    installapp.init;
-   vm.col:=80;
+{   vm.col:=80;
    vm.row:=25;
    vm.color:=true;
    installapp.SetScreenVideoMode(vm);
-
+}
    FSplit (FExpand (ParamStr (0)), DStr, CfgName, EStr);
 
    installapp.readcfg(CfgName + CfgExt);
@@ -2044,18 +2059,3 @@ begin
    if createlog then
      close(log);
 end.
-{
-  $Log: install.pas,v $
-  Revision 1.29  2005/02/14 17:13:19  peter
-    * truncate log
-
-  Revision 1.28  2005/01/07 16:48:14  peter
-    * fix writing of -T<targetos>
-
-  Revision 1.27  2005/01/05 21:27:55  hajny
-    * error message boxes instead of writeln
-
-  Revision 1.26  2005/01/05 17:43:44  armin
-  * maxpacks increased tp 30, close logfile before halt
-
-}

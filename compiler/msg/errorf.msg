@@ -1,11 +1,10 @@
 #
-#   $Id: errorf.msg,v 1.6 2004/09/04 21:18:47 armin Exp $
 #   This file is part of the Free Pascal Compiler
 #   Copyright (c) 1998-2000 by the Free Pascal Development team
 #
 #   French (cp850) Language File for Free Pascal
 #
-#   See the file COPYING.FPC, included in this distribution,
+#   See the file COPYING.v2, included in this distribution,
 #   for details about the copyright.
 #
 #   This program is distributed in the hope that it will be useful,
@@ -64,13 +63,13 @@ general_i_targetos=01002_I_SystŠme d'exploitation cible : $1
 % operating system is.
 general_t_exepath=01003_T_R‚pertoire pour fichiers executables : $1
 % When the \var{-vt} switch is used, this line tells you where the compiler
-% looks for it's binaries.
+% looks for its binaries.
 general_t_unitpath=01004_T_R‚pertoire de recherche d'unit‚s : $1
 % When the \var{-vt} switch is used, this line tells you where the compiler
 % looks for compiled units. You can set this path with the \var{-Fu}
 general_t_includepath=01005_T_R‚pertoire pour recherche de fichiers inclus : $1
 % When the \var{-vt} switch is used, this line tells you where the compiler
-% looks for it's include files (files used in \var{\{\$I xxx\}} statements).
+% looks for its include files (files used in \var{\{\$I xxx\}} statements).
 % You can set this path with the \var{-I} option.
 general_t_librarypath=01006_T_R‚pertoire pour librairies : $1
 % When the \var{-vt} switch is used, this line tells you where the compiler
@@ -205,7 +204,7 @@ scan_i_user_defined=02027_I_D‚fini par l'utilisateur : $1
 scan_e_keyword_cant_be_a_macro=02028_E_Impossible de redefinir un mot r‚serv‚
 % You cannot redefine keywords with macros.
 scan_f_macro_buffer_overflow=02029_F_D‚bordement du buffer de la macro en lecture ou expansion
-% Your macro or it's result  was too long for the compiler.
+% Your macro or its result was too long for the compiler.
 scan_w_macro_deep_ten=02030_W_L'expansion des macros d‚passe un niveau de 16.
 % When expanding a macro macros have been nested to a level of 16.
 % The compiler will expand no further, since this may be a sign that
@@ -252,7 +251,7 @@ scan_t_back_in=02043_T_De retour dans $1
 % When you use (\var{-vt}) the compiler tells you when it has finished
 % reading an include file.
 scan_w_unsupported_app_type=02044_W_Type d'application non support‚e : $1
-% You get this warning, ff you specify an unknown application type
+% You get this warning, if you specify an unknown application type
 % with the directive $APPTYPE
 scan_w_app_type_not_support=02045_W_$APPTYPE non support‚ par OS cible
 % The $APPTYPE directive is supported by win32 applications only
@@ -416,7 +415,7 @@ parser_e_range_check_error=03035_E_Erreur d'intervalle dans l'‚valuation d'une c
 % The constants are out of their allowed range.
 parser_w_range_check_error=03036_W_Erreur d'intervalle dans l'‚valuation d'une constante
 % The constants are out of their allowed range.
-parser_e_double_caselabel=03037_E_Valeur en double dans une instruction  CASE
+parser_e_double_caselabel=03037_E_Valeur en double dans une instruction CASE
 % You are specifying the same label 2 times in a \var{case} statement.
 parser_e_case_lower_less_than_upper_bound=03038_E_Valeur max inf‚rieure … la valeur min dans CASE
 % The upper bound of a \var{case} label is less than the lower bound and this
@@ -564,7 +563,7 @@ parser_e_illegal_set_expr=03074_E_Erreur d'intervalle ou ‚l‚ment dupliqu‚ dans u
 % the same.
 parser_e_pointer_to_class_expected=03075_E_Pointeur d'object attendu
 % You specified an illegal type in a \var{New} statement.
-% The extended synax of \var{New} needs an  object as a parameter.
+% The extended synax of \var{New} needs an object as a parameter.
 parser_e_expr_have_to_be_constructor_call=03076_E_Expression doit ˆtre un appel … un constructeur
 % When using the extended syntax of \var{new}, you must specify the constructor
 % method of the object you are trying to create. The procedure you specified
@@ -573,7 +572,7 @@ parser_e_expr_have_to_be_destructor_call=03077_E_Expression doit ˆtre un appel …
 % When using the extended syntax of \var{dispose}, you must specify the
 % destructor method of the object you are trying to dispose of.
 % The procedure you specified is not a destructor.
-parser_e_invalid_record_const=03078_E_Mauvais ordre  des ‚l‚ments d'un record
+parser_e_invalid_record_const=03078_E_Mauvais ordre des ‚l‚ments d'un record
 % When declaring a constant record, you specified the fields in the wrong
 % order.
 parser_e_false_with_expr=03079_E_L'expression doit ˆtre de type record ou objet
@@ -583,9 +582,9 @@ parser_e_false_with_expr=03079_E_L'expression doit ˆtre de type record ou objet
 parser_e_void_function=03080_E_Les proc‚dures ne peuvent retourner une valeur
 % In \fpc, you can specify a return value for a function when using
 % the \var{exit} statement. This error occurs when you try to do this with a
-% procedure. Procedures  cannot return a value.
-parser_e_constructors_always_objects=03081_E_Les constructeurs et destructeurs doivent ˆtre des m‚thodes
-% You're declaring a procedure as destructor or constructor, when the
+% procedure. Procedures cannot return a value.
+parser_e_only_methods_allowed=03081_E_Les constructeurs, destructeurs et class operators doivent ˆtre des m‚thodes
+% You're declaring a procedure as destructor, constructor or class operator, when the
 % procedure isn't a class method.
 parser_e_operator_not_overloaded=03082_E_Operator n'est pas surcharg‚
 % You're trying to use an overloaded operator when it isn't overloaded for
@@ -689,7 +688,7 @@ parser_d_compiling_second_time=03107_D_Compilation de $1 pour la seconde fois
 % When you request debug messages (\var{-vd}) the compiler tells you what
 % units it recompiles for the second time.
 parser_e_no_paras_allowed=03108_E_Les propri‚t‚s vecteurs ne sont pas accept‚es ici
-% You cannot use  array properties at that point.
+% You cannot use array properties at that point.
 parser_e_no_property_found_to_override=03109_E_Aucune propri‚t‚ trouv‚e pour override
 % You want to overrride a property of a parent class, when there is, in fact,
 % no such property in the parent class.
@@ -703,7 +702,7 @@ parser_e_constructor_cannot_be_not_virtual=03112_E_Les constructeurs virtuels so
 % in classes.
 parser_e_no_default_property_available=03113_E_Pas de propri‚t‚ par d‚faut
 % You try to access a default property of a class, but this class (or one of
-% it's ancestors) doesn't have a default property.
+% its ancestors) doesn't have a default property.
 parser_e_cant_have_published=03114_E_PUBLISHED non autoris‚ ici pour des classes, utilisez {$M+}
 % If you want a \var{published} section in a class definition, you must
 % use the \var{\{\$M+\}} switch, whch turns on generation of type
@@ -738,9 +737,9 @@ parser_e_not_external_and_export=03121_E_EXPORT et EXTERNAL sont incompatibles
 % These two procedure directives are mutually exclusive
 parser_e_name_keyword_expected=03122_E_Le mot r‚serv‚ NAME est requis ici
 % The definition of an external variable needs a \var{name} clause.
-parser_w_not_supported_for_inline=03123_W_$1 n'est pas support‚ pour des fonctions INLINE
+parser_h_not_supported_for_inline=03123_H_$1 n'est pas support‚ pour des fonctions INLINE
 % Inline procedures don't support this declaration.
-parser_w_inlining_disabled=03124_W_Inlining d‚sactiv‚
+parser_h_inlining_disabled=03124_H_Inlining d‚sactiv‚
 % Inlining of procedures is disabled.
 parser_i_writing_browser_log=03125_I_Ecriture du Browser log $1
 % When information messages are on, the compiler warns you when it
@@ -811,15 +810,15 @@ parser_e_self_in_non_message_handler=03146_E_SELF ne peut ˆtre un paramŠtre expl
 parser_e_threadvars_only_sg=03147_E_THREADVARS peuvent seulement ˆtre statiques ou globaux
 % Threadvars must be static or global, you can't declare a thread
 % local to a procedure. Local variables are always local to a thread,
-% because every thread has it's own stack and local variables
+% because every thread has its own stack and local variables
 % are stored on the stack
 parser_f_direct_assembler_not_allowed=03148_F_Assembleur direct non support‚ pour la sortie binaire
 % You can't use direct assembler when using a binary writer, choose an
-% other outputformat or use an other assembler reader
+% other outputformat or use another assembler reader
 parser_w_no_objpas_use_mode=03149_W_Ne chargez pas l'unit‚ OBJPAS manuellement, utilisez {$mode objfpc} ou {$mode delphi}
 % You're trying to load the ObjPas unit manual from a uses clause. This is
 % not a good idea to do, you can better use the {$mode objfpc} or {$mode delphi}
-% directives which load the unit automaticly
+% directives which load the unit automatically
 parser_e_no_object_override=03150_E_OVERRIDE nepeut ˆtre utilis‚ pour des objets
 % Override isn't support for objects, use VIRTUAL instead to override
 % a method of an anchestor object
@@ -968,7 +967,7 @@ type_e_integer_or_real_expr_expected=04023_E_Expression entiŠre ou r‚elle attend
 type_e_wrong_type_in_array_constructor=04024_E_Mauvais type dans array constructor
 % You are trying to use a type in an array constructor which is not
 % allowed.
-type_e_wrong_parameter_type=04025_E_Type incompatible type pour arg #$1:  $2 au lieu de $3
+type_e_wrong_parameter_type=04025_E_Type incompatible type pour arg #$1: $2 au lieu de $3
 % You are trying to pass an invalid type for the specified parameter.
 % \end{description}
 type_e_no_method_and_procedure_not_compatible=04026_E_Method (variable) et Procedure (variable) sont incompatibles
@@ -1026,7 +1025,7 @@ sym_e_id_not_found=05000_E_Identificateur non trouv‚ $1
 % variable.
 sym_f_internal_error_in_symtablestack=05001_F_Internal Error in SymTableStack()
 % An internal error occurred in the compiler; If you encounter such an error,
-% please contact the developers and try to provide  an exact description of
+% please contact the developers and try to provide an exact description of
 % the circumstances in which the error occurs.
 sym_e_duplicate_id=05002_E_Duplicate identifier $1
 % The identifier was already declared in the current scope.
@@ -1057,7 +1056,7 @@ sym_e_only_static_in_static=05010_E_Only static variables can be used in static 
 % A static method of an object can only access static variables.
 sym_e_invalid_call_tvarsymmangledname=05011_E_Invalid call to tvarsym.mangledname()
 % An internal error occurred in the compiler; If you encounter such an error,
-% please contact the developers and try to provide  an exact description of
+% please contact the developers and try to provide an exact description of
 % the circumstances in which the error occurs.
 sym_f_type_must_be_rec_or_class=05012_F_record or class type expected
 % The variable or expression isn't of the type \var{record} or \var{class}.
@@ -1073,7 +1072,7 @@ sym_e_ill_label_decl=05016_E_Illegal label declaration
 % procedure or function.
 sym_e_goto_and_label_not_supported=05017_E_GOTO und LABEL are not supported (use switch -Sg)
 % You must compile a program which has \var{label}s and \var{goto} statements
-% with the  \var{-Sg} switch. By default, \var{label} and \var{goto} aren't
+% with the \var{-Sg} switch. By default, \var{label} and \var{goto} aren't
 % supported.
 sym_e_label_not_found=05018_E_Label not found
 % A \var{goto label} was encountered, but the label isn't declared.
@@ -1225,7 +1224,7 @@ cg_w_unreachable_code=06018_W_unreachable code
 %   end;
 % \end{verbatim}
 cg_e_stackframe_with_esp=06019_E_procedure call with stackframe ESP/SP
-% The compiler encountered a procedure  or function call inside a
+% The compiler encountered a procedure or function call inside a
 % procedure that uses a \var{ESP/SP} stackframe. Normally, when a call is
 % done the procedure needs a \var{EBP} stackframe.
 cg_e_cant_call_abstract_method=06020_E_Abstract methods can't be called directly
@@ -1233,13 +1232,13 @@ cg_e_cant_call_abstract_method=06020_E_Abstract methods can't be called directly
 % overriding child method, because an abstract method isn't implemented.
 cg_f_internal_error_in_getfloatreg=06021_F_Internal Error in getfloatreg(), allocation failure
 % An internal error occurred in the compiler; If you encounter such an error,
-% please contact the developers and try to provide  an exact description of
+% please contact the developers and try to provide an exact description of
 % the circumstances in which the error occurs.
 cg_f_unknown_float_type=06022_F_Unknown float type
 % The compiler cannot determine the kind of float that occurs in an expression.
 cg_f_secondvecn_base_defined_twice=06023_F_SecondVecn() base defined twice
 % An internal error occurred in the compiler; If you encounter such an error,
-% please contact the developers and try to provide  an exact description of
+% please contact the developers and try to provide an exact description of
 % the circumstances in which the error occurs.
 cg_f_extended_cg68k_not_supported=06024_F_Extended cg68k not supported
 % The var{extended} type is not supported on the m68k platform.
@@ -1247,7 +1246,7 @@ cg_f_32bit_not_supported_in_68000=06025_F_32-bit unsigned not supported in MC680
 % The cardinal is not supported on the m68k platform.
 cg_f_internal_error_in_secondinline=06026_F_Internal Error in secondinline()
 % An internal error occurred in the compiler; If you encounter such an error,
-% please contact the developers and try to provide  an exact description of
+% please contact the developers and try to provide an exact description of
 % the circumstances in which the error occurs.
 cg_d_register_weight=06027_D_Register $1 weight $2 $3
 % Debugging message. Shown when the compiler considers a variable for
@@ -1513,13 +1512,13 @@ exec_i_compilingresource=09022_I_Compiling resource $1
 #
 # Executable information
 #
-execinfo_f_cant_process_executable=09023_F_Can't post process executable $1
-execinfo_f_cant_open_executable=09024_F_Can't open executable $1
-execinfo_x_codesize=09025_X_Size of Code: $1 bytes
-execinfo_x_initdatasize=09026_X_Size of initialized data: $1 bytes
-execinfo_x_uninitdatasize=09027_X_Size of uninitialized data: $1 bytes
-execinfo_x_stackreserve=09028_X_Stack space reserved: $1 bytes
-execinfo_x_stackcommit=09029_X_Stack space commited: $1 bytes
+execinfo_f_cant_process_executable=09128_F_Can't post process executable $1
+execinfo_f_cant_open_executable=09129_F_Can't open executable $1
+execinfo_x_codesize=09130_X_Size of Code: $1 bytes
+execinfo_x_initdatasize=09131_X_Size of initialized data: $1 bytes
+execinfo_x_uninitdatasize=09132_X_Size of uninitialized data: $1 bytes
+execinfo_x_stackreserve=09133_X_Stack space reserved: $1 bytes
+execinfo_x_stackcommit=09134_X_Stack space commited: $1 bytes
 # Unit loading
 #
 # BeginOfTeX
@@ -1549,10 +1548,10 @@ unit_u_ppu_invalid_header=10007_U_PPU Invalid Header (no PPU at the begin)
 unit_u_ppu_invalid_version=10008_U_PPU Invalid Version $1
 % This unit file was compiled with a different version of the compiler, and
 % cannot be read.
-unit_u_ppu_invalid_processor=10009_U_PPU is compiled for an other processor
+unit_u_ppu_invalid_processor=10009_U_PPU is compiled for another processor
 % This unit file was compiled for a different processor type, and
 % cannot be read
-unit_u_ppu_invalid_target=10010_U_PPU is compiled for an other target
+unit_u_ppu_invalid_target=10010_U_PPU is compiled for another target
 % This unit file was compiled for a different processor type, and
 % cannot be read
 unit_u_ppu_source=10011_U_PPU Source: $1
@@ -1636,7 +1635,7 @@ unit_u_check_time=10037_U_PPU Check file $1 time $2
 #
 #  Options
 #
-option_usage=11000_$1 [options] <inputfile> [options]
+option_usage=11000_O_$1 [options] <inputfile> [options]
 # BeginOfTeX
 %
 % \section{Command-line handling errors}
@@ -1712,25 +1711,25 @@ option_asm_forced=11022_W_"$1" assembler use forced
 # Logo (option -l)
 #
 option_logo=11023_[
-Compilateur Free Pascal version $FPCVER [$FPCDATE] pour $FPCTARGET
-Copyright (c) 1998-2000 by Florian Klaempfl
+Compilateur Free Pascal version $FPCFULLVERSION [$FPCDATE] pour $FPCTARGET
+Copyright (c) 1998-2011 by Florian Klaempfl
 ]
 
 #
 # Info (option -i)
 #
 option_info=11024_[
-Compilateur Free Pascal version $FPCVER
+Compilateur Free Pascal version $FPCVERSION
 
 Date du compilateur  : $FPCDATE
 Cible du compilateur : $FPCTARGET
 # the next lines are NOT translated on purpose !!!
 
 This program comes under the GNU General Public Licence
-For more information read COPYING.FPC
+For more information read COPYING.v2
 
 Report bugs,suggestions etc to:
-                 bugrep@freepascal.org
+                 http://bugs.freepascal.org
 ]
 
 #
@@ -1752,7 +1751,7 @@ option_help_pages=11025_[
 **2Cn_pas de linking
 **2Co_g‚nŠre des tests d'overflow pour les op‚rations sur les entiers
 **2Cr_Controle d'intervalles
-**2Cs<n>_sp‚cifie <n> comme  taille de la pile
+**2Cs<n>_sp‚cifie <n> comme taille de la pile
 **2Ct_test de d‚bordement de pile
 3*2CS_cr‚er une librairie statique
 3*2Cx_utiliser le smartlinking
@@ -1804,7 +1803,6 @@ option_help_pages=11025_[
 **2So_essaye d'ˆtre compatible avec TP/BP 7.0
 **2Sp_essaye d'ˆtre compatible avec GPC
 **2Ss_les constructeurs doivent s'appeler init (et les destructeurs done)
-**2St_autorise "static" dans les objects
 **1s_n'appelle pas l'assembleur ni le linker
 **1u<x>_rend le symbole <x> non d‚fini
 **1U_options d'unit‚s :
@@ -1833,7 +1831,7 @@ option_help_pages=11025_[
 3*2Anasmcoff_fichier COFF (Go32v2) avec Nasm
 3*2Anasmelf_fichier ELF32 (Linux) avec Nasm
 3*2Anasmobj_fichier OBJ avec Nasm
-3*2Amasm_fichier OBJ avec Masm (Mircosoft)
+3*2Amasm_fichier OBJ avec Masm (Microsoft)
 3*2Atasm_fichier OBJ avec Tasm (Borland)
 3*2Acoff_coff (Go32v2) using internal writer
 3*2Apecoff_pecoff (Win32) using internal writer
@@ -1852,7 +1850,7 @@ option_help_pages=11025_[
 3*2Op<x>_processeur cible :
 3*3Op1_d‚finit 386/486 comme processeur cible
 3*3Op2_d‚finit Pentium/PentiumMMX (tm) comme processeur cycle
-3*3Op3_d‚finit  PPro/PII/c6x86/K6 (tm) comme processeur cycle
+3*3Op3_d‚finit PPro/PII/c6x86/K6 (tm) comme processeur cycle
 3*1T<x>_systŠme d'expliotation cible:
 3*2TEMX_OS/2 via EMX (et les extensions EMX/RSX)
 3*2TGO32V2_version 2 de l'extension DOS de DJ Delorie
@@ -1897,4 +1895,3 @@ option_help_pages=11025_[
 
 #
 # The End...
-#

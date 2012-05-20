@@ -3,6 +3,9 @@
 { e-mail: graphcoloring@yahoo.com.cn }
 program fpc_test_3;
 
+{$R-}
+{$Q-}
+
 {$APPTYPE CONSOLE}
 
 {$IFDEF FPC}
@@ -40,7 +43,7 @@ var
       Check('Interface(nil)', a[1], vtInterface);
       Check('Interface', a[2], vtInterface);
       { TObject is a class as well! }
-      Check('Class Object(nil)', a[3], vtClass);
+      Check('Class Object(nil)', a[3], vtObject);
       Check('Class', a[4], vtClass);
       {$IFDEF FPC}
       Check('QWord', a[5], vtQWord);
@@ -128,7 +131,7 @@ var
     Writeln(Format('high of int64 is: %d', [Longlong]), ' ', IntToHex(Longlong, 16));
     {$IFDEF FPC}
     Quad := High(Quad);
-    Writeln(Format('high of quadword is: %u', [Quad]), ' ', IntToHex(Quad, 16));
+    Writeln(Format('high of quadword is: %u', [Quad]), ' ', IntToHex(int64(Quad), 16));
     {$ENDIF}
   end;
 

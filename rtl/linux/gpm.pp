@@ -1,5 +1,4 @@
 {
-    $Id: gpm.pp,v 1.6 2005/02/14 17:13:30 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Peter Vreman
 
@@ -30,7 +29,7 @@ unit gpm;
 uses
   baseUnix;
 
-{$ifndef use_external}
+{$ifdef use_external}
 {$linklib gpm}
 {$linklib c}
 {$endif}
@@ -84,10 +83,10 @@ type
           dx : word;
           dy : word;
           x,y : word;
-          wdx,wdy : word;
           EventType : TGpmEType;
           clicks : longint;
           margin : TGpmMargin;
+          wdx,wdy : word;
      end;
 
      Pgpmevent=Pgpm_event;
@@ -107,13 +106,13 @@ type
           maxMod : word;
           pid : longint;
           vc : longint;
-       end;
+end;
 
      Pgpmconnect=Pgpm_connect;
      Tgpmconnect=Tgpm_connect;
 
      Pgpm_roi=^Tgpm_roi;
-     Tgpm_roi=record
+     Tgpm_roi= record
        xmin,xmax:integer;
        ymin,ymax:integer;
        minmod,maxmod:word;
@@ -163,24 +162,25 @@ function Gpm_StrictTriple(EventType : longint) : boolean;
 function Gpm_AnyTriple(EventType : longint) : boolean;
 
 {$ifdef use_external}
-function Gpm_Open(var _para1:TGpmConnect; _para2:longint):longint;cdecl;external;
-function Gpm_Close:longint;cdecl;external;
-function Gpm_GetEvent(var _para1:TGpmEvent):longint;cdecl;external;
+function Gpm_Open(var _para1:TGpmConnect; _para2:longint):longint;cdecl;external name 'Gpm_Open';
+function Gpm_Close:longint;cdecl;external name 'Gpm_Close';
+function Gpm_GetEvent(var _para1:TGpmEvent):longint;cdecl;external name 'Gpm_GetEvent';
 {function Gpm_Getc(_para1:pFILE):longint;cdecl;external;
 function Gpm_Getchar : longint;}
-function Gpm_Repeat(millisec:longint):longint;cdecl;external;
-function Gpm_FitValuesM(var x,y:longint; margin:longint):longint;cdecl;external;
-function Gpm_FitValues(var x,y:longint):longint;cdecl;external;
+function Gpm_Repeat(millisec:longint):longint;cdecl;external name 'Gpm_Repeat';
+function Gpm_FitValuesM(var x,y:longint; margin:longint):longint;cdecl;external name 'Gpm_FitValuesM';
+function Gpm_FitValues(var x,y:longint):longint;cdecl;external name 'Gpm_FitValues';
 {function GPM_DRAWPOINTER(ePtr : longint) : longint;}
-function Gpm_PushRoi(x1:longint; y1:longint; X2:longint; Y2:longint; mask:longint; fun:TGpmHandler; xtradata:pointer):PGpmRoi;cdecl;external;
-function Gpm_PopRoi(which:PGpmRoi):PGpmRoi;cdecl;external;
-function Gpm_RaiseRoi(which:PGpmRoi; before:PGpmRoi):PGpmRoi;cdecl;external;
-function Gpm_LowerRoi(which:PGpmRoi; after:PGpmRoi):PGpmRoi;cdecl;external;
+function Gpm_PushRoi(x1:longint; y1:longint; X2:longint; Y2:longint; mask:longint; fun:TGpmHandler; xtradata:pointer):PGpmRoi;cdecl;external name 'Gpm_PushRoi';
+function Gpm_PopRoi(which:PGpmRoi):PGpmRoi;cdecl;external name 'Gpm_PopRoi';
+function Gpm_RaiseRoi(which:PGpmRoi; before:PGpmRoi):PGpmRoi;cdecl;external name 'Gpm_RaiseRoi';
+function Gpm_LowerRoi(which:PGpmRoi; after:PGpmRoi):PGpmRoi;cdecl;external name 'Gpm_LowerRoi';
 {function Gpm_Wgetch:longint;cdecl;external;
 function Gpm_Getch:longint;}
-function Gpm_GetLibVersion(var where:longint):pchar;cdecl;external;
-function Gpm_GetServerVersion(var where:longint):pchar;cdecl;external;
-function Gpm_GetSnapshot(var ePtr:TGpmEvent):longint;cdecl;external;
+function Gpm_GetLibVersion(var where:longint):pchar;cdecl;external name 'Gpm_GetLibVersion';
+function Gpm_GetServerVersion(var where:longint):pchar;cdecl;external name 'Gpm_GetServerVersion';
+function gpm_getsnapshot(eptr:Pgpmevent):longint;cdecl;external name 'Gpm_GetSnapshot';
+function Gpm_GetSnapshot(var ePtr:TGpmEvent):longint;cdecl;external name 'Gpm_GetSnapshot';
 {$else}
 function gpm_open(var conn:Tgpm_connect;flag:longint):longint;
 function gpm_close:longint;
@@ -189,7 +189,7 @@ function gpm_getevent(var event:Tgpm_event):longint;
 function Gpm_Getchar : longint;}
 function gpm_repeat(millisec:longint):longint;
 function gpm_fitvaluesM(var x,y:longint; margin:longint):longint;
-function gpm_fitvalues(var x,y:longint):longint;{$ifndef VER1_0}inline;{$endif}
+function gpm_fitvalues(var x,y:longint):longint;inline;
 function gpm_pushroi(x1:longint;y1:longint;x2:longint;y2:longint;
                      mask:longint;fun:Tgpmhandler;xtradata:pointer):Pgpm_roi;
 function gpm_poproi(which:Pgpm_roi):Pgpm_roi;
@@ -198,8 +198,7 @@ function gpm_lowerroi(which:Pgpm_roi;after:Pgpm_roi):Pgpm_roi;
 {Should be pointer because proc accepts nil.}
 function gpm_getsnapshot(eptr:Pgpmevent):longint;
 {Overload for compatibility.}
-function gpm_getsnapshot(var eptr:Tgpmevent):longint;
-{$ifndef VER1_0}inline;{$endif}
+function gpm_getsnapshot(var eptr:Tgpmevent):longint;inline;
 {$endif}
 
 
@@ -305,10 +304,14 @@ end;
 const checked_con:boolean=false;
 
 function putdata(where:longint;const what:Tgpmconnect):boolean;
-
+var
+  res: cint;
 begin
   putdata:=true;
-  if fpwrite(where,what,sizeof(Tgpmconnect))<>sizeof(Tgpmconnect) then
+  repeat
+    res:=fpwrite(where,what,sizeof(Tgpmconnect));
+  until (res<>-1) or (fpgeterrno<>ESysEINTR);
+  if res<>sizeof(Tgpmconnect) then
     begin
 {      gpm_report(GPM_PR_ERR,GPM_MESS_WRITE_ERR,strerror(errno));}
       putdata:=false;
@@ -362,7 +365,7 @@ var conn:Tgpmconnect;
 begin
   fpsigemptyset(new_sigset);
   fpsigaddset(new_sigset,SIGTSTP);
-  fpsigprocmask(SIG_BLOCK,{$ifdef ver1_0}@{$endif}new_sigset,{$ifdef ver1_0}@{$endif}old_sigset);
+  fpsigprocmask(SIG_BLOCK,new_sigset,old_sigset);
 
   {Open a completely transparent gpm connection.}
   conn.eventmask:=0;
@@ -404,6 +407,7 @@ var tty:string;
     p:byte; {there max 256 console ttys}
     buf:stat;
     sa:sigactionrec;
+    res: cint;
 
 label err;
 
@@ -415,6 +419,7 @@ begin
 
   {....................................... First of all, check xterm}
 
+(*
   term:=fpgetenv('TERM');
   if (term<>nil) and (strcomp(term,'xterm')=0) then
     begin
@@ -432,6 +437,7 @@ begin
       gpm_open:=gpm_fd;
       exit;
     end;
+*)
   {....................................... No xterm, go on}
 
   { check whether we know what name the console is: what's with the lib??? }
@@ -496,7 +502,9 @@ begin
 
       if (gpm_consolefd=-1) then
         begin
-          gpm_consolefd:=fpopen(tty,O_WRONLY);
+          repeat
+            gpm_consolefd:=fpopen(tty,O_WRONLY);
+          until (gpm_consolefd<>-1) or (fpgeterrno<>ESysEINTR);
           if gpm_consolefd<0 then
             begin
 {              gpm_report(GPM_PR_ERR,GPM_MESS_DOUBLE_S,tty,strerror(errno));}
@@ -523,7 +531,7 @@ begin
   {....................................... Connect to the control socket}
   if not gpm_flag then
     begin
-      gpm_fd:=socket(AF_UNIX,SOCK_STREAM,0);
+      gpm_fd:=fpsocket(AF_UNIX,SOCK_STREAM,0);
       if gpm_fd<0 then
         begin
 {           gpm_report(GPM_PR_ERR,GPM_MESS_SOCKET,strerror(errno));}
@@ -536,13 +544,20 @@ begin
   strcopy(addr.path, GPM_NODE_CTL);
   i:=sizeof(addr.family)+length(GPM_NODE_CTL);
 
-  if fpconnect(gpm_fd,@addr,i)<0 then
+  repeat
+    res:=fpconnect(gpm_fd,psockaddr(@addr),i);
+  until (res<>-1) or (fpgeterrno<>ESysEINTR);
+  if res<0 then
     begin
 {         gpm_report(GPM_PR_INFO,GPM_MESS_DOUBLE_S,GPM_NODE_CTL,strerror(errno));}
       {Well, try to open a chr device called /dev/gpmctl. This should
        be forward-compatible with a kernel server.}
-      fpclose(gpm_fd); {the socket}
-      gpm_fd:=fpopen(GPM_NODE_DEV,O_RDWR);
+      repeat
+        res:=fpclose(gpm_fd); {the socket}
+      until (res<>-1) or (fpgeterrno<>ESysEINTR);
+      repeat
+        gpm_fd:=fpopen(GPM_NODE_DEV,O_RDWR);
+      until (gpm_fd<>-1) or (fpgeterrno<>ESysEINTR);
       if gpm_fd=-1 then
         begin
 {              gpm_report(GPM_PR_ERR,GPM_MESS_DOUBLE_S,GPM_NODE_DEV
@@ -590,23 +605,32 @@ err:
       gpm_stack:=n;
    until gpm_stack=nil;
    if gpm_fd>=0 then
-     fpclose(gpm_fd);
+     begin
+       repeat
+         res:=fpclose(gpm_fd);
+       until (res<>-1) or (fpgeterrno<>ESysEINTR);
+     end;
    gpm_flag:=false;
    gpm_open:=-1;
 end;
 
 function gpm_close:longint;
 
-var next:Pgpm_stst;
+var
+  next:Pgpm_stst;
+  res: cint;
+
 
 begin
   gpm_tried:=false; { reset the error flag for next time }
+(*
   if gpm_fd=-2 then { xterm }
     begin
       write(#27'[?1000l'#27'[?1001r');
       flush(output);
     end
   else            { linux }
+*)
     begin
       if not gpm_flag then
         gpm_close:=0
@@ -623,7 +647,11 @@ begin
     end;
 
   if gpm_fd>=0 then
-   fpclose(gpm_fd);
+    begin
+      repeat
+        res:=fpclose(gpm_fd);
+      until (res<>-1) or (fpgeterrno<>ESysEINTR);
+    end;
   gpm_fd:=-1;
   fpsigaction(SIGTSTP,@gpm_saved_suspend_hook,nil);
   fpsigaction(SIGWINCH,@gpm_saved_winch_hook,nil);
@@ -634,14 +662,16 @@ end;
 
 function gpm_getevent(var event:Tgpm_event):longint;
 
-var count:longint;
+var count:cint;
 
 begin
   gpm_getevent:=0;
   if gpm_fd=-1 then
     exit;
 
-  count:=fpread(gpm_fd,event,sizeof(Tgpm_event));
+  repeat
+    count:=fpread(gpm_fd,event,sizeof(Tgpm_event));
+  until (count<>-1) or (fpgeterrno<>ESysEINTR);
   if count<>sizeof(Tgpm_event) then
     begin
        {avoid to send the message if there is no data; sometimes it makes
@@ -702,8 +732,7 @@ begin
     end;
 end;
 
-function gpm_fitvalues(var x,y:longint):longint;
-{$ifndef VER1_0}inline;{$endif}
+function gpm_fitvalues(var x,y:longint):longint;inline;
 
 begin
   gpm_fitvalues:=gpm_fitvaluesm(x,y,-1);
@@ -918,7 +947,6 @@ begin
       conn.vc:=GPM_REQ_BUTTONS;
       eptr:=@event;
     end;
-
   if gpm_fd=-1 then
     begin
       gpm_getsnapshot:=-1;
@@ -938,13 +966,14 @@ begin
       else
         begin
           gpm_getsnapshot:=eptr^.eventtype; { number of buttons }
+          if eptr^.eventtype=0 then
+            gpm_getsnapshot:=15;
           eptr^.eventtype:=0;
         end;
     end;
 end;
 
-function gpm_getsnapshot(var eptr:Tgpmevent):longint;
-{$ifndef VER1_0}inline;{$endif}
+function gpm_getsnapshot(var eptr:Tgpmevent):longint;inline;
 
 begin
     gpm_getsnapshot:=gpm_getsnapshot(@eptr);
@@ -953,15 +982,3 @@ end;
 {$endif}
 
 end.
-{
-  $Log: gpm.pp,v $
-  Revision 1.6  2005/02/14 17:13:30  peter
-    * truncate log
-
-  Revision 1.5  2005/01/30 18:35:42  peter
-    * goto on
-
-  Revision 1.4  2005/01/30 18:00:28  peter
-    * move gpm.pp to linux
-
-}

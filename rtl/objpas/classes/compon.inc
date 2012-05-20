@@ -1,5 +1,4 @@
 {
-    $Id: compon.inc,v 1.9 2005/04/15 07:21:09 michael Exp $
     This file is part of the Free Component Library (FCL)
     Copyright (c) 1999-2000 by the Free Pascal development team
 
@@ -13,13 +12,47 @@
  **********************************************************************}
 
 {****************************************************************************}
+{*                        TComponentEnumerator                              *}
+{****************************************************************************}
+
+constructor TComponentEnumerator.Create(AComponent: TComponent);
+begin
+  inherited Create;
+  FComponent := AComponent;
+  FPosition := -1;
+end;
+
+function TComponentEnumerator.GetCurrent: TComponent;
+begin
+  Result := FComponent.Components[FPosition];
+end;
+
+function TComponentEnumerator.MoveNext: Boolean;
+begin
+  Inc(FPosition);
+  Result := FPosition < FComponent.ComponentCount;
+end;
+
+
+{****************************************************************************}
 {*                             TComponent                                   *}
 {****************************************************************************}
 
-Type
-  Longrec = Packed Record
-    Hi,lo : word;
+function TComponent.GetComObject: IUnknown;
+begin
+  { Check if VCLComObject is not assigned - we need to create it by    }
+  { the call to CreateVCLComObject routine. If in the end we are still }
+  { have no valid VCLComObject pointer we need to raise an exception   }
+  if not Assigned(VCLComObject) then
+    begin
+      if Assigned(CreateVCLComObjectProc) then
+        CreateVCLComObjectProc(Self);
+      if not Assigned(VCLComObject) then
+        raise EComponentError.CreateFmt(SNoComSupport,[Name]);
     end;
+  { VCLComObject is IVCComObject but we need to return IUnknown }
+  IVCLComObject(VCLComObject).QueryInterface(IUnknown, Result);
+end;
 
 Function  TComponent.GetComponent(AIndex: Integer): TComponent;
 
@@ -30,6 +63,27 @@ begin
     Result:=TComponent(FComponents.Items[Aindex]);
 end;
 
+function TComponent.IsImplementorOf (const Intf:IInterface):boolean;
+var ref : IInterfaceComponentReference;
+begin
+ result:=assigned(intf) and supports(intf,IInterfaceComponentReference,ref);
+ if result then
+   result:=ref.getcomponent=self;
+end;
+
+procedure TComponent.ReferenceInterface(const intf:IInterface;op:TOperation);
+var ref : IInterfaceComponentReference;
+    comp : TComponent;
+begin
+ if assigned(intf) and supports(intf,IInterfaceComponentReference,ref) then
+   begin
+    comp:=ref.getcomponent;
+    if op = opInsert then
+      comp.FreeNotification(Self)
+    else
+      comp.RemoveFreeNotification(Self); 
+   end;
+end;
 
 Function  TComponent.GetComponentCount: Integer;
 
@@ -55,7 +109,7 @@ Procedure TComponent.Insert(AComponent: TComponent);
 
 begin
   If not assigned(FComponents) then
-    FComponents:=TList.Create;
+    FComponents:=TFpList.Create;
   FComponents.Add(AComponent);
   AComponent.FOwner:=Self;
 end;
@@ -201,6 +255,12 @@ begin
 end;
 
 
+Function  TComponent.GetEnumerator: TComponentEnumerator;
+
+begin
+  Result:=TComponentEnumerator.Create(Self);
+end;
+
 Function  TComponent.GetNamePath: string;
 
 begin
@@ -219,6 +279,12 @@ Procedure TComponent.Loaded;
 
 begin
   Exclude(FComponentState,csLoading);
+end;
+
+Procedure TComponent.Loading;
+
+begin
+  Include(FComponentState,csLoading);
 end;
 
 
@@ -263,25 +329,43 @@ begin
   If Value then
     Include(FComponentState,csAncestor)
   else
-    Include(FCOmponentState,csAncestor);
+    Exclude(FCOmponentState,csAncestor);
   if Assigned(FComponents) then
     For Runner:=0 To FComponents.Count-1 do
       TComponent(FComponents.Items[Runner]).SetAncestor(Value);
 end;
 
 
-Procedure TComponent.SetDesigning(Value: Boolean);
+Procedure TComponent.SetDesigning(Value: Boolean; SetChildren : Boolean = True);
 
 Var Runner : Longint;
 
 begin
   If Value then
-    Include(FComponentSTate,csDesigning)
+    Include(FComponentState,csDesigning)
   else
-    Exclude(FComponentSTate,csDesigning);
-  if Assigned(FComponents) then
+    Exclude(FComponentState,csDesigning);
+  if Assigned(FComponents) and SetChildren then
     For Runner:=0 To FComponents.Count - 1 do
       TComponent(FComponents.items[Runner]).SetDesigning(Value);
+end;
+
+Procedure TComponent.SetDesignInstance(Value: Boolean);
+
+begin
+  If Value then
+    Include(FComponentState,csDesignInstance)
+  else
+    Exclude(FComponentState,csDesignInstance);
+end;
+
+Procedure TComponent.SetInline(Value: Boolean);
+
+begin
+  If Value then
+    Include(FComponentState,csInline)
+  else
+    Exclude(FComponentState,csInline);
 end;
 
 
@@ -289,7 +373,7 @@ Procedure TComponent.SetName(const NewName: TComponentName);
 
 begin
   If FName=NewName then exit;
-  If not IsValidIdent(NewName) then
+  If (NewName<>'') and not IsValidIdent(NewName) then
     Raise EComponentError.CreateFmt(SInvalidName,[NewName]);
   If Assigned(FOwner) Then
     FOwner.ValidateRename(Self,FName,NewName)
@@ -341,7 +425,7 @@ Procedure TComponent.ValidateRename(AComponent: TComponent;
 
 begin
 //!! This contradicts the Delphi manual.
-  If (AComponent<>Nil) and (CurName<>NewName) and (AComponent.Owner = Self) and
+  If (AComponent<>Nil) and (CompareText(CurName,NewName)<>0) and (AComponent.Owner = Self) and
      (FindComponent(NewName)<>Nil) then
       raise EComponentError.Createfmt(SDuplicateName,[newname]);
   If (csDesigning in FComponentState) and (FOwner<>Nil) then
@@ -352,6 +436,7 @@ end;
 Procedure TComponent.ValidateContainer(AComponent: TComponent);
 
 begin
+  AComponent.ValidateInsert(Self);
 end;
 
 
@@ -462,7 +547,7 @@ begin
   Result:=Nil;
   If (AName='') or Not assigned(FComponents) then exit;
   For i:=0 to FComponents.Count-1 do
-    if TComponent(FComponents[I]).Name=AName then
+    if (CompareText(TComponent(FComponents[I]).Name,AName)=0) then
       begin
       Result:=TComponent(FComponents.Items[I]);
       exit;
@@ -479,7 +564,7 @@ begin
   else
     begin
     If not (Assigned(FFreeNotifies)) then
-      FFreeNotifies:=TList.Create;
+      FFreeNotifies:=TFpList.Create;
     If FFreeNotifies.IndexOf(AComponent)=-1 then
       begin
       FFreeNotifies.Add(AComponent);
@@ -497,9 +582,9 @@ end;
 
 
 Procedure TComponent.FreeOnRelease;
-
 begin
-  // Delphi compatibility only at the moment.
+  if Assigned(VCLComObject) then
+    IVCLComObject(VCLComObject).FreeOnRelease;
 end;
 
 
@@ -542,10 +627,12 @@ end;
 
 
 Function  TComponent.SafeCallException(ExceptObject: TObject;
-  ExceptAddr: Pointer): Integer;
-
+  ExceptAddr: Pointer): HResult;
 begin
-  SafeCallException:=0;
+  if Assigned(VCLComObject) then
+    Result := IVCLComObject(VCLComObject).SafeCallException(ExceptObject, ExceptAddr)
+  else
+    Result := inherited SafeCallException(ExceptObject, ExceptAddr);
 end;
 
 procedure TComponent.SetSubComponent(ASubComponent: Boolean);
@@ -568,40 +655,71 @@ begin
     Result := False;
 end;
 
-{$ifdef HASINTF}
-function TComponent.QueryInterface(const IID: TGUID; out Obj): HResult;stdcall;
+function TComponent.QueryInterface({$IFDEF FPC_HAS_CONSTREF}constref{$ELSE}const{$ENDIF} IID: TGUID; out Obj): HResult;{$IFNDEF WINDOWS}cdecl{$ELSE}stdcall{$ENDIF};
 begin
-  if GetInterface(IID, Obj) then
-    result:=S_OK
+  if Assigned(VCLComObject) then
+    Result := IVCLComObject(VCLComObject).QueryInterface(IID, Obj)
   else
-    result:=E_NOINTERFACE;
+  if GetInterface(IID, Obj) then
+    Result := S_OK
+  else
+    Result := E_NOINTERFACE;
 end;
 
-function TComponent._AddRef: Integer;stdcall;
+function TComponent._AddRef: Integer;{$IFNDEF WINDOWS}cdecl{$ELSE}stdcall{$ENDIF};
 begin
-  result:=-1;
+  if Assigned(VCLComObject) then
+    Result := IVCLComObject(VCLComObject)._AddRef
+  else
+    Result := -1;
 end;
 
-function TComponent._Release: Integer;stdcall;
+function TComponent._Release: Integer;{$IFNDEF WINDOWS}cdecl{$ELSE}stdcall{$ENDIF};
 begin
-  result:=-1;
+  if Assigned(VCLComObject) then
+    Result := IVCLComObject(VCLComObject)._Release
+  else
+    Result := -1;
 end;
 
-{$endif HASINTF}
+function TComponent.iicrGetComponent: TComponent;
 
-{
-  $Log: compon.inc,v $
-  Revision 1.9  2005/04/15 07:21:09  michael
-  +  Streaming of subcomponents added by Marc Weustink
+begin
+  result:=self;
+end;
 
-  Revision 1.8  2005/02/14 17:13:31  peter
-    * truncate log
+function TComponent.GetTypeInfoCount(out Count: Integer): HResult; stdcall;
+begin
+  if Assigned(VCLComObject) then
+    Result := IVCLComObject(VCLComObject).GetTypeInfoCount(Count)
+  else
+    Result := E_NOTIMPL;
+end;
 
-  Revision 1.7  2005/02/02 19:56:11  florian
-    + PaletteCreated added
-    + TCollectionNotification added
+function TComponent.GetTypeInfo(Index, LocaleID: Integer; out TypeInfo): HResult; stdcall;
+begin
+  if Assigned(VCLComObject) then
+    Result := IVCLComObject(VCLComObject).GetTypeInfo(Index, LocaleID, TypeInfo)
+  else
+    Result := E_NOTIMPL;
+end;
 
-  Revision 1.6  2005/01/31 19:41:39  peter
-    * interface additions
+function TComponent.GetIDsOfNames(const IID: TGUID; Names: Pointer; NameCount,
+  LocaleID: Integer; DispIDs: Pointer): HResult; stdcall;
+begin
+  if Assigned(VCLComObject) then
+    Result := IVCLComObject(VCLComObject).GetIDsOfNames(IID, Names, NameCount, LocaleID, DispIDs)
+  else
+    Result := E_NOTIMPL;
+end;
 
-}
+function TComponent.Invoke(DispID: Integer; const IID: TGUID;
+  LocaleID: Integer; Flags: Word; var Params; VarResult, ExcepInfo,
+  ArgErr: Pointer): HResult; stdcall;
+begin
+  if Assigned(VCLComObject) then
+    Result := IVCLComObject(VCLComObject).Invoke(DispID, IID, LocaleID, Flags, Params,
+      VarResult, ExcepInfo, ArgErr)
+  else
+    Result := E_NOTIMPL;
+end;

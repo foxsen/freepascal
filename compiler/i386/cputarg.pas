@@ -1,5 +1,4 @@
 {
-    $Id: cputarg.pas,v 1.16 2005/02/14 17:13:09 peter Exp $
     Copyright (c) 2001-2002 by Peter Vreman
 
     Includes the i386 dependent target units
@@ -51,8 +50,8 @@ implementation
     {$ifndef NOTARGETOS2}
       ,t_os2
     {$endif}
-    {$ifndef NOTARGETWIN32}
-      ,t_win32
+    {$ifndef NOTARGETWIN}
+      ,t_win
     {$endif}
     {$ifndef NOTARGETNETWARE}
       ,t_nwm
@@ -66,11 +65,23 @@ implementation
     {$ifndef NOTARGETBEOS}
       ,t_beos
     {$endif}
+    {$ifndef NOTARGETHAIKU}
+      ,t_haiku
+    {$endif}
     {$ifndef NOTARGETWDOSX}
       ,t_wdosx
     {$endif}
     {$ifndef NOTARGETWATCOM}
       ,t_watcom
+    {$endif}
+    {$ifndef NOTARGETSYMBIAN}
+      ,t_symbian
+    {$endif}
+    {$ifndef NOTARGETNATIVENT}
+      ,t_nativent
+    {$endif}
+    {$ifndef NOTARGETEMBEDDED}
+      ,t_embed
     {$endif}
 
 {**************************************
@@ -81,20 +92,41 @@ implementation
       ,agx86att
     {$endif}
     {$ifndef NOAG386NSM}
-      ,ag386nsm
+      ,agx86nsm
     {$endif}
     {$ifndef NOAG386INT}
-      ,ag386int
+      ,agx86int
     {$endif}
 
       ,ogcoff
       ,ogelf
+      ,ogmacho
+
+{**************************************
+        Assembler Readers
+**************************************}
+
+  {$ifndef NoRa386Int}
+       ,ra386int
+  {$endif NoRa386Int}
+  {$ifndef NoRa386Att}
+       ,ra386att
+  {$endif NoRa386Att}
+
+{**************************************
+             Debuginfo
+**************************************}
+
+  {$ifndef NoCFIDwarf}
+      ,cfidwarf
+  {$endif NoCFIDwarf}
+  {$ifndef NoDbgStabs}
+      ,dbgstabs
+  {$endif NoDbgStabs}
+  {$ifndef NoDbgDwarf}
+      ,dbgdwarf
+  {$endif NoDbgDwarf}
+
       ;
 
 end.
-{
-  $Log: cputarg.pas,v $
-  Revision 1.16  2005/02/14 17:13:09  peter
-    * truncate log
-
-}

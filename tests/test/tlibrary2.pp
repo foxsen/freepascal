@@ -1,10 +1,11 @@
+{ %skiptarget=go32v2 }
 { %NEEDLIBRARY }
 
 { Test program to test linking to fpc library }
 
-{$ifdef win32}
+{$ifdef mswindows}
  {$define supported}
-{$endif win32}
+{$endif mswindows}
 {$ifdef Unix}
  {$define supported}
 {$endif Unix}
@@ -15,15 +16,20 @@
 {$ifdef supported}
 
 const
-{$ifdef win32}
+{$ifdef windows}
   libname='tlibrary1.dll';
 {$else}
-  libname='libtlibrary1.so';
+  libname='tlibrary1';
+  {$linklib tlibrary1}
 {$endif}
 
 procedure test;external libname name 'TestName';
 
 begin
+  if islibrary then
+    halt(3);
+  if moduleislib then
+    halt(4);
   test;
 end.
 {$else not supported}

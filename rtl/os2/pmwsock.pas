@@ -1,6 +1,5 @@
 {****************************************************************************
 
-    $Id: pmwsock.pas,v 1.5 2005/02/14 17:13:31 peter Exp $
 
     This file is part of the Free Pascal run time library.
     Copyrigth (c) 2003 by Yuri Prokushev (prokushev@freemail.ru)
@@ -56,8 +55,13 @@ Function __WSAFDIsSet(a: TSocket;var b: fdset): Longint; cdecl;
     external 'PMWSock' name '__WSAFDIsSet';
 Function __WSAFDIsSet_(s:TSocket; var FDSet:TFDSet): Longint; cdecl;
     external 'PMWSock' name '__WSAFDIsSet';
+Function __WSAFDIsSet2_(s:TSocket; var FDSet:TFDSet): boolean; cdecl;
+    external 'PMWSock' name '__WSAFDIsSet';
 
-Function FD_ISSET(a: TSocket;var b: fdset): Longint; cdecl;
+Function FD_ISSET2(a: TSocket;var b: fdset): Longint; cdecl;
+    external 'PMWSock' name '__WSAFDIsSet';
+
+Function FD_ISSET(a: TSocket;var b: fdset): boolean; cdecl;
     external 'PMWSock' name '__WSAFDIsSet';
 
 Procedure FD_CLR(ASocket: TSocket; var aset: fdset);
@@ -102,7 +106,7 @@ const
   IOCPARM_MASK    = $7f;               // parameters must be < 128 bytes
   IOC_VOID        = $20000000;         // no parameters
   IOC_OUT         = $40000000;         // copy out parameters
-  IOC_IN          = $80000000;         // copy in parameters
+  IOC_IN          = longint ($80000000);         // copy in parameters
   IOC_INOUT       = IOC_IN or IOC_OUT; // 0x20000000 distinguishes new &
                                        // old ioctl's
 const
@@ -1055,10 +1059,3 @@ begin
 end;
 
 end.
-
-{
-$Log: pmwsock.pas,v $
-Revision 1.5  2005/02/14 17:13:31  peter
-  * truncate log
-
-}

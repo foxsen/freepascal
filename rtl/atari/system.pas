@@ -1,5 +1,4 @@
 {
-    $Id: system.pas,v 1.15 2005/05/12 20:29:04 michael Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Carl Eric Codere
     member of the Free Pascal development team
@@ -13,7 +12,7 @@
 
  **********************************************************************}
 {$define ATARI}
-unit {$ifdef VER1_0}sysatari{$else}{$ifdef VER0_99}sysatari{$ELSE}system{$endif}{$ENDIF};
+unit system;
 
 {--------------------------------------------------------------------}
 { LEFT TO DO:                                                        }
@@ -42,10 +41,15 @@ const
  CtrlZMarksEOF: boolean = false; (* #26 not considered as end of file *)
  DirectorySeparator = '/';
  DriveSeparator = ':';
+ ExtensionSeparator = '.';
  PathSeparator = ';';
+ AllowDirectorySeparators : set of char = ['\','/'];
+ AllowDriveSeparators : set of char = [':'];
  FileNameCaseSensitive = false;
+ FileNameCasePreserving = false;
  maxExitCode = 255;
  MaxPathLen = 255;
+ AllFilesMask = '*';
 
  sLineBreak: string [1] = LineEnding;
     { used for single computations }
@@ -284,13 +288,13 @@ end ['D0'];
                           Low Level File Routines
  ****************************************************************************}
 
-procedure AllowSlash(p:pchar);
+procedure DoDirSeparators(p:pchar);
 var
   i : longint;
 begin
 { allow slash as backslash }
   for i:=0 to strlen(p) do
-   if p[i]='/' then p[i]:='\';
+   if p[i] in AllowDirectorySeparators then p[i]:=DirectorySeparator;
 end;
 
 
@@ -310,7 +314,7 @@ end;
 
 procedure do_erase(p : pchar);
 begin
-  AllowSlash(p);
+  DoDirSeparators(p);
   asm
         move.l  d2,d6            { save d2   }
         movem.l d3/a2/a3,-(sp)   { save regs }
@@ -332,8 +336,8 @@ end;
 
 procedure do_rename(p1,p2 : pchar);
 begin
-  AllowSlash(p1);
-  AllowSlash(p2);
+  DoDirSeparators(p1);
+  DoDirSeparators(p2);
   asm
             move.l  d2,d6      { save d2 }
             movem.l d3/a2/a3,-(sp)
@@ -502,7 +506,7 @@ var
   i : word;
   oflags: longint;
 begin
-  AllowSlash(p);
+  DoDirSeparators(p);
  { close first if opened }
   if ((flags and $10000)=0) then
    begin
@@ -625,7 +629,7 @@ var
 begin
   move(s[1],buffer,length(s));
   buffer[length(s)]:=#0;
-  AllowSlash(pchar(@buffer));
+  DoDirSeparators(pchar(@buffer));
   c:=word(func);
   asm
         move.l  d2,d6      { save d2 }
@@ -702,8 +706,8 @@ begin
   i:=0;
   while (temp[i]<>#0) do
    begin
-     if temp[i]='/' then
-      temp[i]:='\';
+     if temp[i] in AllowDirectorySeparators then
+       temp[i]:=DirectorySeparator;
      dir[i+3]:=temp[i];
      inc(i);
    end;
@@ -748,12 +752,20 @@ end;
                          SystemUnit Initialization
 *****************************************************************************}
 
+function CheckInitialStkLen (StkLen: SizeUInt): SizeUInt;
+begin
+  CheckInitialStkLen := StkLen;
+end;
 
 begin
+  StackLength := CheckInitialStkLen (InitialStkLen);
 { Initialize ExitProc }
   ExitProc:=Nil;
 { Setup heap }
   InitHeap;
+{$ifdef HASWIDESTRING}
+  InitUnicodeStringManager;
+{$endif HASWIDESTRING}
 { Setup stdin, stdout and stderr }
   OpenStdIO(Input,fmInput,StdInputHandle);
   OpenStdIO(Output,fmOutput,StdOutputHandle);
@@ -767,20 +779,5 @@ begin
   errno := 0;
 { Setup command line arguments }
   argc:=GetParamCount(args);
-{$ifdef HASVARIANT}
-  initvariantmanager;
-{$endif HASVARIANT}
+  InitVariantManager;
 end.
-
-{
-  $Log: system.pas,v $
-  Revision 1.15  2005/05/12 20:29:04  michael
-  + Added maxpathlen constant (maximum length of filename path)
-
-  Revision 1.14  2005/04/03 21:10:59  hajny
-    * EOF_CTRLZ conditional define replaced with CtrlZMarksEOF, #26 handling made more consistent (fix for bug 2453)
-
-  Revision 1.13  2005/02/14 17:13:21  peter
-    * truncate log
-
-}

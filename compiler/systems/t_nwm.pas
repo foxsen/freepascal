@@ -1,5 +1,4 @@
 {
-    $Id: t_nwm.pas,v 1.25 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 1998-2002 by Peter Vreman
 
     This unit implements support import,export,link routines
@@ -93,19 +92,17 @@ interface
 implementation
 
   uses
-    cutils,
+    SysUtils,
+    cutils,cfileutl,
     verbose,systems,globtype,globals,
     symconst,script,
-    fmodule,aasmbase,aasmtai,aasmcpu,cpubase,symsym,symdef,
-    import,export,link,i_nwm
+    fmodule,aasmbase,aasmtai,aasmdata,aasmcpu,cpubase,symsym,symdef,
+    import,export,link,i_nwm,ogbase, ogcoff, ognlm, cclasses
     {$ifdef netware} ,dos {$endif}
     ;
 
   type
     timportlibnetware=class(timportlib)
-      procedure preparelib(const s:string);override;
-      procedure importprocedure(aprocdef:tprocdef;const module:string;index:longint;const name:string);override;
-      procedure importvariable(vs:tglobalvarsym;const name,module:string);override;
       procedure generatelib;override;
     end;
 
@@ -126,6 +123,16 @@ implementation
       function  MakeExecutable:boolean;override;
     end;
 
+    TInternalLinkerNetware = class(TInternalLinker)
+        prelude : string;
+        constructor create;override;
+        destructor destroy;override;
+        procedure DefaultLinkScript;override;
+        procedure InitSysInitUnitName;override;
+        procedure ConcatEntryName; virtual;
+        Function  MakeSharedLibrary:boolean;override;
+      end;
+
 Const tmpLinkFileName = 'link~tmp._o_';
       minStackSize = 32768;
 
@@ -133,31 +140,17 @@ Const tmpLinkFileName = 'link~tmp._o_';
                                TIMPORTLIBNETWARE
 *****************************************************************************}
 
-procedure timportlibnetware.preparelib(const s : string);
-begin
-end;
-
-
-procedure timportlibnetware.importprocedure(aprocdef:tprocdef;const module:string;index:longint;const name:string);
-begin
-  { insert sharedlibrary }
-  current_module.linkothersharedlibs.add(SplitName(module),link_allways);
-end;
-
-
-procedure timportlibnetware.importvariable(vs:tglobalvarsym;const name,module:string);
-begin
-  { insert sharedlibrary }
-  current_module.linkothersharedlibs.add(SplitName(module),link_allways);
-  { reset the mangledname and turn off the dll_var option }
-  vs.set_mangledname(name);
-  exclude(vs.varoptions,vo_is_dll_var);
-end;
-
-
-procedure timportlibnetware.generatelib;
-begin
-end;
+    procedure timportlibnetware.generatelib;
+      var
+        i : longint;
+        ImportLibrary : TImportLibrary;
+      begin
+        for i:=0 to current_module.ImportLibraryList.Count-1 do
+          begin
+            ImportLibrary:=TImportLibrary(current_module.ImportLibraryList[i]);
+            current_module.linkothersharedlibs.add(ImportLibrary.Name,link_always);
+          end;
+      end;
 
 
 {*****************************************************************************
@@ -222,6 +215,7 @@ end;
 procedure texportlibnetware.generatelib;
 var
   hp2 : texported_item;
+  pd  : tprocdef;
 begin
   hp2:=texported_item(current_module._exports.first);
   while assigned(hp2) do
@@ -231,14 +225,15 @@ begin
       begin
         { the manglednames can already be the same when the procedure
           is declared with cdecl }
-        if tprocsym(hp2.sym).first_procdef.mangledname<>hp2.name^ then
+        pd:=tprocdef(tprocsym(hp2.sym).ProcdefList[0]);
+        if pd.mangledname<>hp2.name^ then
          begin
 {$ifdef i386}
-           { place jump in codesegment }
-           codesegment.concat(Tai_align.Create_op(4,$90));
-           codeSegment.concat(Tai_symbol.Createname_global(hp2.name^,AT_FUNCTION,0));
-           codeSegment.concat(Taicpu.Op_sym(A_JMP,S_NO,objectlibrary.newasmsymbol(tprocsym(hp2.sym).first_procdef.mangledname,AB_EXTERNAL,AT_FUNCTION)));
-           codeSegment.concat(Tai_symbol_end.Createname(hp2.name^));
+           { place jump in al_procedures }
+           current_asmdata.asmlists[al_procedures].concat(Tai_align.Create_op(4,$90));
+           current_asmdata.asmlists[al_procedures].concat(Tai_symbol.Createname_global(hp2.name^,AT_FUNCTION,0));
+           current_asmdata.asmlists[al_procedures].concat(Taicpu.Op_sym(A_JMP,S_NO,current_asmdata.RefAsmSymbol(pd.mangledname)));
+           current_asmdata.asmlists[al_procedures].concat(Tai_symbol_end.Createname(hp2.name^));
 {$endif i386}
          end;
       end
@@ -280,7 +275,7 @@ Function TLinkerNetware.WriteResponseFile(isdll:boolean) : Boolean;
 Var
   linkres      : TLinkRes;
   i            : longint;
-  s,s2,s3      : string;
+  s,s2,s3      : TCmdStr;
   ProgNam      : string [80];
   NlmNam       : string [80];
   hp2          : texported_item;  { for exports }
@@ -288,15 +283,15 @@ Var
 begin
   WriteResponseFile:=False;
 
-  ProgNam := current_module.exefilename^;
+  ProgNam := current_module.exefilename;
   i:=Pos(target_info.exeext,ProgNam);
   if i>0 then
     Delete(ProgNam,i,255);
   NlmNam := ProgNam + target_info.exeext;
 
   { Open link.res file }
-  LinkRes:=TLinkRes.Create(outputexedir+Info.ResName);             {for ld}
-  NLMConvLinkFile:=TLinkRes.Create(outputexedir+'n'+Info.ResName); {for nlmconv, written in CreateExeFile}
+  LinkRes:=TLinkRes.Create(outputexedir+Info.ResName,true);             {for ld}
+  NLMConvLinkFile:=TLinkRes.Create(outputexedir+'n'+Info.ResName,true); {for nlmconv, written in CreateExeFile}
 
   p := Pos ('"', Description);
   while (p > 0) do
@@ -345,9 +340,25 @@ begin
 
   { add objectfiles, start with nwpre always }
   LinkRes.Add ('INPUT(');
-  s2 := FindObjectFile('nwpre','',false);
+  if target_info.system = system_i386_netwlibc then
+   begin
+     s2 := FindObjectFile('nwplibc','',false);
+     if s2 = '' then
+       s2 := FindObjectFile('libcpre.gcc','',false);
+   end else
+     s2 := FindObjectFile('nwpre','',false);
   Comment (V_Debug,'adding Object File '+s2);
   {$ifndef netware} LinkRes.Add (s2); {$else} LinkRes.Add (FExpand(s2)); {$endif}
+
+  if target_info.system = system_i386_netwlibc then
+   begin
+     if isDll then  {needed to provide main}
+       s2 := FindObjectFile('nwl_dlle','',false)
+     else
+       s2 := FindObjectFile('nwl_main','',false);
+     Comment (V_Debug,'adding Object File '+s2);
+     {$ifndef netware} LinkRes.Add (s2); {$else} LinkRes.Add (FExpand(s2)); {$endif}
+    end;
 
   { main objectfiles, add to linker input }
   while not ObjectFiles.Empty do
@@ -370,11 +381,22 @@ begin
   {$endif}
 
   { start and stop-procedures }
-  NLMConvLinkFile.Add ('START _Prelude');  { defined in rtl/netware/nwpre.as }
-  NLMConvLinkFile.Add ('EXIT _Stop');                             { nwpre.as }
-  NLMConvLinkFile.Add ('CHECK FPC_NW_CHECKFUNCTION');            { system.pp }
 
-  if not (cs_link_strip in aktglobalswitches) then
+  if target_info.system = system_i386_netwlibc then
+    begin
+      NLMConvLinkFile.Add ('START _LibCPrelude');
+      NLMConvLinkFile.Add ('EXIT _LibCPostlude');
+      NLMConvLinkFile.Add ('CHECK _LibCCheckUnload');
+      NLMConvLinkFile.Add ('REENTRANT');            { needed by older libc versions }
+    end else
+    begin
+      NLMConvLinkFile.Add ('START _Prelude');  { defined in rtl/netware/nwpre.as }
+      NLMConvLinkFile.Add ('EXIT _Stop');                             { nwpre.as }
+      NLMConvLinkFile.Add ('CHECK FPC_NW_CHECKFUNCTION');            { system.pp }
+    end;
+
+
+  if not (cs_link_strip in current_settings.globalswitches) then
   begin
     NLMConvLinkFile.Add ('DEBUG');
     Comment(V_Debug,'DEBUG');
@@ -403,7 +425,7 @@ begin
            if i>0 then
              Delete(S,i,255);
            S := S + '.imp'; S2 := '';
-           librarysearchpath.FindFile(S,S2);
+           librarysearchpath.FindFile(S,false,S2);
            {$ifdef netware}
            Comment(V_Debug,'IMPORT @'+s2);
            s2 := FExpand (S2);
@@ -420,7 +442,7 @@ begin
    begin
      While not SharedLibFiles.Empty do
       begin
-        {becuase of upper/lower case mix, we may get duplicate
+        {because of upper/lower case mix, we may get duplicate
          names but nlmconv ignores that.
          Here we are setting the import-files for nlmconv. I.e. for
          the module clib or clib.nlm we add IMPORT @clib.imp and also
@@ -436,7 +458,7 @@ begin
            if s[1] = '!' then
            begin  // special, with ! only the imp will be included but no module is autoloaded, needed i.e. for netware.imp
              S := copy(S,2,255) + '.imp';
-             librarysearchpath.FindFile(S,S3);
+             librarysearchpath.FindFile(S,false,S3);
              {$ifdef netware}
              Comment(V_Debug,'IMPORT @'+S3);
              S3 := FExpand (S3);
@@ -446,7 +468,7 @@ begin
            end else
            begin
              S := S + '.imp';
-             librarysearchpath.FindFile(S,S3);
+             librarysearchpath.FindFile(S,false,S3);
              {$ifdef netware}
              Comment(V_Debug,'IMPORT @'+S3);
              S3 := FExpand (S3);
@@ -512,18 +534,18 @@ end;
 
 function TLinkerNetware.MakeExecutable:boolean;
 var
-  binstr : String;
+  binstr,
   cmdstr   : TCmdStr;
   success  : boolean;
   StripStr : string[2];
 begin
-  if not(cs_link_extern in aktglobalswitches) then
-   Message1(exec_i_linking,current_module.exefilename^);
+  if not(cs_link_nolink in current_settings.globalswitches) then
+   Message1(exec_i_linking,current_module.exefilename);
 
 { Create some replacements }
   StripStr:='';
 
-  if (cs_link_strip in aktglobalswitches) then
+  if (cs_link_strip in current_settings.globalswitches) then
    StripStr:='-s';
 
 { Write used files and libraries and create Headerfile for
@@ -533,16 +555,16 @@ begin
 { Call linker, this will generate a new object file that will be passed
   to nlmconv. Otherwise we could not create nlms without debug info }
   SplitBinCmd(Info.ExeCmd[1],binstr,cmdstr);
-  Replace(cmdstr,'$EXE',maybequoted(current_module.exefilename^));
+  Replace(cmdstr,'$EXE',maybequoted(current_module.exefilename));
   Replace(cmdstr,'$RES',maybequoted(outputexedir+Info.ResName));
   Replace(cmdstr,'$STRIP',StripStr);
   Replace(cmdstr,'$TMPOBJ',maybequoted(outputexedir+tmpLinkFileName));
   Comment (v_debug,'Executing '+BinStr+' '+cmdstr);
-  success:=DoExec(FindUtil(BinStr),CmdStr,true,false);
+  success:=DoExec(BinStr,CmdStr,true,false);
 
   { Remove ReponseFile }
-  if (success) and not(cs_link_extern in aktglobalswitches) then
-    RemoveFile(outputexedir+Info.ResName);
+  if (success) and not(cs_link_nolink in current_settings.globalswitches) then
+    DeleteFile(outputexedir+Info.ResName);
 
 { Call nlmconv }
   if success then
@@ -552,17 +574,405 @@ begin
     SplitBinCmd(Info.ExeCmd[2],binstr,cmdstr);
     Replace(cmdstr,'$RES',maybequoted(outputexedir+'n'+Info.ResName));
     Comment (v_debug,'Executing '+BinStr+' '+cmdstr);
-    success:=DoExec(FindUtil(BinStr),CmdStr,true,false);
-    if (success) and not(cs_link_extern in aktglobalswitches) then
+    success:=DoExec(BinStr,CmdStr,true,false);
+    if (success) and not(cs_link_nolink in current_settings.globalswitches) then
     begin
-      RemoveFile(outputexedir+'n'+Info.ResName);
-      RemoveFile(outputexedir+tmpLinkFileName);
+      DeleteFile(outputexedir+'n'+Info.ResName);
+      DeleteFile(outputexedir+tmpLinkFileName);
     end;
   end;
 
   MakeExecutable:=success;   { otherwise a recursive call to link method }
 end;
 
+
+{****************************************************************************
+                            TInternalLinkerNetware
+****************************************************************************}
+
+    constructor TInternalLinkerNetware.Create;
+      begin
+        inherited Create;
+        CExeoutput:=TNLMexeoutput;
+        CObjInput:=TNLMCoffObjInput;
+        nlmSpecialSymbols_Segments := TFPHashList.create;
+      end;
+
+    destructor TInternalLinkerNetware.destroy;
+      begin
+        if assigned(nlmSpecialSymbols_Segments) then
+          begin
+            nlmSpecialSymbols_Segments.Free;
+            nlmSpecialSymbols_Segments := nil;
+          end;
+        inherited destroy;
+      end;
+
+    procedure TInternalLinkerNetware.DefaultLinkScript;
+      var
+        s,s2 : TCmdStr;
+        secname,
+        secnames : string;
+        hasCopyright,
+        hasScreenname,
+        hasThreadname,
+        hasVersion,
+        hasDescription,
+        hasStacksize: boolean;
+        t : text;
+
+
+
+        procedure addLinkerOption(s : string);
+        var op : string;
+        begin
+          if s = '' then exit;
+          if s[1]  = '#' then exit;
+          LinkScript.Concat(s);
+          op := upper(GetToken(s,' '));
+          {check for options via -k that can also be specified vie
+           compiler directives in source, -k options will override
+           options in source}
+          if op = 'COPYRIGHT' then hasCopyright := true else
+          if op = 'SCREENNAME' then hasScreenname := true else
+          if op = 'THREADNAME' then hasThreadname := true else
+          if op = 'VERSION' then hasVersion := true else
+          if op = 'DESCRIPTION' then hasDescription := true else
+          if (op = 'STACK') or (op = 'STACKSIZE') then hasStacksize := true;
+        end;
+
+        { add linker scropt specified by -k@FileName }
+        procedure addLinkerOptionsFile (fileName : string);
+        var
+          t : text;
+          option : string;
+          fn : TCmdStr;
+        begin
+          fn := fileName;
+          if not sysutils.fileExists(fn) then
+            if not includesearchpath.FindFile(fileName,true,fn) then
+            begin
+              comment(v_error,'linker options file "'+fileName+'" not found');
+              exit;
+            end;
+          assign(t,fn); reset(t);
+          while not eof(t) do
+            begin
+              readln(t,option);
+              addLinkerOption(option);
+            end;
+          close(t);
+        end;
+
+        { add  linker options specified by command line parameter -k }
+        procedure addLinkerOptions;
+        var
+          s,option : string;
+        begin
+          s := ParaLinkOptions;
+          option := GetToken(s,';');
+          while option <> '' do
+          begin
+            if copy(option,1,1)='@' then
+            begin
+              delete(option,1,1);
+              addLinkerOptionsFile(option);
+            end else
+              addLinkerOption(option);
+            option := GetToken(s,';');
+          end;
+        end;
+
+        { default: nwpre but can be specified via linker options
+          bacuse this has to be the first object, we have to scan
+          linker options before adding other options }
+
+        function findPreludeInFile (fileName : string):string;
+        var
+          t : text;
+          option,s : string;
+          fn : TCmdStr;
+        begin
+          result := '';
+          fn := fileName;
+          if not sysutils.fileExists(fn) then
+            if not includesearchpath.FindFile(fileName,true,fn) then
+            begin
+              comment(v_error,'linker options file "'+fileName+'" not found');
+              exit;
+            end;
+          assign(t,fn); reset(t);
+          while not eof(t) do
+            begin
+              readln(t,option);
+              option := upper(GetToken(s,' '));
+              if option='PRELUDE' then
+                begin
+                  result := getToken(s,' ');
+                  close(t);
+                  exit;
+                end;
+            end;
+          close(t);
+        end;
+
+        function findPrelude : string;
+        var
+          s,option,keyword : string;
+        begin
+          s := ParaLinkOptions;
+          option := GetToken(s,';');
+          while option <> '' do
+          begin
+            if copy(option,1,1)='@' then
+            begin
+              delete(option,1,1);
+              result := findPreludeInFile(option);
+              if result <> '' then exit;
+            end else
+            begin
+              keyword := GetToken(option,' ');
+              if keyword = 'PRELUDE' then
+                begin
+                  result := GetToken(option,' ');
+                  exit;
+                end;
+            end;
+            option := GetToken(s,';');
+          end;
+          if target_info.system = system_i386_netwlibc then
+            result := 'libcpre'
+          else
+            result := 'nwpre';
+        end;
+
+      begin
+        with LinkScript do
+          begin
+            prelude := findPrelude;  // needs to be first object, can be specified by -k"PRELUDE ObjFileName"
+            if prelude = '' then internalerror(201103271);
+            if pos ('.',prelude) = 0 then prelude := prelude + '.o';
+            s2 := FindObjectFile(prelude,'',false);
+            Comment (V_Debug,'adding init Object File '+s2);
+            Concat('READOBJECT '+MaybeQuoted(s2));
+            while not ObjectFiles.Empty do
+              begin
+                s:=ObjectFiles.GetFirst;
+                if s<>'' then
+                begin
+                  Concat('READOBJECT '+MaybeQuoted(s));
+                  Comment (V_Debug,'adding Object File '+s);
+                end;
+              end;
+            while not StaticLibFiles.Empty do
+              begin
+                s:=StaticLibFiles.GetFirst;
+                if s<>'' then
+                begin
+                  Comment (V_Debug,'adding StaticLibFile '+s);
+                  Concat('READSTATICLIBRARY '+MaybeQuoted(s));
+                end;
+              end;
+           { While not SharedLibFiles.Empty do
+              begin
+                S:=SharedLibFiles.GetFirst;
+                if FindLibraryFile(s,target_info.staticClibprefix,target_info.importlibext,s2) then
+                begin
+                  Comment (V_Debug,'adding LibraryFile '+s);
+                  Concat('READSTATICLIBRARY '+MaybeQuoted(s2));
+                end else
+                  Comment(V_Error,'Import library not found for '+S);
+              end;}
+            if IsSharedLibrary then
+              Concat('ISSHAREDLIBRARY');
+            ConcatEntryName;
+            Concat('IMAGEBASE $' + hexStr(0, SizeOf(imagebase)*2));
+            Concat('HEADER');
+            Concat('EXESECTION .text');
+            Concat('  SYMBOL __text_start__');  nlmSpecialSymbols_Segments.Add('__text_start__',pointer(ptruint(Section_text)));
+            Concat('  OBJSECTION .text*');
+            Concat('  SYMBOL ___CTOR_LIST__');  nlmSpecialSymbols_Segments.Add('___CTOR_LIST__',pointer(ptruint(Section_text)));
+            Concat('  SYMBOL __CTOR_LIST__');   nlmSpecialSymbols_Segments.Add('__CTOR_LIST__',pointer(ptruint(Section_text)));
+            Concat('  LONG -1');
+            Concat('  OBJSECTION .ctor*');
+            Concat('  LONG 0');
+            Concat('  SYMBOL ___DTOR_LIST__');  nlmSpecialSymbols_Segments.Add('___DTOR_LIST__',pointer(ptruint(Section_text)));
+            Concat('  SYMBOL __DTOR_LIST__');   nlmSpecialSymbols_Segments.Add('__DTOR_LIST__',pointer(ptruint(Section_text)));
+            Concat('  LONG -1');
+            Concat('  OBJSECTION .dtor*');
+            Concat('  LONG 0');
+            Concat('  SYMBOL etext');           nlmSpecialSymbols_Segments.Add('etext',pointer(ptruint(Section_text)));
+            Concat('ENDEXESECTION');
+
+            Concat('EXESECTION .data');
+            Concat('  SYMBOL __data_start__');  nlmSpecialSymbols_Segments.Add('__data_start__',pointer(ptruint(Section_data)));
+            Concat('  OBJSECTION .data*');
+            Concat('  OBJSECTION .fpc*');
+            Concat('  SYMBOL edata');           nlmSpecialSymbols_Segments.Add('edata',pointer(ptruint(Section_data)));
+            Concat('  SYMBOL __data_end__');    nlmSpecialSymbols_Segments.Add('__data_end__',pointer(ptruint(Section_data)));
+            Concat('ENDEXESECTION');
+
+            Concat('EXESECTION .bss');
+            Concat('  SYMBOL __bss_start__');   nlmSpecialSymbols_Segments.Add('__bss_start__',pointer(ptruint(Section_data)));
+            Concat('  OBJSECTION .bss*');
+            Concat('  SYMBOL __bss_end__');     nlmSpecialSymbols_Segments.Add('__bss_end__',pointer(ptruint(Section_data)));
+            Concat('ENDEXESECTION');
+
+            Concat('EXESECTION .imports');
+            Concat('  SYMBOL __imports_start__');
+            Concat('  OBJSECTION .imports*');
+            Concat('  SYMBOL __imports_end__');
+            Concat('ENDEXESECTION');
+
+            Concat('EXESECTION .modules');
+            Concat('  SYMBOL __modules_start__');
+            Concat('  OBJSECTION .modules*');
+            Concat('  SYMBOL __modules_end__');
+            Concat('ENDEXESECTION');
+
+            Concat('EXESECTION .exports');
+            Concat('  SYMBOL __exports_start__');
+            Concat('  OBJSECTION .exports*');
+            Concat('  SYMBOL __exports_end__');
+            Concat('ENDEXESECTION');
+
+            Concat('EXESECTION .reloc');
+            Concat('  SYMBOL __reloc_start__');
+            Concat('  OBJSECTION .reloc*');
+            Concat('  SYMBOL __reloc_end__');
+            Concat('ENDEXESECTION');
+
+            Concat('EXESECTION .xdc');
+            Concat('  OBJSECTION .xdc*');
+            Concat('ENDEXESECTION');
+
+            Concat('EXESECTION .custom');
+            Concat('  OBJSECTION .custom*');
+            Concat('ENDEXESECTION');
+
+            Concat('EXESECTION .messages');
+            Concat('  OBJSECTION .messages*');
+            Concat('ENDEXESECTION');
+
+            Concat('EXESECTION .help');
+            Concat('  OBJSECTION .help*');
+            Concat('ENDEXESECTION');
+
+            Concat('EXESECTION .rdata');
+            Concat('  SYMBOL ___RUNTIME_PSEUDO_RELOC_LIST__');
+            Concat('  SYMBOL __RUNTIME_PSEUDO_RELOC_LIST__');
+            Concat('  OBJSECTION .rdata_runtime_pseudo_reloc');
+            Concat('  SYMBOL ___RUNTIME_PSEUDO_RELOC_LIST_END__');
+            Concat('  SYMBOL __RUNTIME_PSEUDO_RELOC_LIST_END__');
+            Concat('  OBJSECTION .rdata*');
+            Concat('  OBJSECTION .rodata*');
+            Concat('ENDEXESECTION');
+            Concat('EXESECTION .pdata');
+            Concat('  OBJSECTION .pdata');
+            Concat('ENDEXESECTION');
+            secnames:='.edata,.rsrc,.gnu_debuglink,'+
+                      '.debug_aranges,.debug_pubnames,.debug_info,.debug_abbrev,.debug_line,.debug_frame,.debug_str,.debug_loc,'+
+                      '.debug_macinfo,.debug_weaknames,.debug_funcnames,.debug_typenames,.debug_varnames,.debug_ranges';
+            repeat
+              secname:=gettoken(secnames,',');
+              if secname='' then
+                break;
+              Concat('EXESECTION '+secname);
+              Concat('  OBJSECTION '+secname+'*');
+              Concat('ENDEXESECTION');
+            until false;
+            { Can't use the generic rules, because that will add also .stabstr to .stab }
+            Concat('EXESECTION .stab');
+            Concat('  OBJSECTION .stab');
+            Concat('ENDEXESECTION');
+            Concat('EXESECTION .stabstr');
+            Concat('  OBJSECTION .stabstr');
+            Concat('ENDEXESECTION');
+            Concat('STABS');
+            Concat('SYMBOLS');
+            Concat('');
+
+            hasCopyright := false;
+            hasScreenname := false;
+            hasThreadname := false;
+            hasVersion := false;
+            hasDescription := false;
+            hasStacksize := false;
+            addLinkerOptions;
+            if not hasCopyright then
+              if nwcopyright <> '' then
+                Concat('COPYRIGHT "'+nwCopyright+'"');
+            if not hasScreenname then
+              if nwscreenname <> '' then
+                Concat('SCREENNAME "'+nwscreenname+'"');
+            if not hasThreadname then
+              if nwthreadname <> '' then
+                Concat('THREADNAME "'+nwthreadname+'"');
+            if not hasVersion then
+              Concat('VERSION '+tostr(dllmajor)+' '+tostr(dllminor)+' '+tostr(dllrevision));
+            if not hasDescription then
+              if description <> '' then
+                Concat ('DESCRIPTION "'+description+'"');
+            if not hasStacksize then
+              if MaxStackSizeSetExplicity then
+              begin
+                if stacksize < minStackSize then stacksize := minStackSize;
+                Concat ('STACKSIZE '+tostr(stacksize));
+              end else
+                Concat ('STACKSIZE '+tostr(minStackSize));
+              if target_info.system = system_i386_netwlibc then
+                Concat ('REENTRANT');            { needed by older libc versions }
+          end;
+
+        // add symbols needed by nwpre. We have not loaded the ppu,
+        // therefore we do not know the externals so read it from nwpre.imp
+        s := ChangeFileExt(prelude,'.imp');  // nwpre.imp
+        if not librarysearchpath.FindFile(s,true,s2) then
+          begin
+            comment(v_error,s+' not found');
+            exit;
+          end;
+        assign(t,s2); reset(t);
+        while not eof(t) do
+          begin
+            readln(t,s);
+            s := trimspace(s);
+            if (length(s) > 0) then
+              if copy(s,1,1) <> '#' then
+                AddImportSymbol('!clib',s,s,0,false);
+          end;
+        close(t);
+      end;
+
+
+    procedure TInternalLinkerNetware.InitSysInitUnitName;
+      begin
+        //if target_info.system=system_i386_netware then
+        //  GlobalInitSysInitUnitName(self);
+      end;
+
+    procedure TInternalLinkerNetware.ConcatEntryName;
+      begin
+        with LinkScript do
+          begin
+            if IsSharedLibrary then
+              begin
+                Concat('ISSHAREDLIBRARY');
+                Concat('ENTRYNAME _Prelude')
+              end
+            else
+              begin
+                Concat('ENTRYNAME _Prelude')
+              end;
+          end;
+      end;
+
+
+    Function  TInternalLinkerNetware.MakeSharedLibrary:boolean;
+    begin
+      Comment(V_Error,'Make shared library not supported for netware');
+      MakeSharedLibrary := false;
+    end;
 
 {*****************************************************************************
                                      Initialize
@@ -571,16 +981,8 @@ end;
 
 initialization
   RegisterExternalLinker(system_i386_netware_info,TLinkerNetware);
+  RegisterInternalLinker(system_i386_netware_info,TInternalLinkerNetware);
   RegisterImport(system_i386_netware,TImportLibNetware);
   RegisterExport(system_i386_netware,TExportLibNetware);
   RegisterTarget(system_i386_netware_info);
 end.
-{
-  $Log: t_nwm.pas,v $
-  Revision 1.25  2005/02/14 17:13:10  peter
-    * truncate log
-
-  Revision 1.24  2005/01/01 20:08:59  armin
-  * support ! in import file names for netware also
-
-}

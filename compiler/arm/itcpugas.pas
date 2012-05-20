@@ -1,5 +1,4 @@
 {
-    $Id: itcpugas.pas,v 1.5 2005/02/14 17:13:09 peter Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl
 
     This unit contains the ARM GAS instruction tables
@@ -35,26 +34,7 @@ interface
       opcode strings should conform to the names as defined by the
       processor manufacturer.
     }
-    gas_op2str : op2strtable = (
-            '','adc','add','and','n','bic','bkpt','b','bl','blx','bx',
-            'cdp','cdp2','clz','cmn','cmp','eor','ldc','ldc2',
-            'ldm','ldr','ldrb','ldrd','ldrbt','ldrh','ldrsb',
-            'ldrsh','ldrt','mcr','mcr2','mcrr','mla','mov',
-            'mrc','mrc2','mrrc','rs','msr','mul','mvn',
-            'orr','pld','qadd','qdadd','qdsub','qsub','rsb','rsc',
-            'sbc','smlal','smull','smul',
-            'smulw','stc','stc2','stm','str','strb','strbt','strd',
-            'strh','strt','sub','swi','swp','swpb','teq','tst',
-            'umlal','umull',
-            { FPA coprocessor codes }
-            'ldf','stf','lfm','sfm','flt','fix','wfs','rfs','rfc',
-            'adf','dvf','fdv','fml','frd','muf','pol','pw','rdf',
-            'rmf','rpw','rsf','suf','abs','acs','asn','atn','cos',
-            'exp','log','lgn','mvf','mnf','nrm','rnd','sin','sqt','tan','urd',
-            'cmf','cmfe','cnf'
-            { VPA coprocessor codes }
-            );
-
+    gas_op2str : op2strtable = {$i armatt.inc}
 
     function gas_regnum_search(const s:string):Tregister;
     function gas_regname(r:Tregister):string;
@@ -111,9 +91,3 @@ implementation
       end;
 
 end.
-{
-  $Log: itcpugas.pas,v $
-  Revision 1.5  2005/02/14 17:13:09  peter
-    * truncate log
-
-}

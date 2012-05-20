@@ -1,5 +1,4 @@
 {
-    $Id: cpuinfo.pas,v 1.16 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 1998-2000 by Florian Klaempfl
 
     Basic Processor information
@@ -39,14 +38,16 @@ Type
 
    pbestreal=^bestreal;
 
-   tprocessors =
-      (no_processor,
-       ClassAthlon64
+   tcputype =
+      (cpu_none,
+       cpu_athlon64
       );
 
    tfputype =
-     (no_fpuprocessor,
-      fpu_sse64
+     (fpu_none,
+//      fpu_soft,  { generic }
+      fpu_sse64,
+      fpu_sse3
      );
 
 Const
@@ -60,35 +61,43 @@ Const
    { calling conventions supported by the code generator }
    supported_calling_conventions : tproccalloptions = [
      pocall_internproc,
-     pocall_compilerproc,
-     pocall_inline,
+{     pocall_compilerproc,
+     pocall_inline,}
      pocall_register,
      pocall_safecall,
      pocall_stdcall,
      pocall_cdecl,
-     pocall_cppdecl
+     pocall_cppdecl,
+     pocall_mwpascal
    ];
 
-   processorsstr : array[tprocessors] of string[10] = ('',
+   cputypestr : array[tcputype] of string[10] = ('',
      'ATHLON64'
    );
 
    fputypestr : array[tfputype] of string[6] = ('',
-     'SSE64'
+//     'SOFT',
+     'SSE64',
+     'SSE3'
    );
 
-   sse_singlescalar : set of tfputype = [fpu_sse64];
-   sse_doublescalar : set of tfputype = [fpu_sse64];
+   sse_singlescalar : set of tfputype = [fpu_sse64,fpu_sse3];
+   sse_doublescalar : set of tfputype = [fpu_sse64,fpu_sse3];
+
+   { Supported optimizations, only used for information }
+   supported_optimizerswitches = genericlevel1optimizerswitches+
+                                 genericlevel2optimizerswitches+
+                                 genericlevel3optimizerswitches-
+                                 { no need to write info about those }
+                                 [cs_opt_level1,cs_opt_level2,cs_opt_level3]+
+                                 [cs_opt_regvar,cs_opt_loopunroll,cs_opt_stackframe,
+								  cs_opt_tailrecursion,cs_opt_nodecse];
+
+   level1optimizerswitches = genericlevel1optimizerswitches;
+   level2optimizerswitches = genericlevel2optimizerswitches + level1optimizerswitches + 
+     [cs_opt_regvar,cs_opt_stackframe,cs_opt_tailrecursion,cs_opt_nodecse];
+   level3optimizerswitches = genericlevel3optimizerswitches + level2optimizerswitches + [{,cs_opt_loopunroll}];
 
 Implementation
 
 end.
-{
-  $Log: cpuinfo.pas,v $
-  Revision 1.16  2005/02/14 17:13:10  peter
-    * truncate log
-
-  Revision 1.15  2005/01/20 16:38:45  peter
-    * load jmp_buf_size from system unit
-
-}

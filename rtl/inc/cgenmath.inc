@@ -1,5 +1,4 @@
 {
-    $Id: cgenmath.inc,v 1.6 2005/02/14 17:13:22 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2001 by Several contributors
 
@@ -15,7 +14,71 @@
  **********************************************************************}
 
 { for 80x86, we can easily write the optimal inline code }
-{$ifndef cpui386}
+{ Furthermore, the routines below only go up to double   }
+{ precision and we need extended precision if supported  }
+{$ifndef FPC_HAS_TYPE_EXTENDED}
+
+{$ifdef aix}
+    { aix math library routines don't raise exceptions, you have to manually
+      check for them }
+    function feclearexcept(flags: longint): longint; cdecl; external 'c';
+    function fetestexcept(flags: longint): longint; cdecl; external 'c';
+
+    const
+      FE_DIVBYZERO  = $04000000;
+      FE_INEXACT    = $02000000;
+      FE_INVALID    = $20000000;
+      FE_OVERFLOW   = $10000000;
+      FE_UNDERFLOW  = $08000000;
+      FE_ALL_EXCEPT = $3E000000;
+
+    procedure resetexcepts;
+      begin
+        seterrno(0);
+        feclearexcept(FE_ALL_EXCEPT);
+      end;
+
+    procedure checkexcepts;
+      var
+        feres: longint;
+        sfexcepts: shortint;
+      begin
+        feres:=fetestexcept(FE_ALL_EXCEPT);
+        sfexcepts:=0;
+        if feres<>0 then
+          begin
+            if (feres and FE_DIVBYZERO) <> 0 then
+              sfexcepts:=sfexcepts or float_flag_divbyzero;
+            if (feres and FE_INEXACT) <> 0 then
+              sfexcepts:=sfexcepts or float_flag_inexact;
+            if (feres and FE_INVALID) <> 0 then
+              sfexcepts:=sfexcepts or float_flag_invalid;
+            if (feres and FE_OVERFLOW) <> 0 then
+              sfexcepts:=sfexcepts or float_flag_overflow;
+            if (feres and FE_UNDERFLOW) <> 0 then
+              sfexcepts:=sfexcepts or float_flag_underflow;
+          end
+        { unknown error }
+        else if (geterrno<>0) then
+          sfexcepts:=sfexcepts or float_flag_invalid;
+        if sfexcepts<>0 then
+          float_raise(sfexcepts);
+      end;
+
+{$else aix}
+    procedure resetexcepts; inline;
+      begin
+      end;
+
+
+    procedure checkexcepts; inline;
+      begin
+      end;
+
+{$endif aix}
+
+
+{$ifndef SOLARIS}
 
 {$ifndef FPC_SYSTEM_HAS_INT}
 {$define FPC_SYSTEM_HAS_INT}
@@ -23,45 +86,43 @@
 {$ifdef SUPPORT_DOUBLE}
     function c_trunc(d: double): double; cdecl; external 'c' name 'trunc';
 
-  {$ifdef INTERNCONSTINTF}
-    function fpc_int_real(d: double): double;compilerproc; {$ifdef MATHINLINE}inline;{$endif}
-  {$else}
-    function int(d: double): double; {$ifdef MATHINLINE}inline;{$endif}[internconst:fpc_in_const_int];
-  {$endif}
+    function fpc_int_real(d: ValReal): ValReal;compilerproc; {$ifdef MATHINLINE}inline;{$endif}
     begin
+      resetexcepts;
       result := c_trunc(d);
+      checkexcepts;
     end;
 
 
 {$else SUPPORT_DOUBLE}
 
-    function c_truncf(d: real): double; cdecl; external 'c' name 'truncf';
+    function c_truncf(d: single): double; cdecl; external 'c' name 'truncf';
 
-  {$ifdef INTERNCONSTINTF}
-    function fpc_int_real(d: real): real;compilerproc; {$ifdef MATHINLINE}inline;{$endif}
-  {$else}
-    function int(d: real) : real;[internconst:fpc_in_const_int];
-  {$endif}
+    function fpc_int_real(d: ValReal): ValReal;compilerproc; {$ifdef MATHINLINE}inline;{$endif}
       begin
         { this will be correct since real = single in the case of }
         { the motorola version of the compiler...                 }
+        resetexcepts;
         int:=c_truncf(d);
+        checkexcepts;
       end;
 {$endif SUPPORT_DOUBLE}
 
-{$endif}
-
+{$endif FPC_SYSTEM_HAS_INT}
+{$endif SOLARIS}
 
 {$ifndef SYSTEM_HAS_FREXP}
 {$define SYSTEM_HAS_FREXP}
-    function c_frexp(x: double; var e: longint): double; cdecl; external 'c' name 'frexp';
+    function c_frexp(x: double; out e: longint): double; cdecl; external 'c' name 'frexp';
 
-    function frexp(x:Real; var e:Integer ):Real; {$ifdef MATHINLINE}inline;{$endif}
+    function frexp(x:ValReal; out e:Integer ):ValReal; {$ifdef MATHINLINE}inline;{$endif}
     var
       l: longint;
     begin
+      resetexcepts;
       frexp := c_frexp(x,l);
       e := l;
+      checkexcepts;
     end;
 {$endif not SYSTEM_HAS_FREXP}
 
@@ -70,9 +131,11 @@
 {$define SYSTEM_HAS_LDEXP}
     function c_ldexp(x: double; n: longint): double; cdecl; external 'c' name 'ldexp';
 
-    function ldexp( x: Real; N: Integer):Real;{$ifdef MATHINLINE}inline;{$endif}
+    function ldexp( x: ValReal; N: Integer):ValReal;{$ifdef MATHINLINE}inline;{$endif}
     begin
+      resetexcepts;
       ldexp := c_ldexp(x,n);
+      checkexcepts;
     end;
 {$endif not SYSTEM_HAS_LDEXP}
 
@@ -82,16 +145,11 @@
 
     function c_sqrt(d: double): double; cdecl; external 'c' name 'sqrt';
 
-  {$ifdef INTERNCONSTINTF}
-    function fpc_sqrt_real(d:Real):Real;compilerproc; {$ifdef MATHINLINE}inline;{$endif}
-  {$else}
-    {$ifdef hascompilerproc}
-    function fpc_sqrt_real(d:Real):Real;compilerproc; external name 'FPC_SQRT_REAL';
-    {$endif hascompilerproc}
-    function sqrt(d:Real):Real;[internconst:fpc_in_const_sqrt];[public, alias: 'FPC_SQRT_REAL']; {$ifdef MATHINLINE}inline;{$endif}
-  {$endif}
+    function fpc_sqrt_real(d:ValReal):ValReal;compilerproc; {$ifdef MATHINLINE}inline;{$endif}
     begin
+      resetexcepts;
       result := c_sqrt(d);
+      checkexcepts;
     end;
 
 {$endif}
@@ -101,55 +159,30 @@
 {$define FPC_SYSTEM_HAS_EXP}
     function c_exp(d: double): double; cdecl; external 'c' name 'exp';
 
-  {$ifdef INTERNCONSTINTF}
-    function fpc_Exp_real(d:Real):Real;compilerproc; {$ifdef MATHINLINE}inline;{$endif}
-  {$else}
-    function Exp(d:Real):Real;[internconst:fpc_in_const_exp]; {$ifdef MATHINLINE}inline;{$endif}
-  {$endif}
-    begin
-      result := c_exp(d);
+
+    function fpc_Exp_real(d:ValReal):ValReal;compilerproc; {$ifdef MATHINLINE}inline;{$endif}
+      begin
+        resetexcepts;
+        result := c_exp(d);
+        checkexcepts;
     end;
 {$endif}
 
-(*
 
-Not supported on Mac OS X 10.1
-
-{$ifndef FPC_SYSTEM_HAS_ROUND}
-{$define FPC_SYSTEM_HAS_ROUND}
-
-    function c_llround(d: double): int64; cdecl; external 'c' name 'llround';
-
-{$ifdef hascompilerproc}
-    function round(d : Real) : int64;{$ifndef INTERNCONSTINTF}[internconst:fpc_in_const_round];{$endif} external name 'FPC_ROUND';
-
-    function fpc_round(d : Real) : int64;[public, alias:'FPC_ROUND'];{$ifdef hascompilerproc}compilerproc;{$endif hascompilerproc}
-    begin
-      fpc_round := c_llround(d);
-    end;
-{$else}
-    function round(d : Real) : int64;{$ifndef INTERNCONSTINTF}[internconst:fpc_in_const_round];{$endif}
-    begin
-      round := c_llround(d);
-    end;
-{$endif hascompilerproc}
-{$endif}
-*)
-
-
+{ buggy on aix, sets DIV_BY_ZERO flag for some valid inputs }
+{$ifndef aix}
 {$ifndef FPC_SYSTEM_HAS_LN}
 {$define FPC_SYSTEM_HAS_LN}
 
     function c_log(d: double): double; cdecl; external 'c' name 'log';
 
-  {$ifdef INTERNCONSTINTF}
-    function fpc_Ln_real(d:Real):Real;compilerproc;{$ifdef MATHINLINE}inline;{$endif}
-  {$else}
-    function Ln(d:Real):Real;[internconst:fpc_in_const_ln];{$ifdef MATHINLINE}inline;{$endif}
-  {$endif}
+    function fpc_Ln_real(d:ValReal):ValReal;compilerproc;{$ifdef MATHINLINE}inline;{$endif}
     begin
+      resetexcepts;
       result := c_log(d);
+      checkexcepts;
     end;
+{$endif}
 {$endif}
 
 
@@ -157,13 +190,11 @@ Not supported on Mac OS X 10.1
 {$define FPC_SYSTEM_HAS_SIN}
     function c_sin(d: double): double; cdecl; external 'c' name 'sin';
 
-  {$ifdef INTERNCONSTINTF}
-    function fpc_Sin_real(d:Real):Real;compilerproc; {$ifdef MATHINLINE}inline;{$endif}
-  {$else}
-    function Sin(d:Real):Real;[internconst:fpc_in_const_sin]; {$ifdef MATHINLINE}inline;{$endif}
-  {$endif}
+    function fpc_Sin_real(d:ValReal):ValReal;compilerproc; {$ifdef MATHINLINE}inline;{$endif}
     begin
+      resetexcepts;
       result := c_sin(d);
+      checkexcepts;
     end;
 {$endif}
 
@@ -173,13 +204,11 @@ Not supported on Mac OS X 10.1
 {$define FPC_SYSTEM_HAS_COS}
     function c_cos(d: double): double; cdecl; external 'c' name 'cos';
 
-  {$ifdef INTERNCONSTINTF}
-    function fpc_Cos_real(d:Real):Real;compilerproc; {$ifdef MATHINLINE}inline;{$endif}
-  {$else}
-    function Cos(d:Real):Real;[internconst:fpc_in_const_cos];{$ifdef MATHINLINE}inline;{$endif}
-  {$endif}
+    function fpc_Cos_real(d:ValReal):ValReal;compilerproc; {$ifdef MATHINLINE}inline;{$endif}
     begin
+      resetexcepts;
       result := c_cos(d);
+      checkexcepts;
     end;
 {$endif}
 
@@ -189,21 +218,13 @@ Not supported on Mac OS X 10.1
 {$define FPC_SYSTEM_HAS_ARCTAN}
     function c_atan(d: double): double; cdecl; external 'c' name 'atan';
 
-  {$ifdef INTERNCONSTINTF}
-    function fpc_ArcTan_real(d:Real):Real;compilerproc; {$ifdef MATHINLINE}inline;{$endif}
-  {$else}
-    function ArcTan(d:Real):Real;[internconst:fpc_in_const_arctan];{$ifdef MATHINLINE}inline;{$endif}
-  {$endif}
+    function fpc_ArcTan_real(d:ValReal):ValReal;compilerproc; {$ifdef MATHINLINE}inline;{$endif}
     begin
+      resetexcepts;
       result := c_atan(d);
+      checkexcepts;
     end;
 {$endif}
 
-{$endif not i386}
+{$endif not FPC_HAS_TYPE_EXTENDED}
 
-{
-  $Log: cgenmath.inc,v $
-  Revision 1.6  2005/02/14 17:13:22  peter
-    * truncate log
-
-}

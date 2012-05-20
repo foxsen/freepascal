@@ -1,5 +1,4 @@
 {
-    $Id: ptypes.inc,v 1.11 2005/02/14 17:13:21 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2001 by Free Pascal development team
 
@@ -34,8 +33,13 @@ type
     gid_t    = cuint32;         { used for group IDs           }
     TGid     = gid_t;
     pGid     = ^gid_t;
+    TIOCtlRequest = cuLong;
 
-    ino_t    = clong;           { used for file serial numbers }
+{$if not defined(cpuarm) and not defined(iphonesim)}
+    ino_t    = cuint32;         { used for file serial numbers }
+{$else}
+    ino_t    = cuint64;
+{$endif}
     TIno     = ino_t;
     pIno     = ^ino_t;
 
@@ -55,11 +59,12 @@ type
     TPid     = pid_t;
     pPid     = ^pid_t;
 
-    size_t   = cuint32;         { as definied in the C standard}
+    size_t   = culong;          { as definied in the C standard}
     TSize    = size_t;
     pSize    = ^size_t;
+    psize_t  = ^size_t;
 
-    ssize_t  = cint32;          { used by function for returning number of bytes }
+    ssize_t  = clong;           { used by function for returning number of bytes }
     TsSize   = ssize_t;
     psSize   = ^ssize_t;
 
@@ -72,29 +77,37 @@ type
     pClock   = ^clock_t;
 
     time_t   = clong;           { used for returning the time  }
-    TTime    = time_t;
+    // TTime    = time_t;    // Not allowed in system unit, -> unixtype
+
     pTime    = ^time_t;
-    ptime_t =  ^time_t;
+    ptime_t  = ^time_t;
+
+    wchar_t  = cint32;
+    pwchar_t = ^wchar_t;
+    wint_t   = cint32;
 
     socklen_t= cuint32;
     TSocklen = socklen_t;
     pSocklen = ^socklen_t;
 
+    suseconds_t = cint32;
+
     timeval = record
-        tv_sec: cint;
-        tv_usec: cint;
+        tv_sec: time_t;
+        tv_usec: suseconds_t;
     end;
     ptimeval = ^timeval;
     TTimeVal = timeval;
 
-  timespec = packed record
-    tv_sec   : time_t;
-    tv_nsec  : clong;
-  end;
-  ptimespec= ^timespec;
-  Ttimespec= timespec;
+    timespec = record
+      tv_sec   : time_t;
+      tv_nsec  : clong;
+    end;
+    ptimespec= ^timespec;
+    Ttimespec= timespec;
 
-
+    rlim_t		= int64;
+    TRlim		= rlim_t;
 
 CONST
    { System limits, POSIX value in parentheses, used for buffer and stack allocation }
@@ -119,7 +132,7 @@ type
 
 
   const
-     _PTHREAD_MUTEX_DEFAULT             = _PTHREAD_MUTEX_NORMAL;
+     _PTHREAD_MUTEX_DEFAULT    = _PTHREAD_MUTEX_NORMAL;
      _MUTEX_TYPE_FAST          = _PTHREAD_MUTEX_NORMAL;
      _MUTEX_TYPE_COUNTING_FAST = _PTHREAD_MUTEX_RECURSIVE;
 
@@ -131,37 +144,68 @@ type
           val: array[0..1] of cint32;
      end;
 
+{$if defined(cpuarm) or defined(iphonesim)}
+     { structure used on iPhoneOS and available on Mac OS X 10.6 and later }
+     tstatfs = record
+          bsize : cuint32;
+          iosize : cint32;
+          blocks : cuint64;
+          bfree : cuint64;
+          bavail : cuint64;
+          files : cuint64;
+          ffree : cuint64;
+          fsid : fsid_t;
+          owner : uid_t;
+          ftype : cuint32;
+          fflags : cuint32;
+          fssubtype : cuint32;
+          fstypename : array[0..(MFSNAMELEN)-1] of char;
+          mountpoint : array[0..(PATH_MAX)-1] of char;
+          mntfromname : array[0..(PATH_MAX)-1] of char;
+          reserved: array[0..7] of cuint32;
+     end;
+{$else}
      tstatfs = record
           otype : cint16;
           oflags : cint16;
-          bsize : cint32;
-          iosize : cint32;
-          blocks : cint32;
-          bfree : cint32;
-          bavail : cint32;
-          files : cint32;
-          ffree : cint32;
+          bsize : clong;
+          iosize : clong;
+          blocks : clong;
+          bfree : clong;
+          bavail : clong;
+          files : clong;
+          ffree : clong;
           fsid : fsid_t;
           fowner : uid_t;
           reserved1 : cint16;
           ftype : cint16;
-          fflags : cint32;
-          reserved2 : array[0..1] of cint32;
+          fflags : clong;
+          reserved2 : array[0..1] of clong;
           fstypename : array[0..(MFSNAMELEN)-1] of char;
           mountpoint : array[0..(MNAMELEN)-1] of char;
           mntfromname : array[0..(MNAMELEN)-1] of char;
+          f_reserved3: char;
+          reserved4: array[0..3] of clong;
        end;
+{$endif}
     pstatfs = ^tstatfs;
 
+    mbstate_t = record
+      case byte of
+        0: (__mbstate8: array[0..127] of char);
+        1: (_mbstateL: clonglong); { for alignment }
+    end;
+    pmbstate_t = ^mbstate_t;
+
    pthread_t            = pointer;
-   pthread_attr_t       = record sig: clong; opaque: array[0..36-1] of byte; end;
-   pthread_mutex_t      = record sig: clong; opaque: array[0..40-1] of byte; end;
+   pthread_attr_t       = record sig: clong; opaque: array[0..{$ifdef cpu64}56{$else}36{$endif}-1] of byte; end;
+   pthread_mutex_t      = {$i pmutext.inc}
    pthread_mutexattr_t  = record sig: clong; opaque: array[0..8-1] of byte; end;
-   pthread_cond_t       = record sig: clong; opaque: array[0..24-1] of byte; end;
-   pthread_condattr_t   = record sig: clong; opaque: array[0..4-1] of byte; end;
-   pthread_key_t        = clong;
-   pthread_rwlock_t             = record sig: clong; opaque: array[0..124-1] of byte; end;
-   pthread_rwlockattr_t = record sig: clong; opaque: array[0..12-1] of byte; end;
+   pthread_cond_t       = record sig: clong; opaque: array[0..{$ifdef cpu64}40{$else}24{$endif}-1] of byte; end;
+   pthread_condattr_t   = record sig: clong; opaque: array[0..{$ifdef cpu64}8{$else}4{$endif}-1] of byte; end;
+   pthread_key_t        = culong;
+   pthread_rwlock_t     = record sig: clong; opaque: array[0..{$ifdef cpu64}192{$else}124{$endif}-1] of byte; end;
+   pthread_rwlockattr_t = record sig: clong; opaque: array[0..{$ifdef cpu64}16{$else}12{$endif}-1] of byte; end;
 
    sem_t                = cint;
 
@@ -172,13 +216,3 @@ Const
   Prio_PGrp    = 1;
   Prio_User    = 2;
 
-
-{
-  $Log: ptypes.inc,v $
-  Revision 1.11  2005/02/14 17:13:21  peter
-    * truncate log
-
-  Revision 1.10  2005/02/11 13:07:05  jonas
-    * fixed SYS_NMLN constant
-
-}

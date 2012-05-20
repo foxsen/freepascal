@@ -4,12 +4,12 @@
      .text
      .globl _mainCRTStartup
 _mainCRTStartup:
-     movb   $1,U_SYSTEM_ISCONSOLE
+     movb   $1,operatingsystem_isconsole
      jmp    _start
 
      .globl _WinMainCRTStartup
 _WinMainCRTStartup:
-     movb   $0,U_SYSTEM_ISCONSOLE
+     movb   $0,operatingsystem_isconsole
 _start:
      subl   $0x8,%esp
      andl   $0xfffffff0,%esp
@@ -21,6 +21,7 @@ _cmain:
      subl   $0x8,%esp
      andl   $0xfffffff0,%esp
      call   ___main
+     movl   %esp,__stkptr
      call   _FPC_EXE_Entry
      ret
 
@@ -68,17 +69,5 @@ exitprocess:
 .L6:
 	.ascii	"kernel32.dll\000"
 
-
-
-// $Log: wcygprt0.as,v $
-// Revision 1.1  2004/11/04 17:15:01  peter
-//  * wcygprt is now used for cygwin (libc) linking, initc contains only cerrno
-//
-// Revision 1.4  2002/11/30 18:17:35  carl
-//   + profiling support
-//
-// Revision 1.3  2002/07/28 20:43:51  florian
-//   * several fixes for linux/powerpc
-//   * several fixes to MT
-//
-//
+.bss
+    .comm   __stkptr,4

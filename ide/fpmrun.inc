@@ -1,5 +1,4 @@
 {
-    $Id: fpmrun.inc,v 1.11 2005/02/14 17:13:18 peter Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 1998 by Berczi Gabor
 
@@ -100,7 +99,8 @@ begin
      else
       Debugger^.TraceNext;
     end;}
-  Debugger^.AnnotateError;
+  if Debugger^.IsRunning then
+    Debugger^.AnnotateError;
 {$else NODEBUG}
   NoDebugger;
 {$endif NODEBUG}
@@ -180,6 +180,7 @@ procedure TIDEApp.DoRun;
 var
   RunDirect : boolean;
   oldcurrdir : string;
+  s : shortstring;
 begin
 {$ifndef NODEBUG}
   if not assigned(Debugger) or not Debugger^.HasExe or not Debugger^.IsRunning then
@@ -207,9 +208,10 @@ begin
          ErrorBox(msg_nothingtorun,nil);
          Exit;
        end;
+      s:=EXEFile;
       if not ExistsFile(ExeFile) then
         begin
-          MsgParms[1].Ptr:=@EXEFile;
+          MsgParms[1].Ptr:=@s;
           ErrorBox(msg_invalidfilename,@MsgParms);
           Exit;
         end;
@@ -256,22 +258,28 @@ begin
       { In case we have something that the compiler touched }
       AskToReloadAllModifiedFiles;
       LastExitCode:=ExecuteResult;
+
+      s:=EXEFile;
       If IOStatus<>0 then
         begin
-          MsgParms[1].Ptr:=@EXEFile;
+          MsgParms[1].Ptr:=@s;
           MsgParms[2].long:=IOStatus;
           InformationBox(msg_programnotrundoserroris,@MsgParms);
         end
       else If LastExitCode<>0 then
         begin
-          MsgParms[1].Ptr:=@EXEFile;
+          MsgParms[1].Ptr:=@s;
           MsgParms[2].long:=LastExitCode;
           InformationBox(msg_programfileexitedwithexitcode,@MsgParms);
         end;
     end
 {$ifndef NODEBUG}
   else
-    Debugger^.Continue
+    begin
+      if AskRecompileIfModified then
+        exit;
+      Debugger^.Continue;
+    end;
 {$endif}
   ;
 end;
@@ -280,14 +288,23 @@ procedure TIDEApp.UpdateRunMenu(DebuggeeRunning : boolean);
 var MenuItem : PMenuItem;
 begin
   MenuItem:=PAdvancedMenuBar(MenuBar)^.GetMenuItem(cmRun);
+  if not assigned(MenuItem) then
+    MenuItem:=PAdvancedMenuBar(MenuBar)^.GetMenuItem(cmContinue);
+
   if assigned(MenuItem) then
     begin
       If assigned(MenuItem^.Name) then
         DisposeStr(MenuItem^.Name);
       if DebuggeeRunning then
-        MenuItem^.Name:=NewStr(menu_run_continue)
+        begin
+          MenuItem^.Name:=NewStr(menu_run_continue);
+          MenuItem^.command:=cmContinue;
+        end
       else
-        MenuItem^.Name:=NewStr(menu_run_run);
+        begin
+          MenuItem^.Name:=NewStr(menu_run_run);
+          MenuItem^.command:=cmRun;
+        end;
     end;
   MenuItem:=PAdvancedMenuBar(MenuBar)^.GetMenuItem(cmResetDebugger);
   if assigned(MenuItem) then
@@ -382,7 +399,7 @@ begin
         begin
           FileName:=PSourceWindow(W)^.Editor^.FileName;
           LineNr:=PSourceWindow(W)^.Editor^.CurPos.Y+1;
-          Debugger^.Command('tbreak '+GDBFileName(NameAndExtOf(FileName))+':'+IntToStr(LineNr));
+          Debugger^.SetTbreak(GDBFileName(NameAndExtOf(FileName))+':'+IntToStr(LineNr));
           Debugger^.Continue;
         end
       else
@@ -396,7 +413,7 @@ begin
             begin
               if PDL^.Address<>0 then
                 begin
-                  Debugger^.Command('tbreak *0x'+IntToHex(PDL^.Address,8));
+                  Debugger^.SetTBreak('*0x'+HexStr(PDL^.Address,sizeof(pointer)*2));
                 end
               else
                 begin
@@ -407,7 +424,7 @@ begin
                   p:=pos(' ',S);
                   S:=Copy(S,1,p-1);
                   LineNr:=StrToInt(S);
-                  Debugger^.Command('tbreak '+GDBFileName(NameAndExtOf(FileName))+':'+IntToStr(LineNr));
+                  Debugger^.SetTBreak(GDBFileName(NameAndExtOf(FileName))+':'+IntToStr(LineNr));
                 end;
               Debugger^.Continue;
             end;
@@ -487,7 +504,7 @@ begin
         begin
           if PDL^.Address<>0 then
             begin
-              PB:=New(PBreakpoint,init_address(IntToHex(PDL^.Address,8)));
+              PB:=New(PBreakpoint,init_address(HexStr(PDL^.Address,sizeof(pointer)*2)));
               BreakpointsCollection^.Insert(PB);
               WD^.Editor^.SetLineFlagState(CurY,lfBreakpoint,true);
             end
@@ -510,13 +527,3 @@ begin
 {$endif NODEBUG}
 end;
 
-{
-  $Log: fpmrun.inc,v $
-  Revision 1.11  2005/02/14 17:13:18  peter
-    * truncate log
-
-  Revision 1.10  2005/01/07 21:52:23  florian
-    * proper stepping in disassembler window now possible
-    + disassembler window to menu added
-
-}

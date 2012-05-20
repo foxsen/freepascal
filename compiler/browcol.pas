@@ -1,5 +1,4 @@
 {
-    $Id: browcol.pas,v 1.43 2005/02/14 17:13:06 peter Exp $
     Copyright (c) 1998-2002 by Berczi Gabor
     Modifications Copyright (c) 1999-2002 Florian Klaempfl and Pierre Muller
 
@@ -25,16 +24,19 @@
   {$N+,E+}
 {$endif}
 unit browcol;
+
+{$i fpcdefs.inc}
+{ $define use_refs}
+{$H-}
+
 interface
+
 uses
+  SysUtils,
+  CUtils,
   objects,
   cclasses,
   symconst,symtable;
-
-{$ifndef FPC}
-  type
-    sw_integer = integer;
-{$endif FPC}
 
 const
   SymbolTypLen : integer = 6;
@@ -87,6 +89,8 @@ type
     TSymbol = object(TObject)
       Name       : PString;
       Typ        : tsymtyp;
+      varoptions : tvaroptions;
+      varspez    : tvarspez;  { sets the type of access }
       Params     : PString;
       References : PReferenceCollection;
       Items      : PSymbolCollection;
@@ -108,6 +112,8 @@ type
       function    GetText: string;
       function    GetTypeName: string;
       destructor  Done; virtual;
+      procedure   SetVarSpez(const AVarSpez : TVarSpez);
+      procedure   SetVarOptions(const AVarOptions : TVarOptions);
       constructor Load(var S: TStream);
       procedure   Store(var S: TStream);
     end;
@@ -224,7 +230,7 @@ type
       UsedUnits  : PSymbolCollection;
       DependentUnits: PSymbolCollection;
       MainSource: PString;
-      SourceFiles: PStringCollection;
+      SourceFiles: pstringCollection;
       constructor Init(const AName, AMainSource: string);
       procedure   SetLoadedFrom(const AModuleName: string);
       procedure   AddUsedUnit(P: PSymbol);
@@ -260,18 +266,13 @@ procedure RegisterSymbols;
 implementation
 
 uses
-{$IFDEF USE_SYSUTILS}
-  SysUtils,
-{$ELSE USE_SYSUTILS}
-  Dos,{$ifndef FPC}strings,{$endif}
-{$ENDIF USE_SYSUTILS}
+  globtype,globals,comphook,constexp,
 {$ifdef DEBUG}
   verbose,
 {$endif DEBUG}
-  CUtils,
-  globtype,globals,comphook,
   finput,fmodule,
-  cpuinfo,cgbase,aasmbase,aasmtai,paramgr,
+  crefs,cpuinfo,cgbase,
+  aasmbase,aasmtai,aasmdata,paramgr,
   symsym,symdef,symtype,symbase,defutil;
 
 const
@@ -279,68 +280,81 @@ const
      ObjType: 3001;
      VmtLink: Ofs(TypeOf(TModuleNameCollection)^);
      Load:    @TModuleNameCollection.Load;
-     Store:   @TModuleNameCollection.Store
+     Store:   @TModuleNameCollection.Store;
+     Next: nil
   );
   RTypeNameCollection: TStreamRec = (
      ObjType: 3002;
      VmtLink: Ofs(TypeOf(TTypeNameCollection)^);
      Load:    @TTypeNameCollection.Load;
-     Store:   @TTypeNameCollection.Store
+     Store:   @TTypeNameCollection.Store;
+     Next: nil
   );
   RReference: TStreamRec = (
      ObjType: 3003;
      VmtLink: Ofs(TypeOf(TReference)^);
      Load:    @TReference.Load;
-     Store:   @TReference.Store
+     Store:   @TReference.Store;
+     Next: nil
   );
   RSymbol: TStreamRec = (
      ObjType: 3004;
      VmtLink: Ofs(TypeOf(TSymbol)^);
      Load:    @TSymbol.Load;
-     Store:   @TSymbol.Store
+     Store:   @TSymbol.Store;
+     Next: nil
   );
   RObjectSymbol: TStreamRec = (
      ObjType: 3005;
      VmtLink: Ofs(TypeOf(TObjectSymbol)^);
      Load:    @TObjectSymbol.Load;
-     Store:   @TObjectSymbol.Store
+     Store:   @TObjectSymbol.Store;
+     Next: nil
   );
   RSymbolCollection: TStreamRec = (
      ObjType: 3006;
      VmtLink: Ofs(TypeOf(TSymbolCollection)^);
      Load:    @TSymbolCollection.Load;
-     Store:   @TSymbolCollection.Store
+     Store:   @TSymbolCollection.Store;
+     Next: nil
   );
   RSortedSymbolCollection: TStreamRec = (
      ObjType: 3007;
      VmtLink: Ofs(TypeOf(TSortedSymbolCollection)^);
      Load:    @TSortedSymbolCollection.Load;
-     Store:   @TSortedSymbolCollection.Store
+     Store:   @TSortedSymbolCollection.Store;
+     Next: nil
   );
   RIDSortedSymbolCollection: TStreamRec = (
      ObjType: 3008;
      VmtLink: Ofs(TypeOf(TIDSortedSymbolCollection)^);
      Load:    @TIDSortedSymbolCollection.Load;
-     Store:   @TIDSortedSymbolCollection.Store
+     Store:   @TIDSortedSymbolCollection.Store;
+     Next: nil
   );
   RObjectSymbolCollection: TStreamRec = (
      ObjType: 3009;
      VmtLink: Ofs(TypeOf(TObjectSymbolCollection)^);
      Load:    @TObjectSymbolCollection.Load;
-     Store:   @TObjectSymbolCollection.Store
+     Store:   @TObjectSymbolCollection.Store;
+     Next: nil
   );
   RReferenceCollection: TStreamRec = (
      ObjType: 3010;
      VmtLink: Ofs(TypeOf(TReferenceCollection)^);
      Load:    @TReferenceCollection.Load;
-     Store:   @TReferenceCollection.Store
+     Store:   @TReferenceCollection.Store;
+     Next: nil
   );
   RModuleSymbol: TStreamRec = (
      ObjType: 3011;
      VmtLink: Ofs(TypeOf(TModuleSymbol)^);
      Load:    @TModuleSymbol.Load;
-     Store:   @TModuleSymbol.Store
+     Store:   @TModuleSymbol.Store;
+     Next: nil
   );
+
+  SymbolCount : longint = 0;
 
 {****************************************************************************
                                    Helpers
@@ -409,7 +423,7 @@ end;
 constructor TSymbolCollection.Init(ALimit, ADelta: Integer);
 begin
   inherited Init(ALimit,ADelta);
-{  Duplicates:=true;}
+  Duplicates:=true;
 end;
 
 function TSymbolCollection.At(Index: Sw_Integer): PSymbol;
@@ -453,7 +467,9 @@ begin
   S2:=Upper(K2^.GetName);
   if S1<S2 then R:=-1 else
   if S1>S2 then R:=1 else
-   if K1^.TypeID=K2^.TypeID then R:=0 else
+   if K1^.TypeID=K2^.TypeID then
+     R:=0
+   else
     begin
       S1:=K1^.GetName;
       S2:=K2^.GetName;
@@ -461,7 +477,19 @@ begin
       if S1>S2 then R:=1 else
        if K1^.TypeID<K2^.TypeID then R:=-1 else
        if K1^.TypeID>K2^.TypeID then R:= 1 else
-        R:=0;
+         begin
+           { Handle overloaded functions }
+           if (K1^.Typ=procsym) then
+             begin
+               S1:=K1^.GetText;
+               S2:=K2^.GetText;
+               if S1<S2 then R:=-1 else
+               if S1>S2 then R:=1 else
+                 R:=0;
+             end
+           else
+             R:=0;
+         end
     end;
   Compare:=R;
 end;
@@ -591,8 +619,8 @@ begin
   if S1<S2 then R:=-1 else
   if S1>S2 then R:=1 else
   { make sure that we distinguish between different objects with the same name }
-  if Ptrint(K1^.Symbol)<Ptrint(K2^.Symbol) then R:=-1 else
-  if Ptrint(K1^.Symbol)>Ptrint(K2^.Symbol) then R:= 1 else
+  if PtrUInt(K1^.Symbol)<PtrUInt(K2^.Symbol) then R:=-1 else
+  if PtrUInt(K1^.Symbol)>PtrUInt(K2^.Symbol) then R:= 1 else
   R:=0;
   Compare:=R;
 end;
@@ -681,6 +709,9 @@ end;
 constructor TSymbol.Init(const AName: string; ATyp: tsymtyp; AParams: string; AMemInfo: PSymbolMemInfo);
 begin
   inherited Init;
+  inc(SymbolCount);
+  VarSpez:=vs_value;
+  VarOptions:=[];
   Name:=NewStr(AName); Typ:=ATyp;
   if AMemInfo<>nil then
     SetMemInfo(AMemInfo^);
@@ -689,6 +720,16 @@ begin
     begin
       Items:=New(PSortedSymbolCollection, Init(50,100));
     end;
+end;
+
+procedure TSymbol.SetVarSpez(const AVarSpez : TVarSpez);
+begin
+  VarSpez:=AVarSpez;
+end;
+
+procedure TSymbol.SetVarOptions(const AVarOptions : TVarOptions);
+begin
+  VarOptions:=AVarOptions;
 end;
 
 procedure TSymbol.SetMemInfo(const AMemInfo: TSymbolMemInfo);
@@ -763,6 +804,8 @@ begin
       if Assigned(VType) then
         S:=S+': '+VType^;
     end;
+  if Typ=ProcSym then
+    S:=S+';';
   GetText:=S;
 end;
 
@@ -772,9 +815,15 @@ begin
   case Typ of
     abstractsym  : S:='abst';
     fieldvarsym  : S:='member';
-    globalvarsym,
+    staticvarsym,
     localvarsym,
-    paravarsym   : S:='var';
+    paravarsym   :
+      begin
+        if (vo_is_hidden_para in varoptions) then
+          S:='hidden'
+        else
+          S:='var';
+      end;
     typesym      : S:='type';
     procsym      : if VType=nil then
                      S:='proc'
@@ -783,11 +832,14 @@ begin
     unitsym      : S:='unit';
     constsym     : S:='const';
     enumsym      : S:='enum';
-    typedconstsym: S:='const';
     errorsym     : S:='error';
     syssym       : S:='sys';
     labelsym     : S:='label';
-    absolutevarsym : S:='abs';
+    absolutevarsym :
+      if (vo_is_funcret in varoptions) then
+        S:='ret'
+      else
+        S:='abs';
     propertysym  : S:='prop';
     macrosym     : S:='macro';
   else S:='';
@@ -797,7 +849,6 @@ end;
 
 destructor TSymbol.Done;
 begin
-  inherited Done;
   if assigned(MemInfo) then
     Dispose(MemInfo);
   if assigned(References) then
@@ -814,6 +865,8 @@ begin
     DisposeStr(DType);
   if assigned(Ancestor) then
     DisposeStr(Ancestor);}
+  dec(SymbolCount);
+  inherited Done;
 end;
 
 constructor TSymbol.Load(var S: TStream);
@@ -821,8 +874,25 @@ var MI: TSymbolMemInfo;
     W: word;
 begin
   TObject.Init;
+  inc(SymbolCount);
 
   S.Read(Typ,SizeOf(Typ));
+  case Typ of
+    abstractsym,
+    absolutevarsym,
+    staticvarsym,
+    localvarsym,
+    paravarsym :
+    begin
+      S.Read(VarSpez,SizeOf(VarSpez));
+      S.Read(VarOptions,SizeOf(VarOptions));
+    end;
+  else
+    begin
+      VarSpez:=vs_value;
+      VarOptions:=[];
+    end;
+  end;
   S.Read(TypeID, SizeOf(TypeID));
   S.Read(RelatedTypeID, SizeOf(RelatedTypeID));
   S.Read(Flags, SizeOf(Flags));
@@ -850,6 +920,17 @@ procedure TSymbol.Store(var S: TStream);
 var W: word;
 begin
   S.Write(Typ,SizeOf(Typ));
+  case Typ of
+    abstractsym,
+    absolutevarsym,
+    staticvarsym,
+    localvarsym,
+    paravarsym :
+    begin
+      S.Write(VarSpez,SizeOf(VarSpez));
+      S.Write(VarOptions,SizeOf(VarOptions));
+    end;
+  end;
   S.Write(TypeID, SizeOf(TypeID));
   S.Write(RelatedTypeID, SizeOf(RelatedTypeID));
   S.Write(Flags, SizeOf(Flags));
@@ -1004,7 +1085,6 @@ end;
 
 destructor TModuleSymbol.Done;
 begin
-  inherited Done;
   if Assigned(MainSource) then DisposeStr(MainSource);
   if assigned(Exports_) then
     Dispose(Exports_, Done);
@@ -1023,6 +1103,7 @@ begin
     Dispose(DependentUnits, Done);
   end;
   if Assigned(SourceFiles) then Dispose(SourceFiles, Done);
+  inherited Done;
 end;
 
 
@@ -1160,12 +1241,14 @@ end;
 
 
   procedure ProcessSymTable(OwnerSym: PSymbol; var Owner: PSymbolCollection; Table: TSymTable);
-  var J: longint;
-      Ref: TRef;
+  var I: longint;
       Sym: TSym;
+      pd : TProcDef;
       Symbol: PSymbol;
       Reference: PReference;
       inputfile : Tinputfile;
+      Ref : TRefItem;
+      DefPos : TFilePosInfo;
   procedure SetVType(Symbol: PSymbol; VType: string);
   begin
     Symbol^.VType:=TypeNames^.Add(VType);
@@ -1176,19 +1259,17 @@ end;
   end;
   function GetDefinitionStr(def: tdef): string; forward;
   function GetEnumDefStr(def: tenumdef): string;
-  var Name: string;
-      esym: tenumsym;
-      Count: integer;
+  var
+    Name: string;
+    esym: tenumsym;
+    i: integer;
   begin
     Name:='(';
-    esym:=tenumsym(def.Firstenum); Count:=0;
-    while (esym<>nil) do
+    for i := 0 to def.symtable.SymList.Count - 1 do
       begin
-        if Count>0 then
+        if i>0 then
           Name:=Name+', ';
-        Name:=Name+esym.name;
-        esym:=esym.nextenum;
-        Inc(Count);
+        Name:=Name+tenumsym(def.symtable.SymList[i]).name;
       end;
     Name:=Name+')';
     GetEnumDefStr:=Name;
@@ -1197,8 +1278,8 @@ end;
   var Name: string;
   begin
     Name:='array ['+IntToStr(def.lowrange)+'..'+IntToStr(def.highrange)+'] of ';
-    if assigned(def.elementtype.def) then
-      Name:=Name+GetDefinitionStr(def.elementtype.def);
+    if assigned(def.elementdef) then
+      Name:=Name+GetDefinitionStr(def.elementdef);
     GetArrayDefStr:=Name;
   end;
   function GetFileDefStr(def: tfiledef): string;
@@ -1208,7 +1289,7 @@ end;
     case def.filetyp of
       ft_text    : Name:='text';
       ft_untyped : Name:='file';
-      ft_typed   : Name:='file of '+GetDefinitionStr(def.typedfiletype.def);
+      ft_typed   : Name:='file of '+GetDefinitionStr(def.typedfiledef);
     end;
     GetFileDefStr:=Name;
   end;
@@ -1216,7 +1297,7 @@ end;
   var Name: string;
   begin
     Name:='';
-    case def.string_typ of
+    case def.stringtype of
       st_shortstring :
         if def.len=255 then
           Name:='shortstring'
@@ -1228,6 +1309,8 @@ end;
         Name:='ansistring';
       st_widestring :
         Name:='widestring';
+      st_unicodestring :
+        Name:='unicodestring';
     else ;
     end;
     GetStringDefStr:=Name;
@@ -1236,14 +1319,14 @@ end;
   var OK: boolean;
   begin
     OK:=false;
-    if assigned(def.rettype.def) then
-      if UpcaseStr(GetDefinitionStr(def.rettype.def))<>'VOID' then
+    if assigned(def.returndef) then
+      if UpcaseStr(GetDefinitionStr(def.returndef))<>'VOID' then
         OK:=true;
     retdefassigned:=OK;
   end;
   function GetAbsProcParmDefStr(def: tabstractprocdef): string;
   var Name: string;
-      dc: tparavarsym;
+      dc: tabstractvarsym;
       i,
       Count: integer;
       CurName: string;
@@ -1252,20 +1335,25 @@ end;
     Count:=0;
     for i:=0 to def.paras.count-1 do
      begin
-       dc:=tparavarsym(def.paras[i]);
-       if i=0 then
-         CurName:=''
-       else
-         CurName:=', '+CurName;
-       case dc.varspez of
-         vs_Value : ;
-         vs_Const : CurName:=CurName+'const ';
-         vs_Var   : CurName:=CurName+'var ';
-       end;
-       if assigned(dc.vartype.def) then
-         CurName:=CurName+GetDefinitionStr(dc.vartype.def);
-       Name:=CurName+Name;
-       Inc(Count);
+       dc:=tabstractvarsym(def.paras[i]);
+       if not (vo_is_hidden_para in dc.VarOptions) then
+         begin
+           CurName:='';
+           if assigned(dc.vardef) then
+             CurName:=': '+GetDefinitionStr(dc.vardef);
+           CurName:=dc.RealName+CurName;
+           case dc.varspez of
+             vs_Value    : ;
+             vs_Const    : CurName:='const '+CurName;
+             vs_Var      : CurName:='var '+CurName;
+             vs_Out      : CurName:='out '+CurName;
+             vs_Constref : CurName:='constref '+CurName;
+           end;
+           if Count>0 then
+             CurName:='; '+CurName;
+           Name:=Name+CurName;
+           Inc(Count);
+         end;
      end;
     GetAbsProcParmDefStr:=Name;
   end;
@@ -1275,9 +1363,9 @@ end;
     Name:=GetAbsProcParmDefStr(def);
     if Name<>'' then Name:='('+Name+')';
     if retdefassigned(def) then
-      Name:='function'+Name+': '+GetDefinitionStr(def.rettype.def)
+      Name:='function'+Name+': '+GetDefinitionStr(def.returndef)+';'
     else
-      Name:='procedure'+Name;
+      Name:='procedure'+Name+';';
     GetAbsProcDefStr:=Name;
   end;
   function GetProcDefStr(def: tprocdef): string;
@@ -1309,19 +1397,12 @@ end;
   function GetSetDefStr(def: tsetdef): string;
   var Name: string;
   begin
-    Name:='';
-    case def.settype of
-      normset  : Name:='set';
-      smallset : Name:='set';
-      varset   : Name:='varset';
-    end;
-    Name:=Name+' of ';
-    Name:=Name+GetDefinitionStr(def.elementtype.def);
+    Name:='set of '+GetDefinitionStr(def.elementdef);
     GetSetDefStr:=Name;
   end;
   function GetPointerDefStr(def: tpointerdef): string;
   begin
-    GetPointerDefStr:='^'+GetDefinitionStr(def.pointertype.def);
+    GetPointerDefStr:='^'+GetDefinitionStr(def.pointeddef);
   end;
   function GetDefinitionStr(def: tdef): string;
   var Name: string;
@@ -1332,7 +1413,7 @@ end;
       if assigned(def.typesym) then
         Name:=def.typesym.name;
       if Name='' then
-      case def.deftype of
+      case def.typ of
         arraydef :
           Name:=GetArrayDefStr(tarraydef(def));
         stringdef :
@@ -1378,17 +1459,17 @@ end;
     case sym.consttyp of
       constord :
         begin
-          if sym.consttype.def.deftype=enumdef then
-            Name:=sym.consttype.def.typesym.name+'('+IntToStr(sym.value.valueord)+')'
+          if sym.constdef.typ=enumdef then
+            Name:=sym.constdef.typesym.name+'('+tostr(sym.value.valueord)+')'
           else
-            if is_boolean(sym.consttype.def) then
-              Name:='Longbool('+IntToStr(sym.value.valueord)+')'
+            if is_boolean(sym.constdef) then
+              Name:='Longbool('+tostr(sym.value.valueord)+')'
           else
-            if is_char(sym.consttype.def) or
-               is_widechar(sym.consttype.def) then
-              Name:=''''+chr(sym.value.valueord)+''''
+            if is_char(sym.constdef) or
+               is_widechar(sym.constdef) then
+              Name:=''''+chr(sym.value.valueord.svalue)+''''
           else
-            Name:=IntToStr(sym.value.valueord);
+            Name:=tostr(sym.value.valueord);
         end;
       constresourcestring,
       conststring :
@@ -1404,10 +1485,10 @@ end;
   procedure ProcessDefIfStruct(definition: tdef);
   begin
     { still led to infinite recursions
-      only usefull for unamed types PM }
+      only useful for unamed types PM }
     if assigned(definition) and not assigned(definition.typesym) then
     begin
-      case definition.deftype of
+      case definition.typ of
         recorddef :
           if trecorddef(definition).symtable<>Table then
             ProcessSymTable(Symbol,Symbol^.Items,trecorddef(definition).symtable);
@@ -1425,33 +1506,54 @@ end;
   end;
   var MemInfo: TSymbolMemInfo;
       ObjDef: tobjectdef;
+      symidx : longint;
   begin
     if not Assigned(Table) then
      Exit;
+    Symbol:=nil;
     if Owner=nil then
      Owner:=New(PSortedSymbolCollection, Init(10,50));
-    sym:=tsym(Table.symindex.first);
-    while assigned(sym) do
+    for symidx:=0 to Table.SymList.Count-1 do
       begin
+        sym:=tsym(Table.SymList[symidx]);
         New(Symbol, Init(Sym.Name,Sym.Typ,'',nil));
         case Sym.Typ of
-          globalvarsym,
+          staticvarsym,
+          localvarsym,
+          absolutevarsym,
+          paravarsym :
+            begin
+              Symbol^.SetVarOptions(tabstractvarsym(sym).VarOptions);
+              Symbol^.SetVarSpez(tabstractvarsym(sym).VarSpez);
+            end;
+        end;
+        case Sym.Typ of
+          staticvarsym,
           localvarsym,
           paravarsym :
              with tabstractvarsym(sym) do
              begin
-               if assigned(vartype.def) then
-                 if assigned(vartype.def.typesym) then
-                   SetVType(Symbol,vartype.def.typesym.name)
+               if (vo_is_funcret in varoptions) then
+                 begin
+                   if Assigned(OwnerSym) then
+                       if assigned(vardef) then
+                         if assigned(vardef.typesym) then
+                           SetVType(OwnerSym,vardef.typesym.name)
+                         else
+                           SetVType(OwnerSym,GetDefinitionStr(vardef));
+                 end;
+               if assigned(vardef) then
+                 if assigned(vardef.typesym) then
+                   SetVType(Symbol,vardef.typesym.name)
                  else
-                   SetVType(Symbol,GetDefinitionStr(vartype.def));
-               ProcessDefIfStruct(vartype.def);
-               if assigned(vartype.def) then
-                 if (vartype.def.deftype=pointerdef) and
-                    assigned(tpointerdef(vartype.def).pointertype.def) then
+                   SetVType(Symbol,GetDefinitionStr(vardef));
+               ProcessDefIfStruct(vardef);
+               if assigned(vardef) then
+                 if (vardef.typ=pointerdef) and
+                    assigned(tpointerdef(vardef).pointeddef) then
                  begin
                    Symbol^.Flags:=(Symbol^.Flags or sfPointer);
-                   Symbol^.RelatedTypeID:=Ptrint(tpointerdef(vartype.def).pointertype.def);
+                   Symbol^.RelatedTypeID:=Ptrint(tpointerdef(vardef).pointeddef);
                  end;
                if typ=fieldvarsym then
                  MemInfo.Addr:=tfieldvarsym(sym).fieldoffset
@@ -1462,9 +1564,9 @@ end;
                    else
                      MemInfo.Addr:=0;
                  end;
-               if assigned(vartype.def) and (vartype.def.deftype=arraydef) then
+               if assigned(vardef) and (vardef.typ=arraydef) then
                  begin
-                   if tarraydef(vartype.def).highrange<tarraydef(vartype.def).lowrange then
+                   if tarraydef(vardef).highrange<tarraydef(vardef).lowrange then
                      MemInfo.Size:=-1
                    else
                      MemInfo.Size:=getsize;
@@ -1472,15 +1574,21 @@ end;
                else
                  MemInfo.Size:=getsize;
                { this is not completely correct... }
-               MemInfo.PushSize:=paramanager.push_size(varspez,vartype.def,pocall_default);
+               if assigned(vardef) then
+                 MemInfo.PushSize:=paramanager.push_size(varspez,vardef,pocall_default)
+               else
+                 begin
+                   { This can happen, why? }
+                   MemInfo.PushSize:=0;
+                 end;
                Symbol^.SetMemInfo(MemInfo);
              end;
           fieldvarsym :
              with tfieldvarsym(sym) do
              begin
-               if assigned(vartype.def) and (vartype.def.deftype=arraydef) then
+               if assigned(vardef) and (vardef.typ=arraydef) then
                  begin
-                   if tarraydef(vartype.def).highrange<tarraydef(vartype.def).lowrange then
+                   if tarraydef(vardef).highrange<tarraydef(vardef).lowrange then
                      MemInfo.Size:=-1
                    else
                      MemInfo.Size:=getsize;
@@ -1506,103 +1614,128 @@ end;
               end;
           procsym :
             begin
-              with tprocsym(sym) do
-              if assigned(first_procdef) then
-              begin
-                if cs_local_browser in aktmoduleswitches then
-                  ProcessSymTable(Symbol,Symbol^.Items,first_procdef.parast);
-                if assigned(first_procdef.parast) then
-                  begin
-                    Symbol^.Params:=TypeNames^.Add(GetAbsProcParmDefStr(first_procdef));
-                  end
-                else { param-definition is NOT assigned }
-                  if assigned(Table.Name) then
-                  if Table.Name^='SYSTEM' then
-                  begin
-                    Symbol^.Params:=TypeNames^.Add('...');
-                  end;
-                if cs_local_browser in aktmoduleswitches then
-                 begin
-                   if assigned(first_procdef.localst) and
-                     (first_procdef.localst.symtabletype<>staticsymtable) then
-                    ProcessSymTable(Symbol,Symbol^.Items,first_procdef.localst);
-                 end;
-              end;
+              for i:=0 to tprocsym(sym).ProcdefList.Count-1 do
+                begin
+                  if i>0 then
+                    begin
+                      if Assigned(Symbol) then
+                        Owner^.Insert(Symbol);
+                      New(Symbol, Init(Sym.Name,Sym.Typ,'',nil));
+                    end;
+                  with tprocsym(sym) do
+                    begin
+                      pd:=tprocdef(procdeflist[i]);
+                      if assigned(pd) then
+                        begin
+                          ProcessSymTable(Symbol,Symbol^.Items,pd.parast);
+                          if assigned(pd.parast) then
+                            begin
+                              Symbol^.Params:=TypeNames^.Add(
+                                GetAbsProcParmDefStr(pd));
+                            end
+                          else { param-definition is NOT assigned }
+                            if assigned(Table.Name) and
+                               (Table.Name^='SYSTEM') then
+                            begin
+                              Symbol^.Params:=TypeNames^.Add('...');
+                            end;
+                          if cs_local_browser in current_settings.moduleswitches then
+                           begin
+                             if assigned(pd.localst) and
+                               (pd.localst.symtabletype<>staticsymtable) then
+                              ProcessSymTable(Symbol,Symbol^.Items,pd.localst);
+                           end;
+                        end;
+                    end;
+                end;
             end;
           typesym :
             begin
             with ttypesym(sym) do
-              if assigned(restype.def) then
+              if assigned(typedef) then
                begin
-                Symbol^.TypeID:=Ptrint(restype.def);
-                case restype.def.deftype of
+                Symbol^.TypeID:=Ptrint(typedef);
+                case typedef.typ of
                   arraydef :
-                    SetDType(Symbol,GetArrayDefStr(tarraydef(restype.def)));
+                    SetDType(Symbol,GetArrayDefStr(tarraydef(typedef)));
                   enumdef :
-                    SetDType(Symbol,GetEnumDefStr(tenumdef(restype.def)));
+                    SetDType(Symbol,GetEnumDefStr(tenumdef(typedef)));
                   procdef :
-                    SetDType(Symbol,GetProcDefStr(tprocdef(restype.def)));
+                    SetDType(Symbol,GetProcDefStr(tprocdef(typedef)));
                   procvardef :
-                    SetDType(Symbol,GetProcVarDefStr(tprocvardef(restype.def)));
+                    SetDType(Symbol,GetProcVarDefStr(tprocvardef(typedef)));
                   objectdef :
-                    with tobjectdef(restype.def) do
+                    with tobjectdef(typedef) do
                     begin
                       ObjDef:=childof;
                       if ObjDef<>nil then
                         Symbol^.RelatedTypeID:=Ptrint(ObjDef);{TypeNames^.Add(S);}
                       Symbol^.Flags:=(Symbol^.Flags or sfObject);
-                      if tobjectdef(restype.def).objecttype=odt_class then
+                      if tobjectdef(typedef).objecttype=odt_class then
                         Symbol^.Flags:=(Symbol^.Flags or sfClass);
-                      ProcessSymTable(Symbol,Symbol^.Items,tobjectdef(restype.def).symtable);
+                      ProcessSymTable(Symbol,Symbol^.Items,tobjectdef(typedef).symtable);
                     end;
                   recorddef :
                     begin
                       Symbol^.Flags:=(Symbol^.Flags or sfRecord);
-                      ProcessSymTable(Symbol,Symbol^.Items,trecorddef(restype.def).symtable);
+                      ProcessSymTable(Symbol,Symbol^.Items,trecorddef(typedef).symtable);
                     end;
                   pointerdef :
                     begin
                       Symbol^.Flags:=(Symbol^.Flags or sfPointer);
-                      Symbol^.RelatedTypeID:=Ptrint(tpointerdef(restype.def).pointertype.def);{TypeNames^.Add(S);}
-                      SetDType(Symbol,GetPointerDefStr(tpointerdef(restype.def)));
+                      Symbol^.RelatedTypeID:=Ptrint(tpointerdef(typedef).pointeddef);{TypeNames^.Add(S);}
+                      SetDType(Symbol,GetPointerDefStr(tpointerdef(typedef)));
                     end;
 
                   filedef :
-                    SetDType(Symbol,GetFileDefStr(tfiledef(restype.def)));
+                    SetDType(Symbol,GetFileDefStr(tfiledef(typedef)));
                   setdef :
-                    SetDType(Symbol,GetSetDefStr(tsetdef(restype.def)));
+                    SetDType(Symbol,GetSetDefStr(tsetdef(typedef)));
                 end;
                end;
             end;
         end;
-        Ref:=tstoredsym(sym).defref;
-        while Assigned(Symbol) and assigned(Ref) do
+        if assigned(sym) then
           begin
-            inputfile:=get_source_file(ref.moduleindex,ref.posinfo.fileindex);
-            if Assigned(inputfile) and Assigned(inputfile.name) then
+            DefPos:=tstoredsym(sym).FileInfo;
+            inputfile:=get_source_file(defpos.moduleindex,defpos.fileindex);
+            if Assigned(inputfile) and (inputfile.name<>'') then
               begin
-                New(Reference, Init(ModuleNames^.Add(inputfile.name^),
-                  ref.posinfo.line,ref.posinfo.column));
+                New(Reference, Init(ModuleNames^.Add(inputfile.name),
+                  DefPos.line,DefPos.column));
                 Symbol^.References^.Insert(Reference);
               end;
-            Ref:=Ref.nextref;
+          end;
+        if assigned(Symbol) and assigned(sym.RefList) then
+          begin
+            Ref:=TRefItem(tstoredsym(sym).RefList.First);
+            while assigned(Ref) do
+              begin
+                inputfile:=get_source_file(ref.refinfo.moduleindex,ref.refinfo.fileindex);
+                if Assigned(inputfile) and (inputfile.name<>'') then
+                  begin
+                    New(Reference, Init(ModuleNames^.Add(inputfile.name),
+                      ref.refinfo.line,ref.refinfo.column));
+                    Symbol^.References^.Insert(Reference);
+                  end;
+                Ref:=TRefItem(Ref.next);
+              end;
           end;
         if Assigned(Symbol) then
           begin
-            if not Owner^.Search(Symbol,J) then
+            (* if not Owner^.Search(Symbol,J) then *)
               Owner^.Insert(Symbol)
-            else
+            (*else
               begin
                 Dispose(Symbol,done);
                 Symbol:=nil;
-              end;
+              end;*)
           end;
-        sym:=tsym(sym.indexnext);
       end;
   end;
 
 function SearchModule(const Name: string): PModuleSymbol;
-function Match(P: PModuleSymbol): boolean; {$ifndef FPC}far;{$endif}
+function Match(P: PModuleSymbol): boolean;
 begin
   Match:=CompareText(P^.GetName,Name)=0;
 end;
@@ -1616,6 +1749,9 @@ end;
 
 procedure CreateBrowserCol;
 var
+  path,module,
+  name,msource : string;
+
   T: TSymTable;
   UnitS,PM: PModuleSymbol;
   hp : tmodule;
@@ -1624,16 +1760,21 @@ var
   pif: tinputfile;
 begin
   DisposeBrowserCol;
-  if (cs_browser in aktmoduleswitches) then
+  if (cs_browser in current_settings.moduleswitches) then
     NewBrowserCol;
   hp:=tmodule(loaded_units.first);
-  if (cs_browser in aktmoduleswitches) then
+  if (cs_browser in current_settings.moduleswitches) then
    while assigned(hp) do
     begin
-       t:=tsymtable(hp.globalsymtable);
+       if hp.is_unit then
+         t:=tsymtable(hp.globalsymtable)
+       else
+         t:=tsymtable(hp.localsymtable);
        if assigned(t) then
          begin
-           New(UnitS, Init(T.Name^,hp.mainsource^));
+           name:=GetStr(T.Name);
+           msource:=hp.mainsource;
+           New(UnitS, Init(Name,msource));
            if Assigned(hp.loaded_from) then
              if assigned(hp.loaded_from.globalsymtable) then
                UnitS^.SetLoadedFrom(tsymtable(hp.loaded_from.globalsymtable).name^);
@@ -1644,14 +1785,17 @@ begin
              pif:=hp.sourcefiles.files;
              while (pif<>nil) do
              begin
-               UnitS^.AddSourceFile(pif.path^+pif.name^);
+               path:=pif.path;
+               name:=pif.name;
+               UnitS^.AddSourceFile(path+name);
                pif:=pif.next;
              end;
            end;
 
            Modules^.Insert(UnitS);
            ProcessSymTable(UnitS,UnitS^.Items,T);
-           if cs_local_browser in aktmoduleswitches then
+           if hp.is_unit then
+           if cs_local_browser in current_settings.moduleswitches then
              begin
                 t:=tsymtable(hp.localsymtable);
                 if assigned(t) then
@@ -1662,17 +1806,19 @@ begin
     end;
 
   hp:=tmodule(loaded_units.first);
-  if (cs_browser in aktmoduleswitches) then
+  if (cs_browser in current_settings.moduleswitches) then
    while assigned(hp) do
     begin
        t:=tsymtable(hp.globalsymtable);
        if assigned(t) then
          begin
-           UnitS:=SearchModule(T.Name^);
+           name:=GetStr(T.Name);
+           UnitS:=SearchModule(Name);
            puu:=tused_unit(hp.used_units.first);
            while (puu<>nil) do
            begin
-             PM:=SearchModule(puu.u.modulename^);
+             module:=GetStr(puu.u.modulename);
+             PM:=SearchModule(module);
              if Assigned(PM) then
                UnitS^.AddUsedUnit(PM);
              puu:=tused_unit(puu.next);
@@ -1680,7 +1826,8 @@ begin
            pdu:=tdependent_unit(hp.dependent_units.first);
            while (pdu<>nil) do
            begin
-             PM:=SearchModule(tsymtable(pdu.u.globalsymtable).name^);
+             name:=GetStr(tsymtable(pdu.u.globalsymtable).name);
+             PM:=SearchModule(Name);
              if Assigned(PM) then
                UnitS^.AddDependentUnit(PM);
              pdu:=tdependent_unit(pdu.next);
@@ -1689,7 +1836,7 @@ begin
        hp:=tmodule(hp.next);
     end;
 
-  if (cs_browser in aktmoduleswitches) then
+  if (cs_browser in current_settings.moduleswitches) then
     BuildObjectInfo;
   { can allways be done
     needed to know when recompilation of sources is necessary }
@@ -1708,11 +1855,11 @@ begin
   for I:=0 to Symbols^.Count-1 do
     begin
       P:=Symbols^.At(I);
-      if (P^.Flags and sfObject)<>0 then
+      if (P^.Flags and (sfObject or sfClass))<>0 then
         C^.Insert(P);
       if (P^.typ=typesym) then
         D^.Insert(P);
-      if (P^.typ in [globalvarsym,localvarsym,paravarsym]) and ((P^.flags and sfPointer)<>0) then
+      if (P^.typ in [staticvarsym,localvarsym,paravarsym]) and ((P^.flags and sfPointer)<>0) then
         E^.Insert(P);
       if P^.Items<>nil then
         InsertSymbolCollection(P^.Items);
@@ -1847,7 +1994,6 @@ end;
 procedure BuildSourceList;
 var m: tmodule;
     s: tinputfile;
-    p: cutils.pstring;
     ppu,obj: string;
     source: string;
 begin
@@ -1862,25 +2008,19 @@ begin
     m:=tmodule(loaded_units.first);
     while assigned(m) do
     begin
-      obj:=fexpand(m.objfilename^);
+      obj:=ExpandFileName(m.objfilename);
       ppu:=''; source:='';
       if m.is_unit then
-        ppu:=fexpand(m.ppufilename^);
+        ppu:=ExpandFileName(m.ppufilename);
       if (m.is_unit=false) and (m.islibrary=false) then
-        ppu:=fexpand(m.exefilename^);
+        ppu:=ExpandFileName(m.exefilename);
       if assigned(m.sourcefiles) then
         begin
           s:=m.sourcefiles.files;
           while assigned(s) do
           begin
-            source:='';
-            p:=s.path;
-            if assigned(p) then
-              source:=source+p^;
-            p:=s.name;
-            if assigned(p) then
-              source:=source+p^;
-            source:=fexpand(source);
+            source:=s.path+s.name;
+            source:=ExpandFileName(source);
 
             sourcefiles^.Insert(New(PSourceFile, Init(source,obj,ppu)));
             s:=s.ref_next;
@@ -1900,7 +2040,7 @@ end;
 var
   oldexit : pointer;
 
-procedure browcol_exit;{$ifndef FPC}far;{$endif}
+procedure browcol_exit;
 begin
   exitproc:=oldexit;
   DisposeBrowserCol;
@@ -1969,8 +2109,8 @@ var K1: PPointerXRef absolute Key1;
     K2: PPointerXRef absolute Key2;
     R: integer;
 begin
-  if Ptrint(K1^.PtrValue)<Ptrint(K2^.PtrValue) then R:=-1 else
-  if Ptrint(K1^.PtrValue)>Ptrint(K2^.PtrValue) then R:= 1 else
+  if PtrUInt(K1^.PtrValue)<PtrUInt(K2^.PtrValue) then R:=-1 else
+  if PtrUInt(K1^.PtrValue)>PtrUInt(K2^.PtrValue) then R:= 1 else
   R:=0;
   Compare:=R;
 end;
@@ -2036,11 +2176,11 @@ end;
 function LoadBrowserCol(S: PStream): boolean;
 var PD: PPointerDictionary;
 procedure FixupPointers;
-procedure FixupReference(P: PReference); {$ifndef FPC}far;{$endif}
+procedure FixupReference(P: PReference);
 begin
   PD^.Resolve(P^.FileName);
 end;
-procedure FixupSymbol(P: PSymbol); {$ifndef FPC}far;{$endif}
+procedure FixupSymbol(P: PSymbol);
 var I: sw_integer;
 begin
   PD^.Resolve(P^.DType);
@@ -2058,7 +2198,7 @@ end;
 begin
   Modules^.ForEach(@FixupSymbol);
 end;
-procedure ReadSymbolPointers(P: PSymbol); {$ifndef FPC}far;{$endif}
+procedure ReadSymbolPointers(P: PSymbol);
 var I: sw_integer;
     PV: pointer;
 begin
@@ -2102,7 +2242,7 @@ begin
 end;
 
 function StoreBrowserCol(S: PStream) : boolean;
-procedure WriteSymbolPointers(P: PSymbol); {$ifndef FPC}far;{$endif}
+procedure WriteSymbolPointers(P: PSymbol);
 var I: sw_integer;
 begin
   S^.Write(P, SizeOf(P));
@@ -2142,9 +2282,3 @@ begin
   oldexit:=exitproc;
   exitproc:=@browcol_exit;
 end.
-{
-  $Log: browcol.pas,v $
-  Revision 1.43  2005/02/14 17:13:06  peter
-    * truncate log
-
-}

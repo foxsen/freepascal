@@ -1,5 +1,4 @@
 {
-    $Id: dw_latex.pp,v 1.11 2005/03/10 20:32:16 michael Exp $
 
     FPDoc  -  Free Pascal Documentation Tool
     Copyright (C) 2000 - 2003 by
@@ -39,6 +38,7 @@ Type
   TLaTeXWriter = class(TLinearWriter)
   protected
     FLink: String;
+    FImageDir: String;
     FTableCount : Integer;
     FInVerbatim : Boolean;
     Inlist,
@@ -58,6 +58,7 @@ Type
     Procedure StartDescription; override;
     Procedure StartAccess; override;
     Procedure StartErrors; override;
+    Procedure StartVersion; override;
     Procedure StartSeealso; override;
     Procedure EndSeealso; override;
     procedure StartUnitOverview(AModuleName,AModuleLabel : String);override;
@@ -76,9 +77,8 @@ Type
     procedure StartChapter(ChapterName : String); override;
     procedure StartOverview(WithAccess : Boolean); override;
     procedure EndOverview; override;
-    procedure WriteOverviewMember(ALabel,AName,Access,ADescr : String); override;
-    procedure WriteOverviewMember(ALabel,AName,ADescr : String); override;
-    Class Function FileNameExtension : String; override;
+    procedure WriteOverviewMember(const ALabel,AName,Access,ADescr : String); override;
+    procedure WriteOverviewMember(const ALabel,AName,ADescr : String); override;
     // Description node conversion
     procedure DescrBeginBold; override;
     procedure DescrEndBold; override;
@@ -86,11 +86,14 @@ Type
     procedure DescrEndItalic; override;
     procedure DescrBeginEmph; override;
     procedure DescrEndEmph; override;
+    procedure DescrWriteImageEl(const AFileName, ACaption, ALinkName : DOMString); override;
     procedure DescrWriteFileEl(const AText: DOMString); override;
     procedure DescrWriteKeywordEl(const AText: DOMString); override;
     procedure DescrWriteVarEl(const AText: DOMString); override;
     procedure DescrBeginLink(const AId: DOMString); override;
     procedure DescrEndLink; override;
+    procedure DescrBeginURL(const AURL: DOMString); override; // Provides a default implementation
+    procedure DescrEndURL; override;
     procedure DescrWriteLinebreak; override;
     procedure DescrBeginParagraph; override;
     procedure DescrBeginCode(HasBorder: Boolean; const AHighlighterName: String); override;
@@ -126,6 +129,9 @@ Type
     procedure DescrEndTableCell; override;
     // TFPDocWriter class methods
     Function InterPretOption(Const Cmd,Arg : String) : boolean; override;
+    Property ImageDir : String Read FImageDir Write FImageDir;
+  public
+    Class Function FileNameExtension : String; override;
   end;
 
 
@@ -182,7 +188,9 @@ begin
   SetLength(Result, 0);
   for i := 1 to Length(S) do
     If not (S[i] in ['&','{','}','#','_','$','%','''','~','^', '\']) then
-      Result := Result + S[i];
+      Result := Result + S[i]
+    else
+      Result:=result+'!'  
 end;
 
 
@@ -216,6 +224,29 @@ begin
   Write('}');
 end;
 
+procedure TLaTeXWriter.DescrWriteImageEl(const AFileName, ACaption, ALinkName : DOMString); 
+
+Var
+  FN : String;
+  L : Integer;
+  
+begin
+  Writeln('\begin{figure}[ht]%');
+  Writeln('\begin{center}');
+  If (ACaption<>ACaption) then
+    Writeln(Format('\caption{%s}',[EscapeText(ACaption)]));
+  If (ALinkName<>'') then
+    WriteLabel('fig:'+ALinkName);
+  FN:=ImageDir;
+  L:=Length(FN);
+  If (L>0) and (FN[l]<>'/')  then
+    FN:=FN+'/';
+  FN:=FN+AFileName;
+  Writeln('\epsfig{file='+FN+'}');
+  Writeln('\end{center}');
+  Writeln('\end{figure}');
+end;
+
 procedure TLaTeXWriter.DescrWriteFileEl(const AText: DOMString);
 begin
   Write('\file{');
@@ -246,6 +277,18 @@ end;
 procedure TLaTeXWriter.DescrEndLink;
 begin
   WriteF(' (\pageref{%s})',[StripText(Flink)]);
+end;
+
+procedure TLaTeXWriter.DescrBeginURL(const AURL: DOMString);
+begin
+  Inherited; //  Save link
+  Write('\htmladdnormallink{');
+end;
+
+procedure TLaTeXWriter.DescrEndURL;
+begin
+  WriteF('}{%s}',[LastURL]);
+  LastURL:='';
 end;
 
 procedure TLaTeXWriter.DescrWriteLinebreak;
@@ -558,6 +601,11 @@ begin
   Writeln('\Errors');
 end;
 
+procedure TLaTeXWriter.StartVersion;
+begin
+  Writeln('\VersionInfo');
+end;
+
 Procedure TLatexWriter.StartAccess;
 
 begin
@@ -613,19 +661,19 @@ begin
   WriteLn('\end{tabularx}');
 end;
 
-procedure TLatexWriter.WriteOverviewMember(ALabel,AName,Access,ADescr : String);
+procedure TLatexWriter.WriteOverviewMember(const ALabel,AName,Access,ADescr : String);
 
 begin
-  WriteLnF('\pageref{%s} & %s & %s & %s \\',[ALabel,AName,Access,ADescr]);
+  WriteLnF('\pageref{%s} & %s & %s & %s \\',[ALabel,EscapeText(AName),Access,ADescr]);
 end;
 
-procedure TLatexWriter.WriteOverviewMember(ALabel,AName,ADescr : String);
+procedure TLatexWriter.WriteOverviewMember(const ALabel,AName,ADescr : String);
 
 begin
-  WriteLnF('\pageref{%s} & %s  & %s \\',[ALabel,AName,ADescr]);
+  WriteLnF('\pageref{%s} & %s  & %s \\',[ALabel,EscapeText(AName),ADescr]);
 end;
 
-function TLaTeXWriter.FileNameExtension: String;
+class function TLaTeXWriter.FileNameExtension: String;
 begin
   Result:=TexExtension;
 end;
@@ -651,7 +699,7 @@ procedure TLatexWriter.StartUnitOverview(AModuleName,AModuleLabel : String);
 
 begin
   WriteLnF('\begin{FPCltable}{lr}{%s}{%s:0units}',
-    [Format(SDocUsedUnitsByUnitXY, [AModuleName]), AModuleName]);
+    [Format(SDocUsedUnitsByUnitXY, [EscapeText(AModuleName)]), StripText(AModuleName)]);
   WriteLn('Name & Page \\ \hline');
 end;
 
@@ -659,7 +707,7 @@ procedure TLatexWriter.WriteUnitEntry(UnitRef : TPasType);
 
 begin
   WriteLnF('%s\index{unit!%s} & \pageref{%s} \\',
-     [UnitRef.Name, UnitRef.Name, StripText(GetLabel(UnitRef))]);
+     [EscapeText(UnitRef.Name), EscapeText(UnitRef.Name), StripText(GetLabel(UnitRef))]);
 end;
 
 procedure TLatexWriter.EndUnitOverview;
@@ -676,6 +724,8 @@ begin
     LatexHighLight:=True
   else if Cmd = '--latex-extension' then
      TexExtension:=Arg
+  else if Cmd = '--image-dir' then
+     ImageDir:=Arg
   else
     Result:=False;
 end;
@@ -686,68 +736,3 @@ initialization
 finalization
   UnRegisterWriter('latex');
 end.
-
-
-{
-  $Log: dw_latex.pp,v $
-  Revision 1.11  2005/03/10 20:32:16  michael
-  + Fixed subsection/section writing
-
-  Revision 1.10  2005/02/14 17:13:39  peter
-    * truncate log
-
-  Revision 1.9  2005/01/12 21:11:41  michael
-  + New structure for writers. Implemented TXT writer
-
-  Revision 1.8  2005/01/09 15:59:50  michael
-  + Split out latex writer to linear and latex writer
-
-  Revision 1.7  2004/11/15 18:01:16  michael
-  + Example fixes, and more escape seqences
-
-  Revision 1.6  2004/07/23 23:39:48  michael
-  + Some fixes in verbatim writing
-
-  Revision 1.5  2004/06/06 10:53:02  michael
-  + Added Topic support
-
-  Revision 1.4  2003/03/18 19:28:44  michael
-  + Some changes to output handling, more suitable for tex output
-
-  Revision 1.3  2003/03/18 19:12:29  michael
-  + More EscapeText calls needed
-
-  Revision 1.2  2003/03/18 01:11:51  michael
-  + Some fixes to deal with illegal tex characters
-
-  Revision 1.1  2003/03/17 23:03:20  michael
-  + Initial import in CVS
-
-  Revision 1.13  2003/03/13 22:02:13  sg
-  * New version with many bugfixes and our own parser (now independent of the
-    compiler source)
-
-  Revision 1.12  2002/10/20 22:49:31  michael
-  + Sorted all overviews. Added table with enumeration values for enumerated types.
-
-  Revision 1.11  2002/05/24 00:13:22  sg
-  * much improved new version, including many linking and output fixes
-
-  Revision 1.10  2002/03/12 10:58:36  sg
-  * reworked linking engine and internal structure
-
-  Revision 1.9  2002/01/20 11:19:55  michael
-  + Added link attribute and property to TFPElement
-
-  Revision 1.8  2002/01/08 13:00:06  michael
-  + Added correct array handling and syntax highlighting is now optional
-
-  Revision 1.7  2002/01/08 08:22:40  michael
-  + Implemented latex writer
-
-  Revision 1.6  2001/12/17 14:41:42  michael
-  + Split out of latex writer
-
-  Revision 1.5  2001/12/17 13:41:18  jonas
-    * OsPathSeparator -> PathDelim
-}

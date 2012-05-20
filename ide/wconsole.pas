@@ -1,5 +1,4 @@
 {
-    $Id: wconsole.pas,v 1.9 2005/02/14 17:13:18 peter Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 2001 by Pierre Muller
 
@@ -18,12 +17,7 @@ unit WConsole;
 interface
 {$ifdef UNIX}
    uses
-     TermInfo,
-{$Ifdef ver1_0}
-     linux;
-{$else}
      termio;
-{$endif}
 {$endif UNIX}
 
   type
@@ -34,36 +28,51 @@ interface
 {$ifdef UNIX}
       TermIos
 {$endif UNIX}
-{$ifdef Win32}
+{$ifdef Windows}
       dword
-{$endif Win32}
+{$endif Windows}
 {$ifdef go32v2}
       longint
 {$endif go32v2}
 {$ifdef netware}
       longint
 {$endif netware}
+{$ifdef amiga}
+      longint
+{$endif amiga}
+{$ifdef morphos}
+      longint
+{$endif morphos}
     ;
-
 Procedure SaveConsoleMode(var ConsoleMode : TConsoleMode);
 Procedure RestoreConsoleMode(const ConsoleMode : TConsoleMode);
 
 implementation
-{$ifdef Win32}
+{$ifdef Windows}
   uses
+    wutils,
     windows;
-{$endif Win32}
+{$endif Windows}
+{$ifdef GO32V2}
+  uses
+    Dpmiexcp;
+{$endif GO32V2}
 
 Procedure SaveConsoleMode(var ConsoleMode : TConsoleMode);
 Begin
 {$ifdef UNIX}
   TCGetAttr(1,ConsoleMode);
 {$endif UNIX}
-{$ifdef Win32}
-  GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE),ConsoleMode);
-{$endif Win32}
+{$ifdef Windows}
+  if not GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE),ConsoleMode) then
+    DebugMessage('','Call to GetConsoleMode failed, GetLastError='+
+        IntToStr(GetLastError),0,0);
+{$endif Windows}
 {$ifdef go32v2}
-  ConsoleMode:=0;
+  if djgpp_set_ctrl_c(false) then
+    ConsoleMode:=1
+  else
+    ConsoleMode:=0;
 {$endif go32v2}
 {$ifdef netware}
   ConsoleMode:=0;
@@ -75,18 +84,14 @@ Begin
 {$ifdef UNIX}
   TCSetAttr(1,TCSANOW,ConsoleMode);
 {$endif UNIX}
-{$ifdef Win32}
-  SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE),ConsoleMode);
-{$endif Win32}
+{$ifdef Windows}
+  if not SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE),ConsoleMode) then
+    DebugMessage('','Call to SetConsoleMode failed, GetLastError='+
+        IntToStr(GetLastError),0,0);
+{$endif Windows}
 {$ifdef go32v2}
+  djgpp_set_ctrl_c((ConsoleMode and 1)<>0);
 {$endif go32v2}
 End;
 
 end.
-
-{
-  $Log: wconsole.pas,v $
-  Revision 1.9  2005/02/14 17:13:18  peter
-    * truncate log
-
-}

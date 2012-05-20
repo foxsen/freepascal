@@ -1,5 +1,4 @@
 {
-    $Id: ppheap.pas,v 1.16 2005/02/14 17:13:07 peter Exp $
     Copyright (c) 1998-2002 by Pierre Muller
 
     Simple unit to add source line and column to each
@@ -107,26 +106,16 @@ implementation
       begin
         with pextra_info(p)^ do
          begin
-           line:=aktfilepos.line;
-           col:=aktfilepos.column;
+           line:=current_filepos.line;
+           col:=current_filepos.column;
            if assigned(current_module) then
-            fileindex:=current_module.unit_index*100000+aktfilepos.fileindex
+            fileindex:=current_module.unit_index*100000+current_filepos.fileindex
            else
-            fileindex:=aktfilepos.fileindex;
+            fileindex:=current_filepos.fileindex;
          end;
       end;
 
 
-{$ifdef VER1_0}
-    function get_extra_info(p : pointer) : string;
-      begin
-        with pextra_info(p)^ do
-         begin
-           get_extra_info:=getfilename(fileindex)+'('+tostr(line)+','+tostr(col)+
-             ') ';
-         end;
-      end;
-{$else}
     procedure show_extra_info(var t : text;p : pointer);
       begin
         with pextra_info(p)^ do
@@ -134,7 +123,6 @@ implementation
            writeln(t,getfilename(fileindex)+'('+tostr(line)+','+tostr(col)+') ');
          end;
       end;
-{$endif}
 
 
   const
@@ -146,13 +134,9 @@ implementation
          begin
             keepreleased:=true;
             SetHeapTraceOutput('heap.log');
-{$ifdef VER1_0}
-            SetExtraInfoString(@get_extra_info);
-{$else}
             SetHeapExtraInfo(sizeof(textra_info),
                              @set_extra_info,
                              @show_extra_info);
-{$endif}
          end;
        pp_heap_inited:=true;
     end;
@@ -161,9 +145,3 @@ implementation
 begin
   pp_heap_init;
 end.
-{
-  $Log: ppheap.pas,v $
-  Revision 1.16  2005/02/14 17:13:07  peter
-    * truncate log
-
-}

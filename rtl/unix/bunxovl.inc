@@ -1,5 +1,4 @@
 {
-    $Id: bunxovl.inc,v 1.18 2005/02/14 17:13:31 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2002 by Marco van de Voort
 
@@ -14,40 +13,36 @@
 
  **********************************************************************}
 
-{$if defined(CPUARM) or defined(CPUX86_64) or defined(CPUSPARC)}
-  {$define RTSIGACTION}
-{$endif}
-
 {$I textrec.inc}
 {$I filerec.inc}
 
-Function  FpLink (existing : AnsiString; newone : AnsiString): cInt;
+Function  FpLink (existing : AnsiString; newone : AnsiString): cInt; {$ifdef VER2_0}inline;{$endif}
 Begin
   FpLink:=FpLink(pchar(existing),pchar(newone));
 End;
 
-Function  FpMkfifo (path : AnsiString; Mode : TMode): cInt;
+Function  FpMkfifo (path : AnsiString; Mode : TMode): cInt; {$ifdef VER2_0}inline;{$endif}
 Begin
   FpMkfifo:=FpMkfifo(pchar(path),mode);
 End;
 
-Function  FpChmod (path : AnsiString; Mode : TMode): cInt;
+Function  FpChmod (path : AnsiString; Mode : TMode): cInt; {$ifdef VER2_0}inline;{$endif}
 Begin
   FpChmod:=FpChmod(pchar(path),mode);
 End;
 
-Function  FpChown (path : AnsiString; owner : TUid; group : TGid): cInt;
+Function  FpChown (path : AnsiString; owner : TUid; group : TGid): cInt;{$ifdef VER2_0}inline;{$endif}
 Begin
   FpChown:=FpChown(pchar(path),owner,group);
 End;
 
-Function  FpUtime (path : AnsiString; times : putimbuf): cInt;
+Function  FpUtime (path : AnsiString; times : putimbuf): cInt; {$ifdef VER2_0}inline;{$endif}
 Begin
   FpUtime:=FpUtime(pchar(path),times);
 End;
 
 {
-Function  FpGetcwd (path:AnsiString; siz:TSize):AnsiString;
+Function  FpGetcwd (path:AnsiString; siz:TSize):AnsiString; {$ifdef VER2_0}inline;{$endif}
 Begin
   FpGetcwd:=ansistring(pchar(FpGetcwd(pchar(path),siz)));
 End;
@@ -64,59 +59,76 @@ Begin
     FpGetcwd:=Buf;
 End;
 
-Function  FpExecve (path : AnsiString; argv : ppchar; envp: ppchar): cInt;
+Function  FpExecve (path : AnsiString; argv : ppchar; envp: ppchar): cInt; {$ifdef VER2_0}inline;{$endif}
 Begin
   FpExecve:=FpExecve (pchar(path),argv,envp);
 End;
 
-Function  FpExecv (path : AnsiString; argv : ppchar): cInt;
+Function  FpExecv (path : AnsiString; argv : ppchar): cInt; {$ifdef VER2_0}inline;{$endif}
 Begin
   FpExecv:=FpExecve (pchar(path),argv,envp);
 End;
 
 
-Function  FpChdir (path : AnsiString): cInt;
+Function  FpChdir (path : AnsiString): cInt; {$ifdef VER2_0}inline;{$endif}
 Begin
  FpChDir:=FpChdir(pchar(Path));
 End;
 
-Function  FpOpen (path : AnsiString; flags : cInt; Mode: TMode):cInt;
+Function  FpOpen (path : AnsiString; flags : cInt; Mode: TMode):cInt; {$ifdef VER2_0}inline;{$endif}
 Begin
   FpOpen:=FpOpen(pchar(Path),flags,mode);
 End;
 
 
-Function  FpMkdir (path : AnsiString; Mode: TMode):cInt;
+Function  FpMkdir (path : AnsiString; Mode: TMode):cInt; {$ifdef VER2_0}inline;{$endif}
 Begin
   FpMkdir:=FpMkdir(pchar(Path),mode);
 End;
 
-Function  FpUnlink (path : AnsiString): cInt;
+Function  FpUnlink (path : AnsiString): cInt; {$ifdef VER2_0}inline;{$endif}
 Begin
   FpUnlink:=FpUnlink(pchar(path));
 End;
 
-Function  FpRmdir (path : AnsiString): cInt;
+Function  FpRmdir (path : AnsiString): cInt; {$ifdef VER2_0}inline;{$endif}
 Begin
   FpRmdir:=FpRmdir(pchar(path));
 End;
 
-Function  FpRename (old  : AnsiString;newpath: AnsiString): cInt;
+Function  FpRename (old  : AnsiString;newpath: AnsiString): cInt; {$ifdef VER2_0}inline;{$endif}
 Begin
   FpRename:=FpRename(pchar(old),pchar(newpath));
 End;
 
-Function  FpStat (path: AnsiString; var buf : stat): cInt;
+Function  FpStat (path: AnsiString; var buf : stat): cInt; {$ifdef VER2_0}inline;{$endif}
 begin
   FpStat:=FpStat(pchar(path),buf);
 End;
 
-Function FpAccess (pathname : AnsiString; aMode : cInt): cInt;
+Function  fpLstat   (path: Ansistring; Info: pstat):cint; inline;
+begin
+  fplstat:=fplstat(pchar(path), info);
+end;
+
+Function  fpLstat   (path:pchar;var Info:stat):cint; inline;
+
+begin
+  fpLstat:=fplstat(path,@info);
+end;
+
+Function  fpLstat   (Filename: ansistring;var Info:stat):cint; inline;
+
+begin
+  fpLstat:=fplstat(filename,@info);
+end;
+
+Function FpAccess (pathname : AnsiString; aMode : cInt): cInt; {$ifdef VER2_0}inline;{$endif}
 Begin
   FpAccess:=FpAccess(pchar(pathname),amode);
 End;
 
-Function  FPFStat(var F:Text;Var Info:stat):Boolean;
+Function  FPFStat(var F:Text;Var Info:stat):Boolean; {$ifdef VER2_0}inline;{$endif}
 {
   Get all information on a text file, and return it in info.
 }
@@ -124,7 +136,7 @@ begin
   FPFStat:=FPFstat(TextRec(F).Handle,INfo)=0;
 end;
 
-Function  FPFStat(var F:File;Var Info:stat):Boolean;
+Function  FPFStat(var F:File;Var Info:stat):Boolean; {$ifdef VER2_0}inline;{$endif}
 {
   Get all information on a untyped file, and return it in info.
 }
@@ -139,19 +151,12 @@ var sa,osa : sigactionrec;
 
 begin
      sa.sa_handler:=SigActionHandler(handler);
-     FillChar(sa.sa_mask,sizeof(sigset),#0);
+     FillChar(sa.sa_mask,sizeof(sa.sa_mask),#0);
      sa.sa_flags := 0;
 {     if (sigintr and signum) =0 then
  {restart behaviour needs libc}
       sa.sa_flags :=sa.sa_flags or SA_RESTART;
 }
-{$ifdef RTSIGACTION}
-      sa.sa_flags:=SA_SIGINFO
-{$ifdef cpux86_64}
-         or $4000000
-{$endif cpux86_64}
-      ;
-{$endif RTSIGACTION}
      FPSigaction(signum,@sa,@osa);
      if fpgetErrNo<>0 then
        fpsignal:=NIL
@@ -165,24 +170,38 @@ function xFpread(fd: cint; buf: pchar; nbytes : size_t): ssize_t; cdecl; externa
 function xFpread(fd: cint; buf: pchar; nbytes : size_t): ssize_t; external name 'FPC_SYSC_READ';
 {$endif}
 
-Function  FpRead           (fd : cInt;var buf; nbytes : TSize): TSsize;
+Function  FpRead           (fd : cInt;var buf; nbytes : TSize): TSsize; {$ifdef VER2_0}inline;{$endif}
 
 begin
   FPRead:=xFpRead(fd,pchar(@buf),nbytes);
 end;
 
-Function  FpWrite          (fd : cInt;const buf; nbytes : TSize): TSsize;
+Function  FpWrite          (fd : cInt;const buf; nbytes : TSize): TSsize; {$ifdef VER2_0}inline;{$endif}
 begin
  FpWrite:=FpWrite(fd,pchar(@buf),nbytes);
 end;
 
-Function  FpOpen    (path : pChar; flags : cInt):cInt;
+{$ifdef linux}
+function  FppRead           (fd : cInt;var buf; nbytes : TSize; offset:Toff): TSsize; {$ifdef VER2_0}inline;{$endif}
+
+begin
+  FppRead:=FppRead(fd,pchar(@buf),nbytes,offset);
+end;
+
+function  FppWrite          (fd : cInt;const buf; nbytes : TSize; offset:Toff): TSsize; {$ifdef VER2_0}inline;{$endif}
+
+begin
+  FppWrite:=FppWrite(fd,pchar(@buf),nbytes,offset);
+end;
+{$endif}
+
+Function  FpOpen    (path : pChar; flags : cInt):cInt; {$ifdef VER2_0}inline;{$endif}
 
 begin
  FpOpen:=FpOpen(path,flags,438);
 end;
 
-Function  FpOpen    (path : AnsiString; flags : cInt):cInt;
+Function  FpOpen    (path : AnsiString; flags : cInt):cInt; {$ifdef VER2_0}inline;{$endif}
 
 begin
  FpOpen:=FpOpen(pchar(path),flags,438);
@@ -202,13 +221,13 @@ begin
  FpOpen:=FpOpen(@path[1],flags,Mode);
 end;
 
-Function  FpOpendir (dirname : AnsiString): pDir;
+Function  FpOpendir (dirname : AnsiString): pDir; {$ifdef VER2_0}inline;{$endif}
 Begin
   FpOpenDir:=FpOpenDir(pchar(dirname));
 End;
 
 
-Function  FpOpendir (dirname : shortString): pDir;
+Function  FpOpendir (dirname : shortString): pDir; {$ifdef VER2_0}inline;{$endif}
 Begin
   dirname:=dirname+#0;
   FpOpenDir:=FpOpenDir(pchar(@dirname[1]));
@@ -279,12 +298,16 @@ Function FpDup2(var oldfile,newfile:file):cint;
 {
   Copies the filedescriptor oldfile to newfile
 }
+var
+  tmphandle : word;
 begin
+  tmphandle := filerec(newfile).handle;
   filerec(newfile):=filerec(oldfile);
+  filerec(newfile).handle := tmphandle;
   fpDup2:=fpDup2(filerec(oldfile).handle,filerec(newfile).handle);
 end;
 
-function  fptime    :time_t;
+function  fptime    :time_t;  {$ifdef VER2_0}inline;{$endif}
 var t:time_t;
 begin
   fptime:=fptime(t);
@@ -370,14 +393,3 @@ begin
 end;
 
 
-{
- $Log: bunxovl.inc,v $
- Revision 1.18  2005/02/14 17:13:31  peter
-   * truncate log
-
- Revision 1.17  2005/01/30 18:01:15  peter
-   * signal cleanup for linux
-   * sigactionhandler instead of tsigaction for bsds
-   * sigcontext moved to cpu dir
-
-}

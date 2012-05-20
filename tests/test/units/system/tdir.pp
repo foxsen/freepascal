@@ -6,6 +6,9 @@
 { Creates the following directory, and sets it as the     }
 { current directory.                                      }
 {    ../testdir                                           }
+
+{ %skiptarget=wince }
+
 Program tdir;
 {$I-}
 
@@ -63,11 +66,3 @@ Begin
    getdir(0,s);
    WriteLn(s);
 end.
-
-{
- $Log: tdir.pp,v $
- Revision 1.5  2005/02/14 17:13:37  peter
-   * truncate log
-
-}
-

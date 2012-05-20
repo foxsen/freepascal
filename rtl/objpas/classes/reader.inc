@@ -1,5 +1,4 @@
 {
-    $Id: reader.inc,v 1.19 2005/04/15 07:21:09 michael Exp $
     This file is part of the Free Component Library (FCL)
     Copyright (c) 1999-2000 by the Free Pascal development team
 
@@ -14,6 +13,100 @@
 {****************************************************************************}
 {*                       TBinaryObjectReader                                *}
 {****************************************************************************}
+
+{$ifndef FPUNONE}
+{$IFNDEF FPC_HAS_TYPE_EXTENDED}
+function ExtendedToDouble(e : pointer) : double;
+var mant : qword;
+    exp : smallint;
+    sign : boolean;
+    d : qword;
+begin
+  move(pbyte(e)[0],mant,8); //mantissa         : bytes 0..7
+  move(pbyte(e)[8],exp,2);  //exponent and sign: bytes 8..9
+  mant:=LEtoN(mant);
+  exp:=LEtoN(word(exp));
+  sign:=(exp and $8000)<>0;
+  if sign then exp:=exp and $7FFF;
+  case exp of
+        0 : mant:=0;  //if denormalized, value is too small for double,
+                      //so it's always zero
+    $7FFF : exp:=2047 //either infinity or NaN
+    else
+    begin
+      dec(exp,16383-1023);
+      if (exp>=-51) and (exp<=0) then //can be denormalized
+      begin
+        mant:=mant shr (-exp);
+        exp:=0;
+      end
+      else
+      if (exp<-51) or (exp>2046) then //exponent too large.
+      begin
+        Result:=0;
+        exit;
+      end
+      else //normalized value
+        mant:=mant shl 1; //hide most significant bit
+    end;
+  end;
+  d:=word(exp);
+  d:=d shl 52;
+
+  mant:=mant shr 12;
+  d:=d or mant;
+  if sign then d:=d or $8000000000000000;
+  Result:=pdouble(@d)^;
+end;
+{$ENDIF}
+{$endif}
+
+function TBinaryObjectReader.ReadWord : word; {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
+begin
+  Read(Result,2);
+  Result:=LEtoN(Result);
+end;
+
+function TBinaryObjectReader.ReadDWord : longword; {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
+begin
+  Read(Result,4);
+  Result:=LEtoN(Result);
+end;
+
+function TBinaryObjectReader.ReadQWord : qword; {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
+begin
+  Read(Result,8);
+  Result:=LEtoN(Result);
+end;
+
+{$IFDEF FPC_DOUBLE_HILO_SWAPPED}
+procedure SwapDoubleHiLo(var avalue: double); {$ifdef CLASSESINLINE}inline{$endif CLASSESINLINE}
+var dwo1 : dword;
+type tdoublerec = array[0..1] of dword;
+begin
+  dwo1:= tdoublerec(avalue)[0];
+  tdoublerec(avalue)[0]:=tdoublerec(avalue)[1];
+  tdoublerec(avalue)[1]:=dwo1;
+end;
+{$ENDIF FPC_DOUBLE_HILO_SWAPPED}
+
+{$ifndef FPUNONE}
+function TBinaryObjectReader.ReadExtended : extended; {$ifdef CLASSESINLINE}inline;{$endif CLASSESINLINE}
+{$IFNDEF FPC_HAS_TYPE_EXTENDED}
+var ext : array[0..9] of byte;
+{$ENDIF}
+begin
+  {$IFNDEF FPC_HAS_TYPE_EXTENDED}
+  Read(ext[0],10);
+  Result:=ExtendedToDouble(@(ext[0]));
+  {$IFDEF FPC_DOUBLE_HILO_SWAPPED}
+  SwapDoubleHiLo(result);
+  {$ENDIF}
+  {$ELSE}
+  Read(Result,sizeof(Result));
+  {$ENDIF}
+end;
+{$endif}
 
 constructor TBinaryObjectReader.Create(Stream: TStream; BufSize: Integer);
 begin
@@ -37,9 +130,11 @@ begin
 end;
 
 function TBinaryObjectReader.ReadValue: TValueType;
+var
+  b: byte;
 begin
-  Result := vaNull; { Necessary in FPC as TValueType is larger than 1 byte! }
-  Read(Result, 1);
+  Read(b, 1);
+  Result := TValueType(b);
 end;
 
 function TBinaryObjectReader.NextValue: TValueType;
@@ -55,7 +150,7 @@ var
 begin
   { Read filer signature }
   Read(Signature, 4);
-  if Signature <> LongInt(FilerSignature) then
+  if Signature <> LongInt(unaligned(FilerSignature)) then
     raise EReadError.Create(SInvalidImage);
 end;
 
@@ -100,32 +195,34 @@ procedure TBinaryObjectReader.ReadBinary(const DestData: TMemoryStream);
 var
   BinSize: LongInt;
 begin
-  Read(BinSize, 4);
+  BinSize:=LongInt(ReadDWord);
   DestData.Size := BinSize;
   Read(DestData.Memory^, BinSize);
 end;
 
+{$ifndef FPUNONE}
 function TBinaryObjectReader.ReadFloat: Extended;
 begin
-  Read(Result, SizeOf(Extended))
+  Result:=ReadExtended;
 end;
 
 function TBinaryObjectReader.ReadSingle: Single;
 begin
-  Read(Result, SizeOf(Single))
+  Result:=single(ReadDWord);
 end;
+{$endif}
 
-{$ifdef HASCURRENCY}
 function TBinaryObjectReader.ReadCurrency: Currency;
 begin
-  Read(Result, SizeOf(Currency))
+  Result:=currency(ReadQWord);
 end;
-{$endif  HASCURRENCY}
 
+{$ifndef FPUNONE}
 function TBinaryObjectReader.ReadDate: TDateTime;
 begin
-  Read(Result, SizeOf(TDateTime))
+  Result:=TDateTime(ReadQWord);
 end;
+{$endif}
 
 function TBinaryObjectReader.ReadIdent(ValueType: TValueType): String;
 var
@@ -156,20 +253,22 @@ end;
 
 function TBinaryObjectReader.ReadInt16: SmallInt;
 begin
-  Read(Result, 2);
+  Result:=SmallInt(ReadWord);
 end;
 
 function TBinaryObjectReader.ReadInt32: LongInt;
 begin
-  Read(Result, 4);
+  Result:=LongInt(ReadDWord);
 end;
 
 function TBinaryObjectReader.ReadInt64: Int64;
 begin
-  Read(Result, 8);
+  Result:=Int64(ReadQWord);
 end;
 
 function TBinaryObjectReader.ReadSet(EnumType: Pointer): Integer;
+type
+  tset = set of 0..31;
 var
   Name: String;
   Value: Integer;
@@ -184,7 +283,7 @@ begin
       Value := GetEnumValue(PTypeInfo(EnumType), Name);
       if Value = -1 then
         raise EReadError.Create(SInvalidPropertyValue);
-      Result := Result or (1 shl Value);
+      include(tset(result),Value);
     end;
   except
     SkipSetBody;
@@ -204,16 +303,18 @@ end;
 
 function TBinaryObjectReader.ReadString(StringType: TValueType): String;
 var
+  b: Byte;
   i: Integer;
 begin
   case StringType of
-    vaString:
+    vaLString, vaUTF8String:
+      i:=ReadDWord;
+    else
+    //vaString:
       begin
-        i := 0;
-        Read(i, 1);
+        Read(b, 1);
+        i := b;
       end;
-    vaLString:
-      Read(i, 4);
   end;
   SetLength(Result, i);
   if i > 0 then
@@ -221,18 +322,43 @@ begin
 end;
 
 
-{$ifdef HASWIDESTRING}
 function TBinaryObjectReader.ReadWideString: WideString;
 var
-  i: Integer;
+  len: DWord;
+{$IFDEF ENDIAN_BIG}
+  i : integer;
+{$ENDIF}
 begin
-  Read(i, 4);
-  SetLength(Result, i);
-  if i > 0 then
-    Read(Pointer(@Result[1])^, i*2);
+  len := ReadDWord;
+  SetLength(Result, len);
+  if (len > 0) then
+  begin
+    Read(Pointer(@Result[1])^, len*2);
+    {$IFDEF ENDIAN_BIG}
+    for i:=1 to len do
+      Result[i]:=widechar(SwapEndian(word(Result[i])));
+    {$ENDIF}
+  end;
 end;
-{$endif HASWIDESTRING}
 
+function TBinaryObjectReader.ReadUnicodeString: UnicodeString;
+var
+  len: DWord;
+{$IFDEF ENDIAN_BIG}
+  i : integer;
+{$ENDIF}
+begin
+  len := ReadDWord;
+  SetLength(Result, len);
+  if (len > 0) then
+  begin
+    Read(Pointer(@Result[1])^, len*2);
+    {$IFDEF ENDIAN_BIG}
+    for i:=1 to len do
+      Result[i]:=UnicodeChar(SwapEndian(word(Result[i])));
+    {$ENDIF}
+  end;
+end;
 
 procedure TBinaryObjectReader.SkipComponent(SkipComponentInfos: Boolean);
 var
@@ -291,17 +417,22 @@ begin
     vaInt32:
       SkipBytes(4);
     vaExtended:
-      SkipBytes(SizeOf(Extended));
+      SkipBytes(10);
     vaString, vaIdent:
       ReadStr;
     vaBinary, vaLString:
       begin
-        Read(Count, 4);
+        Count:=LongInt(ReadDWord);
         SkipBytes(Count);
       end;
     vaWString:
       begin
-        Read(Count, 4);
+        Count:=LongInt(ReadDWord);
+        SkipBytes(Count*sizeof(widechar));
+      end;
+    vaUString:
+      begin
+        Count:=LongInt(ReadDWord);
         SkipBytes(Count*sizeof(widechar));
       end;
     vaSet:
@@ -321,12 +452,14 @@ begin
         ReadValue;
       end;
     vaSingle:
+{$ifndef FPUNONE}
       SkipBytes(Sizeof(Single));
+{$else}
+      SkipBytes(4);
+{$endif}
     {!!!: vaCurrency:
       SkipBytes(SizeOf(Currency));}
-    vaDate:
-      SkipBytes(Sizeof(TDateTime));
-    vaInt64:
+    vaDate, vaInt64:
       SkipBytes(8);
   end;
 end;
@@ -406,28 +539,30 @@ type
 
 function GetFieldClass(Instance: TObject; const ClassName: string): TPersistentClass;
 var
-  UClassName: String;
+  ShortClassName: shortstring;
   ClassType: TClass;
   ClassTable: PFieldClassTable;
   i: Integer;
-{  FieldTable: PFieldTable; }
+  FieldTable: PFieldTable;
 begin
   // At first, try to locate the class in the class tables
-  UClassName := UpperCase(ClassName);
+  ShortClassName := ClassName;
   ClassType := Instance.ClassType;
   while ClassType <> TPersistent do
   begin
-{    FieldTable := PFieldTable((Pointer(ClassType) + vmtFieldTable)^); }
-    ClassTable := PFieldTable((Pointer(ClassType) + vmtFieldTable)^)^.ClassTable;
-    if Assigned(ClassTable) then
+    FieldTable := PFieldTable(PVmt(ClassType)^.vFieldTable);
+    if Assigned(FieldTable) then
+    begin
+      ClassTable := FieldTable^.ClassTable;
       for i := 0 to ClassTable^.Count - 1 do
       begin
         Result := ClassTable^.Entries[i];
-        if UpperCase(Result.ClassName) = UClassName then
+        if Result.ClassNameIs(ShortClassName) then
           exit;
       end;
-     // Try again with the parent class type
-     ClassType := ClassType.ClassParent;
+    end;
+    // Try again with the parent class type
+    ClassType := ClassType.ClassParent;
   end;
   Result := Classes.GetClass(ClassName);
 end;
@@ -454,13 +589,7 @@ end;
 
 procedure TReader.BeginReferences;
 begin
-  FLoaded := TList.Create;
-  try
-    FFixups := TList.Create;
-  except
-    FLoaded.Free;
-    raise;
-  end;
+  FLoaded := TFpList.Create;
 end;
 
 procedure TReader.CheckValue(Value: TValueType);
@@ -516,7 +645,6 @@ end;
 
 procedure TReader.EndReferences;
 begin
-  FreeFixups;
   FLoaded.Free;
   FLoaded := nil;
 end;
@@ -543,51 +671,43 @@ begin
     raise EReadError.Create(SInvalidPropertyValue);
 end;
 
-procedure RemoveGlobalFixup(Fixup: TPropFixup);
-var
-  i: Integer;
-begin
-  with GlobalFixupList.LockList do
-    try
-      for i := Count - 1 downto 0 do
-        with TPropFixup(Items[i]) do
-          if (FInstance = Fixup.FInstance) and
-            (FPropInfo = Fixup.FPropInfo) then
-          begin
-            Free;
-            Delete(i);
-          end;
-    finally
-      GlobalFixupList.UnlockList;
-    end;
-end;
-
 procedure TReader.DoFixupReferences;
-var
-  i: Integer;
-  CurFixup: TPropFixup;
-  CurName: String;
-  Target: Pointer;
+
+Var
+  R,RN : TLocalUnresolvedReference;
+  G : TUnresolvedInstance;
+  Ref : String;
+  C : TComponent;
+  P : integer;
+  L : TLinkedList;
+  
 begin
-  if Assigned(FFixups) then
-    try
-      for i := 0 to FFixups.Count - 1 do
+  If Assigned(FFixups) then
+    begin
+    L:=TLinkedList(FFixups);
+    R:=TLocalUnresolvedReference(L.Root);
+    While (R<>Nil) do
       begin
-        CurFixup := TPropFixup(FFixups[i]);
-        CurName := CurFixup.FName;
-        if Assigned(FOnReferenceName) then
-          FOnReferenceName(Self, CurName);
-        Target := FindNestedComponent(CurFixup.FInstanceRoot, CurName);
-        RemoveGlobalFixup(CurFixup);
-        if (not Assigned(Target)) and CurFixup.MakeGlobalReference then
+      RN:=TLocalUnresolvedReference(R.Next);
+      Ref:=R.FRelative;
+      If Assigned(FOnReferenceName) then
+        FOnReferenceName(Self,Ref);
+      C:=FindNestedComponent(R.FRoot,Ref);
+      If Assigned(C) then
+        SetObjectProp(R.FInstance,R.FPropInfo,C)
+      else
         begin
-          GlobalFixupList.Add(CurFixup);
-          FFixups[i] := nil;
-        end else
-          SetOrdProp(CurFixup.FInstance, CurFixup.FPropInfo, LongInt(Target));
+        P:=Pos('.',R.FRelative);
+        If (P<>0) then
+          begin
+          G:=AddToResolveList(R.FInstance);
+          G.Addreference(R.FRoot,R.FPropInfo,Copy(R.FRelative,1,P-1),Copy(R.FRelative,P+1,Length(R.FRelative)-P));
+          end;
+        end;
+      L.RemoveItem(R,True);
+      R:=RN;
       end;
-    finally
-      FreeFixups;
+    FreeAndNil(FFixups);
     end;
 end;
 
@@ -601,22 +721,17 @@ begin
     TComponent(FLoaded[I]).Loaded;
 end;
 
-procedure TReader.FreeFixups;
-var
-  i: Integer;
-begin
-  if Assigned(FFixups) then
-  begin
-    for i := 0 to FFixups.Count - 1 do
-      TPropFixup(FFixups[I]).Free;
-    FFixups.Free;
-    FFixups := nil;
-  end;
-end;
 
 function TReader.NextValue: TValueType;
 begin
   Result := FDriver.NextValue;
+end;
+
+procedure TReader.Read(var Buf; Count: LongInt);
+begin
+  //This should give an exception if read is not implemented (i.e. TTextObjectReader)
+  //but should work with TBinaryObjectReader.
+  Driver.Read(Buf, Count);
 end;
 
 procedure TReader.PropertyError;
@@ -649,28 +764,48 @@ begin
     raise EReadError.Create(SInvalidPropertyValue);
 end;
 
+function TReader.ReadWideChar: WideChar;
+
+var
+  W: WideString;
+  
+begin
+  W := ReadWideString;
+  if Length(W) = 1 then
+    Result := W[1]
+  else
+    raise EReadError.Create(SInvalidPropertyValue);
+end;
+            
+function TReader.ReadUnicodeChar: UnicodeChar;
+
+var
+  U: UnicodeString;
+  
+begin
+  U := ReadUnicodeString;
+  if Length(U) = 1 then
+    Result := U[1]
+  else
+    raise EReadError.Create(SInvalidPropertyValue);
+end;
+            
 procedure TReader.ReadCollection(Collection: TCollection);
 var
-  Item: TPersistent;
+  Item: TCollectionItem;
 begin
   Collection.BeginUpdate;
-  try
-    if not EndOfList then
-      Collection.Clear;
-    while not EndOfList do
-    begin
-      if FDriver.NextValue in [vaInt8, vaInt16, vaInt32] then
-        ReadInteger;            { Skip order value }
-      Item := Collection.Add;
-      ReadListBegin;
-      while not EndOfList do
-        ReadProperty(Item);
-      ReadListEnd;
-    end;
+  if not EndOfList then
+    Collection.Clear;
+  while not EndOfList do begin
+    ReadListBegin;
+    Item := Collection.Add;
+    while NextValue<>vaNull do
+      ReadProperty(Item);
     ReadListEnd;
-  finally
-    Collection.EndUpdate;
   end;
+  Collection.EndUpdate;
+  ReadListEnd;
 end;
 
 function TReader.ReadComponent(Component: TComponent): TComponent;
@@ -822,49 +957,37 @@ end;
 
 procedure TReader.ReadData(Instance: TComponent);
 var
-  DoFreeFixups: Boolean;
   SavedOwner, SavedParent: TComponent;
+  
 begin
-  if not Assigned(FFixups) then
-  begin
-    FFixups := TList.Create;
-    DoFreeFixups := True;
-  end else
-    DoFreeFixups := False;
+  { Read properties }
+  while not EndOfList do
+    ReadProperty(Instance);
+  ReadListEnd;
 
+  { Read children }
+  SavedOwner := Owner;
+  SavedParent := Parent;
   try
-    { Read properties }
+    Owner := Instance.GetChildOwner;
+    if not Assigned(Owner) then
+      Owner := Root;
+    Parent := Instance.GetChildParent;
+
     while not EndOfList do
-      ReadProperty(Instance);
+      ReadComponent(nil);
     ReadListEnd;
-
-    { Read children }
-    SavedOwner := Owner;
-    SavedParent := Parent;
-    try
-      Owner := Instance.GetChildOwner;
-      if not Assigned(Owner) then
-        Owner := Root;
-      Parent := Instance.GetChildParent;
-
-      while not EndOfList do
-        ReadComponent(nil);
-      ReadListEnd;
-    finally
-      Owner := SavedOwner;
-      Parent := SavedParent;
-    end;
-
-    { Fixup references if necessary (normally only if this is the root) }
-    if DoFreeFixups then
-      DoFixupReferences;
-
   finally
-    if DoFreeFixups then
-      FreeFixups;
+    Owner := SavedOwner;
+    Parent := SavedParent;
   end;
+
+  { Fixup references if necessary (normally only if this is the root) }
+  If (Instance=FRoot) then
+    DoFixupReferences;
 end;
 
+{$ifndef FPUNONE}
 function TReader.ReadFloat: Extended;
 begin
   if FDriver.NextValue = vaExtended then
@@ -884,8 +1007,8 @@ begin
   end else
     Result := ReadInteger;
 end;
+{$endif}
 
-{$ifdef HASCURRENCY}
 function TReader.ReadCurrency: Currency;
 begin
   if FDriver.NextValue = vaCurrency then
@@ -895,9 +1018,8 @@ begin
   end else
     Result := ReadInteger;
 end;
-{$endif HASCURRENCY}
 
-
+{$ifndef FPUNONE}
 function TReader.ReadDate: TDateTime;
 begin
   if FDriver.NextValue = vaDate then
@@ -907,6 +1029,7 @@ begin
   end else
     Result := ReadInteger;
 end;
+{$endif}
 
 function TReader.ReadIdent: String;
 var
@@ -944,6 +1067,17 @@ begin
     Result := ReadInteger;
 end;
 
+function TReader.ReadSet(EnumType: Pointer): Integer; 
+begin
+  if FDriver.NextValue = vaSet then
+    begin
+      FDriver.ReadValue;
+      Result := FDriver.ReadSet(enumtype);
+    end 
+  else
+    Result := ReadInteger;
+end;
+
 procedure TReader.ReadListBegin;
 begin
   CheckValue(vaList);
@@ -952,6 +1086,80 @@ end;
 procedure TReader.ReadListEnd;
 begin
   CheckValue(vaNull);
+end;
+
+function TReader.ReadVariant: variant;
+var
+  nv: TValueType;
+begin
+  { Ensure that a Variant manager is installed }
+  if not Assigned(VarClearProc) then
+    raise EReadError.Create(SErrNoVariantSupport);
+
+  FillChar(Result,sizeof(Result),0);
+
+  nv:=NextValue;
+  case nv of
+    vaNil:
+      begin
+        Result:=system.unassigned;
+        readvalue;
+      end;
+    vaNull:
+      begin
+        Result:=system.null;
+        readvalue;
+      end;
+    { all integer sizes must be split for big endian systems }
+    vaInt8,vaInt16,vaInt32:
+      begin
+        Result:=ReadInteger;
+      end;
+    vaInt64:
+      begin
+        Result:=ReadInt64;
+      end;
+    vaQWord:
+      begin
+        Result:=QWord(ReadInt64);
+      end;
+    vaFalse,vaTrue:
+      begin
+        Result:=(nv<>vaFalse);
+      end;
+    vaCurrency:
+      begin
+        Result:=ReadCurrency;
+      end;
+{$ifndef fpunone}
+    vaSingle:
+      begin
+        Result:=ReadSingle;
+      end;
+    vaExtended:
+      begin
+        Result:=ReadFloat;
+      end;
+    vaDate:
+      begin
+        Result:=ReadDate;
+      end;
+{$endif fpunone}
+    vaWString,vaUTF8String:
+      begin
+        Result:=ReadWideString;
+      end;
+    vaString:
+      begin
+        Result:=ReadString;
+      end;
+    vaUString:
+      begin
+        Result:=ReadUnicodeString;
+      end;
+    else
+      raise EReadError.CreateFmt(SUnsupportedPropertyVariantType, [Ord(nv)]);
+  end;
 end;
 
 procedure TReader.ReadProperty(AInstance: TPersistent);
@@ -1090,6 +1298,8 @@ begin
       SetOrdProp(Instance, PropInfo, Ord(ReadBoolean));
     tkChar:
       SetOrdProp(Instance, PropInfo, Ord(ReadChar));
+    tkWChar,tkUChar:
+      SetOrdProp(Instance, PropInfo, Ord(ReadWideChar));  
     tkEnumeration:
       begin
         Value := GetEnumValue(PropType, ReadIdent);
@@ -1097,8 +1307,10 @@ begin
           raise EReadError.Create(SInvalidPropertyValue);
         SetOrdProp(Instance, PropInfo, Value);
       end;
+{$ifndef FPUNONE}
     tkFloat:
       SetFloatProp(Instance, PropInfo, ReadFloat);
+{$endif}
     tkSet:
       begin
         CheckValue(vaSet);
@@ -1124,21 +1336,21 @@ begin
             SetMethodProp(Instance, PropInfo, Method);
         end;
       end;
-{$ifndef HASWIDESTRING}
-    tkWString,
-{$endif}
     tkSString, tkLString, tkAString:
-    begin
-      TmpStr:=ReadString;
-      if Assigned(FOnReadStringProperty) then
-        FOnReadStringProperty(Self,Instance,PropInfo,TmpStr);
-      SetStrProp(Instance, PropInfo, TmpStr);
-    end;
-{$ifdef HASWIDESTRING}
-    tkWstring:
+      begin
+        TmpStr:=ReadString;
+        if Assigned(FOnReadStringProperty) then
+          FOnReadStringProperty(Self,Instance,PropInfo,TmpStr);
+        SetStrProp(Instance, PropInfo, TmpStr);
+      end;
+    tkUstring:
+      SetUnicodeStrProp(Instance,PropInfo,ReadUnicodeString);
+    tkWString:
       SetWideStrProp(Instance,PropInfo,ReadWideString);
-{$endif}
-    {!!!: tkVariant}
+    tkVariant:
+      begin
+        SetVariantProp(Instance,PropInfo,ReadVariant);
+      end;
     tkClass:
       case FDriver.NextValue of
         vaNil:
@@ -1152,9 +1364,19 @@ begin
             ReadCollection(TCollection(GetObjectProp(Instance, PropInfo)));
           end
         else
-          FFixups.Add(TPropFixup.Create(Instance, Root, PropInfo, '', ReadIdent));
+          begin
+          If Not Assigned(FFixups) then
+            FFixups:=TLinkedList.Create(TLocalUnresolvedReference);
+          With TLocalUnresolvedReference(TLinkedList(FFixups).Add) do
+            begin
+            FInstance:=Instance;
+            FRoot:=Root;
+            FPropInfo:=PropInfo;
+            FRelative:=ReadIdent;
+            end;
+          end;
       end;
-    tkInt64: SetInt64Prop(Instance, PropInfo, ReadInt64);
+    tkInt64, tkQWord: SetInt64Prop(Instance, PropInfo, ReadInt64);
     else
       raise EReadError.CreateFmt(SUnknownPropertyType, [Ord(PropType^.Kind)]);
   end;
@@ -1205,7 +1427,7 @@ begin
       if Assigned(GlobalLoaded) then
         FLoaded := GlobalLoaded
       else
-        FLoaded := TList.Create;
+        FLoaded := TFpList.Create;
 
       try
         if FLoaded.IndexOf(FRoot) < 0 then
@@ -1266,34 +1488,74 @@ var
   StringType: TValueType;
 begin
   StringType := FDriver.ReadValue;
-  if StringType in [vaString, vaLString] then
-    Result := FDriver.ReadString(StringType)
+  if StringType in [vaString, vaLString,vaUTF8String] then
+    begin
+      Result := FDriver.ReadString(StringType);
+      if (StringType=vaUTF8String) then
+        Result:=utf8Decode(Result);
+    end
+  else if StringType in [vaWString] then
+    Result:= FDriver.ReadWidestring
+  else if StringType in [vaUString] then
+    Result:= FDriver.ReadUnicodeString
   else
     raise EReadError.Create(SInvalidPropertyValue);
 end;
 
 
-{$ifdef HASWIDESTRING}
 function TReader.ReadWideString: WideString;
 var
  s: String;
  i: Integer;
+ vt:TValueType;
 begin
-  if NextValue = vaWString then
-  begin
-    ReadValue;
-    Result := FDriver.ReadWideString
-  end
-  else begin
-    //data probable from ObjectTextToBinary
-    s := ReadString;
-    setlength(result,length(s));
-    for i:= 1 to length(s) do begin
-     result[i]:= s[i]; //no code conversion
+  if NextValue in [vaWString,vaUString,vaUTF8String] then
+    //vaUTF8String needs conversion? 2008-09-06 mse, YES!! AntonK
+    begin
+      vt:=ReadValue;
+      if vt=vaUTF8String then
+        Result := utf8decode(fDriver.ReadString(vaLString))
+      else
+        Result := FDriver.ReadWideString
+    end
+  else
+    begin
+      //data probable from ObjectTextToBinary
+      s := ReadString;
+      setlength(result,length(s));
+      for i:= 1 to length(s) do begin
+        result[i]:= widechar(ord(s[i])); //no code conversion
     end;
   end;
 end;
-{$endif HASWIDESTRING}
+
+
+function TReader.ReadUnicodeString: UnicodeString;
+var
+ s: String;
+ i: Integer;
+ vt:TValueType;
+begin
+  if NextValue in [vaWString,vaUString,vaUTF8String] then
+    //vaUTF8String needs conversion? 2008-09-06 mse, YES!! AntonK
+    begin
+      vt:=ReadValue;
+      if vt=vaUTF8String then
+        Result := utf8decode(fDriver.ReadString(vaLString))
+      else
+        Result := FDriver.ReadWideString
+    end
+  else
+    begin
+      //data probable from ObjectTextToBinary
+      s := ReadString;
+      setlength(result,length(s));
+      for i:= 1 to length(s) do begin
+        result[i]:= UnicodeChar(ord(s[i])); //no code conversion
+    end;
+  end;
+end;
+
 
 function TReader.ReadValue: TValueType;
 begin
@@ -1311,7 +1573,7 @@ procedure TReader.CopyValue(Writer: TWriter);
       FDriver.Read(Buffer, 1024);
       Writer.Driver.Write(Buffer, 1024);
       Dec(Count, 1024);
-â    end;
+    end;
     if Count > 0 then
     begin
       FDriver.Read(Buffer, Count);
@@ -1342,8 +1604,10 @@ begin
       end;}
     vaInt8, vaInt16, vaInt32:
       Writer.WriteInteger(ReadInteger);
+{$ifndef FPUNONE}
     vaExtended:
       Writer.WriteFloat(ReadFloat);
+{$endif}
     {!!!: vaString:
       Writer.WriteStr(ReadStr);}
     vaIdent:
@@ -1357,54 +1621,82 @@ begin
       end;}
     {!!!: vaSet:
       Writer.WriteSet(ReadSet);}
+{$ifndef FPUNONE}
     vaSingle:
       Writer.WriteSingle(ReadSingle);
+{$endif}
     {!!!: vaCurrency:
       Writer.WriteCurrency(ReadCurrency);}
+{$ifndef FPUNONE}
     vaDate:
       Writer.WriteDate(ReadDate);
+{$endif}
     vaInt64:
       Writer.WriteInteger(ReadInt64);
   end;
 end;
 
 function TReader.FindComponentClass(const AClassName: String): TComponentClass;
+
+var
+  PersistentClass: TPersistentClass;
+  ShortClassName: shortstring;
+
+  procedure FindInFieldTable(RootComponent: TComponent);
+  var
+    FieldTable: PFieldTable;
+    FieldClassTable: PFieldClassTable;
+    Entry: TPersistentClass;
+    i: Integer;
+    ComponentClassType: TClass;
+  begin
+    ComponentClassType := RootComponent.ClassType;
+    // it is not necessary to look in the FieldTable of TComponent,
+    // because TComponent doesn't have published properties that are
+    // descendants of TComponent
+    while ComponentClassType<>TComponent do
+    begin
+      FieldTable:=PVmt(ComponentClassType)^.vFieldTable;
+      if assigned(FieldTable) then
+      begin
+        FieldClassTable := FieldTable^.ClassTable;
+        for i := 0 to FieldClassTable^.Count -1 do
+        begin
+          Entry := FieldClassTable^.Entries[i];
+          //writeln(format('Looking for %s in field table of class %s. Found %s',
+            //[AClassName, ComponentClassType.ClassName, Entry.ClassName]));
+          if Entry.ClassNameIs(ShortClassName) and
+            (Entry.InheritsFrom(TComponent)) then
+          begin
+            Result := TComponentClass(Entry);
+            Exit;
+          end;
+        end;
+      end;
+      // look in parent class
+      ComponentClassType := ComponentClassType.ClassParent;
+    end;
+  end;
+  
 begin
-  TPersistentClass(Result) := GetFieldClass(Root, AClassName);
-  if not Assigned(Result) and Assigned(FLookupRoot) and (FLookupRoot <> Root) then
-    TPersistentClass(Result) := GetFieldClass(FLookupRoot, AClassName);
-  if Assigned(FOnFindComponentClass) then
-    FOnFindComponentClass(Self, AClassName, Result);
-  if not (Assigned(Result) and Result.InheritsFrom(TComponent)) then
+  Result := nil;
+  ShortClassName:=AClassName;
+  FindInFieldTable(Root);
+  
+  if (Result=nil) and assigned(LookupRoot) and (LookupRoot<>Root) then
+    FindInFieldTable(LookupRoot);
+
+  if (Result=nil) then begin
+    PersistentClass := GetClass(AClassName);
+    if PersistentClass.InheritsFrom(TComponent) then
+      Result := TComponentClass(PersistentClass);
+  end;
+    
+  if (Result=nil) and assigned(OnFindComponentClass) then
+    OnFindComponentClass(Self, AClassName, Result);
+
+  if (Result=nil) or (not Result.InheritsFrom(TComponent)) then
     raise EClassNotFound.CreateFmt(SClassNotFound, [AClassName]);
 end;
 
 
-{
-  $Log: reader.inc,v $
-  Revision 1.19  2005/04/15 07:21:09  michael
-  +  Streaming of subcomponents added by Marc Weustink
-
-  Revision 1.18  2005/04/09 20:37:08  michael
-  + Patch from Uberto Barbini to allow creating streams with different drivers
-
-  Revision 1.17  2005/03/25 22:53:39  jonas
-    * fixed several warnings and notes about unused variables (mainly) or
-      uninitialised use of variables/function results (a few)
-
-  Revision 1.16  2005/03/07 16:35:19  peter
-    * Object text format of widestrings patch from Martin Schreiber
-
-  Revision 1.15  2005/02/25 23:02:05  florian
-    + implemented D7 compliant FindGlobalComponents
-
-  Revision 1.14  2005/02/14 17:13:31  peter
-    * truncate log
-
-  Revision 1.13  2005/01/22 20:53:02  michael
-   + Patch from Colin Western to fix reading inherited forms
-
-  Revision 1.12  2005/01/21 15:53:17  peter
-    * fixed vaWString in skipvalue, patch by Martin Schreiber
-
-}

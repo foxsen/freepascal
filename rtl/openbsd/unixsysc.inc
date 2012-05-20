@@ -1,5 +1,4 @@
 {
-   $Id: unixsysc.inc,v 1.4 2005/02/14 17:13:31 peter Exp $
    This file is part of the Free Pascal run time library.
    Copyright (c) 2000 by Marco van de Voort
      member of the Free Pascal development team.
@@ -63,42 +62,32 @@ end;
 }
 
 {$ifndef FPC_USE_LIBC}
-Function  fsync (fd : cint) : cint;
 
-begin
-  fsync:=do_syscall(syscall_nr_fsync,fd);
-end;
-
-Function  Flock (fd,mode : longint) : cint;
+Function  fpFlock (fd,mode : longint) : cint;
 
 begin
  Flock:=do_syscall(syscall_nr_flock,fd,mode);
 end;
 
-Function fStatFS(Fd:Longint;Var Info:tstatfs):cint;
-{
-  Get all information on a fileSystem, and return it in Info.
-  Fd is the file descriptor of a file/directory on the fileSystem
-  you wish to investigate.
-}
-
+Function  fpfStatFS (Fd: cint; Info:pstatfs):cint;
 begin
- fStatFS:=do_syscall(syscall_nr_fstatfs,fd,longint(@info));
+  fpfstatfs:=do_SysCall(SysCall_nr_fstatfs,fd,TSysParam(info))
 end;
 
-Function StatFS(path:pchar;Var Info:tstatfs):cint;
-{
-  Get all information on a fileSystem, and return it in Info.
-  Fd is the file descriptor of a file/directory on the fileSystem
-  you wish to investigate.
-}
+Function  fpStatFS  (Path:pchar; Info:pstatfs):cint;
 
 begin
- StatFS:=do_syscall(syscall_nr_statfs,longint(path),longint(@info));
+  fpstatfs:=do_SysCall(SysCall_nr_statfs,TSysParam(path),TSysParam(Info))
+end;
+
+Function  fpfsync (fd : cint) : cint;
+
+begin
+  fpfsync:=do_SysCall(syscall_nr_fsync, fd);
 end;
 
 // needs oldfpccall;
-Function intAssignPipe(var pipe_in,pipe_out:longint;var errn:cint):cint; {$ifndef ver1_0} oldfpccall;{$endif}
+Function intAssignPipe(var pipe_in,pipe_out:longint;var errn:cint):cint; oldfpccall;
 {
   Sets up a pair of file variables, which act as a pipe. The first one can
   be read from, the second one can be written to.
@@ -219,7 +208,7 @@ end;
 
 
 {
-function  intClone(func:TCloneFunc;sp:pointer;flags:longint;args:pointer):longint; {$ifndef ver1_0} oldfpccall; {$endif}
+function  intClone(func:TCloneFunc;sp:pointer;flags:longint;args:pointer):longint;  oldfpccall;
 
 
 var lerrno : Longint;
@@ -275,9 +264,3 @@ end;
 }
 
 
-{
-  $Log: unixsysc.inc,v $
-  Revision 1.4  2005/02/14 17:13:31  peter
-    * truncate log
-
-}

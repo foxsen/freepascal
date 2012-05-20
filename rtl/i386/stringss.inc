@@ -1,5 +1,4 @@
 {
-    $Id: stringss.inc,v 1.14 2005/02/14 17:13:22 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team
 
@@ -25,29 +24,16 @@ asm
         movl    %edi,saveedi
         movl    %esi,saveesi
         cld
-{$ifdef REGCALL}
+
         movl    %eax,%edi          // load destination address
         movl    %edx,%esi          // Load Source adress
-{$else}
-        movl    s,%esi          // Load Source adress
-        movl    d,%edi          // load destination address
-{$endif}
         movzbl  (%esi),%ecx        // load length in ECX
         incl    %esi
         rep
         movsb
         movb    $0,(%edi)
-{$ifndef REGCALL}
-        movl    d,%eax       // return value to EAX
-{$endif}
         movl    saveedi,%edi
         movl    saveesi,%esi
 end;
 {$endif FPC_UNIT_HAS_STRPCOPY}
 
-{
-  $Log: stringss.inc,v $
-  Revision 1.14  2005/02/14 17:13:22  peter
-    * truncate log
-
-}

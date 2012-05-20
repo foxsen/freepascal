@@ -1,5 +1,4 @@
 {
-    $Id: stat.inc,v 1.2 2005/02/14 17:13:30 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Jonas Maebe,
     member of the Free Pascal development team.
@@ -13,56 +12,46 @@
 
  **********************************************************************}
 
-  Stat = Packed Record  // No unix typing because of differences
-                              // kernel <->libc
+  Stat = packed record  // No unix typing because of differences
     case byte of
-      0: (st_dev     : word;
-          pad1       : word;
-          st_ino     : longint;
-          st_mode,
-          nlink,
-          uid,
-          gid        : word;
-          rdev       : word;
-          pad2       : word;
-          st_size,
-          st_blksze,
-          st_blocks,
-          st_atime,
-          unused1,
-          st_mtime,
-          unused2,
-          st_ctime,
-          unused3,
-          unused4,
-          unused5   : longint;);
-      1: (
-          dev     : word;
-          pad1_dummy    : word;
-          ino     : longint;
-          mode,
-          nlink_dummy,
-          uid_dummy,
-          gid_dummy     : word;
-          rdev_dummy    : word;
-          pad2_dummy    : word;
-          size,
-          blksze,
-          blocks,
-          atime,
-          unused1_dummy,
-          mtime,
-          unused2_dummy,
-          ctime,
-          unused3_dummy,
-          unused4_dummy,
-          unused5_dummy : longint;
-         );
+      0:
+        (dev    : qword;
+        __pad0  : array[0..1] of byte;
+        __ino,
+        mode,
+        nlink,
+        uid,
+        gid     : cardinal;
+        rdev    : qword;
+        __pad3  : array[0..1] of byte;
+        size    : qword;
+        blksize : cardinal;
+        blocks  : qword;
+        atime,
+        atime_nsec,
+        mtime,
+        mtime_nsec,
+        ctime,
+        ctime_nsec : cardinal;
+        ino    : qword);
+      1:
+        (st_dev   : qword;
+        __pad0_   : array[0..1] of byte;
+        __st_ino_,
+        st_mode,
+        st_nlink,
+        st_uid,
+        st_gid    : cardinal;
+        st_rdev   : qword;
+        __pad3_   : array[0..1] of byte;
+        st_size   : qword;
+        st_blksize: cardinal;
+        st_blocks : qword;
+        st_atime,
+        st_atime_nsec,
+        st_mtime,
+        st_mtime_nsec,
+        st_ctime,
+        st_ctime_nsec : cardinal;
+        st_ino    : qword);
   end;
-
-{
-  $Log: stat.inc,v $
-  Revision 1.2  2005/02/14 17:13:30  peter
-    * truncate log
-
-}

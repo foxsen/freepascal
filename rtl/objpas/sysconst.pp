@@ -1,5 +1,4 @@
 {
-    $Id: sysconst.pp,v 1.17 2005/03/28 13:38:05 florian Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2003 by Florian Klaempfl
     member of the Free Pascal development team
@@ -29,6 +28,7 @@ resourcestring
   SArgumentMissing       = 'Missing argument in format "%s"';
   SAssertError           = '%s (%s, line %d)';
   SAssertionFailed       = 'Assertion failed';
+  SBusError              = 'Bus error or misaligned data access';
   SCannotCreateEmptyDir  = 'Cannot create empty directory';
   SControlC              = 'Control-C hit';
   SDiskFull              = 'Disk Full';
@@ -36,14 +36,18 @@ resourcestring
   SDivByZero             = 'Division by zero';
   SEndOfFile             = 'Read past end of file';
   SErrInvalidDateMonthWeek = 'Year %d, month %d, Week %d and day %d is not a valid date.';
+  SerrInvalidHourMinuteSecMsec = '%d:%d:%d.%d is not a valid time specification';
   SErrInvalidDateWeek    = '%d %d %d is not a valid dateweek';
   SErrInvalidDayOfWeek   = '%d is not a valid day of the week';
   SErrInvalidDayOfWeekInMonth = 'Year %d Month %d NDow %d DOW %d is not a valid date';
   SErrInvalidDayOfYear   = 'Year %d does not have a day number %d';
   SErrInvalidTimeStamp   = 'Invalid date/timestamp : "%s"';
-  SExceptionErrorMessage = 'exception at %p';
+  SInvalidJulianDate            = '%f Julian cannot be represented as a DateTime';
+  SErrIllegalDateFormatString   = '"%s" is not a valid date format string';
+  SErrInvalidTimeFormat  = '"%s" is not a valid time';
+  SExceptionErrorMessage = 'Exception at %p: %s';
   SExceptionStack        = 'Exception stack error';
-  SExecuteProcessFailed  = 'Failed to execute %s : %d';
+  SExecuteProcessFailed  = 'Failed to execute "%s", error code: %d';
   SExternalException     = 'External exception %x';
   SFileNotAssigned       = 'File not assigned';
   SFileNotFound          = 'File not found';
@@ -54,6 +58,7 @@ resourcestring
   SIntOverflow           = 'Arithmetic overflow';
   SIntfCastError         = 'Interface not supported';
   SInvalidArgIndex       = 'Invalid argument index in format "%s"';
+  SInvalidBCD            = '%x is an invalid BCD value';
   SInvalidBoolean        = '"%s" is not a valid boolean.';
   SInvalidCast           = 'Invalid type cast';
   SinvalidCurrency       = 'Invalid currency: "%s"';
@@ -67,18 +72,25 @@ resourcestring
   SInvalidInteger        = '"%s" is an invalid integer';
   SInvalidOp             = 'Invalid floating point operation';
   SInvalidPointer        = 'Invalid pointer operation';
-  SInvalidVarCast        = 'Invalid variant type case';
+  SInvalidVarCast        = 'Invalid variant type cast';
   SInvalidVarNullOp      = 'Invalid NULL variant operation';
   SInvalidVarOp          = 'Invalid variant operation';
+  SInvalidBinaryVarOp    = 'Invalid variant operation %s %s %s';
+  SInvalidUnaryVarOp     = 'Invalid variant operation %s %s';
   SInvalidVarOpWithHResultWithPrefix = 'Invalid variant operation (%s%.8x)'+LineEnding+'%s';
   SNoError               = 'No error.';
   SNoThreadSupport       = 'Threads not supported. Recompile program with thread driver.';
+  SMissingWStringManager = 'Widestring manager not available. Recompile program with appropriate manager.';
+  SSigQuit               = 'SIGQUIT signal received.';
   SOSError               = 'System error, (OS Code %d):'+LineEnding+'%s';
   SOutOfMemory           = 'Out of memory';
   SOverflow              = 'Floating point overflow';
   SPrivilege             = 'Privileged instruction';
   SRangeError            = 'Range check error';
+  SStackOverflow         = 'Stack overflow';
   SSafecallException     = 'Exception in safecall method';
+  SiconvError            = 'iconv error';
+
   STooManyOpenFiles      = 'Too many open files';
   SUnKnownRunTimeError   = 'Unknown Run-Time error : %3.3d';
   SUnderflow             = 'Floating point underflow';
@@ -105,10 +117,23 @@ resourcestring
   SVarTypeRangeCheck2           = 'Range check error while converting variant of type (%s) into type (%s)';
   SVarTypeTooManyCustom         = 'Too many custom variant types have been registered';
   SVarUnexpected                = 'Unexpected variant error';
+  SZeroDivide                   = 'Floating point division by zero';
 
   SFallbackError                = 'An error, whose error code is larger than can be returned to the OS, has occured';
 
   SNoToolserver                 = 'Toolserver is not installed, cannot execute Tool';
+
+  SNotValidCodePageName         = '%s is not a valid code page name';
+  SInvalidCount                 = 'invalid count [%d]';
+  SCharacterIndexOutOfBounds    = 'character index out of bounds [%d]';
+  SInvalidDestinationArray      = 'invalid destination array';
+  SInvalidDestinationIndex      = 'invalid destination index [%d]';
+
+  SNoArrayMatch                 = 'Can''t match any allowed value at pattern position %d, string position %d.';
+  SNoCharMatch                  = 'Mismatch char "%s" <> "%s" at pattern position %d, string position %d.';
+  SHHMMError                    = 'mm in a sequence hh:mm is interpreted as minutes. No longer versions allowed! (Position : %d).' ;
+  SFullpattern                  = 'Couldn''t match entire pattern string. Input too short at pattern position %d.';
+  SPatternCharMismatch          = 'Pattern mismatch char "%s" at position %d.';
 
   SShortMonthNameJan = 'Jan';
   SShortMonthNameFeb = 'Feb';
@@ -183,6 +208,7 @@ begin
      206 : Result:=SUnderFlow;
      207 : Result:=SInvalidOp;
      211 : Result:=SAbstractError;
+     214 : Result:=SBusError;
      215 : Result:=SIntOverFlow;
      216 : Result:=SAccessViolation;
      217 : Result:=SPrivilege;
@@ -200,6 +226,7 @@ begin
      230 : Result:=SSafecallException;
      231 : Result:=SExceptionStack;
      232 : Result:=SNoThreadSupport;
+     233 : Result:=SMissingWStringManager;
 
      255 : Result:=SFallbackError;
 
@@ -221,18 +248,3 @@ begin
 end;
 
 end.
-{
-  $Log: sysconst.pp,v $
-  Revision 1.17  2005/03/28 13:38:05  florian
-    + a lot of vararray stuff
-
-  Revision 1.16  2005/03/17 16:29:04  peter
-    * fixed str() call
-
-  Revision 1.15  2005/02/14 17:13:31  peter
-    * truncate log
-
-  Revision 1.14  2005/01/14 12:59:25  michael
-  + Implemented ForceDirectories for Delphi compatibility
-
-}

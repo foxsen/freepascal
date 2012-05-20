@@ -1,5 +1,4 @@
 {
-    $Id: sysutils.pp,v 1.8 2005/02/26 14:38:14 florian Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Florian Klaempfl
     member of the Free Pascal development team
@@ -14,10 +13,14 @@
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
  **********************************************************************}
+
+{$inline on}
+
 unit sysutils;
 interface
 
 {$MODE objfpc}
+{$modeswitch out}
 { force ansistrings }
 {$H+}
 
@@ -33,6 +36,9 @@ implementation
 
   uses
     sysconst;
+
+{$DEFINE FPC_FEXPAND_UNC} (* UNC paths are supported *)
+{$DEFINE FPC_FEXPAND_DRIVES} (* Full paths begin with drive specification *)
 
 { Include platform independent implementation part }
 {$i sysutils.inc}
@@ -129,13 +135,18 @@ begin
 end;
 
 
-Function FileCreate (Const FileName : String; Mode:longint) : Longint;
+Function FileCreate (Const FileName : String; Rights:longint) : Longint;
+begin
+  FileCreate:=FileCreate(FileName);
+end;
+
+Function FileCreate (Const FileName : String; ShareMode:longint; Rights: Longint) : Longint;
 begin
   FileCreate:=FileCreate(FileName);
 end;
 
 
-Function FileRead (Handle : Longint; Var Buffer; Count : longint) : Longint;
+Function FileRead (Handle : Longint; Out Buffer; Count : longint) : Longint;
 var
   regs     : registers;
   size,
@@ -224,7 +235,7 @@ begin
 end;
 
 
-Function FileSeek (Handle : Longint; FOffset,Origin : Int64) : Int64;
+Function FileSeek (Handle : Longint; FOffset: Int64; Origin: Longint) : Int64;
 begin
   {$warning need to add 64bit call }
   FileSeek:=FileSeek(Handle,Longint(FOffset),Longint(Origin));
@@ -243,18 +254,23 @@ begin
 end;
 
 
-Function FileTruncate (Handle,Size: Longint) : boolean;
+Function FileTruncate (Handle: THandle; Size: Int64) : boolean;
 var
   regs : trealregs;
 begin
-  FileSeek(Handle,Size,0);
-  Regs.realecx := 0;
-  Regs.realedx := tb_offset;
-  Regs.ds := tb_segment;
-  Regs.ebx := Handle;
-  Regs.eax:=$4000;
-  RealIntr($21, Regs);
-  FileTruncate:=(regs.realflags and carryflag)=0;
+  if Size > high (longint) then
+   FileTruncate := false
+  else
+   begin
+    FileSeek(Handle,Size,0);
+    Regs.realecx := 0;
+    Regs.realedx := tb_offset;
+    Regs.ds := tb_segment;
+    Regs.ebx := Handle;
+    Regs.eax:=$4000;
+    RealIntr($21, Regs);
+    FileTruncate:=(regs.realflags and carryflag)=0;
+   end;
 end;
 
 
@@ -272,38 +288,49 @@ begin
 end;
 
 
-Function FileExists (Const FileName : String) : Boolean;
-Var
-  Sr : Searchrec;
+function FileExists (const FileName: string): boolean;
+var
+  L: longint;
 begin
-  DOS.FindFirst(FileName,$3f,sr);
-  if DosError = 0 then
-   begin
-     { No volumeid,directory }
-     Result:=(sr.attr and $18)=0;
-     Dos.FindClose(sr);
-   end
+  if FileName = '' then
+   Result := false
   else
-   Result:=false;
+   begin
+    L := FileGetAttr (FileName);
+    Result := (L >= 0) and (L and (faDirectory or faVolumeID) = 0);
+(* Neither VolumeIDs nor directories are files. *)
+   end;
 end;
 
 
-Function DirectoryExists (Const Directory : String) : Boolean;
-Var
-  Sr : Searchrec;
+function DirectoryExists (const Directory: string): boolean;
+var
+  L: longint;
 begin
-  DOS.FindFirst(Directory,$3f,sr);
-  if DosError = 0 then
-   begin
-     Result:=(sr.attr and $10)=$10;
-     Dos.FindClose(sr);
-   end
+  if Directory = '' then
+   Result := false
   else
-   Result:=false;
+   begin
+    if ((Length (Directory) = 2) or
+        (Length (Directory) = 3) and
+        (Directory [3] in AllowDirectorySeparators)) and
+       (Directory [2] in AllowDriveSeparators) and
+       (UpCase (Directory [1]) in ['A'..'Z']) then
+(* Checking attributes for 'x:' is not possible but for 'x:.' it is. *)
+     L := FileGetAttr (Directory + '.')
+    else if (Directory [Length (Directory)] in AllowDirectorySeparators) and
+                                              (Length (Directory) > 1) and
+(* Do not remove '\' in '\\' (invalid path, possibly broken UNC path). *)
+      not (Directory [Length (Directory) - 1] in AllowDirectorySeparators) then
+     L := FileGetAttr (Copy (Directory, 1, Length (Directory) - 1))
+    else
+     L := FileGetAttr (Directory);
+    Result := (L > 0) and (L and faDirectory = faDirectory);
+   end;
 end;
 
 
-Function FindFirst (Const Path : String; Attr : Longint; Var Rslt : TSearchRec) : Longint;
+Function FindFirst (Const Path : String; Attr : Longint; out Rslt : TSearchRec) : Longint;
 
 Var Sr : PSearchrec;
 
@@ -496,47 +523,14 @@ TYPE  ExtendedFat32FreeSpaceRec=packed Record
          Dummy,Dummy2    : DWORD;  {8 bytes reserved}
          END;
 
+
 function do_diskdata(drive : byte; Free : BOOLEAN) : Int64;
 VAR S    : String;
     Rec  : ExtendedFat32FreeSpaceRec;
     regs : registers;
-BEGIN
- if (swap(dosversion)>=$070A) AND LFNSupport then
+
+  procedure OldDosDiskData;
   begin
-   DosError:=0;
-   S:='C:\'#0;
-   if Drive=0 then
-    begin
-     GetDir(Drive,S);
-     Setlength(S,4);
-     S[4]:=#0;
-    end
-   else
-    S[1]:=chr(Drive+64);
-   Rec.Strucversion:=0;
-   dosmemput(tb_segment,tb_offset,Rec,SIZEOF(ExtendedFat32FreeSpaceRec));
-   dosmemput(tb_segment,tb_offset+Sizeof(ExtendedFat32FreeSpaceRec)+1,S[1],4);
-   regs.dx:=tb_offset+Sizeof(ExtendedFat32FreeSpaceRec)+1;
-   regs.ds:=tb_segment;
-   regs.di:=tb_offset;
-   regs.es:=tb_segment;
-   regs.cx:=Sizeof(ExtendedFat32FreeSpaceRec);
-   regs.ax:=$7303;
-   msdos(regs);
-   if regs.ax<>$ffff then
-    begin
-      copyfromdos(rec,Sizeof(ExtendedFat32FreeSpaceRec));
-      if Free then
-       Do_DiskData:=int64(rec.AvailAllocUnits)*rec.SecPerClus*rec.BytePerSec
-      else
-       Do_DiskData:=int64(rec.TotalAllocUnits)*rec.SecPerClus*rec.BytePerSec;
-    end
-   else
-    Do_DiskData:=-1;
-  end
- else
-  begin
-   DosError:=0;
    regs.dl:=drive;
    regs.ah:=$36;
    msdos(regs);
@@ -550,7 +544,48 @@ BEGIN
    else
     do_diskdata:=-1;
   end;
+
+BEGIN
+ if LFNSupport then
+  begin
+   S:='C:\'#0;
+   if Drive=0 then
+    begin
+     GetDir(Drive,S);
+     Setlength(S,4);
+     S[4]:=#0;
+    end
+   else
+    S[1]:=chr(Drive+64);
+   Rec.Strucversion:=0;
+   Rec.RetSize := 0;
+   dosmemput(tb_segment,tb_offset,Rec,SIZEOF(ExtendedFat32FreeSpaceRec));
+   dosmemput(tb_segment,tb_offset+Sizeof(ExtendedFat32FreeSpaceRec)+1,S[1],4);
+   regs.dx:=tb_offset+Sizeof(ExtendedFat32FreeSpaceRec)+1;
+   regs.ds:=tb_segment;
+   regs.di:=tb_offset;
+   regs.es:=tb_segment;
+   regs.cx:=Sizeof(ExtendedFat32FreeSpaceRec);
+   regs.ax:=$7303;
+   msdos(regs);
+   if (regs.flags and fcarry) = 0 then {No error clausule in int except cf}
+    begin
+     copyfromdos(rec,Sizeof(ExtendedFat32FreeSpaceRec));
+     if Rec.RetSize = 0 then (* Error - "FAT32" function not supported! *)
+      OldDosDiskData
+     else
+      if Free then
+       Do_DiskData:=int64(rec.AvailAllocUnits)*rec.SecPerClus*rec.BytePerSec
+      else
+       Do_DiskData:=int64(rec.TotalAllocUnits)*rec.SecPerClus*rec.BytePerSec;
+    end
+   else
+    Do_DiskData:=-1;
+  end
+ else
+  OldDosDiskData;
 end;
+
 
 
 function diskfree(drive : byte) : int64;
@@ -758,7 +793,7 @@ begin
 end;
 
 
-function ExecuteProcess(Const Path: AnsiString; Const ComLine: AnsiString):integer;
+function ExecuteProcess(Const Path: AnsiString; Const ComLine: AnsiString;Flags:TExecuteFlags=[]):integer;
 
 var
   e : EOSError;
@@ -782,7 +817,7 @@ end;
 
 
 function ExecuteProcess (const Path: AnsiString;
-                                  const ComLine: array of AnsiString): integer;
+                                  const ComLine: array of AnsiString;Flags:TExecuteFlags=[]): integer;
 
 var
   CommandLine: AnsiString;
@@ -876,13 +911,3 @@ Initialization
 Finalization
   DoneExceptions;
 end.
-
-{
-  $Log: sysutils.pp,v $
-  Revision 1.8  2005/02/26 14:38:14  florian
-    + SysLocale
-
-  Revision 1.7  2005/02/14 17:13:32  peter
-    * truncate log
-
-}

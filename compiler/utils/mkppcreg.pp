@@ -1,5 +1,4 @@
 {
-    $Id: mkppcreg.pp,v 1.9 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 1998-2002 by Peter Vreman and Florian Klaempfl
 
     Convert ppcreg.dat to several .inc files for usage with
@@ -13,6 +12,7 @@
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
  **********************************************************************}
+{$mode objfpc}
 program mkppcreg;
 
 const Version = '1.00';
@@ -38,29 +38,6 @@ var s : string;
     gas_regname_index,
     mot_regname_index : array[0..max_regcount-1] of byte;
 
-{$ifndef FPC}
-  procedure readln(var t:text;var s:string);
-  var
-    c : char;
-    i : longint;
-  begin
-    c:=#0;
-    i:=0;
-    while (not eof(t)) and (c<>#10) do
-     begin
-       read(t,c);
-       if c<>#10 then
-        begin
-          inc(i);
-          s[i]:=c;
-        end;
-     end;
-    if (i>0) and (s[i]=#13) then
-     dec(i);
-    s[0]:=chr(i);
-  end;
-{$endif}
-
 function tostr(l : longint) : string;
 
 begin
@@ -69,9 +46,6 @@ end;
 
 function readstr : string;
 
-  var
-     result : string;
-
   begin
      result:='';
      while (s[i]<>',') and (i<=length(s)) do
@@ -79,7 +53,6 @@ function readstr : string;
           result:=result+s[i];
           inc(i);
        end;
-     readstr:=result;
   end;
 
 
@@ -102,7 +75,7 @@ procedure skipspace;
        inc(i);
   end;
 
-procedure openinc(var f:text;const fn:string);
+procedure openinc(out f:text;const fn:string);
 begin
   writeln('creating ',fn);
   assign(f,fn);
@@ -377,7 +350,7 @@ begin
   closeinc(grifile);
   closeinc(mrifile);
   writeln('Done!');
-  writeln(regcount,' registers procesed');
+  writeln(regcount,' registers processed');
 end;
 
 
@@ -395,9 +368,3 @@ begin
    build_mot_regname_index;
    write_inc_files;
 end.
-{
-  $Log: mkppcreg.pp,v $
-  Revision 1.9  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

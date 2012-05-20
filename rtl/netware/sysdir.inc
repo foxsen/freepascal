@@ -1,10 +1,8 @@
 {
-    $Id: sysdir.inc,v 1.2 2005/02/14 17:13:30 peter Exp $
     This file is part of the Free Pascal run time library.
-    Copyright (c) 1999-2000 by Florian Klaempfl and Pavel Ozerski
-    member of the Free Pascal development team.
+    Copyright (c) 2004-2011 by Armin Diehl
 
-    FPC Pascal system unit for the Win32 API.
+    FPC Pascal system unit for the netware API.
 
     See the file COPYING.FPC, included in this distribution,
     for details about the copyright.
@@ -18,46 +16,42 @@
 {*****************************************************************************
                            Directory Handling
 *****************************************************************************}
-procedure mkdir(const s : string);[IOCheck];
-VAR S2 : STRING;
-    Res: LONGINT;
-BEGIN
-  S2 := S;
-  IF Length (S2) = 255 THEN DEC (BYTE(S2[0]));
-  S2 := S2 + #0;
-  Res := _mkdir (@S2[1]);
-  IF Res = 0 THEN
-    InOutRes:=0
-  ELSE
-    SetFileError (Res);
-END;
 
-procedure rmdir(const s : string);[IOCheck];
-VAR S2 : STRING;
-    Res: LONGINT;
-BEGIN
-  S2 := S;
-  IF Length (S2) = 255 THEN DEC (BYTE(S2[0]));
-  S2 := S2 + #0;
-  Res := _rmdir (@S2[1]);
-  IF Res = 0 THEN
-    InOutRes:=0
-  ELSE
-    SetFileError (Res);
+Procedure MkDir(s: pchar;len:sizeuint);[IOCheck, public, alias : 'FPC_SYS_MKDIR'];
+var
+    Rc : longint;
+begin
+  If not assigned(s) or (len=0) or (InOutRes <> 0) then
+    exit;
+  DoDirSeparators(s);
+  Rc := _mkdir(pchar(s));
+  if Rc <> 0 then
+    SetFileError (Rc);
 end;
 
-procedure chdir(const s : string);[IOCheck];
-VAR S2 : STRING;
-    Res: LONGINT;
+
+procedure RmDir(s: pchar;len:sizeuint);[IOCheck, public, alias : 'FPC_SYS_RMDIR'];
+var Rc : longint;
 begin
-  S2 := S;
-  IF Length (S2) = 255 THEN DEC (BYTE(S2[0]));
-  S2 := S2 + #0;
-  Res := _chdir (@S2[1]);
-  IF Res = 0 THEN
-    InOutRes:=0
-  ELSE
-    SetFileError (Res);
+  if (len=1) and (s^ = '.' ) then
+    InOutRes := 16;
+  If not assigned(s) or (len=0) or (InOutRes <> 0) then
+    exit;
+  DoDirSeparators(s);
+  Rc := _rmdir(pchar(s));
+  if Rc <> 0 then
+    SetFileError(Rc);
+end;
+
+
+procedure ChDir(s: pchar;len:sizeuint);[IOCheck, public, alias : 'FPC_SYS_CHDIR'];
+var RC: longint;
+begin
+  If not assigned(s) or (len=0) or (InOutRes <> 0) then
+    exit;
+  RC := _chdir (pchar(s));
+  if Rc <> 0 then
+    SetFileError(Rc);
 end;
 
 procedure getdir(drivenr : byte;var dir : shortstring);
@@ -71,8 +65,7 @@ begin
   begin
     Move (P, dir[1], i);
     BYTE(dir[0]) := i;
-    For i := 1 to length (dir) do
-      if dir[i] = '\' then dir [i] := '/';
+    DoDirSeparators(dir);
     // fix / after volume, the compiler needs that
     // normaly root of a volumes is SERVERNAME/SYS:, change that
     // to SERVERNAME/SYS:/
@@ -84,18 +77,3 @@ begin
     InOutRes := 1;
 end;
 
-
-
-{
-  $Log: sysdir.inc,v $
-  Revision 1.2  2005/02/14 17:13:30  peter
-    * truncate log
-
-  Revision 1.1  2005/02/06 16:57:18  peter
-    * threads for go32v2,os,emx,netware
-
-  Revision 1.1  2005/02/06 13:06:20  peter
-    * moved file and dir functions to sysfile/sysdir
-    * win32 thread in systemunit
-
-}

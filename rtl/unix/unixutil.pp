@@ -1,5 +1,4 @@
 {
-    $Id: unixutil.pp,v 1.8 2005/03/25 22:53:39 jonas Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team
 
@@ -27,16 +26,16 @@ Type
   NameStr = String[255];
   ExtStr  = String[255];
 
-Function Dirname(Const path:pathstr):pathstr;
+Function Dirname(Const path:pathstr):pathstr; deprecated;
 Function StringToPPChar(S: PChar;ReserveEntries:integer):ppchar;
-Function StringToPPChar(Var S:String;ReserveEntries:integer):ppchar;
+Function StringToPPChar(Var S:String;ReserveEntries:integer):ppchar; deprecated; 
 Function StringToPPChar(Var S:AnsiString;ReserveEntries:integer):ppchar;
 function ArrayStringToPPchar(const S:Array of AnsiString;reserveentries:Longint):ppchar; // const ?
-Function Basename(Const path:pathstr;Const suf:pathstr):pathstr;
-Function FNMatch(const Pattern,Name:string):Boolean;
-Function GetFS (var T:Text):longint;
-Function GetFS(Var F:File):longint;
-Procedure FSplit(const Path:PathStr;Var Dir:DirStr;Var Name:NameStr;Var Ext:ExtStr);
+Function Basename(Const path:pathstr;Const suf:pathstr):pathstr; deprecated;
+Function FNMatch(const Pattern,Name:string):Boolean; deprecated;
+Function GetFS (var T:Text):longint; deprecated;
+Function GetFS(Var F:File):longint; deprecated; // use sysutils.getfilehandle
+Procedure FSplit(const Path:PathStr;Var Dir:DirStr;Var Name:NameStr;Var Ext:ExtStr); deprecated;
 Function LocalToEpoch(year,month,day,hour,minute,second:Word):Longint;
 Procedure EpochToLocal(epoch:longint;var year,month,day,hour,minute,second:Word);
 Procedure JulianToGregorian(JulianDN:LongInt;Var Year,Month,Day:Word);
@@ -115,7 +114,7 @@ end;
 Function StringToPPChar(Var S:String;ReserveEntries:integer):ppchar;
 {
   Create a PPChar to structure of pchars which are the arguments specified
-  in the string S. Especially usefull for creating an ArgV for Exec-calls
+  in the string S. Especially useful for creating an ArgV for Exec-calls
   Note that the string S is destroyed by this call.
 }
 
@@ -127,7 +126,7 @@ end;
 Function StringToPPChar(Var S:AnsiString;ReserveEntries:integer):ppchar;
 {
   Create a PPChar to structure of pchars which are the arguments specified
-  in the string S. Especially usefull for creating an ArgV for Exec-calls
+  in the string S. Especially useful for creating an ArgV for Exec-calls
 }
 
 begin
@@ -405,13 +404,3 @@ End;
 
 
 end.
-{
-  $Log: unixutil.pp,v $
-  Revision 1.8  2005/03/25 22:53:39  jonas
-    * fixed several warnings and notes about unused variables (mainly) or
-      uninitialised use of variables/function results (a few)
-
-  Revision 1.7  2005/02/14 17:13:31  peter
-    * truncate log
-
-}

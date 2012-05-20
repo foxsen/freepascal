@@ -1,12 +1,11 @@
 {
-    $Id: cpupara.pas,v 1.3 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 2002 by Florian Klaempfl
 
     Generates the argument location information for the
     virtual instruction set machine
 
     This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published bymethodpointer
+    it under the terms of the GNU General Public License as published by
     the Free Software Foundation; either version 2 of the License, or
     (at your option) any later version.
 
@@ -73,10 +72,3 @@ unit cpupara;
 begin
    paramanager:=tcpuparamanager.create;
 end.
-
-{
-  $Log: cpupara.pas,v $
-  Revision 1.3  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

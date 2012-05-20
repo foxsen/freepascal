@@ -1,5 +1,4 @@
 {
-    $Id: fpcompil.pas,v 1.41 2005/04/24 21:37:16 florian Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 1998 by Berczi Gabor
 
@@ -15,6 +14,12 @@
  **********************************************************************}
 {$i globdir.inc}
 unit FPCompil;
+
+{2.0 compatibility}
+{$ifdef VER2_0}
+  {$macro on}
+  {$define resourcestring := const}
+{$endif}
 
 interface
 
@@ -79,15 +84,17 @@ type
     TCompilerStatusDialog = object(TCenterDialog)
       ST    : PAdvancedStaticText;
       KeyST : PColorStaticText;
+      starttime : real;
       constructor Init;
       destructor Done;virtual;
       procedure   Update;
+      procedure SetStartTime(r : real);
     end;
 
     TFPInputFile = class(tinputfile)
       constructor Create(AEditor: PFileEditor);
     protected
-      function fileopen(const filename: string): boolean; override;
+      function fileopen(const filename: ansistring): boolean; override;
       function fileseek(pos: longint): boolean; override;
       function fileread(var databuf; maxsize: longint): longint; override;
       function fileeof: boolean; override;
@@ -117,31 +124,27 @@ implementation
 
 uses
 {$ifdef Unix}
-  {$ifdef VER1_0}
-    Linux,
-  {$else}
-    Unix, BaseUnix,
-  {$endif}
+  Unix, BaseUnix,
 {$endif}
 {$ifdef go32v2}
   dpmiexcp,
 {$endif}
-{$ifdef win32}
-  signals,
+{$ifdef Windows}
+  {$ifdef HasSignal}
+    signals,
+  {$endif}
 {$endif}
 { $ifdef HasSignal}
   fpcatch,
 { $endif HasSignal}
   Dos,
-{$ifdef fpc}
   Video,
-{$endif fpc}
   globals,
   StdDlg,App,tokens,
   FVConsts,
   CompHook, Compiler, systems, browcol,
   WEditor,
-  FPString,FPRedir,FPDesk,
+  FPRedir,FPDesk,
   FPUsrScr,FPHelp,
 {$ifndef NODEBUG}FPDebug,{$endif}
   FPConst,FPVars,FPUtils,
@@ -162,11 +165,63 @@ const
      Store:   @TCompilerMessageWindow.Store
   );
 {$endif}
+{$ifdef useresstrings}
+resourcestring
+{$else}
+const
+{$endif}
+                dialog_compilermessages = 'Compiler Messages';
+                dialog_compilingwithmode = 'Compiling  (%s mode)';
 
+                { Compiler message classes }
+                msg_class_normal   = '';
+                msg_class_fatal    = 'Fatal';
+                msg_class_error    = 'Error';
+                msg_class_warning  = 'Warning';
+                msg_class_note     = 'Note';
+                msg_class_hint     = 'Hint';
+                msg_class_macro    = 'Macro';
+                msg_class_procedure= 'Procedure';
+                msg_class_conditional = 'Conditional';
+                msg_class_info     = 'Info';
+                msg_class_status   = 'Status';
+                msg_class_used     = 'Used';
+                msg_class_tried    = 'Tried';
+                msg_class_debug    = 'Debug';
+
+                { Compile status dialog texts }
+                msg_compilingfile      = 'Compiling %s';
+                msg_loadingunit        = 'Loading %s unit';
+                msg_linkingfile        = 'Linking %s';
+                msg_compiledone        = 'Done.';
+                msg_failedtocompile    = 'Failed to compile...';
+                msg_compilationaborted = 'Compilation aborted...';
+
+                msg_nothingtocompile = 'Oooops, nothing to compile.';
+                msg_cantcompileunsavedfile = 'Can''t compile unsaved file.';
+
+                msg_couldnotcreatefile = 'could not create %s';
+                msg_therearemoreerrorsinfile = 'There are more errors in file %s';
+                msg_firstcompilationof = 'First compilation of %s';
+                msg_recompilingbecauseof = 'Recompiling because of %s';
+
+                msg_errorinexternalcompilation = 'Error in external compilation';
+                msg_iostatusis = 'IOStatus = %d';
+                msg_executeresultis = 'ExecuteResult = %d';
+
+                { Status hints during compilation }
+                msg_hint_pressesctocancel = 'Press ESC to cancel';
+                msg_hint_compilesuccessfulpressenter = 'Compile successful: ~Press any key~';
+                msg_hint_compilefailed = 'Compile failed';
+                msg_hint_compileaborted = 'Compile aborted';
+                msg_hint_pleasewait = 'Please wait...';
+
+                msg_cantopenfile = 'Can''t open %s';
 
 procedure ParseUserScreen;
 var
-  y : longint;
+  Y,YMax : longint;
+  LEvent : TEvent;
   Text,Attr : String;
   DisplayCompilerWindow : boolean;
   cc: integer;
@@ -175,10 +230,10 @@ var
       var AText,ModuleName,st : String;
           row : longint;
       begin
-        if pos('  0x',Text)=1 then
+        if pos('  $',Text)=1 then
           begin
             AText:=Text;
-            Delete(Text,1,10);
+            Delete(Text,1,11);
             While pos(' ',Text)=1 do
               Delete(Text,1,1);
             if pos('of ',Text)>0 then
@@ -197,7 +252,7 @@ var
               end
             else
               row:=0;
-            CompilerMessageWindow^.AddMessage(V_Fatal,AText
+            CompilerMessageWindow^.AddMessage(V_Fatal or v_lineinfo,AText
                   ,ModuleName,row,1);
             DisplayCompilerWindow:=true;
           end;
@@ -228,11 +283,21 @@ begin
   if not assigned(UserScreen) then
     exit;
   DisplayCompilerWindow:=false;
+  YMax:=UserScreen^.GetHeight;
   PushStatus('Parsing User Screen');
   CompilerMessageWindow^.Lock;
-  for Y:=0 to UserScreen^.GetHeight do
+  for Y:=0 to YMax do
     begin
       UserScreen^.GetLine(Y,Text,Attr);
+      if (y mod 10) = 0 then
+        begin
+          CompilerMessageWindow^.Unlock;
+          SetStatus('Parsing User Screen line '+IntToStr(y)+'/'+IntToStr(YMax));
+          CompilerMessageWindow^.Lock;
+        end;
+      GetKeyEvent(LEvent);
+      if (LEvent.What=evKeyDown) and (LEvent.KeyCode=kbEsc) then
+        break;
       SearchBackTrace;
       InsertInMessages(' Fatal:',v_Fatal or v_lineinfo,true);
       InsertInMessages(' Error:',v_Error or v_lineinfo,true);
@@ -314,7 +379,7 @@ function TCompilerMessageListBox.GetPalette: PPalette;
 const
   P: string[length(CBrowserListBox)] = CBrowserListBox;
 begin
-  GetPalette:=@P;
+  GetPalette:=PPalette(@P);
 end;
 
 procedure TCompilerMessageListBox.SelectFirstError;
@@ -439,7 +504,7 @@ function TCompilerMessageWindow.GetPalette: PPalette;
 const
   S : string[length(CBrowserWindow)] = CBrowserWindow;
 begin
-  GetPalette:=@S;
+  GetPalette:=PPalette(@S);
 end;
 
 
@@ -486,12 +551,30 @@ end;
                           CompilerStatusDialog
 ****************************************************************************}
 
+function getrealtime : real;
+var
+{$IFDEF USE_SYSUTILS}
+  h,m,s,s1000 : word;
+{$ELSE USE_SYSUTILS}
+  h,m,s,s100 : word;
+{$ENDIF USE_SYSUTILS}
+begin
+{$IFDEF USE_SYSUTILS}
+  DecodeTime(Time,h,m,s,s1000);
+  getrealtime:=h*3600.0+m*60.0+s+s1000/1000.0;
+{$ELSE USE_SYSUTILS}
+  gettime(h,m,s,s100);
+  getrealtime:=h*3600.0+m*60.0+s+s100/100.0;
+{$ENDIF USE_SYSUTILS}
+end;
+
 constructor TCompilerStatusDialog.Init;
 var R: TRect;
 begin
   R.Assign(0,0,56,11);
   ClearFormatParams; AddFormatParamStr(KillTilde(SwitchesModeName[SwitchesMode]));
   inherited Init(R, FormatStrF(dialog_compilingwithmode, FormatParams));
+  starttime:=getrealtime;
   GetExtent(R); R.B.Y:=11;
   R.Grow(-3,-2);
   New(ST, Init(R, ''));
@@ -511,12 +594,16 @@ begin
   Inherited Done;
 end;
 
+procedure TCompilerStatusDialog.SetStartTime(r : real);
+  begin
+    starttime:=r;
+  end;
+
 procedure TCompilerStatusDialog.Update;
 var
   StatusS,KeyS: string;
-{$ifdef HASGETHEAPSTATUS}
   hstatus : TFPCHeapStatus;
-{$endif HASGETHEAPSTATUS}
+  r : real;
 const
   MaxFileNameSize = 46;
 begin
@@ -524,7 +611,7 @@ begin
     cpCompiling :
       begin
         ClearFormatParams;
-        if Status.Compiling_current then
+        if Upcase(Status.currentmodulestate)='COMPILE' then
           begin
             AddFormatParamStr(ShrinkPath(SmartPath(Status.Currentsourcepath+Status.CurrentSource),
               MaxFileNameSize - Length(msg_compilingfile)));
@@ -575,15 +662,13 @@ begin
   AddFormatParamStr(KillTilde(TargetSwitches^.ItemName(TargetSwitches^.GetCurrSel)));
   AddFormatParamInt(Status.CurrentLine);
   AddFormatParamInt(Status.CompiledLines);
-{$ifdef HASGETHEAPSTATUS}
   hstatus:=GetFPCHeapStatus;
   AddFormatParamInt(hstatus.CurrHeapUsed div 1024);
   AddFormatParamInt(hstatus.CurrHeapSize div 1024);
-{$else}
-  AddFormatParamInt((Heapsize-MemAvail) div 1024);
-  AddFormatParamInt(Heapsize div 1024);
-{$endif}
   AddFormatParamInt(Status.ErrorCount);
+  r:=getrealtime;
+  AddFormatParamInt(trunc(r-starttime));
+  AddFormatParamInt(trunc(frac(r-starttime)*10));
   ST^.SetText(
    FormatStrF(
     'Main file: %s'#13+
@@ -591,7 +676,7 @@ begin
     'Target: %s'#13+
     'Line number: %6d     '+'Total lines:      %6d'+#13+
     'Used memory: %6dK    '+'Allocated memory: %6dK'#13+
-    'Total errors: %5d',
+    'Total errors:%6d     '+'Compile time: %8d.%1ds',
    FormatParams)
   );
   KeyST^.SetText(^C+KeyS);
@@ -602,27 +687,10 @@ end;
                                Compiler Hooks
 ****************************************************************************}
 
-function getrealtime : real;
-var
-{$IFDEF USE_SYSUTILS}
-  h,m,s,s1000 : word;
-{$ELSE USE_SYSUTILS}
-  h,m,s,s100 : word;
-{$ENDIF USE_SYSUTILS}
-begin
-{$IFDEF USE_SYSUTILS}
-  DecodeTime(Time,h,m,s,s1000);
-  getrealtime:=h*3600.0+m*60.0+s+s1000/1000.0;
-{$ELSE USE_SYSUTILS}
-  gettime(h,m,s,s100);
-  getrealtime:=h*3600.0+m*60.0+s+s100/100.0;
-{$ENDIF USE_SYSUTILS}
-end;
-
 const
   lasttime  : real = 0;
 
-function CompilerStatus: boolean; {$ifndef FPC}far;{$endif}
+function CompilerStatus: boolean;
   var
      event : tevent;
 
@@ -665,7 +733,7 @@ begin
   CompilerStatus:=false;
 end;
 
-Function  CompilerGetNamedFileTime(const filename : string) : Longint; {$ifndef FPC}far;{$endif}
+Function  CompilerGetNamedFileTime(const filename : ansistring) : Longint;
 var t: longint;
     W: PSourceWindow;
 begin
@@ -677,7 +745,7 @@ begin
   CompilerGetNamedFileTime:=t;
 end;
 
-function CompilerOpenInputFile(const filename: string): tinputfile; {$ifndef FPC}far;{$endif}
+function CompilerOpenInputFile(const filename: ansistring): tinputfile;
 var f: tinputfile;
     W: PSourceWindow;
 begin
@@ -695,7 +763,7 @@ begin
   CompilerOpenInputFile:=f;
 end;
 
-function CompilerComment(Level:Longint; const s:string):boolean; {$ifndef FPC}far;{$endif}
+function CompilerComment(Level:Longint; const s:ansistring):boolean;
 begin
   CompilerComment:=false;
   if (status.verbosity and Level)<>0 then
@@ -775,13 +843,18 @@ begin
       else
         FileName:='';
     end;
+  {$ifdef Unix}
+  If (FileName<>'') then
+    FileName:=FExpand(FileName);
+  {$else}
   If (FileName<>'') then
     FileName:=FixFileName(FExpand(FileName));
+  {$endif}
   GetMainFile:=FileName;
 end;
 
 procedure ResetErrorMessages;
-  procedure ResetErrorLine(P: PView); {$ifndef FPC}far;{$endif}
+  procedure ResetErrorLine(P: PView);
   begin
     if assigned(P) and
        (TypeOf(P^)=TypeOf(TSourceWindow)) then
@@ -853,6 +926,7 @@ begin
   if not assigned(CompilingHiddenFile) then
     begin
       New(CompilerStatusDialog, Init);
+      CompilerStatusDialog^.SetStartTime(getrealtime);
       CompilerStatusDialog^.SetState(sfModal,true);
       { disable window closing }
       CompilerStatusDialog^.Flags:=CompilerStatusDialog^.Flags and not wfclose;
@@ -933,14 +1007,9 @@ begin
        ChangeRedirError(FPErrFileName,false);
 {$endif}
 {$ifdef Unix}
-       {$ifdef ver1_0}
-       Shell(GetExePath+PpasFile);
-       Error:=LinuxError;
-       {$else}
        error:=0;
-       If Shell(GetExePath+PpasFile)=-1 Then
+       If fpsystem(GetExePath+PpasFile)=-1 Then
         Error:=fpgeterrno;
-       {$endif}
 {$else}
        DosExecute(GetEnv('COMSPEC'),'/C '+GetExePath+PpasFile);
        Error:=DosError;
@@ -1138,7 +1207,7 @@ begin
 end;
 
 
-function TFPInputFile.fileopen(const filename: string): boolean;
+function TFPInputFile.fileopen(const filename: ansistring): boolean;
 var OK: boolean;
 begin
   S:=New(PMemoryStream, Init(0,0));
@@ -1224,32 +1293,3 @@ end;
 
 
 end.
-{
-  $Log: fpcompil.pas,v $
-  Revision 1.41  2005/04/24 21:37:16  florian
-    * fixed compilation
-
-  Revision 1.40  2005/04/24 21:03:16  peter
-    * always use exceptions to stop the compiler
-    - remove stop, do_stop
-
-  Revision 1.39  2005/04/02 23:56:54  hajny
-    * fix for targets missing exception handler implementation
-
-  Revision 1.38  2005/03/06 13:48:59  florian
-    + Units & Exe dir may now contain $fpc... valus
-    * version to 1.0.4 increased
-
-  Revision 1.37  2005/02/28 15:38:38  marco
-   * getFPCheapstatus  (no, FPC HEAP, not FP CHEAP!)
-
-  Revision 1.36  2005/02/14 17:13:18  peter
-    * truncate log
-
-  Revision 1.35  2005/02/10 20:57:02  peter
-    * implement tinputfile.getfiletime
-
-  Revision 1.34  2005/01/08 12:05:13  florian
-    * user screen parsing fixed
-
-}

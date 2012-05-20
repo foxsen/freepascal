@@ -1,5 +1,4 @@
 {
-    $Id: ppufiles.pp,v 1.6 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 1999-2002 by Peter Vreman
 
     List files needed by PPU
@@ -57,17 +56,13 @@ Procedure Error(const s:string;stop:boolean);
   Write an error message to stderr
 }
 begin
-{$ifdef FPC}
   writeln(stderr,s);
-{$else}
-  writeln(s);
-{$endif}
   if stop then
    halt(1);
 end;
 
 
-Function AddExtension(Const HStr,ext:String):String;
+Function ChangeFileExt(Const HStr,ext:String):String;
 {
   Return a filename which will have extension ext added if no
   extension is found
@@ -79,9 +74,9 @@ begin
   while (j>0) and (Hstr[j]<>'.') do
    dec(j);
   if j=0 then
-   AddExtension:=Hstr+'.'+Ext
+   ChangeFileExt:=Hstr+'.'+Ext
   else
-   AddExtension:=HStr;
+   ChangeFileExt:=HStr;
 end;
 
 
@@ -229,16 +224,14 @@ begin
   parafile:=i;
   for i:=parafile to ParamCount do
    begin
-     InFile:=AddExtension(ParamStr(i),PPUExt);
+     InFile:=ChangeFileExt(ParamStr(i),PPUExt);
      FindFirst(InFile,$20,Dir);
      while (DosError=0) do
       begin
         DoPPU(SplitPath(InFile)+Dir.Name);
         FindNext(Dir);
       end;
-{$ifdef fpc}
      FindClose(Dir);
-{$endif}
    end;
 { Display the files }
   while assigned(outfiles) do
@@ -251,9 +244,3 @@ begin
       write(' ');
    end;
 end.
-{
-  $Log: ppufiles.pp,v $
-  Revision 1.6  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

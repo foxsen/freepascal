@@ -1,5 +1,4 @@
 {
-    $Id: dbugintf.pp,v 1.2 2005/02/14 17:13:38 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2003 by the Free Pascal development team
 
@@ -24,7 +23,7 @@ interface
 
 uses
 {$ifdef fpc}
-   linux,
+   baseunix,
 {$else}
    Libc,
 {$endif}
@@ -223,7 +222,7 @@ begin
 {$else}
       tv.tv_sec:=1;
       tv.tv_nsec:=0;
-      nanosleep(tv,tr);
+      fpnanosleep(@tv,@tr);
 {$endif}
       end;
 {$ifdef fpc}
@@ -252,7 +251,7 @@ begin
   end;
   Msg.MsgType:=lctIdentify;
   Msg.MsgTimeStamp:=Now;
-  Msg.Msg:=Format(SProcessID,[getPID,ExtractFileName(Paramstr(0))]);
+  Msg.Msg:=Format(SProcessID,[fpgetPID,ExtractFileName(Paramstr(0))]);
   WriteMessage(REsult,Msg);
 end;
 
@@ -281,13 +280,3 @@ Initialization
 Finalization
   FreeDebugStream;
 end.
-
-{
-  $Log: dbugintf.pp,v $
-  Revision 1.2  2005/02/14 17:13:38  peter
-    * truncate log
-
-  Revision 1.1  2003/01/02 14:44:29  michael
-  + Initial implementation
-
-}

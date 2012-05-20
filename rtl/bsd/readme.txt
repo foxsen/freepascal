@@ -22,6 +22,7 @@
 
 Common *BSD files:
 
+bsd.pa		BSD specific syscall functions
 bsdmacro.inc		The POSIX mode_t (IS_DIR etc) and exit macro's.
 bsdsysc.inc		The base syscalls for *BSD system unit.
 			  including a few that are _not_ posix, but still
@@ -43,9 +44,3 @@ i386/syscall.inc	The primitives for performing syscalls
 i386/syscallh.inc	Headers to syscall.inc
 powerpc/syscall.inc	likewise for PPC.
 
-{
- $Log: readme.txt,v $
- Revision 1.2  2002/10/27 11:58:30  marco
-  * Modifications from Saturday.
-
-}

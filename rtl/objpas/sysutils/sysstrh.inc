@@ -1,6 +1,5 @@
 {
     *********************************************************************
-    $Id: sysstrh.inc,v 1.18 2005/04/28 09:15:44 florian Exp $
     Copyright (C) 1997, 1998 Gertjan Schouten
 
     This program is free software; you can redistribute it and/or modify
@@ -40,11 +39,11 @@ type
    End;
 
 const
-  { For floattodatetime }
-  MinDateTime: TDateTime = -657434.0;      { 01/01/0100 12:00:00.000 AM }
+  { For floattodatetime and VariantToDate }
+{$ifndef FPUNONE}
+  MinDateTime: TDateTime =  -693593.0;     { 01/01/0001 12:00:00.000 AM }
   MaxDateTime: TDateTime =  2958465.99999; { 12/31/9999 11:59:59.999 PM }
 
-{$ifndef VER1_0}
 {$if defined(FPC_HAS_TYPE_EXTENDED) or defined(FPC_HAS_TYPE_FLOAT128)}
   MinCurrency: Currency = -922337203685477.5807;
   MaxCurrency: Currency =  922337203685477.5807;
@@ -52,38 +51,37 @@ const
   MinCurrency: Currency = -922337203685477.0000;
   MaxCurrency: Currency =  922337203685477.0000;
 {$endif}
-{$endif VER1_0}
-
-Type
-  TTextLineBreakStyle = (tlbsLF, tlbsCRLF,tlbsCR);   // Must move to system unit, and add Mac tlbsCR too ?
-
-Const
-  DefaultTextLineBreakStyle: TTextLineBreakStyle =
-    {$ifdef unix} tlbsLF {$else} {$ifdef macos} tlbsCR {$else} tlbsCRLF {$endif} {$endif} ;
-
+{$else}
+  MinCurrency: Currency = -9223372036854775807;
+  MaxCurrency: Currency =  9223372036854775807;
+{$endif}
 
 Const
   LeadBytes: set of Char = [];
   EmptyStr : string = '';
   NullStr : PString = @EmptyStr;
 
-{$IFDEF VIRTUALPASCAL}
-  EmptyWideStr : AnsiString = '';
-  NullWideStr : PString = @EmptyWideStr;
-{$ELSE}
   EmptyWideStr : WideString = '';
 //  NullWideStr : PWideString = @EmptyWideStr;
-{$ENDIF}
 
-function NewStr(const S: string): PString;
-procedure DisposeStr(S: PString);
+Var TrueBoolStrs,
+    FalseBoolStrs : Array of String;
+
+// declaring this breaks delphi compatibility and e.g. tw3721.pp
+// function NewStr(Const S: ShortString): PShortString; overload;
+function NewStr(const S: string): PString; overload;
+procedure DisposeStr(S: PString); overload;
+procedure DisposeStr(S: PShortString); overload;
 procedure AssignStr(var P: PString; const S: string);
 procedure AppendStr(var Dest: String; const S: string);
 function UpperCase(const s: string): string;
 function LowerCase(const s: string): string; overload;
-function CompareStr(const S1, S2: string): Integer;
-function CompareMemRange(P1, P2: Pointer; Length: cardinal): integer;
-function CompareMem(P1, P2: Pointer; Length: cardinal): Boolean;
+{ the compiler can't decide else if it should use the char or the ansistring
+  version for a variant }
+function LowerCase(const V: variant): string; overload;{$ifdef SYSUTILSINLINE}inline;{$endif}
+function CompareStr(const S1, S2: string): Integer; overload;
+function CompareMemRange(P1, P2: Pointer; Length: PtrUInt): integer;{$ifdef SYSUTILSINLINE}inline;{$endif}
+function CompareMem(P1, P2: Pointer; Length: PtrUInt): Boolean;{$ifdef SYSUTILSINLINE}inline;{$endif}
 function CompareText(const S1, S2: string): integer;
 function SameText(const s1,s2:String):Boolean;
 
@@ -107,62 +105,126 @@ function TrimLeft(const S: string): string;
 function TrimRight(const S: string): string;
 function QuotedStr(const S: string): string;
 function AnsiQuotedStr(const S: string; Quote: char): string;
+function AnsiDequotedStr(const S: string; AQuote: Char): string;
 function AnsiExtractQuotedStr(var Src: PChar; Quote: Char): string;
 function AdjustLineBreaks(const S: string): string;
 function AdjustLineBreaks(const S: string; Style: TTextLineBreakStyle): string;
 function IsValidIdent(const Ident: string): boolean;
 function IntToStr(Value: integer): string;
-{$IFNDEF VIRTUALPASCAL}
 function IntToStr(Value: Int64): string;
-{$ENDIF}
 function IntToStr(Value: QWord): string;
 function IntToHex(Value: integer; Digits: integer): string;
 function IntToHex(Value: Int64; Digits: integer): string;
+function IntToHex(Value: QWord; Digits: integer): string;
 function StrToInt(const s: string): integer;
-function TryStrToInt(const s: string; var i : integer) : boolean;
-{$IFNDEF VIRTUALPASCAL}
+function TryStrToInt(const s: string; Out i : integer) : boolean;
 function StrToInt64(const s: string): int64;
-function TryStrToInt64(const s: string; var i : int64) : boolean;
-{$ENDIF}
+function TryStrToInt64(const s: string; Out i : int64) : boolean;
+function StrToQWord(const s: string): QWord;
+function TryStrToQWord(const s: string; Out Q : QWord) : boolean;
 function StrToIntDef(const S: string; Default: integer): integer;
-{$IFNDEF VIRTUALPASCAL}
 function StrToInt64Def(const S: string; Default: int64): int64;
-{$ENDIF}
+function StrToQWordDef(const S: string; Default: QWord): QWord;
 function LoadStr(Ident: integer): string;
 // function FmtLoadStr(Ident: integer; const Args: array of const): string;
 Function Format (Const Fmt : String; const Args : Array of const) : String;
+Function Format (Const Fmt: string; const Args: array of const; const FormatSettings: TFormatSettings): string;
 Function FormatBuf (Var Buffer; BufLen : Cardinal; Const Fmt; fmtLen : Cardinal; Const Args : Array of const) : Cardinal;
+Function FormatBuf (Var Buffer; BufLen : Cardinal; Const Fmt; fmtLen : Cardinal; Const Args : Array of const; Const FormatSettings: TFormatSettings) : Cardinal;
 Function StrFmt(Buffer,Fmt : PChar; Const args: Array of const) : Pchar;
+Function StrFmt(Buffer,Fmt : PChar; Const Args: Array of const; Const FormatSettings: TFormatSettings): PChar;
 Function StrLFmt(Buffer : PCHar; Maxlen : Cardinal;Fmt : PChar; Const args: Array of const) : Pchar;
+Function StrLFmt(Buffer : PCHar; Maxlen : Cardinal;Fmt : PChar; Const args: Array of const; Const FormatSettings: TFormatSettings) : Pchar;
 Procedure FmtStr(Var Res: String; Const Fmt : String; Const args: Array of const);
-Function FloatToStrF(Value: Extended; format: TFloatFormat; Precision, Digits: Integer): String;
-Function FloatToStr(Value: Extended): String;
-Function StrToFloat(Const S : String) : Extended;
-Function StrToFloatDef(Const S: String; Const Default: Extended): Extended;
-Function TryStrToFloat(Const S : String; Var Value: Single): Boolean;
-Function TryStrToFloat(Const S : String; Var Value: Double): Boolean;
+Procedure FmtStr(Var Res: string; const Fmt : string; Const args: Array of const; Const FormatSettings: TFormatSettings);
+{$ifndef FPUNONE}
 {$ifdef FPC_HAS_TYPE_EXTENDED}
-Function TryStrToFloat(Const S : String; Var Value: Extended): Boolean;
+Function FloatToStrF(Value: Extended; format: TFloatFormat; Precision, Digits: Integer): String;
+Function FloatToStrF(Value: Extended; format: TFloatFormat; Precision, Digits: Integer; Const FormatSettings: TFormatSettings): String;
 {$endif FPC_HAS_TYPE_EXTENDED}
-Function TextToFloat(Buffer: PChar; Var Value: Extended): Boolean;
-Function TextToFloat(Buffer: PChar; Var Value; ValueType: TFloatValue): Boolean;
+Function FloatToStrF(Value: Double; format: TFloatFormat; Precision, Digits: Integer): String;
+Function FloatToStrF(Value: Double; format: TFloatFormat; Precision, Digits: Integer; Const FormatSettings: TFormatSettings): String;
+Function FloatToStrF(Value: Single; format: TFloatFormat; Precision, Digits: Integer): String;
+Function FloatToStrF(Value: Single; format: TFloatFormat; Precision, Digits: Integer; Const FormatSettings: TFormatSettings): String;
+Function FloatToStrF(Value: Comp; format: TFloatFormat; Precision, Digits: Integer): String;
+Function FloatToStrF(Value: Comp; format: TFloatFormat; Precision, Digits: Integer; Const FormatSettings: TFormatSettings): String;
+Function FloatToStrF(Value: Currency; format: TFloatFormat; Precision, Digits: Integer): String;
+Function FloatToStrF(Value: Currency; format: TFloatFormat; Precision, Digits: Integer; Const FormatSettings: TFormatSettings): String;
+{$ifndef FPC_COMP_IS_INT64}
+Function FloatToStrF(Value: Int64; format: TFloatFormat; Precision, Digits: Integer): String;
+Function FloatToStrF(Value: Int64; format: TFloatFormat; Precision, Digits: Integer; Const FormatSettings: TFormatSettings): String;
+{$endif FPC_COMP_IS_INT64}
+Function CurrToStrF(Value: Currency; Format: TFloatFormat; Digits: Integer): string;
+Function CurrToStrF(Value: Currency; Format: TFloatFormat; Digits: Integer; Const FormatSettings: TFormatSettings): string;
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+Function FloatToStr(Value: Extended): String;
+Function FloatToStr(Value: Extended; Const FormatSettings: TFormatSettings): String;
+{$endif FPC_HAS_TYPE_EXTENDED}
+Function FloatToStr(Value: Double): String;
+Function FloatToStr(Value: Double; Const FormatSettings: TFormatSettings): String;
+Function FloatToStr(Value: Single): String;
+Function FloatToStr(Value: Single; Const FormatSettings: TFormatSettings): String;
+Function FloatToStr(Value: Currency): String;
+Function FloatToStr(Value: Currency; Const FormatSettings: TFormatSettings): String;
+Function FloatToStr(Value: Comp): String;
+Function FloatToStr(Value: Comp; Const FormatSettings: TFormatSettings): String;
+{$ifndef FPC_COMP_IS_INT64}
+Function FloatToStr(Value: Int64): String;
+Function FloatToStr(Value: Int64; Const FormatSettings: TFormatSettings): String;
+{$endif FPC_COMP_IS_INT64}
+Function StrToFloat(Const S : String) : Extended;
+Function StrToFloat(Const S : String; Const FormatSettings: TFormatSettings) : Extended;
+Function StrToFloatDef(Const S: String; Const Default: Extended): Extended;
+Function StrToFloatDef(Const S: String; Const Default: Extended; Const FormatSettings: TFormatSettings): Extended;
+Function TryStrToFloat(Const S : String; Out Value: Single): Boolean;
+Function TryStrToFloat(Const S : String; Out Value: Single; Const FormatSettings: TFormatSettings): Boolean;
+Function TryStrToFloat(Const S : String; Out Value: Double): Boolean;
+Function TryStrToFloat(Const S : String; Out Value: Double; Const FormatSettings: TFormatSettings): Boolean;
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+Function TryStrToFloat(Const S : String; Out Value: Extended): Boolean;
+Function TryStrToFloat(Const S : String; Out Value: Extended; Const FormatSettings: TFormatSettings): Boolean;
+{$endif FPC_HAS_TYPE_EXTENDED}
+Function TextToFloat(Buffer: PChar; Out Value: Extended): Boolean;
+Function TextToFloat(Buffer: PChar; Out Value: Extended; Const FormatSettings: TFormatSettings): Boolean;
+Function TextToFloat(Buffer: PChar; Out Value; ValueType: TFloatValue): Boolean;
+Function TextToFloat(Buffer: PChar; Out Value; ValueType: TFloatValue; Const FormatSettings: TFormatSettings): Boolean;
 Function FloatToText(Buffer: PChar; Value: Extended; format: TFloatFormat; Precision, Digits: Integer): Longint;
+Function FloatToText(Buffer: PChar; Value: Extended; format: TFloatFormat; Precision, Digits: Integer; Const FormatSettings: TFormatSettings): Longint;
 Function FloatToDateTime (Const Value : Extended) : TDateTime;
 Function FloattoCurr (Const Value : Extended) : Currency;
 function TryFloatToCurr(const Value: Extended; var AResult: Currency): Boolean;
+
 Function CurrToStr(Value: Currency): string;
+Function CurrToStr(Value: Currency; Const FormatSettings: TFormatSettings): string;
 function StrToCurr(const S: string): Currency;
-function TryStrToCurr(const S: string;Var Value : Currency): Boolean;
+function StrToCurr(const S: string; Const FormatSettings: TFormatSettings): Currency;  
+function TryStrToCurr(const S: string;Out Value : Currency): Boolean;
+function TryStrToCurr(const S: string;Out Value : Currency; Const FormatSettings: TFormatSettings): Boolean;       
 function StrToCurrDef(const S: string; Default : Currency): Currency;
+function StrToCurrDef(const S: string; Default : Currency; Const FormatSettings: TFormatSettings): Currency;  
+
+Function FloatToTextFmt(Buffer: PChar; Value: Extended; format: PChar; FormatSettings : TFormatSettings): Integer;
+Function FloatToTextFmt(Buffer: PChar; Value: Extended; format: PChar): Integer;
+Procedure FloatToDecimal(Out Result: TFloatRec; const Value; ValueType: TFloatValue; Precision, Decimals : integer);
+Procedure FloatToDecimal(Out Result: TFloatRec; Value: Extended; Precision, Decimals : integer);
+Function FormatFloat(Const Format : String; Value : Extended) : String;
+Function FormatFloat(Const Format : String; Value : Extended; Const FormatSettings: TFormatSettings) : String;
+
+function FormatCurr(const Format: string; Value: Currency): string;
+Function FormatCurr(const Format: string; Value: Currency; Const FormatSettings: TFormatSettings): string;
+{$endif}
+
 function StrToBool(const S: string): Boolean;
-function BoolToStr(B: Boolean): string;
+function BoolToStr(B: Boolean;UseBoolStrs:Boolean=False): string;
+function BoolToStr(B: Boolean;const TrueS,FalseS:string): string; inline;
+function StrToBoolDef(const S: string; Default: Boolean): Boolean;
+function TryStrToBool(const S: string; out Value: Boolean): Boolean;
+
 function LastDelimiter(const Delimiters, S: string): Integer;
 function StringReplace(const S, OldPattern, NewPattern: string;  Flags: TReplaceFlags): string;
-Function FloatToTextFmt(Buffer: PChar; Value: Extended; format: PChar): Integer;
-Procedure FloatToDecimal(Var Result: TFloatRec; Value: Extended; Precision, Decimals : integer);
-Function FormatFloat(Const Format : String; Value : Extended) : String;
 Function IsDelimiter(const Delimiters, S: string; Index: Integer): Boolean;
-function FormatCurr(const Format: string; Value: Currency): string;
+
+function SScanf(const s: string; const fmt : string;const Pointers : array of Pointer) : Integer;
 
 {// MBCS Functions. No MBCS yet, so mostly these are calls to the regular counterparts.}
 Type
@@ -174,6 +236,7 @@ Function ByteToCharLen(const S: string; MaxLen: Integer): Integer;
 Function CharToByteLen(const S: string; MaxLen: Integer): Integer;
 Function ByteToCharIndex(const S: string; Index: Integer): Integer;
 Function StrCharLength(const Str: PChar): Integer;
+function StrNextChar(const Str: PChar): PChar;
 
 
 const
@@ -185,6 +248,7 @@ const
 
 Type
   TSysCharSet = Set of char;
+  PSysCharSet = ^TSysCharSet;
 
 Function FindCmdLineSwitch(const Switch: string; const Chars: TSysCharSet;IgnoreCase: Boolean): Boolean;
 Function FindCmdLineSwitch(const Switch: string; IgnoreCase: Boolean): Boolean;
@@ -202,28 +266,3 @@ function LeftStr(const S: string; Count: integer): string;
 function RightStr(const S: string; Count: integer): string;
 function BCDToInt(Value: integer): integer;
 
-{
-  $Log: sysstrh.inc,v $
-  Revision 1.18  2005/04/28 09:15:44  florian
-    + variants: string -> float/int casts
-
-  Revision 1.17  2005/04/26 16:40:51  michael
-  + Added FormatCurr by Uberto Barbini
-
-  Revision 1.16  2005/03/12 14:56:22  florian
-    + added Ansi* routines to widestring manager
-    * made them using OS calls on windows
-
-  Revision 1.15  2005/02/14 17:13:31  peter
-    * truncate log
-
-  Revision 1.14  2005/02/06 09:38:45  florian
-    +  StrCharLength infrastructure
-
-  Revision 1.13  2005/01/17 18:38:48  peter
-    * extended overload disabled for powerpc
-
-  Revision 1.12  2005/01/16 17:53:27  michael
-  + Patch from Colin Western to implemenet TryStrToFLoat
-
-}

@@ -1,5 +1,4 @@
 {
-    $Id: cpunode.pas,v 1.23 2005/02/14 17:13:09 peter Exp $
     Copyright (c) 2000-2002 by Florian Klaempfl
 
     Includes the i386 code generator
@@ -41,30 +40,21 @@ unit cpunode;
        ncgset,
        ncginl,
        ncgopt,
+       ncgobjc,
        { to be able to only parts of the generic code,
          the processor specific nodes must be included
          after the generic one (FK)
        }
        nx86set,
+       nx86con,
+       nx86cnv,
 
        n386add,
        n386cal,
-       n386con,
        n386mem,
        n386set,
        n386inl,
-       n386mat,
-       n386cnv
+       n386mat
        ;
 
 end.
-{
-  $Log: cpunode.pas,v $
-  Revision 1.23  2005/02/14 17:13:09  peter
-    * truncate log
-
-  Revision 1.22  2005/01/24 22:08:32  peter
-    * interface wrapper generation moved to cgobj
-    * generate interface wrappers after the module is parsed
-
-}

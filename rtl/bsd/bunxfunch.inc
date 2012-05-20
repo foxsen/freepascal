@@ -1,5 +1,4 @@
 {
-    $Id: bunxfunch.inc,v 1.2 2005/02/14 17:13:21 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2002 by Marco van de Voort
 
@@ -60,9 +59,3 @@ Function GetITimer(Which : Longint;Var value : ItimerVal):Longint;
 function FPgetrusage(who:cint;var ru : rusage):cint;
 //function FPtimes(var buffer : tms):clock_t;
 
-{
- $Log: bunxfunch.inc,v $
- Revision 1.2  2005/02/14 17:13:21  peter
-   * truncate log
-
-}

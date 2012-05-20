@@ -1,6 +1,5 @@
 {
     *********************************************************************
-    $Id: syspchh.inc,v 1.5 2005/02/14 17:13:31 peter Exp $
     Copyright (C) 1997, 1998 Gertjan Schouten
 
     This program is free software; you can redistribute it and/or modify
@@ -22,9 +21,9 @@
 }
 
 { shared with strings unit }
-function strlen(p:pchar):sizeint;external name 'FPC_PCHAR_LENGTH';
-function strcopy(dest,source : pchar) : pchar;
-function strlcopy(dest,source : pchar;maxlen : SizeInt) : pchar;
+function strlen(p:pchar):sizeint;external name 'FPC_PCHAR_LENGTH';overload;
+function strcopy(dest,source : pchar) : pchar;overload;
+function strlcopy(dest,source : pchar;maxlen : SizeInt) : pchar;overload;
 function strecopy(dest,source : pchar) : pchar;
 function strend(p : pchar) : pchar;
 function strcat(dest,source : pchar) : pchar;
@@ -43,15 +42,9 @@ function strnew(p : pchar) : pchar;
 
 { Different from strings unit - ansistrings or different behaviour }
 function StrPas(Str: PChar): string;
-function StrPCopy(Dest: PChar; Source: string): PChar;
-function StrPLCopy(Dest: PChar; Source: string; MaxLen: SizeUInt): PChar;
+function StrPCopy(Dest: PChar; Source: string): PChar;overload;
+function StrPLCopy(Dest: PChar; Source: string; MaxLen: SizeUInt): PChar;overload;
 function StrAlloc(Size: cardinal): PChar;
 function StrBufSize(Str: PChar): SizeUInt;
 procedure StrDispose(Str: PChar);
 
-{
-  $Log: syspchh.inc,v $
-  Revision 1.5  2005/02/14 17:13:31  peter
-    * truncate log
-
-}

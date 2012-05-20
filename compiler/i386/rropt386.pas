@@ -1,5 +1,4 @@
 {
-    $Id: rropt386.pas,v 1.32 2005/04/22 15:55:08 jonas Exp $
     Copyright (c) 1998-2002 by Jonas Maebe, member of the Free Pascal
       development team
 
@@ -27,9 +26,9 @@ unit rropt386;
 
 interface
 
-uses aasmbase,aasmtai,aasmcpu;
+uses aasmbase,aasmtai,aasmdata,aasmcpu;
 
-procedure doRenaming(asml: taasmoutput; first, last: tai);
+procedure doRenaming(asml: TAsmList; first, last: tai);
 
 implementation
 
@@ -136,7 +135,7 @@ begin
       end;
     A_INC,A_DEC:
       begin
-        reference_reset(tmpref);
+        reference_reset(tmpref,1);
         tmpref.base := newreg(R_INTREGISTER,reg1,R_SUBWHOLE);
         case p.opcode of
           A_INC:
@@ -151,7 +150,7 @@ begin
       end;
     A_SUB,A_ADD:
       begin
-        reference_reset(tmpref);
+        reference_reset(tmpref,1);
         tmpref.base := newreg(R_INTREGISTER,reg1,R_SUBWHOLE);
         case p.oper[0]^.typ of
           top_const:
@@ -164,10 +163,15 @@ begin
             if (p.oper[0]^.ref^.refaddr=addr_full) then
               tmpref.symbol := p.oper[0]^.ref^.symbol
             else
-              internalerror(200402261);
+              internalerror(200402263);
           top_reg:
             begin
+              { "addl %reg2,%reg1" must become "leal (%reg1,%reg1),%reg2" }
+              { since at this point reg1 holds the value that reg2 would  }
+              { otherwise contain                                         }
               tmpref.index := p.oper[0]^.reg;
+              if (getsupreg(tmpref.index)=reg2) then
+                setsupreg(tmpref.index,reg1);
               tmpref.scalefactor := 1;
             end;
           else internalerror(200010031);
@@ -178,7 +182,7 @@ begin
       end;
     A_SHL:
       begin
-        reference_reset(tmpref);
+        reference_reset(tmpref,2);
         tmpref.index := newreg(R_INTREGISTER,reg1,R_SUBWHOLE);
         tmpref.scalefactor := 1 shl p.oper[0]^.val;
         p.opcode := A_LEA;
@@ -190,7 +194,7 @@ begin
 end;
 
 
-function switchRegs(asml: taasmoutput; reg1, reg2: tsuperregister; start: tai): Boolean;
+function switchRegs(asml: TAsmList; reg1, reg2: tsuperregister; start: tai): Boolean;
 { change movl  %reg1,%reg2 ... bla ... to ... bla with reg1 and reg2 switched }
 var
   endP, hp, lastreg1,lastreg2: tai;
@@ -308,6 +312,8 @@ begin
         end;
       if switchLast then
         begin
+          lastreg1 := hp;
+          lastreg2 := hp;
           { this is in case of a storeback, make sure the same size of register }
           { contents as the initial move is transfered                          }
           doSwitchReg(taicpu(hp),reg1,reg2);
@@ -328,7 +334,7 @@ begin
 end;
 
 
-procedure doRenaming(asml: taasmoutput; first, last: tai);
+procedure doRenaming(asml: TAsmList; first, last: tai);
 var
   p: tai;
 begin
@@ -363,13 +369,3 @@ end;
 
 
 End.
-
-{
-  $Log: rropt386.pas,v $
-  Revision 1.32  2005/04/22 15:55:08  jonas
-    * fixed web bug 3905
-
-  Revision 1.31  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

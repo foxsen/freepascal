@@ -1,5 +1,4 @@
 {
-    $Id: unxconst.inc,v 1.2 2005/02/14 17:13:30 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Michael Van Canneyt,
     member of the Free Pascal development team.
@@ -81,21 +80,9 @@ Const
   fs_xia      = $012FD16D;
 
   {Constansts Termios/Ioctl (used in Do_IsDevice) }
-  {$ifdef PowerPC}
+  {$if defined(PowerPC) or defined(Powerpc64)}
   IOCtl_TCGETS=$402c7413;
   {$else}
   IOCtl_TCGETS=$5401; // TCGETS is also in termios.inc, but the sysunix needs only this
   {$endif}
 
-{
-  $Log: unxconst.inc,v $
-  Revision 1.2  2005/02/14 17:13:30  peter
-    * truncate log
-
-  Revision 1.1  2005/02/13 21:47:56  peter
-    * include file cleanup part 2
-
-  Revision 1.12  2005/02/13 20:01:38  peter
-    * include file cleanup
-
-}

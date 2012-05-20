@@ -1,5 +1,4 @@
 {
-    $Id: mouse.inc,v 1.7 2005/02/14 17:13:25 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team
 
@@ -11,6 +10,8 @@
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
  **********************************************************************}
+
+{$T+}
 
 Var
   CurrentMouseDriver : TMouseDriver;
@@ -26,8 +27,8 @@ Var
 Procedure ClearMouseEventQueue;
 
 begin
-  PendingMouseHead:=@PendingMouseEvent;
-  PendingMouseTail:=@PendingMouseEvent;
+  PendingMouseHead:=@PendingMouseEvent[0];
+  PendingMouseTail:=@PendingMouseEvent[0];
   PendingMouseEvents:=0;
   FillChar(LastMouseEvent,sizeof(TMouseEvent),0);
 end;
@@ -119,8 +120,8 @@ Procedure GetPendingEvent(Var MouseEvent:TMouseEvent);
 begin
   MouseEvent:=PendingMouseHead^;
   inc(PendingMouseHead);
-  if PtrInt(PendingMouseHead)=Ptrint(@PendingMouseEvent)+sizeof(PendingMouseEvent) then
-   PendingMouseHead:=@PendingMouseEvent;
+  if PendingMouseHead=@PendingMouseEvent[0]+MouseEventBufSize then
+   PendingMouseHead:=@PendingMouseEvent[0];
   dec(PendingMouseEvents);
   if (LastMouseEvent.x<>MouseEvent.x) or
      (LastMouseEvent.y<>MouseEvent.y) then
@@ -143,13 +144,14 @@ begin
     if (PendingMouseEvents>0) then
       GetPendingEvent(MouseEvent)
     else
-      FillChar(MouseEvent,sizeof(MouseEvent),0);
+      CurrentMouseDriver.GetMouseEvent(MouseEvent);
+{      FillChar(MouseEvent,sizeof(MouseEvent),0);}
     end
   else
     If Assigned(CurrentMouseDriver.GetMouseEvent) Then
       begin
-      CurrentMouseDriver.GetMouseEvent(MouseEvent);
-      LastMouseEvent:=MouseEvent;
+        LastMouseEvent:=MouseEvent;
+        CurrentMouseDriver.GetMouseEvent(MouseEvent);
       end
     else
       FillChar(MouseEvent,sizeof(TMouseEvent),0);
@@ -161,8 +163,8 @@ begin
     begin
     PendingMouseTail^:=MouseEvent;
     inc(PendingMouseTail);
-    if PtrInt(PendingMouseTail)=Ptrint(@PendingMouseEvent)+sizeof(PendingMouseEvent) then
-      PendingMouseTail:=@PendingMouseEvent;
+    if PendingMouseTail=@PendingMouseEvent[0]+MouseEventBufSize then
+      PendingMouseTail:=@PendingMouseEvent[0];
     inc(PendingMouseEvents);
     end
   else
@@ -208,9 +210,3 @@ begin
   Driver:=CurrentMouseDriver;
 end;
 
-{
-  $Log: mouse.inc,v $
-  Revision 1.7  2005/02/14 17:13:25  peter
-    * truncate log
-
-}

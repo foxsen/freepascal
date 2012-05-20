@@ -1,5 +1,4 @@
 {
-  $Id: dotest.pp,v 1.46 2005/02/14 17:13:37 peter Exp $
     This file is part of the Free Pascal test suite.
     Copyright (c) 1999-2002 by the Free Pascal development team.
 
@@ -14,7 +13,10 @@
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
  **********************************************************************}
+{$mode objfpc}
+{$goto on}
 {$H+}
+
 program dotest;
 uses
   dos,
@@ -23,7 +25,9 @@ uses
 {$endif}
   teststr,
   testu,
-  redir;
+  redir,
+  bench,
+  classes;
 
 {$ifdef go32v2}
   {$define LIMIT83FS}
@@ -34,19 +38,23 @@ uses
 
 type
   tcompinfo = (compver,comptarget,compcpu);
+  tdelexecutable = (deBefore, deAfter);
+  tdelexecutables = set of tdelexecutable;
 
 const
   ObjExt='o';
   PPUExt='ppu';
 {$ifdef UNIX}
-  ExeExt='';
+  SrcExeExt='';
 {$else UNIX}
 {$ifdef MACOS}
-  ExeExt='';
+  SrcExeExt='';
 {$else MACOS}
-  ExeExt='exe';
+  SrcExeExt='.exe';
 {$endif MACOS}
 {$endif UNIX}
+  ExeExt : string = '';
+  DefaultTimeout=60;
 
 var
   Config : TConfig;
@@ -57,31 +65,91 @@ var
   RTLUnitsDir,
   TestOutputDir,
   OutputDir : string;
-  CompilerBin : string;
-  CompilerCPU : string;
-  CompilerTarget : string;
-  CompilerVersion : string;
-  PPFile : string;
-  PPFileInfo : string;
+  CompilerBin,
+{ CompilerCPU and CompilerTarget are lowercased at start
+  to avoid need to call lowercase again and again ... }
+  CompilerCPU,
+  CompilerTarget,
+  CompilerVersion,
+  DefaultCompilerCPU,
+  DefaultCompilerTarget,
+  DefaultCompilerVersion : string;
+  PPFile : TStringList;
+  PPFileInfo : TStringList;
   TestName : string;
+  Current : longint;
 
 const
   DoGraph : boolean = false;
+  UseOSOnly : boolean = false;
   DoInteractive : boolean = false;
   DoExecute : boolean = false;
   DoKnown : boolean = false;
   DoAll : boolean = false;
   DoUsual : boolean = true;
-  TargetDir : string = '';
+  { TargetDir : string = ''; unused }
+  BenchmarkInfo : boolean = false;
   ExtraCompilerOpts : string = '';
-  DelExecutable : boolean = false;
+  DelExecutable : TDelExecutables = [];
   RemoteAddr : string = '';
   RemotePath : string = '/tmp';
   RemotePara : string = '';
+  RemoteRshParas : string = '';
+  RemoteShell : string = '';
+  RemoteShellBase : string = '';
+  RemoteShellNeedsExport : boolean = false;
   rshprog : string = 'rsh';
   rcpprog : string = 'rcp';
   rquote : char = '''';
+  UseTimeout : boolean = false;
   emulatorname : string = '';
+  TargetCanCompileLibraries : boolean = true;
+
+{ Constants used in IsAbsolute function }
+  TargetHasDosStyleDirectories : boolean = false;
+  TargetAmigaLike : boolean = false;
+  TargetIsMacOS : boolean = false;
+  TargetIsUnix : boolean = false;
+
+{ extracted from rtl/macos/macutils.inc }
+
+function IsMacFullPath (const path: string): Boolean;
+  begin
+    if Pos(':', path) = 0 then    {its partial}
+      IsMacFullPath := false
+    else if path[1] = ':' then
+      IsMacFullPath := false
+    else
+      IsMacFullPath := true
+  end;
+
+
+Function IsAbsolute (Const F : String) : boolean;
+{
+  Returns True if the name F is a absolute file name
+}
+begin
+  IsAbsolute:=false;
+  if TargetHasDosStyleDirectories then
+    begin
+      if (F[1]='/') or (F[1]='\') then
+        IsAbsolute:=true;
+      if (Length(F)>2) and (F[2]=':') and ((F[3]='\') or (F[3]='/')) then
+        IsAbsolute:=true;
+    end
+  else if TargetAmigaLike then
+    begin
+      if (length(F)>0) and (Pos(':',F) <> 0) then
+        IsAbsolute:=true;
+    end
+  else if TargetIsMacOS then
+    begin
+      IsAbsolute:=IsMacFullPath(F);
+    end
+  { generic case }
+  else if (F[1]='/') then
+    IsAbsolute:=true;
+end;
 
 Function FileExists (Const F : String) : Boolean;
 {
@@ -172,15 +240,15 @@ Var
   info : searchrec;
   dt : DateTime;
 begin
-  FindFirst (PPFile,anyfile,Info);
+  FindFirst (PPFile[current],anyfile,Info);
   If DosError=0 then
     begin
       UnpackTime(info.time,dt);
-      PPFileInfo:=PPFile+' '+ToStr(dt.year)+'/'+ToStrZero(dt.month,2)+'/'+
-        ToStrZero(dt.day,2)+' '+ToStrZero(dt.Hour,2)+':'+ToStrZero(dt.min,2)+':'+ToStrZero(dt.sec,2);
+      PPFileInfo.Insert(current,PPFile[current]+' '+ToStr(dt.year)+'/'+ToStrZero(dt.month,2)+'/'+
+        ToStrZero(dt.day,2)+' '+ToStrZero(dt.Hour,2)+':'+ToStrZero(dt.min,2)+':'+ToStrZero(dt.sec,2));
     end
   else
-    PPFileInfo:=PPfile;
+    PPFileInfo.Insert(current,PPFile[current]);
   FindClose (Info);
 end;
 
@@ -206,6 +274,16 @@ begin
   SplitFileName:=n+e;
 end;
 
+Function SplitFileBase(const s:string):string;
+var
+  p : dirstr;
+  n : namestr;
+  e : extstr;
+begin
+  FSplit(s,p,n,e);
+  SplitFileBase:=n;
+end;
+
 
 function ForceExtension(Const HStr,ext:String):String;
 {
@@ -218,9 +296,14 @@ begin
   while (j>0) and (Hstr[j]<>'.') do
    dec(j);
   if j=0 then
-   j:=255;
+   j:=length(Hstr)+1;
   if Ext<>'' then
-   ForceExtension:=Copy(Hstr,1,j-1)+'.'+Ext
+   begin
+     if Ext[1]='.' then
+       ForceExtension:=Copy(Hstr,1,j-1)+Ext
+     else
+       ForceExtension:=Copy(Hstr,1,j-1)+'.'+Ext
+   end
   else
    ForceExtension:=Copy(Hstr,1,j-1);
 end;
@@ -262,11 +345,12 @@ end;
       end;
 
 
-procedure Copyfile(const fn1,fn2:string;append:boolean);
+function Copyfile(const fn1,fn2:string;append:boolean) : longint;
 const
   bufsize = 16384;
 var
   f,g : file;
+  addsize,
   i   : longint;
   buf : pointer;
 begin
@@ -279,6 +363,7 @@ begin
   {$I-}
    reset(f,1);
   {$I+}
+  addsize:=0;
   if ioresult<>0 then
    Verbose(V_Error,'Can''t open '+fn1);
   if append then
@@ -303,10 +388,12 @@ begin
   repeat
     blockread(f,buf^,bufsize,i);
     blockwrite(g,buf^,i);
+    addsize:=addsize+i;
   until i<bufsize;
   freemem(buf,bufsize);
   close(f);
   close(g);
+  CopyFile:=addsize;
 end;
 
 
@@ -324,7 +411,7 @@ begin
       rewrite(t);
      {$I+}
      if ioresult<>0 then
-      Verbose(V_Abort,'Can''t append to '+logfile);
+       Verbose(V_Abort,'Can''t append to '+logfile);
    end;
   writeln(t,s);
   close(t);
@@ -354,11 +441,32 @@ begin
     return the first info }
   case c of
     compver :
-      hs:='-iVTPTO';
+      begin
+        if DefaultCompilerVersion<>'' then
+          begin
+            GetCompilerInfo:=true;
+            exit;
+          end;
+        hs:='-iVTPTO';
+      end;
     compcpu :
-      hs:='-iTPTOV';
+      begin
+        if DefaultCompilerCPU<>'' then
+          begin
+            GetCompilerInfo:=true;
+            exit;
+          end;
+        hs:='-iTPTOV';
+      end;
     comptarget :
-      hs:='-iTOTPV';
+      begin
+        if DefaultCompilerTarget<>'' then
+          begin
+            GetCompilerInfo:=true;
+            exit;
+          end;
+        hs:='-iTOTPV';
+      end;
   end;
   ExecuteRedir(CompilerBin,hs,'','out','');
   assign(t,'out');
@@ -376,21 +484,21 @@ begin
      case c of
        compver :
          begin
-           CompilerVersion:=GetToken(hs);
-           CompilerCPU:=GetToken(hs);
-           CompilerTarget:=GetToken(hs);
+           DefaultCompilerVersion:=GetToken(hs);
+           DefaultCompilerCPU:=GetToken(hs);
+           DefaultCompilerTarget:=GetToken(hs);
          end;
        compcpu :
          begin
-           CompilerCPU:=GetToken(hs);
-           CompilerTarget:=GetToken(hs);
-           CompilerVersion:=GetToken(hs);
+           DefaultCompilerCPU:=GetToken(hs);
+           DefaultCompilerTarget:=GetToken(hs);
+           DefaultCompilerVersion:=GetToken(hs);
          end;
        comptarget :
          begin
-           CompilerTarget:=GetToken(hs);
-           CompilerCPU:=GetToken(hs);
-           CompilerVersion:=GetToken(hs);
+           DefaultCompilerTarget:=GetToken(hs);
+           DefaultCompilerCPU:=GetToken(hs);
+           DefaultCompilerVersion:=GetToken(hs);
          end;
      end;
      GetCompilerInfo:=true;
@@ -399,41 +507,160 @@ end;
 
 
 function GetCompilerVersion:boolean;
+const
+  CompilerVersionDebugWritten : boolean = false;
 begin
   if CompilerVersion='' then
-    GetCompilerVersion:=GetCompilerInfo(compver)
+    begin
+      GetCompilerVersion:=GetCompilerInfo(compver);
+      CompilerVersion:=DefaultCompilerVersion;
+    end
   else
     GetCompilerVersion:=true;
-  if GetCompilerVersion then
-    Verbose(V_Debug,'Compiler Version: "'+CompilerVersion+'"');
+  if GetCompilerVersion and not CompilerVersionDebugWritten then
+    begin
+      Verbose(V_Debug,'Compiler Version: "'+CompilerVersion+'"');
+      CompilerVersionDebugWritten:=true;
+    end;
 end;
 
 
 function GetCompilerCPU:boolean;
+const
+  CompilerCPUDebugWritten : boolean = false;
 begin
   if CompilerCPU='' then
-    GetCompilerCPU:=GetCompilerInfo(compcpu)
+    begin
+      GetCompilerCPU:=GetCompilerInfo(compcpu);
+      CompilerCPU:=lowercase(DefaultCompilerCPU);
+    end
   else
     GetCompilerCPU:=true;
-  if GetCompilerCPU then
-    Verbose(V_Debug,'Compiler CPU: "'+CompilerCPU+'"');
+  if GetCompilerCPU and not CompilerCPUDebugWritten then
+    begin
+      Verbose(V_Debug,'Compiler CPU: "'+CompilerCPU+'"');
+      CompilerCPUDebugWritten:=true;
+    end;
 end;
 
 
 function GetCompilerTarget:boolean;
+const
+  CompilerTargetDebugWritten : boolean = false;
 begin
   if CompilerTarget='' then
-    GetCompilerTarget:=GetCompilerInfo(comptarget)
+    begin
+      GetCompilerTarget:=GetCompilerInfo(comptarget);
+      CompilerTarget:=lowercase(DefaultCompilerTarget);
+    end
   else
     GetCompilerTarget:=true;
-  if GetCompilerTarget then
-    Verbose(V_Debug,'Compiler Target: "'+CompilerTarget+'"');
+  if GetCompilerTarget and not CompilerTargetDebugWritten then
+    begin
+      Verbose(V_Debug,'Compiler Target: "'+CompilerTarget+'"');
+      CompilerTargetDebugWritten:=true;
+    end;
 end;
 
 
 function CompilerFullTarget:string;
 begin
-  CompilerFullTarget:=CompilerCPU+'-'+CompilerTarget;
+  if UseOSOnly then
+    CompilerFullTarget:=CompilerTarget
+  else
+    CompilerFullTarget:=CompilerCPU+'-'+CompilerTarget;
+end;
+
+{ Set the three constants above according to
+  the current target }
+
+procedure SetTargetDirectoriesStyle;
+var
+  LTarget : string;
+  res : boolean;
+begin
+  { Call this first to ensure that CompilerTarget is not empty }
+  res:=GetCompilerTarget;
+  LTarget := CompilerTarget;
+  TargetHasDosStyleDirectories :=
+    (LTarget='emx') or
+    (LTarget='go32v2') or
+    (LTarget='nativent') or
+    (LTarget='os2') or
+    (LTarget='symbian') or
+    (LTarget='watcom') or
+    (LTarget='wdosx') or
+    (LTarget='win32') or
+    (LTarget='win64');
+  TargetAmigaLike:=
+    (LTarget='amiga') or
+    (LTarget='morphos');
+  TargetIsMacOS:=
+    (LTarget='macos');
+  { Base on whether UNIX is defined as default macro
+    in extradefines in systesms/i_XXX.pas units }
+  TargetIsUnix:=
+    (LTarget='linux') or
+    (LTarget='linux6432') or
+    (LTarget='freebsd') or
+    (LTarget='openbsd') or
+    (LTarget='netbsd') or
+    (LTarget='beos') or
+    (LTarget='haiku') or
+    (LTarget='solaris') or
+    (LTarget='iphonesim') or
+    (LTarget='darwin') or
+    (LTarget='aix');
+
+  { Set ExeExt for CompilerTarget.
+    This list has been set up 2011-06 using the information in
+    compiler/system/i_XXX.pas units.
+    We should update this list when adding new targets PM }
+  if (TargetHasDosStyleDirectories) then
+    ExeExt:='.exe'
+  else if LTarget='atari' then
+    ExeExt:='.tpp'
+  else if LTarget='gba' then
+    ExeExt:='.gba'
+  else if LTarget='nds' then
+    ExeExt:='.bin'
+  else if (LTarget='netware') or (LTarget='netwlibc') then
+    ExeExt:='.nlm'
+  else if LTarget='wii' then
+    ExeExt:='.dol'
+  else if LTarget='wince' then
+    ExeExt:='.exe';
+end;
+
+{$ifndef LIMIT83FS}
+{ Set the UseOSOnly constant above according to
+  the current target }
+
+procedure SetUseOSOnly;
+var
+  LTarget : string;
+  res : boolean;
+begin
+  { Call this first to ensure that CompilerTarget is not empty }
+  res:=GetCompilerTarget;
+  LTarget := CompilerTarget;
+  UseOSOnly:= (LTarget='emx') or
+              (LTarget='go32v2') or
+              (LTarget='os2');
+end;
+{$endif not LIMIT83FS}
+
+procedure SetTargetCanCompileLibraries;
+var
+  LTarget : string;
+  res : boolean;
+begin
+  { Call this first to ensure that CompilerTarget is not empty }
+  res:=GetCompilerTarget;
+  LTarget := CompilerTarget;
+  { Feel free to add other targets here }
+  if (LTarget='go32v2') then
+    TargetCanCompileLibraries:=false;
 end;
 
 
@@ -447,12 +674,12 @@ begin
 end;
 
 
-function TestOutputFileName(Const s,ext:String):String;
+function TestOutputFileName(Const pref,base,ext:String):String;
 begin
 {$ifndef macos}
-  TestOutputFileName:=TestOutputDir+'/'+ForceExtension(SplitFileName(s),ext);
+  TestOutputFileName:=TestOutputDir+'/'+ForceExtension(pref+SplitFileName(base),ext);
 {$else macos}
-  TestOutputFileName:=ConcatMacPath(TestOutputDir,ForceExtension(SplitFileName(s),ext));
+  TestOutputFileName:=ConcatMacPath(TestOutputDir,ForceExtension(pref+SplitFileName(base),ext));
 {$endif macos}
 end;
 
@@ -483,79 +710,241 @@ begin
 end;
 
 
+{ Takes each option from AddOptions list
+  considered as a space separated list
+  and adds the option to args
+  unless option contains a percent sign,
+  in that case, the option after % will be added
+  to args only if CompilerTarget is listed in
+  the string part before %.
+  NOTE: this function does not check for
+  quoted options...
+  The list before % must of course contain no spaces. }
+
+procedure AppendOptions(AddOptions : string;var args : string);
+var
+  endopt,percentpos : longint;
+  opttarget, currentopt : string;
+begin
+  Verbose(V_Debug,'AppendOptions called with AddOptions="'+AddOptions+'"');
+  AddOptions:=trimspace(AddOptions);
+  repeat
+    endopt:=pos(' ',AddOptions);
+    if endopt=0 then
+      endopt:=length(AddOptions);
+    currentopt:=trimspace(copy(AddOptions,1,endopt));
+    AddOptions:=trimspace(copy(Addoptions,endopt+1,length(AddOptions)));
+    if currentopt<>'' then
+      begin
+        percentpos:=pos('%',currentopt);
+        if (percentpos=0) then
+          begin
+            Verbose(V_Debug,'Adding option="'+currentopt+'"');
+            args:=args+' '+currentopt;
+          end
+        else
+          begin
+            opttarget:=lowercase(copy(currentopt,1,percentpos-1));
+            if IsInList(CompilerTarget, opttarget) then
+              begin
+                Verbose(V_Debug,'Adding target specific option="'+currentopt+'" for '+opttarget);
+                args:=args+' '+copy(currentopt,percentpos+1,length(currentopt))
+              end
+            else
+              Verbose(V_Debug,'No matching target "'+currentopt+'"');
+          end;
+      end;
+  until AddOptions='';
+end;
+
+{ This function removes some incompatible
+  options from TEST_OPT before adding them to
+  the list of options passed to the compiler.
+  %DELOPT=XYZ  will remove XYZ exactly
+  %DELOPT=XYZ* will remove all options starting with XYZ.
+  NOTE: This fuinction does not handle quoted options. }
+function DelOptions(Pattern, opts : string) : string;
+var
+  currentopt : string;
+  optpos, endopt, startpos, endpos : longint;
+  iswild : boolean;
+begin
+  opts:=trimspace(opts);
+  pattern:=trimspace(pattern);
+  repeat
+    endpos:=pos(' ',pattern);
+    if endpos=0 then
+      endpos:=length(pattern);
+    currentopt:=trimspace(copy(pattern,1,endpos));
+    pattern:=trimspace(copy(pattern,endpos+1,length(pattern)));
+    if currentopt<>'' then
+      begin
+        if currentopt[length(currentopt)]='*' then
+          begin
+            iswild:=true;
+            system.delete(currentopt,length(currentopt),1);
+          end
+        else
+          iswild:=false;
+        startpos:=1;
+        repeat
+          optpos:=pos(currentopt,copy(opts,startpos,length(opts)));
+          if optpos>0 then
+            begin
+              { move to index in full opts string }
+              optpos:=optpos+startpos-1;
+              { compute position of end of opt }
+              endopt:=optpos+length(currentopt);
+              { use that end as start position for next round }
+              startpos:=endopt;
+              if iswild then
+                begin
+                  while (opts[endopt]<>' ') and
+                    (endopt<length(opts)) do
+                    begin
+                      inc(endopt);
+                      inc(startpos);
+                    end;
+                  Verbose(V_Debug,'Pattern match found "'+currentopt+'*" in "'+opts+'"');
+                  system.delete(opts,optpos,endopt-optpos+1);
+                  Verbose(V_Debug,'After opts="'+opts+'"');
+                end
+              else
+                begin
+                  if (endopt>length(opts)) or (opts[endopt]=' ') then
+                    begin
+                      Verbose(V_Debug,'Exact match found "'+currentopt+'" in "'+opts+'"');
+                      system.delete(opts,optpos,endopt-optpos+1);
+                      Verbose(V_Debug,'After opts="'+opts+'"');
+                    end
+                  else
+                    begin
+                      Verbose(V_Debug,'No exact match "'+currentopt+'" in "'+opts+'"');
+                    end;
+                end;
+
+            end;
+        until optpos=0;
+      end;
+  until pattern='';
+  DelOptions:=opts;
+end;
+
 function RunCompiler:boolean;
 var
-  args    : string;
+  args,LocalExtraArgs,
+  wpoargs : string;
+  passnr,
+  passes  : longint;
   execres : boolean;
+  EndTicks,
+  StartTicks : int64;
 begin
   RunCompiler:=false;
-  args:='-n -Fu'+RTLUnitsDir;
+  args:='-n -T'+CompilerTarget+' -Fu'+RTLUnitsDir;
   args:=args+' -FE'+TestOutputDir;
-{$ifdef macos}
-  args:=args+' -WT ';  {tests should be compiled as MPWTool}
-{$endif macos}
-  if ExtraCompilerOpts<>'' then
-   args:=args+ExtraCompilerOpts;
-{$ifdef unix}
-  { Add runtime library path to current dir to find .so files }
-  if Config.NeedLibrary then
-   args:=args+' -Fl'+TestOutputDir+' ''-k-rpath .''';
-{$endif unix}
-  if Config.NeedOptions<>'' then
-   args:=args+' '+Config.NeedOptions;
-  args:=args+' '+ppfile;
-  Verbose(V_Debug,'Executing '+compilerbin+' '+args);
-  { also get the output from as and ld that writes to stderr sometimes }
-{$ifndef macos}
-  execres:=ExecuteRedir(CompilerBin,args,'',CompilerLogFile,'stdout');
-{$else macos}
-  {Due to that Toolserver is not reentrant, we have to asm and link via script.}
-  execres:=ExecuteRedir(CompilerBin,'-s '+args,'',CompilerLogFile,'stdout');
-  if execres then
-    execres:=ExecuteRedir(TestOutputDir + ':ppas','','',CompilerLogFile,'stdout');
-{$endif macos}
-  Verbose(V_Debug,'Exitcode '+ToStr(ExecuteResult));
+  if TargetIsMacOS then
+    args:=args+' -WT ';  {tests should be compiled as MPWTool}
+  if Config.DelOptions<>'' then
+   LocalExtraArgs:=DelOptions(Config.DelOptions,ExtraCompilerOpts)
+  else
+    LocalExtraArgs:=ExtraCompilerOpts;
 
-  { Error during execution? }
-  if (not execres) and (ExecuteResult=0) then
+  if LocalExtraArgs<>'' then
+   args:=args+' '+LocalExtraArgs;
+  if TargetIsUnix then
     begin
-      AddLog(FailLogFile,TestName);
-      AddLog(ResLogFile,failed_to_compile+PPFileInfo);
-      AddLog(LongLogFile,line_separation);
-      AddLog(LongLogFile,failed_to_compile+PPFileInfo);
-      CopyFile(CompilerLogFile,LongLogFile,true);
-      { avoid to try again }
-      AddLog(ExeLogFile,failed_to_compile+PPFileInfo);
-      Verbose(V_Abort,'IOStatus: '+ToStr(IOStatus));
-      exit;
+      { Add runtime library path to current dir to find .so files }
+      if Config.NeedLibrary then
+        begin
+          if (CompilerTarget='darwin') or
+	     (CompilerTarget='aix') then
+            args:=args+' -Fl'+TestOutputDir
+	  else
+          { do not use single quote for -k as they are mishandled on
+            Windows Shells }
+            args:=args+' -Fl'+TestOutputDir+' -k-rpath -k.'
+        end;
     end;
+  if Config.NeedOptions<>'' then
+   AppendOptions(Config.NeedOptions,args);
+  wpoargs:='';
+  if (Config.WpoPasses=0) or
+     (Config.WpoParas='') then
+    passes:=1
+  else
+    passes:=config.wpopasses+1;
+  args:=args+' '+PPFile[current];
 
-  { Check for internal error }
-  if ExitWithInternalError(CompilerLogFile) then
-   begin
-     AddLog(FailLogFile,TestName);
-     if Config.Note<>'' then
-      AddLog(FailLogFile,Config.Note);
-     AddLog(ResLogFile,failed_to_compile+PPFileInfo+' internalerror generated');
-     AddLog(LongLogFile,line_separation);
-     AddLog(LongLogFile,failed_to_compile+PPFileInfo);
-     if Config.Note<>'' then
-      AddLog(LongLogFile,Config.Note);
-     CopyFile(CompilerLogFile,LongLogFile,true);
-     { avoid to try again }
-     AddLog(ExeLogFile,'Failed to compile '++PPFileInfo);
-     Verbose(V_Abort,'Internal error in compiler');
-     exit;
-   end;
+  for passnr:=1 to passes do
+    begin
+      if (passes>1) then
+        begin
+          wpoargs:=' -OW'+config.wpoparas+' -FW'+TestOutputFileName('',PPFile[current],'wp'+tostr(passnr));
+          if (passnr>1) then
+            wpoargs:=wpoargs+' -Ow'+config.wpoparas+' -Fw'+TestOutputFileName('',PPFile[current],'wp'+tostr(passnr-1));
+        end;
+      Verbose(V_Debug,'Executing '+compilerbin+' '+args+wpoargs);
+      { also get the output from as and ld that writes to stderr sometimes }
+      StartTicks:=GetMicroSTicks;
+    {$ifndef macos}
+      execres:=ExecuteRedir(CompilerBin,args+wpoargs,'',CompilerLogFile,'stdout');
+    {$else macos}
+      {Due to that Toolserver is not reentrant, we have to asm and link via script.}
+      execres:=ExecuteRedir(CompilerBin,'-s '+args+wpoargs,'',CompilerLogFile,'stdout');
+      if execres then
+        execres:=ExecuteRedir(TestOutputDir + ':ppas','','',CompilerLogFile,'stdout');
+    {$endif macos}
+      EndTicks:=GetMicroSTicks;
+      Verbose(V_Debug,'Exitcode '+ToStr(ExecuteResult));
+      if BenchmarkInfo then
+        begin
+          Verbose(V_Normal,'Compilation took '+ToStr(EndTicks-StartTicks)+' us');
+        end;
+
+      { Error during execution? }
+      if (not execres) and (ExecuteResult=0) then
+        begin
+          AddLog(FailLogFile,TestName);
+          AddLog(ResLogFile,failed_to_compile+PPFileInfo[current]);
+          AddLog(LongLogFile,line_separation);
+          AddLog(LongLogFile,failed_to_compile+PPFileInfo[current]);
+          if CopyFile(CompilerLogFile,LongLogFile,true)=0 then
+            AddLog(LongLogFile,'IOStatus'+ToStr(IOStatus));
+          { avoid to try again }
+          AddLog(ExeLogFile,failed_to_compile+PPFileInfo[current]);
+          Verbose(V_Warning,'IOStatus: '+ToStr(IOStatus));
+          exit;
+        end;
+
+      { Check for internal error }
+      if ExitWithInternalError(CompilerLogFile) then
+       begin
+         AddLog(FailLogFile,TestName);
+         if Config.Note<>'' then
+          AddLog(FailLogFile,Config.Note);
+         AddLog(ResLogFile,failed_to_compile+PPFileInfo[current]+' internalerror generated');
+         AddLog(LongLogFile,line_separation);
+         AddLog(LongLogFile,failed_to_compile+PPFileInfo[current]);
+         if Config.Note<>'' then
+          AddLog(LongLogFile,Config.Note);
+         if CopyFile(CompilerLogFile,LongLogFile,true)=0 then
+           AddLog(LongLogFile,'Internal error in compiler');
+         { avoid to try again }
+         AddLog(ExeLogFile,failed_to_compile+PPFileInfo[current]);
+         Verbose(V_Warning,'Internal error in compiler');
+         exit;
+       end;
+    end;
 
   { Should the compile fail ? }
   if Config.ShouldFail then
    begin
      if ExecuteResult<>0 then
       begin
-        AddLog(ResLogFile,success_compilation_failed+PPFileInfo);
+        AddLog(ResLogFile,success_compilation_failed+PPFileInfo[current]);
         { avoid to try again }
-        AddLog(ExeLogFile,success_compilation_failed+PPFileInfo);
+        AddLog(ExeLogFile,success_compilation_failed+PPFileInfo[current]);
         RunCompiler:=true;
       end
      else
@@ -563,11 +952,11 @@ begin
         AddLog(FailLogFile,TestName);
         if Config.Note<>'' then
           AddLog(FailLogFile,Config.Note);
-        AddLog(ResLogFile,failed_compilation_successful+PPFileInfo);
+        AddLog(ResLogFile,failed_compilation_successful+PPFileInfo[current]);
         AddLog(LongLogFile,line_separation);
-        AddLog(LongLogFile,failed_compilation_successful+PPFileInfo);
+        AddLog(LongLogFile,failed_compilation_successful+PPFileInfo[current]);
         { avoid to try again }
-        AddLog(ExeLogFile,failed_compilation_successful+PPFileInfo);
+        AddLog(ExeLogFile,failed_compilation_successful+PPFileInfo[current]);
         if Config.Note<>'' then
           AddLog(LongLogFile,Config.Note);
         CopyFile(CompilerLogFile,LongLogFile,true);
@@ -580,31 +969,33 @@ begin
          ((Config.KnownCompileError<>0) and (ExecuteResult=Config.KnownCompileError))) then
       begin
         AddLog(FailLogFile,TestName+known_problem+Config.KnownCompileNote);
-        AddLog(ResLogFile,failed_to_run+PPFileInfo+known_problem+Config.KnownCompileNote);
+        AddLog(ResLogFile,failed_to_compile+PPFileInfo[current]+known_problem+Config.KnownCompileNote);
         AddLog(LongLogFile,line_separation);
         AddLog(LongLogFile,known_problem+Config.KnownCompileNote);
-        AddLog(LongLogFile,failed_to_compile+PPFileInfo+' ('+ToStr(ExecuteResult)+')');
-        Copyfile(CompilerLogFile,LongLogFile,true);
-        Verbose(V_Abort,known_problem+'exitcode: '+ToStr(ExecuteResult));
+        AddLog(LongLogFile,failed_to_compile+PPFileInfo[current]+' ('+ToStr(ExecuteResult)+')');
+        if Copyfile(CompilerLogFile,LongLogFile,true)=0 then
+          AddLog(LongLogFile,known_problem+'exitcode: '+ToStr(ExecuteResult));
+        Verbose(V_Warning,known_problem+'exitcode: '+ToStr(ExecuteResult));
       end
      else if ExecuteResult<>0 then
       begin
         AddLog(FailLogFile,TestName);
         if Config.Note<>'' then
           AddLog(FailLogFile,Config.Note);
-        AddLog(ResLogFile,failed_to_compile+PPFileInfo);
+        AddLog(ResLogFile,failed_to_compile+PPFileInfo[current]);
         AddLog(LongLogFile,line_separation);
-        AddLog(LongLogFile,failed_to_compile+PPFileInfo);
+        AddLog(LongLogFile,failed_to_compile+PPFileInfo[current]);
         if Config.Note<>'' then
           AddLog(LongLogFile,Config.Note);
-        CopyFile(CompilerLogFile,LongLogFile,true);
+        if CopyFile(CompilerLogFile,LongLogFile,true)=0 then
+          AddLog(LongLogFile,'Exitcode: '+ToStr(ExecuteResult)+' (expected 0)');
         { avoid to try again }
-        AddLog(ExeLogFile,failed_to_compile+PPFileInfo);
-        Verbose(V_Abort,'Exitcode: '+ToStr(ExecuteResult)+' (expected 0)');
+        AddLog(ExeLogFile,failed_to_compile+PPFileInfo[current]);
+        Verbose(V_Warning,'Exitcode: '+ToStr(ExecuteResult)+' (expected 0)');
       end
      else
       begin
-        AddLog(ResLogFile,successfully_compiled+PPFileInfo);
+        AddLog(ResLogFile,successfully_compiled+PPFileInfo[current]);
         RunCompiler:=true;
       end;
    end;
@@ -633,14 +1024,161 @@ begin
       begin
         delete(s,1,i+14-1);
         val(s,ExecuteResult,code);
-        if code=0 then;
-        CheckTestExitCode:=true;
+        if code=0 then
+          CheckTestExitCode:=true;
         break;
       end;
    end;
   close(t);
 end;
 
+function LibraryExists(const PPFile : string; out FileName : string) : boolean;
+begin
+   { Check if a dynamic library XXX was created }
+   { Windows XXX.dll style }
+  FileName:=TestOutputFilename('',PPFile,'dll');
+  if FileExists(FileName) then
+    begin
+      LibraryExists:=true;
+      exit;
+    end;
+   { Linux libXXX.so style }
+  FileName:=TestOutputFilename('lib',PPFile,'so');
+  if FileExists(FileName) then
+    begin
+      LibraryExists:=true;
+      exit;
+    end;
+   { Darwin libXXX.dylib style }
+  FileName:=TestOutputFilename('lib',PPFile,'dylib');
+  if FileExists(FileName) then
+    begin
+      LibraryExists:=true;
+      exit;
+    end;
+   { MacOS LibXXX style }
+  FileName:=TestOutputFilename('Lib',PPFile,'');
+  if FileExists(FileName) then
+    begin
+      LibraryExists:=true;
+      exit;
+    end;
+   { Netware wlic XXX.nlm style }
+  FileName:=TestOutputFilename('',PPFile,'nlm');
+  if FileExists(FileName) then
+    begin
+      LibraryExists:=true;
+      exit;
+    end;
+   { Amiga  XXX.library style }
+  FileName:=TestOutputFilename('',PPFile,'library');
+  if FileExists(FileName) then
+    begin
+      LibraryExists:=true;
+      exit;
+    end;
+  LibraryExists:=false;
+end;
+function ExecuteRemote(const prog,args:string;out StartTicks,EndTicks : int64):boolean;
+const
+  MaxTrials = 5;
+var
+  Trials : longint;
+  Res : boolean;
+begin
+  Verbose(V_Debug,'RemoteExecuting '+Prog+' '+args);
+  StartTicks:=GetMicroSTicks;
+  Res:=false;
+  Trials:=0;
+  While (Trials<MaxTrials) and not Res do
+    begin
+      inc(Trials);
+      Res:=ExecuteRedir(prog,args,'',EXELogFile,'stdout');
+      if not Res then
+        Verbose(V_Debug,'Call to '+prog+' failed: '+
+          'IOStatus='+ToStr(IOStatus)+
+          ' RedirErrorOut='+ToStr(RedirErrorOut)+
+          ' RedirErrorIn='+ToStr(RedirErrorIn)+
+          ' RedirErrorError='+ToStr(RedirErrorError)+
+          ' ExecuteResult='+ToStr(ExecuteResult));
+    end;
+
+  if Trials>1 then
+    Verbose(V_Debug,'Done in '+tostr(trials)+' trials');
+  EndTicks:=GetMicroSTicks;
+  ExecuteRemote:=res;
+end;
+
+function ExecuteEmulated(const prog,args,FullExeLogFile:string;out StartTicks,EndTicks : int64):boolean;
+begin
+  Verbose(V_Debug,'EmulatorExecuting '+Prog+' '+args);
+  StartTicks:=GetMicroSTicks;
+  ExecuteEmulated:=ExecuteRedir(prog,args,'',FullExeLogFile,'stdout');
+  EndTicks:=GetMicroSTicks;
+end;
+
+
+function MaybeCopyFiles(const FileToCopy : string) : boolean;
+var
+  TestRemoteExe,
+  s : string;
+  pref     : string;
+  LocalFile, RemoteFile: string;
+  LocalPath: string;
+  index    : integer;
+  execres : boolean;
+  EndTicks,
+  StartTicks : int64;
+begin
+  if RemoteAddr='' then
+    begin
+      exit(false);
+    end;
+  execres:=true;
+  { We don't want to create subdirs, remove paths from the test }
+  TestRemoteExe:=RemotePath+'/'+SplitFileName(FileToCopy);
+  if deBefore in DelExecutable then
+    ExecuteRemote(rshprog,RemoteRshParas+' rm -f '+TestRemoteExe,
+                  StartTicks,EndTicks);
+  execres:=ExecuteRemote(rcpprog,RemotePara+' '+FileToCopy+' '+
+                         RemoteAddr+':'+TestRemoteExe,StartTicks,EndTicks);
+  if not execres then
+  begin
+    Verbose(V_normal, 'Could not copy executable '+FileToCopy);
+    exit(execres);
+  end;
+  s:=Config.Files;
+  if length(s) > 0 then
+  begin
+    LocalPath:=SplitPath(PPFile[current]);
+    if Length(LocalPath) > 0 then
+      LocalPath:=LocalPath+'/';
+    repeat
+      index:=pos(' ',s);
+      if index=0 then
+        LocalFile:=s
+      else
+        LocalFile:=copy(s,1,index-1);
+      RemoteFile:=RemotePath+'/'+SplitFileName(LocalFile);
+      LocalFile:=LocalPath+LocalFile;
+      if DoVerbose and (rcpprog='pscp') then
+        pref:='-v '
+      else
+        pref:='';
+      execres:=ExecuteRemote(rcpprog,pref+RemotePara+' '+LocalFile+' '+
+                             RemoteAddr+':'+RemoteFile,StartTicks,EndTicks);
+      if not execres then
+      begin
+        Verbose(V_normal, 'Could not copy required file '+LocalFile);
+        exit(false);
+      end;
+      if index=0 then
+        break;
+      s:=copy(s,index+1,length(s)-index);
+    until false;
+  end;
+  MaybeCopyFiles:=execres;
+end;
 
 function RunExecutable:boolean;
 const
@@ -650,32 +1188,20 @@ const
   CurrDir = '';
 {$endif}
 var
-  OldDir,
+  OldDir, s,
+  execcmd,
   FullExeLogFile,
   TestRemoteExe,
   TestExe  : string;
   execres  : boolean;
-
-  function ExecuteRemote(const prog,args:string):boolean;
-    begin
-      Verbose(V_Debug,'RemoteExecuting '+Prog+' '+args);
-      ExecuteRemote:=ExecuteRedir(prog,args,'',EXELogFile,'stdout');
-    end;
-
-  function ExecuteEmulated(const prog,args:string):boolean;
-    begin
-      Verbose(V_Debug,'EmulatorExecuting '+Prog+' '+args);
-      ExecuteEmulated:=ExecuteRedir(prog,args,'',FullExeLogFile,'stdout');
-   end;
-
+  EndTicks,
+  StartTicks : int64;
 begin
   RunExecutable:=false;
   execres:=true;
-  { when remote testing, leave extension away }
-  if RemoteAddr='' then
-    TestExe:=OutputFileName(PPFile,ExeExt)
-  else
-    TestExe:=OutputFileName(PPFile,'');
+
+  TestExe:=OutputFileName(PPFile[current],ExeExt);
+
   if EmulatorName<>'' then
     begin
       { Get full name out log file, because we change the directory during
@@ -686,23 +1212,63 @@ begin
        ChDir(TestOutputDir);
       {$I+}
       ioresult;
-      execres:=ExecuteEmulated(EmulatorName,CurrDir+SplitFileName(TestExe));
+      s:=CurrDir+SplitFileName(TestExe);
+      execres:=ExecuteEmulated(EmulatorName,s,FullExeLogFile,StartTicks,EndTicks);
       {$I-}
        ChDir(OldDir);
       {$I+}
     end
   else if RemoteAddr<>'' then
     begin
-      { We don't want to create subdirs, remove paths from the test }
+      execres:=MaybeCopyFiles(TestExe);
       TestRemoteExe:=RemotePath+'/'+SplitFileName(TestExe);
-      ExecuteRemote(rshprog,RemotePara+' '+RemoteAddr+' rm -f '+TestRemoteExe);
-      ExecuteRemote(rcpprog,RemotePara+' '+TestExe+' '+RemoteAddr+':'+TestRemoteExe);
       { rsh doesn't pass the exitcode, use a second command to print the exitcode
         on the remoteshell to stdout }
-      execres:=ExecuteRemote(rshprog,RemotePara+' '+RemoteAddr+' '+rquote+'chmod 755 '+TestRemoteExe+
-        ' ; cd '+RemotePath+' ; '+TestRemoteExe+' ; echo "TestExitCode: $?"'+rquote);
+      if DoVerbose and (rshprog='plink') then
+        execcmd:='-v '+RemoteRshParas
+      else
+        execcmd:=RemoteRshParas;
+      execcmd:=execcmd+' '+rquote+
+         'chmod 755 '+TestRemoteExe+
+          ' ; cd '+RemotePath+' ; ';
+      { Using -rpath . at compile time does not seem
+        to work for programs copied over to remote machine,
+        at least not for FreeBSD.
+        Does this work for all shells? }
+      if Config.NeedLibrary then
+        begin
+          if RemoteShellNeedsExport then
+            execcmd:=execcmd+' LD_LIBRARY_PATH=.; export LD_LIBRARY_PATH;'
+          else
+            execcmd:=execcmd+' setenv LD_LIBRARY_PATH=.; ';
+        end;
+
+
+      if UseTimeout then
+      begin
+        if Config.Timeout=0 then
+          Config.Timeout:=DefaultTimeout;
+        str(Config.Timeout,s);
+        if (RemoteShellBase='bash') then
+          execcmd:=execcmd+'ulimit -t '+s+'; '
+        else
+          execcmd:=execcmd+'timeout -9 '+s;
+      end;
+      { as we moved to RemotePath, if path is not absolute
+        we need to use ./execfilename only }
+      if not isabsolute(TestRemoteExe) then
+        execcmd:=execcmd+' ./'+SplitFileName(TestRemoteExe)
+      else
+        execcmd:=execcmd+' '+TestRemoteExe;
+      execcmd:=execcmd+' ; echo "TestExitCode: $?"';
+      if (deAfter in DelExecutable) and
+         not Config.NeededAfter then
+        execcmd:=execcmd+' ; rm -f '+SplitFileName(TestRemoteExe);
+      execcmd:=execcmd+rquote;
+      execres:=ExecuteRemote(rshprog,execcmd,StartTicks,EndTicks);
       { Check for TestExitCode error in output, sets ExecuteResult }
-      CheckTestExitCode(EXELogFile);
+      if not CheckTestExitCode(EXELogFile) then
+        Verbose(V_Debug,'Failed to check exit code for '+execcmd);
     end
   else
     begin
@@ -716,10 +1282,12 @@ begin
       {$I+}
       ioresult;
       { don't redirect interactive and graph programs }
+      StartTicks:=GetMicroSTicks;
       if Config.IsInteractive or Config.UsesGraph then
         execres:=ExecuteRedir(CurrDir+SplitFileName(TestExe),'','','','')
       else
         execres:=ExecuteRedir(CurrDir+SplitFileName(TestExe),'','',FullExeLogFile,'stdout');
+      EndTicks:=GetMicroSTicks;
       {$I-}
        ChDir(OldDir);
       {$I+}
@@ -728,16 +1296,21 @@ begin
 
   { Error during execution? }
   Verbose(V_Debug,'Exitcode '+ToStr(ExecuteResult));
+  if BenchmarkInfo then
+    begin
+      Verbose(V_Normal,'Execution took '+ToStr(EndTicks-StartTicks)+' us');
+    end;
   if (not execres) and (ExecuteResult=0) then
     begin
       AddLog(FailLogFile,TestName);
-      AddLog(ResLogFile,failed_to_run+PPFileInfo);
+      AddLog(ResLogFile,failed_to_run+PPFileInfo[current]);
       AddLog(LongLogFile,line_separation);
-      AddLog(LongLogFile,failed_to_run+PPFileInfo);
-      CopyFile(EXELogFile,LongLogFile,true);
+      AddLog(LongLogFile,failed_to_run+PPFileInfo[current]);
+      if CopyFile(EXELogFile,LongLogFile,true)=0 then
+        AddLog(LongLogFile,'IOStatus: '+ToStr(IOStatus));
       { avoid to try again }
-      AddLog(ExeLogFile,failed_to_run+PPFileInfo);
-      Verbose(V_Abort,'IOStatus: '+ToStr(IOStatus));
+      AddLog(ExeLogFile,failed_to_run+PPFileInfo[current]);
+      Verbose(V_Warning,'IOStatus: '+ToStr(IOStatus));
       exit;
     end;
 
@@ -747,34 +1320,40 @@ begin
         (ExecuteResult=Config.KnownRunError) then
        begin
          AddLog(FailLogFile,TestName+known_problem+Config.KnownRunNote);
-         AddLog(ResLogFile,failed_to_run+PPFileInfo+known_problem+Config.KnownRunNote);
+         AddLog(ResLogFile,failed_to_run+PPFileInfo[current]+known_problem+Config.KnownRunNote);
          AddLog(LongLogFile,line_separation);
          AddLog(LongLogFile,known_problem+Config.KnownRunNote);
-         AddLog(LongLogFile,failed_to_run+PPFileInfo+' ('+ToStr(ExecuteResult)+')');
-         Copyfile(EXELogFile,LongLogFile,true);
-         Verbose(V_Abort,known_problem+'exitcode: '+ToStr(ExecuteResult)+' (expected '+ToStr(Config.ResultCode)+')');
+         AddLog(LongLogFile,failed_to_run+PPFileInfo[current]+' ('+ToStr(ExecuteResult)+')');
+         if Copyfile(EXELogFile,LongLogFile,true)=0 then
+           begin
+             AddLog(LongLogFile,known_problem+'exitcode: '+ToStr(ExecuteResult)+' (expected '+ToStr(Config.ResultCode)+')');
+             AddLog(ExeLogFile,known_problem+'exitcode: '+ToStr(ExecuteResult)+' (expected '+ToStr(Config.ResultCode)+')');
+           end;
+         Verbose(V_Warning,known_problem+'exitcode: '+ToStr(ExecuteResult)+' (expected '+ToStr(Config.ResultCode)+')');
        end
      else
        begin
          AddLog(FailLogFile,TestName);
-         AddLog(ResLogFile,failed_to_run+PPFileInfo);
+         AddLog(ResLogFile,failed_to_run+PPFileInfo[current]);
          AddLog(LongLogFile,line_separation);
-         AddLog(LongLogFile,failed_to_run+PPFileInfo+' ('+ToStr(ExecuteResult)+')');
-         Copyfile(EXELogFile,LongLogFile,true);
-         Verbose(V_Abort,'Exitcode: '+ToStr(ExecuteResult)+' (expected '+ToStr(Config.ResultCode)+')');
+         AddLog(LongLogFile,failed_to_run+PPFileInfo[current]+' ('+ToStr(ExecuteResult)+')');
+         if Copyfile(EXELogFile,LongLogFile,true)=0 then
+           begin
+             AddLog(LongLogFile,'Exitcode: '+ToStr(ExecuteResult)+' (expected '+ToStr(Config.ResultCode)+')');
+             AddLog(ExeLogFile,'Exitcode: '+ToStr(ExecuteResult)+' (expected '+ToStr(Config.ResultCode)+')');
+           end;
+         Verbose(V_Warning,'Exitcode: '+ToStr(ExecuteResult)+' (expected '+ToStr(Config.ResultCode)+')');
        end
    end
   else
    begin
-     AddLog(ResLogFile,successfully_run+PPFileInfo);
+     AddLog(ResLogFile,successfully_run+PPFileInfo[current]);
      RunExecutable:=true;
    end;
 
-  if DelExecutable then
+  if (deAfter in DelExecutable) and not Config.NeededAfter then
     begin
       Verbose(V_Debug,'Deleting executable '+TestExe);
-      if RemoteAddr<>'' then
-        ExecuteRemote(rshprog,RemotePara+' '+RemoteAddr+' rm -f '+TestRemoteExe);
       RemoveFile(TestExe);
       RemoveFile(ForceExtension(TestExe,ObjExt));
       RemoveFile(ForceExtension(TestExe,PPUExt));
@@ -782,155 +1361,244 @@ begin
 end;
 
 
-procedure getargs;
+{ Try to collect information concerning the remote configuration
+  Currently only records RemoteShell name and sets
+  RemoteShellNeedsExport boolean variable }
+procedure SetRemoteConfiguration;
 var
-  ch   : char;
-  para : string;
-  i    : longint;
+  f : text;
+  StartTicks,EndTicks : int64;
+begin
+  if RemoteAddr='' then
+    exit;
+  ExeLogFile:='__remote.tmp';
+  ExecuteRemote(rshprog,RemoteRshParas+
+                ' "echo SHELL=${SHELL}"',StartTicks,EndTicks);
+  Assign(f,ExeLogFile);
+  Reset(f);
+  While not eof(f) do
+    begin
+      Readln(f,RemoteShellBase);
+      if pos('SHELL=',RemoteShellBase)>0 then
+        begin
+          RemoteShell:=TrimSpace(Copy(RemoteShellBase,pos('SHELL=',RemoteShellBase)+6,
+                                      length(RemoteShellBase)));
+          Verbose(V_Debug,'Remote shell is "'+RemoteShell+'"');
+          RemoteShellBase:=SplitFileBase(RemoteShell);
+          if (RemoteShellBase='bash') or (RemoteShellBase='sh') then
+            RemoteShellNeedsExport:=true;
+        end;
+    end;
+  Close(f);
+end;
+
+procedure getargs;
 
   procedure helpscreen;
   begin
     writeln('dotest [Options] <File>');
     writeln;
     writeln('Options can be:');
-    writeln('  -C<compiler>  set compiler to use');
-    writeln('  -V            verbose');
-    writeln('  -E            execute test also');
-    writeln('  -X            don''t use COMSPEC');
+    writeln('  !ENV_NAME     parse environment variable ENV_NAME for options');
     writeln('  -A            include ALL tests');
+    writeln('  -B            delete executable before remote upload');
+    writeln('  -C<compiler>  set compiler to use');
+    writeln('  -D            display execution time');
+    writeln('  -E            execute test also');
     writeln('  -G            include graph tests');
-    writeln('  -K            include known bug tests');
     writeln('  -I            include interactive tests');
+    writeln('  -K            include known bug tests');
     writeln('  -M<emulator>  run the tests using the given emulator');
+    writeln('  -O            use timeout wrapper for (remote) execution');
+    writeln('  -P<path>      path to the tests tree on the remote machine');
     writeln('  -R<remote>    run the tests remotely with the given rsh/ssh address');
     writeln('  -S            use ssh instead of rsh');
-    writeln('  -T            remove temporary files (executable,ppu,o)');
-    writeln('  -P<path>      path to the tests tree on the remote machine');
+    writeln('  -T[cpu-]<os>  run tests for target cpu and os');
     writeln('  -U<remotepara>');
     writeln('                pass additional parameter to remote program. Multiple -U can be used');
     writeln('  -V            be verbose');
     writeln('  -W            use putty compatible file names when testing (plink and pscp)');
+    writeln('  -X            don''t use COMSPEC');
     writeln('  -Y<opts>      extra options passed to the compiler. Several -Y<opt> can be given.');
+    writeln('  -Z            remove temporary files (executable,ppu,o)');
     halt(1);
   end;
 
+  procedure interpret_option (para : string);
+  var
+    ch : char;
+    j : longint;
+  begin
+   Verbose(V_Debug,'Interpreting  option"'+para+'"');
+    ch:=Upcase(para[2]);
+    delete(para,1,2);
+    case ch of
+     'A' :
+       begin
+         DoGraph:=true;
+         DoInteractive:=true;
+         DoKnown:=true;
+         DoAll:=true;
+       end;
+
+     'B' : Include(DelExecutable,deBefore);
+
+     'C' : CompilerBin:=Para;
+
+     'D' : BenchMarkInfo:=true;
+
+     'E' : DoExecute:=true;
+
+     'G' : begin
+             DoGraph:=true;
+             if para='-' then
+               DoUsual:=false;
+           end;
+
+     'I' : begin
+             DoInteractive:=true;
+             if para='-' then
+               DoUsual:=false;
+           end;
+
+     'K' : begin
+             DoKnown:=true;
+             if para='-' then
+               DoUsual:=false;
+           end;
+
+     'M' : EmulatorName:=Para;
+
+     'O' : UseTimeout:=true;
+
+     'P' : RemotePath:=Para;
+
+     'R' : RemoteAddr:=Para;
+
+     'S' :
+       begin
+         rshprog:='ssh';
+         rcpprog:='scp';
+       end;
+
+     'T' :
+       begin
+         j:=Pos('-',Para);
+         if j>0 then
+           begin
+             CompilerCPU:=Copy(Para,1,j-1);
+             CompilerTarget:=Copy(Para,j+1,length(para));
+           end
+         else
+           CompilerTarget:=Para
+       end;
+
+     'U' :
+       RemotePara:=RemotePara+' '+Para;
+
+     'V' : DoVerbose:=true;
+
+     'W' :
+       begin
+         rshprog:='plink';
+         rcpprog:='pscp';
+         rquote:='"';
+       end;
+
+     'X' : UseComSpec:=false;
+
+     'Y' : ExtraCompilerOpts:= ExtraCompilerOpts +' '+ Para;
+
+     'Z' : Include(DelExecutable,deAfter);
+    end;
+ end;
+
+ procedure interpret_env(arg : string);
+ var
+   para : string;
+   pspace : longint;
+ begin
+   Verbose(V_Debug,'Interpreting environment option"'+arg+'"');
+   { Get rid of leading '!' }
+   delete(arg,1,1);
+   arg:=getenv(arg);
+   Verbose(V_Debug,'Environment value is "'+arg+'"');
+   while (length(arg)>0) do
+     begin
+       while (length(arg)>0) and (arg[1]=' ') do
+         delete(arg,1,1);
+       pspace:=pos(' ',arg);
+       if pspace=0 then
+         pspace:=length(arg)+1;
+       para:=copy(arg,1,pspace-1);
+       if (length(para)>0) and (para[1]='-') then
+         interpret_option (para)
+       else
+         begin
+           PPFile.Insert(current,ForceExtension(Para,'pp'));
+           inc(current);
+         end;
+       delete(arg,1,pspace);
+     end;
+ end;
+
+var
+  param : string;
+  i  : longint;
+
 begin
-  PPFile:='';
-  if exeext<>'' then
-    CompilerBin:='ppc386.'+exeext
-  else
-    CompilerBin:='ppc386';
+  CompilerBin:='ppc386'+srcexeext;
   for i:=1 to paramcount do
    begin
-     para:=Paramstr(i);
-     if (para[1]='-') then
-      begin
-        ch:=Upcase(para[2]);
-        delete(para,1,2);
-        case ch of
-         'A' :
-           begin
-             DoGraph:=true;
-             DoInteractive:=true;
-             DoKnown:=true;
-             DoAll:=true;
-           end;
-
-         'C' : CompilerBin:=Para;
-
-         'E' : DoExecute:=true;
-
-         'G' : begin
-                 DoGraph:=true;
-                 if para='-' then
-                   DoUsual:=false;
-               end;
-
-         'I' : begin
-                 DoInteractive:=true;
-                 if para='-' then
-                   DoUsual:=false;
-               end;
-
-         'K' : begin
-                 DoKnown:=true;
-                 if para='-' then
-                   DoUsual:=false;
-               end;
-
-         'M' : EmulatorName:=Para;
-
-         'P' : RemotePath:=Para;
-
-         'R' : RemoteAddr:=Para;
-
-         'S' :
-           begin
-             rshprog:='ssh';
-             rcpprog:='scp';
-           end;
-
-         'T' :
-           DelExecutable:=true;
-
-         'U' :
-           RemotePara:=+RemotePara+' '+Para;
-
-         'V' : DoVerbose:=true;
-
-         'W' :
-           begin
-             rshprog:='plink';
-             rcpprog:='pscp';
-             rquote:=' ';
-           end;
-
-         'X' : UseComSpec:=false;
-
-         'Y' : ExtraCompilerOpts:= ExtraCompilerOpts +' '+ Para;
-        end;
-     end
-    else
-     begin
-       If PPFile<>'' then
-         HelpScreen;
-       PPFile:=ForceExtension(Para,'pp');
-     end;
-    end;
-  if (PPFile='') then
-   HelpScreen;
+     param:=Paramstr(i);
+     if (param[1]='-') then
+      interpret_option(param)
+     else if (param[1]='!') then
+       interpret_env(param)
+     else
+       begin
+         PPFile.Insert(current,ForceExtension(Param,'pp'));
+         inc(current);
+       end;
+   end;
+  if current=0 then
+    HelpScreen;
   { disable graph,interactive when running remote }
   if RemoteAddr<>'' then
     begin
       DoGraph:=false;
       DoInteractive:=false;
     end;
-  SetPPFileInfo;
-  TestName:=Copy(PPFile,1,Pos('.pp',PPFile)-1);
-  Verbose(V_Debug,'Running test '+TestName+', file '+PPFile);
+  { If we use PuTTY plink program with -load option,
+    the IP address or name should not be added to
+    the command line }
+  if (rshprog='plink') and (pos('-load',RemotePara)>0) then
+    RemoteRshParas:=RemotePara
+  else
+    RemoteRshParas:=RemotePara+' '+RemoteAddr;
 end;
 
 
 procedure RunTest;
 var
-  PPDir : string;
+  PPDir,LibraryName : string;
   Res : boolean;
 begin
-  Res:=GetConfig(ppfile,Config);
+  Res:=GetConfig(PPFile[current],Config);
 
   if Res then
     begin
       Res:=GetCompilerCPU;
       Res:=GetCompilerTarget;
 {$ifndef MACOS}
-      RTLUnitsDir:='units/'+{$ifdef LIMIT83FS}CompilerTarget{$else}CompilerFullTarget{$endif};
+      RTLUnitsDir:='units/'+CompilerFullTarget;
 {$else MACOS}
       RTLUnitsDir:=':units:'+CompilerFullTarget;
 {$endif MACOS}
       if not PathExists(RTLUnitsDir) then
         Verbose(V_Abort,'Unit path "'+RTLUnitsDir+'" does not exists');
 {$ifndef MACOS}
-      OutputDir:='output/'+{$ifdef LIMIT83FS}CompilerTarget{$else}CompilerFullTarget{$endif};
+      OutputDir:='output/'+CompilerFullTarget;
 {$else MACOS}
       OutputDir:=':output:'+CompilerFullTarget;
 {$endif MACOS}
@@ -941,7 +1609,7 @@ begin
       LongLogFile:=OutputFileName('longlog','');
       FailLogFile:=OutputFileName('faillist','');
       { Make subdir in output if needed }
-      PPDir:=SplitPath(PPFile);
+      PPDir:=SplitPath(PPFile[current]);
       if PPDir[length(PPDir)] in ['/','\'{$ifdef MACOS},':'{$endif MACOS}] then
         Delete(PPDir,length(PPDir),1);
       if PPDir<>'' then
@@ -956,8 +1624,8 @@ begin
       else
         TestOutputDir:=OutputDir;
       { Per test logfiles }
-      CompilerLogFile:=TestOutputFileName(SplitFileName(PPFile),'log');
-      ExeLogFile:=TestOutputFileName(SplitFileName(PPFile),'elg');
+      CompilerLogFile:=TestOutputFileName('',SplitFileName(PPFile[current]),'log');
+      ExeLogFile:=TestOutputFileName('',SplitFileName(PPFile[current]),'elg');
       Verbose(V_Debug,'Using Compiler logfile: '+CompilerLogFile);
       Verbose(V_Debug,'Using Execution logfile: '+ExeLogFile);
     end;
@@ -966,10 +1634,10 @@ begin
    begin
      if Config.UsesGraph and (not DoGraph) then
       begin
-        AddLog(ResLogFile,skipping_graph_test+PPFileInfo);
+        AddLog(ResLogFile,skipping_graph_test+PPFileInfo[current]);
         { avoid a second attempt by writing to elg file }
-        AddLog(EXELogFile,skipping_graph_test+PPFileInfo);
-        Verbose(V_Abort,skipping_graph_test);
+        AddLog(EXELogFile,skipping_graph_test+PPFileInfo[current]);
+        Verbose(V_Warning,skipping_graph_test);
         Res:=false;
       end;
    end;
@@ -979,9 +1647,9 @@ begin
      if Config.IsInteractive and (not DoInteractive) then
       begin
         { avoid a second attempt by writing to elg file }
-        AddLog(EXELogFile,skipping_interactive_test+PPFileInfo);
-        AddLog(ResLogFile,skipping_interactive_test+PPFileInfo);
-        Verbose(V_Abort,skipping_interactive_test);
+        AddLog(EXELogFile,skipping_interactive_test+PPFileInfo[current]);
+        AddLog(ResLogFile,skipping_interactive_test+PPFileInfo[current]);
+        Verbose(V_Warning,skipping_interactive_test);
         Res:=false;
       end;
    end;
@@ -991,9 +1659,9 @@ begin
      if Config.IsKnownCompileError and (not DoKnown) then
       begin
         { avoid a second attempt by writing to elg file }
-        AddLog(EXELogFile,skipping_known_bug+PPFileInfo);
-        AddLog(ResLogFile,skipping_known_bug+PPFileInfo);
-        Verbose(V_Abort,skipping_known_bug);
+        AddLog(EXELogFile,skipping_known_bug+PPFileInfo[current]);
+        AddLog(ResLogFile,skipping_known_bug+PPFileInfo[current]);
+        Verbose(V_Warning,skipping_known_bug);
         Res:=false;
       end;
    end;
@@ -1012,9 +1680,9 @@ begin
         if CompilerVersion<Config.MinVersion then
          begin
            { avoid a second attempt by writing to elg file }
-           AddLog(EXELogFile,skipping_compiler_version_too_low+PPFileInfo);
-           AddLog(ResLogFile,skipping_compiler_version_too_low+PPFileInfo);
-           Verbose(V_Abort,'Compiler version too low '+CompilerVersion+' < '+Config.MinVersion);
+           AddLog(EXELogFile,skipping_compiler_version_too_low+PPFileInfo[current]);
+           AddLog(ResLogFile,skipping_compiler_version_too_low+PPFileInfo[current]);
+           Verbose(V_Warning,'Compiler version too low '+CompilerVersion+' < '+Config.MinVersion);
            Res:=false;
          end;
       end;
@@ -1029,9 +1697,9 @@ begin
         if CompilerVersion>Config.MaxVersion then
          begin
            { avoid a second attempt by writing to elg file }
-           AddLog(EXELogFile,skipping_compiler_version_too_high+PPFileInfo);
-           AddLog(ResLogFile,skipping_compiler_version_too_high+PPFileInfo);
-           Verbose(V_Abort,'Compiler version too high '+CompilerVersion+' > '+Config.MaxVersion);
+           AddLog(EXELogFile,skipping_compiler_version_too_high+PPFileInfo[current]);
+           AddLog(ResLogFile,skipping_compiler_version_too_high+PPFileInfo[current]);
+           Verbose(V_Warning,'Compiler version too high '+CompilerVersion+' > '+Config.MaxVersion);
            Res:=false;
          end;
       end;
@@ -1045,9 +1713,9 @@ begin
         if not IsInList(CompilerCPU,Config.NeedCPU) then
          begin
            { avoid a second attempt by writing to elg file }
-           AddLog(EXELogFile,skipping_other_cpu+PPFileInfo);
-           AddLog(ResLogFile,skipping_other_cpu+PPFileInfo);
-           Verbose(V_Abort,'Compiler cpu "'+CompilerCPU+'" is not in list "'+Config.NeedCPU+'"');
+           AddLog(EXELogFile,skipping_other_cpu+PPFileInfo[current]);
+           AddLog(ResLogFile,skipping_other_cpu+PPFileInfo[current]);
+           Verbose(V_Warning,'Compiler cpu "'+CompilerCPU+'" is not in list "'+Config.NeedCPU+'"');
            Res:=false;
          end;
       end;
@@ -1061,9 +1729,9 @@ begin
         if IsInList(CompilerCPU,Config.SkipCPU) then
          begin
            { avoid a second attempt by writing to elg file }
-           AddLog(EXELogFile,skipping_other_cpu+PPFileInfo);
-           AddLog(ResLogFile,skipping_other_cpu+PPFileInfo);
-           Verbose(V_Abort,'Compiler cpu "'+CompilerCPU+'" is in list "'+Config.SkipCPU+'"');
+           AddLog(EXELogFile,skipping_other_cpu+PPFileInfo[current]);
+           AddLog(ResLogFile,skipping_other_cpu+PPFileInfo[current]);
+           Verbose(V_Warning,'Compiler cpu "'+CompilerCPU+'" is in list "'+Config.SkipCPU+'"');
            Res:=false;
          end;
       end;
@@ -1077,9 +1745,9 @@ begin
         if IsInList(emulatorname,Config.SkipEmu) then
          begin
            { avoid a second attempt by writing to elg file }
-           AddLog(EXELogFile,skipping_other_cpu+PPFileInfo);
-           AddLog(ResLogFile,skipping_other_cpu+PPFileInfo);
-           Verbose(V_Abort,'Emulator "'+emulatorname+'" is in list "'+Config.SkipEmu+'"');
+           AddLog(EXELogFile,skipping_other_cpu+PPFileInfo[current]);
+           AddLog(ResLogFile,skipping_other_cpu+PPFileInfo[current]);
+           Verbose(V_Warning,'Emulator "'+emulatorname+'" is in list "'+Config.SkipEmu+'"');
            Res:=false;
          end;
       end;
@@ -1093,9 +1761,9 @@ begin
         if not IsInList(CompilerTarget,Config.NeedTarget) then
          begin
            { avoid a second attempt by writing to elg file }
-           AddLog(EXELogFile,skipping_other_target+PPFileInfo);
-           AddLog(ResLogFile,skipping_other_target+PPFileInfo);
-           Verbose(V_Abort,'Compiler target "'+CompilerTarget+'" is not in list "'+Config.NeedTarget+'"');
+           AddLog(EXELogFile,skipping_other_target+PPFileInfo[current]);
+           AddLog(ResLogFile,skipping_other_target+PPFileInfo[current]);
+           Verbose(V_Warning,'Compiler target "'+CompilerTarget+'" is not in list "'+Config.NeedTarget+'"');
            Res:=false;
          end;
       end;
@@ -1105,15 +1773,27 @@ begin
    begin
      if Config.SkipTarget<>'' then
       begin
-        Verbose(V_Debug,'Skip compiler target: '+Config.NeedTarget);
+        Verbose(V_Debug,'Skip compiler target: '+Config.SkipTarget);
         if IsInList(CompilerTarget,Config.SkipTarget) then
          begin
            { avoid a second attempt by writing to elg file }
-           AddLog(EXELogFile,skipping_other_target+PPFileInfo);
-           AddLog(ResLogFile,skipping_other_target+PPFileInfo);
-           Verbose(V_Abort,'Compiler target "'+CompilerTarget+'" is in list "'+Config.SkipTarget+'"');
+           AddLog(EXELogFile,skipping_other_target+PPFileInfo[current]);
+           AddLog(ResLogFile,skipping_other_target+PPFileInfo[current]);
+           Verbose(V_Warning,'Compiler target "'+CompilerTarget+'" is in list "'+Config.SkipTarget+'"');
            Res:=false;
          end;
+      end;
+   end;
+
+  if Res then
+   begin
+     { Use known bug, to avoid adding a new entry for this PM 2011-06-24 }
+     if Config.NeedLibrary and not TargetCanCompileLibraries then
+      begin
+        AddLog(EXELogFile,skipping_known_bug+PPFileInfo[current]);
+        AddLog(ResLogFile,skipping_known_bug+PPFileInfo[current]);
+        Verbose(V_Warning,'Compiler target "'+CompilerTarget+'" does not support library compilation');
+        Res:=false;
       end;
    end;
 
@@ -1124,36 +1804,43 @@ begin
       Res:=RunCompiler;
    end;
 
-  if Res then
+  if Res and (not Config.ShouldFail) then
    begin
      if (Config.NoRun) then
       begin
         { avoid a second attempt by writing to elg file }
-        AddLog(EXELogFile,skipping_run_test+PPFileInfo);
-        AddLog(ResLogFile,skipping_run_test+PPFileInfo);
+        AddLog(EXELogFile,skipping_run_test+PPFileInfo[current]);
+        AddLog(ResLogFile,skipping_run_test+PPFileInfo[current]);
         Verbose(V_Debug,skipping_run_test);
+        if LibraryExists(PPFile[current],LibraryName) then
+          MaybeCopyFiles(LibraryName);
       end
      else if Config.IsKnownRunError and (not DoKnown) then
       begin
         { avoid a second attempt by writing to elg file }
-        AddLog(EXELogFile,skipping_known_bug+PPFileInfo);
-        AddLog(ResLogFile,skipping_known_bug+PPFileInfo);
-        Verbose(V_Abort,skipping_known_bug);
+        AddLog(EXELogFile,skipping_known_bug+PPFileInfo[current]);
+        AddLog(ResLogFile,skipping_known_bug+PPFileInfo[current]);
+        Verbose(V_Warning,skipping_known_bug);
       end
      else
       begin
-        if (not Config.ShouldFail) and DoExecute then
+        if DoExecute then
          begin
-           if FileExists(TestOutputFilename(PPFile,'ppu')) or
-              FileExists(TestOutputFilename(PPFile,'ppo')) or
-              FileExists(TestOutputFilename(PPFile,'ppw')) then
+           if FileExists(TestOutputFilename('',PPFile[current],'ppu')) or
+              FileExists(TestOutputFilename('',PPFile[current],'ppo')) or
+              FileExists(TestOutputFilename('',PPFile[current],'ppw')) then
              begin
-               AddLog(ExeLogFile,skipping_run_unit+PPFileInfo);
-               AddLog(ResLogFile,skipping_run_unit+PPFileInfo);
+               AddLog(ExeLogFile,skipping_run_unit+PPFileInfo[current]);
+               AddLog(ResLogFile,skipping_run_unit+PPFileInfo[current]);
                Verbose(V_Debug,'Unit found, skipping run test')
              end
+           else if LibraryExists(PPFile[current],LibraryName) then
+             begin
+               Verbose(V_Debug,'Library found, skipping run test');
+               MaybeCopyFiles(LibraryName);
+             end
            else
-            Res:=RunExecutable;
+             Res:=RunExecutable;
          end;
       end;
    end;
@@ -1161,21 +1848,29 @@ end;
 
 
 begin
+  Current:=0;
+  PPFile:=TStringList.Create;
+  PPFile.Capacity:=10;
+  PPFileInfo:=TStringList.Create;
+  PPFileInfo.Capacity:=10;
   GetArgs;
-  RunTest;
+  SetTargetDirectoriesStyle;
+  SetTargetCanCompileLibraries;
+  SetRemoteConfiguration;
+{$ifdef LIMIT83fs}
+  UseOSOnly:=true;
+{$else not LIMIT83fs}
+  SetUseOSOnly;
+{$endif not LIMIT83fs}
+  Verbose(V_Debug,'Found '+ToStr(PPFile.Count)+' tests to run');
+  if current>0 then
+    for current:=0 to PPFile.Count-1 do
+      begin
+        SetPPFileInfo;
+        TestName:=Copy(PPFile[current],1,Pos('.pp',PPFile[current])-1);
+        Verbose(V_Normal,'Running test '+TestName+', file '+PPFile[current]);
+        RunTest;
+      end;
+  PPFile.Free;
+  PPFileInfo.Free;
 end.
-{
-  $Log: dotest.pp,v $
-  Revision 1.46  2005/02/14 17:13:37  peter
-    * truncate log
-
-  Revision 1.45  2005/01/26 22:05:06  olle
-    + added support for macos
-
-  Revision 1.44  2005/01/06 16:32:04  florian
-    + skipemu added
-
-  Revision 1.43  2005/01/01 18:59:52  florian
-    + emulator execution support added
-
-}

@@ -18,7 +18,6 @@
 {                                                                }
 {****************************************************************}
 program tcalobj6;
-{$STATIC ON}
 {$R+}
 
  const
@@ -198,7 +197,7 @@ type
       bigstring: shortstring; s32: longint; s64: int64);register;
    procedure method_virtual_params_mixed(u8 :byte; u16: word;
       bigstring: shortstring; s32: longint; s64: int64);virtual;register;
-   procedure method_virtual_overriden_params_mixed(u8 :byte; u16: word;
+   procedure method_virtual_overridden_params_mixed(u8 :byte; u16: word;
       bigstring: shortstring; s32: longint; s64: int64);virtual;register;
    procedure method_static_params_mixed(u8 :byte; u16: word;
       bigstring: shortstring; s32: longint; s64: int64);static;register;
@@ -210,7 +209,7 @@ type
       u8 :byte; u16: word; bigstring: shortstring; s32: longint; s64: int64);virtual;register;
    procedure method_virtual_call_virtual_params_mixed(
       u8 :byte; u16: word; bigstring: shortstring; s32: longint; s64: int64);virtual;register;
-   procedure method_virtual_call_overriden_params_mixed(
+   procedure method_virtual_call_overridden_params_mixed(
       u8 :byte; u16: word; bigstring: shortstring; s32: longint; s64: int64);virtual;register;
    procedure method_virtual_call_normal_params_mixed(
       u8 :byte; u16: word; bigstring: shortstring; s32: longint; s64: int64);virtual;register;
@@ -225,7 +224,7 @@ type
  theritedvmtobject = object(tvmtobject)
    constructor constructor_params_mixed_call_virtual(u8 :byte; u16: word;
       bigstring: shortstring; s32: longint; s64: int64);
-   constructor constructor_params_mixed_call_overriden(u8 :byte; u16: word;
+   constructor constructor_params_mixed_call_overridden(u8 :byte; u16: word;
       bigstring: shortstring; s32: longint; s64: int64);
    constructor constructor_params_mixed_call_static(u8 :byte; u16: word;
       bigstring: shortstring; s32: longint; s64: int64);
@@ -233,7 +232,7 @@ type
       bigstring: shortstring; s32: longint; s64: int64);
    constructor constructor_params_mixed_call_inherited(u8 :byte; u16: word;
       bigstring: shortstring; s32: longint; s64: int64);
-   procedure method_virtual_overriden_params_mixed(
+   procedure method_virtual_overridden_params_mixed(
     u8 :byte; u16: word; bigstring: shortstring; s32: longint; s64: int64);virtual;register;
 
    { normal methods which call other methods }
@@ -241,7 +240,7 @@ type
       u8 :byte; u16: word; bigstring: shortstring; s32: longint; s64: int64);register;
    procedure method_normal_call_virtual_params_mixed(
       u8 :byte; u16: word; bigstring: shortstring; s32: longint; s64: int64);register;
-   procedure method_normal_call_overriden_params_mixed(
+   procedure method_normal_call_overridden_params_mixed(
       u8 :byte; u16: word; bigstring: shortstring; s32: longint; s64: int64);register;
    procedure method_normal_call_normal_params_mixed(
       u8 :byte; u16: word; bigstring: shortstring; s32: longint; s64: int64);register;
@@ -460,8 +459,8 @@ procedure tvmtobject.method_virtual_params_mixed(
    object_s64bit := s64;
  end;
 
-{ this one should be overriden }
-procedure tvmtobject.method_virtual_overriden_params_mixed(
+{ this one should be overridden }
+procedure tvmtobject.method_virtual_overridden_params_mixed(
     u8 :byte; u16: word; bigstring: shortstring; s32: longint; s64: int64);register;
  begin
     RunError(211);
@@ -501,10 +500,10 @@ procedure tvmtobject.method_virtual_call_virtual_params_mixed(
     method_virtual_params_mixed(u8, u16, bigstring, s32, s64);
    end;
 
-procedure tvmtobject.method_virtual_call_overriden_params_mixed(
+procedure tvmtobject.method_virtual_call_overridden_params_mixed(
       u8 :byte; u16: word; bigstring: shortstring; s32: longint; s64: int64);register;
    begin
-    method_virtual_overriden_params_mixed(u8, u16, bigstring, s32, s64);
+    method_virtual_overridden_params_mixed(u8, u16, bigstring, s32, s64);
    end;
 
 
@@ -545,7 +544,7 @@ constructor theritedvmtobject.constructor_params_mixed_call_virtual(
    method_virtual_params_mixed(u8, u16, bigstring, s32, s64);
  end;
 
-constructor theritedvmtobject.constructor_params_mixed_call_overriden(
+constructor theritedvmtobject.constructor_params_mixed_call_overridden(
    u8 :byte; u16: word; bigstring: shortstring; s32: longint; s64: int64);
  begin
    object_u8bit := 0;
@@ -553,7 +552,7 @@ constructor theritedvmtobject.constructor_params_mixed_call_overriden(
    object_bigstring := '';
    object_s32bit := 0;
    object_s64bit := 0;
-   method_virtual_overriden_params_mixed(u8, u16, bigstring, s32, s64);
+   method_virtual_overridden_params_mixed(u8, u16, bigstring, s32, s64);
  end;
 
 constructor theritedvmtobject.constructor_params_mixed_call_static(
@@ -589,8 +588,8 @@ constructor theritedvmtobject.constructor_params_mixed_call_inherited
    inherited constructor_params_mixed(u8, u16, bigstring, s32, s64);
  end;
 
-{ this one should be overriden }
-procedure theritedvmtobject.method_virtual_overriden_params_mixed(
+{ this one should be overridden }
+procedure theritedvmtobject.method_virtual_overridden_params_mixed(
     u8 :byte; u16: word; bigstring: shortstring; s32: longint; s64: int64);register;
  begin
    object_u8bit := u8;
@@ -612,10 +611,10 @@ procedure theritedvmtobject.method_normal_call_virtual_params_mixed(
     method_virtual_params_mixed(u8, u16, bigstring, s32, s64);
    end;
 
-procedure theritedvmtobject.method_normal_call_overriden_params_mixed(
+procedure theritedvmtobject.method_normal_call_overridden_params_mixed(
       u8 :byte; u16: word; bigstring: shortstring; s32: longint; s64: int64);register;
    begin
-    method_virtual_overriden_params_mixed(u8, u16, bigstring, s32, s64);
+    method_virtual_overridden_params_mixed(u8, u16, bigstring, s32, s64);
    end;
 
 
@@ -1058,7 +1057,7 @@ var
     failed := false;
 
     Write('Testing mixed parameter (LOC_CONSTANT) constructor call w/virtual call...');
-    vmtobject.constructor_params_mixed_call_overriden(RESULT_U8BIT,
+    vmtobject.constructor_params_mixed_call_overridden(RESULT_U8BIT,
        RESULT_U16BIT, RESULT_BIGSTRING, RESULT_S32BIT, RESULT_S64BIT);
     if vmtobject.object_u8bit <> RESULT_U8BIT then
       failed := true;
@@ -1087,7 +1086,7 @@ var
     value_bigstring := RESULT_BIGSTRING;
     value_s32bit := RESULT_S32BIT;
     value_s64bit := RESULT_S64BIT;
-    vmtobject.constructor_params_mixed_call_overriden(value_u8bit,
+    vmtobject.constructor_params_mixed_call_overridden(value_u8bit,
        value_u16bit, value_bigstring, value_s32bit, value_s64bit);
     if vmtobject.object_u8bit <> RESULT_U8BIT then
       failed := true;
@@ -1274,7 +1273,7 @@ var
 
     vmtobject.constructor_init;
     Write('Testing mixed parameter (LOC_CONSTANT) virtual method call...');
-    vmtobject.method_virtual_overriden_params_mixed(RESULT_U8BIT,
+    vmtobject.method_virtual_overridden_params_mixed(RESULT_U8BIT,
        RESULT_U16BIT, RESULT_BIGSTRING, RESULT_S32BIT, RESULT_S64BIT);
     if vmtobject.object_u8bit <> RESULT_U8BIT then
       failed := true;
@@ -1304,7 +1303,7 @@ var
     value_bigstring := RESULT_BIGSTRING;
     value_s32bit := RESULT_S32BIT;
     value_s64bit := RESULT_S64BIT;
-    vmtobject.method_virtual_overriden_params_mixed(value_u8bit,
+    vmtobject.method_virtual_overridden_params_mixed(value_u8bit,
        value_u16bit, value_bigstring, value_s32bit, value_s64bit);
     if vmtobject.object_u8bit <> RESULT_U8BIT then
       failed := true;
@@ -1493,10 +1492,10 @@ var
     else
       Writeln('Passed!');
 
-    { The virtual method has been overriden by the object in this case }
+    { The virtual method has been overridden by the object in this case }
     vmtobject.constructor_init;
     Write('Testing mixed parameter (LOC_CONSTANT) method call w/virtual call...');
-    vmtobject.method_normal_call_overriden_params_mixed(RESULT_U8BIT,
+    vmtobject.method_normal_call_overridden_params_mixed(RESULT_U8BIT,
        RESULT_U16BIT, RESULT_BIGSTRING, RESULT_S32BIT, RESULT_S64BIT);
     if vmtobject.object_u8bit <> RESULT_U8BIT then
       failed := true;
@@ -1526,7 +1525,7 @@ var
     value_bigstring := RESULT_BIGSTRING;
     value_s32bit := RESULT_S32BIT;
     value_s64bit := RESULT_S64BIT;
-    vmtobject.method_normal_call_overriden_params_mixed(value_u8bit,
+    vmtobject.method_normal_call_overridden_params_mixed(value_u8bit,
        value_u16bit, value_bigstring, value_s32bit, value_s64bit);
     if vmtobject.object_u8bit <> RESULT_U8BIT then
       failed := true;
@@ -1829,10 +1828,10 @@ var
     else
       Writeln('Passed!');
 
-    { The virtual method has been overriden by the object in this case }
+    { The virtual method has been overridden by the object in this case }
     vmtobject.constructor_init;
     Write('Testing mixed parameter (LOC_CONSTANT) virtual call w/virtual call...');
-    vmtobject.method_virtual_call_overriden_params_mixed(RESULT_U8BIT,
+    vmtobject.method_virtual_call_overridden_params_mixed(RESULT_U8BIT,
        RESULT_U16BIT, RESULT_BIGSTRING, RESULT_S32BIT, RESULT_S64BIT);
     if vmtobject.object_u8bit <> RESULT_U8BIT then
       failed := true;
@@ -1862,7 +1861,7 @@ var
     value_bigstring := RESULT_BIGSTRING;
     value_s32bit := RESULT_S32BIT;
     value_s64bit := RESULT_S64BIT;
-    vmtobject.method_virtual_call_overriden_params_mixed(value_u8bit,
+    vmtobject.method_virtual_call_overridden_params_mixed(value_u8bit,
        value_u16bit, value_bigstring, value_s32bit, value_s64bit);
     if vmtobject.object_u8bit <> RESULT_U8BIT then
       failed := true;
@@ -2230,7 +2229,7 @@ var
         failed := false;
 
         Write('Testing mixed parameter (LOC_CONSTANT) constructor call w/virtual call...');
-        constructor_params_mixed_call_overriden(RESULT_U8BIT,
+        constructor_params_mixed_call_overridden(RESULT_U8BIT,
            RESULT_U16BIT, RESULT_BIGSTRING, RESULT_S32BIT, RESULT_S64BIT);
         if object_u8bit <> RESULT_U8BIT then
           failed := true;
@@ -2259,7 +2258,7 @@ var
         value_bigstring := RESULT_BIGSTRING;
         value_s32bit := RESULT_S32BIT;
         value_s64bit := RESULT_S64BIT;
-        constructor_params_mixed_call_overriden(value_u8bit,
+        constructor_params_mixed_call_overridden(value_u8bit,
            value_u16bit, value_bigstring, value_s32bit, value_s64bit);
         if object_u8bit <> RESULT_U8BIT then
           failed := true;
@@ -2446,7 +2445,7 @@ var
 
         constructor_init;
         Write('Testing mixed parameter (LOC_CONSTANT) virtual method call...');
-        method_virtual_overriden_params_mixed(RESULT_U8BIT,
+        method_virtual_overridden_params_mixed(RESULT_U8BIT,
            RESULT_U16BIT, RESULT_BIGSTRING, RESULT_S32BIT, RESULT_S64BIT);
         if object_u8bit <> RESULT_U8BIT then
           failed := true;
@@ -2476,7 +2475,7 @@ var
         value_bigstring := RESULT_BIGSTRING;
         value_s32bit := RESULT_S32BIT;
         value_s64bit := RESULT_S64BIT;
-        method_virtual_overriden_params_mixed(value_u8bit,
+        method_virtual_overridden_params_mixed(value_u8bit,
            value_u16bit, value_bigstring, value_s32bit, value_s64bit);
         if object_u8bit <> RESULT_U8BIT then
           failed := true;
@@ -2665,10 +2664,10 @@ var
         else
           Writeln('Passed!');
 
-        { The virtual method has been overriden by the object in this case }
+        { The virtual method has been overridden by the object in this case }
         constructor_init;
         Write('Testing mixed parameter (LOC_CONSTANT) method call w/virtual call...');
-        method_normal_call_overriden_params_mixed(RESULT_U8BIT,
+        method_normal_call_overridden_params_mixed(RESULT_U8BIT,
            RESULT_U16BIT, RESULT_BIGSTRING, RESULT_S32BIT, RESULT_S64BIT);
         if object_u8bit <> RESULT_U8BIT then
           failed := true;
@@ -2698,7 +2697,7 @@ var
         value_bigstring := RESULT_BIGSTRING;
         value_s32bit := RESULT_S32BIT;
         value_s64bit := RESULT_S64BIT;
-        method_normal_call_overriden_params_mixed(value_u8bit,
+        method_normal_call_overridden_params_mixed(value_u8bit,
            value_u16bit, value_bigstring, value_s32bit, value_s64bit);
         if object_u8bit <> RESULT_U8BIT then
           failed := true;
@@ -3001,10 +3000,10 @@ var
         else
           Writeln('Passed!');
 
-        { The virtual method has been overriden by the object in this case }
+        { The virtual method has been overridden by the object in this case }
         constructor_init;
         Write('Testing mixed parameter (LOC_CONSTANT) virtual call w/virtual call...');
-        method_virtual_call_overriden_params_mixed(RESULT_U8BIT,
+        method_virtual_call_overridden_params_mixed(RESULT_U8BIT,
            RESULT_U16BIT, RESULT_BIGSTRING, RESULT_S32BIT, RESULT_S64BIT);
         if object_u8bit <> RESULT_U8BIT then
           failed := true;
@@ -3034,7 +3033,7 @@ var
         value_bigstring := RESULT_BIGSTRING;
         value_s32bit := RESULT_S32BIT;
         value_s64bit := RESULT_S64BIT;
-        method_virtual_call_overriden_params_mixed(value_u8bit,
+        method_virtual_call_overridden_params_mixed(value_u8bit,
            value_u16bit, value_bigstring, value_s32bit, value_s64bit);
         if object_u8bit <> RESULT_U8BIT then
           failed := true;
@@ -3291,10 +3290,3 @@ begin
   WriteLN('**************** VMT OBJECT TESTS USING WITH *******************');
   testwith;
 end.
-
-{
-  $Log: tcalobj6.pp,v $
-  Revision 1.7  2005/02/14 17:13:37  peter
-    * truncate log
-
-}

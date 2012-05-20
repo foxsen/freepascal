@@ -1,5 +1,4 @@
 {
-    $Id: unxovlh.inc,v 1.5 2005/02/14 17:13:31 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2001 by Free Pascal development team
 
@@ -15,13 +14,6 @@
  ***********************************************************************}
 
 Function PClose(Var F:file) : cint;
-Function PClose      (Var F:text) : cint;
-Function StatFS(Path:ansistring;Var Info:Tstatfs):cint;
-//Function fpReadLink(Name:ansistring):ansistring;
+Function PClose(Var F:text) : cint;
+Function fpStatFS(Path:ansistring;Info:PStatfs):cint;
 
-{
-   $Log: unxovlh.inc,v $
-   Revision 1.5  2005/02/14 17:13:31  peter
-     * truncate log
-
-}

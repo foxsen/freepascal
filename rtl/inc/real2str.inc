@@ -1,5 +1,4 @@
 {
-    $Id: real2str.inc,v 1.18 2005/05/14 11:54:00 olle Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Michael Van Canneyt,
     member of the Free Pascal development team
@@ -16,12 +15,16 @@
 type
   { See symconst.pas tfloattype }
   treal_type = (
-    rt_s32real,rt_s64real,rt_s80real,
+    rt_s32real,rt_s64real,rt_s80real,rt_sc80real,
     rt_c64bit,rt_currency,rt_s128real
   );
   { corresponding to single   double   extended   fixed      comp for i386 }
 
-Procedure str_real (len,f : longint; d : ValReal; real_type :treal_type; var s : string);
+{$if not declared(mul_by_power10)}
+  function mul_by_power10 (x : ValReal; power : integer) : ValReal; forward;
+{$endif}
+
+Procedure str_real (len,f : longint; d : ValReal; real_type :treal_type; out s : string);
 {$ifdef SUPPORT_EXTENDED}
 type
   TSplitExtended = packed record
@@ -34,6 +37,7 @@ const
   maxDigits = 17;
 {$else}
 {$ifdef SUPPORT_DOUBLE}
+{$ifndef cpujvm}
 type
   TSplitDouble = packed record
     case byte of
@@ -41,8 +45,9 @@ type
       1: (words: Array[0..3] of word);
       2: (cards: Array[0..1] of cardinal);
   end;
+  {$endif}
 const
-  maxDigits = 14;
+  maxDigits = 15;
 {$else}
 {$ifdef SUPPORT_SINGLE}
 type
@@ -63,7 +68,11 @@ type
   TIntPartStack = array[1..maxDigits+1] of valReal;
 
 var
+{$ifdef cpujvm}
+  doublebits: int64;
+{$endif}
   roundCorr, corrVal, factor : valReal;
+  high_exp10_reduced,
   spos, endpos, fracCount: longint;
   correct, currprec: longint;
   temp : string;
@@ -174,12 +183,39 @@ const
         { the fractional part is not used for rounding later                }
         currprec := -1;
         { instead, round based on the next whole digit }
-        if (trunc(intPartStack[stackPtr]-corrVal) > 5.0 - roundCorr) then
+        if (int(intPartStack[stackPtr]-corrVal) >= 5.0) then
            roundStr(temp,spos);
         end;
 {$ifdef DEBUG_NASM}
     writeln(stderr,'temp at getintpart exit is = ',temp);
 {$endif DEBUG_NASM}
+  end;
+
+  function reduce_exponent (d : ValReal; out scaled : ValReal) : longint;
+  { Returns decimal exponent which was used for scaling, and a scaled value out }
+  const
+    C_LN10 = ln(10);
+  var
+    log10_d : longint;
+  begin
+    reduce_exponent := 0;
+    if d<>0 then
+      begin
+       // get exponent approximation ["d" is assumed to be non-negative]
+        log10_d:=trunc(ln(d)/C_LN10);
+       // trying to stay at least 1 digit away from introducing integer/fractional part
+        if log10_d > maxDigits+1 then
+          reduce_exponent := log10_d-maxDigits
+        else
+          if log10_d < -(maxDigits+1) then
+            reduce_exponent := log10_d+maxDigits
+       // else
+       //   the number is already suitable enough
+      end;
+    // do scaling if needed
+    if reduce_exponent<>0
+      then scaled := mul_by_power10(d,-reduce_exponent) // denormals should be handled properly by this call
+      else scaled := d;
   end;
 
 begin
@@ -190,35 +226,25 @@ begin
          minlen:=8;
          explen:=4;
          { correction used with comparing to avoid rounding/precision errors }
-         roundCorr := (1/exp((16-4-3)*ln(10)));
+         roundCorr := 1.1920928955e-07;
       end;
     rt_s64real :
       begin
-{ if the maximum supported type is double, we can print out one digit }
-{ less, because otherwise we can't round properly and 1e-400 becomes   }
-{ 0.99999999999e-400 (JM)                                              }
-{$ifdef support_extended}
-         maxlen:=23;
-         { correction used with comparing to avoid rounding/precision errors }
-         roundCorr := (1/exp((23-5-3)*ln(10)));
-{$else support_extended}
-{$ifdef support_double}
          maxlen := 22;
          { correction used with comparing to avoid rounding/precision errors }
-         roundCorr := (1/exp((22-4-3)*ln(10)));
-{$endif support_double}
-{$endif support_extended}
+         roundCorr := 2.2204460493e-16;
          minlen:=9;
          explen:=5;
       end;
-    rt_s80real :
+    rt_s80real,
+    rt_sc80real:
       begin
          { Different in TP help, but this way the output is the same (JM) }
          maxlen:=25;
          minlen:=10;
          explen:=6;
          { correction used with comparing to avoid rounding/precision errors }
-         roundCorr := (1/exp((25-6-3)*ln(10)));
+         roundCorr := 1.0842021725e-19;
       end;
     rt_c64bit  :
       begin
@@ -227,7 +253,7 @@ begin
          { according to TP (was 5) (FK) }
          explen:=6;
          { correction used with comparing to avoid rounding/precision errors }
-         roundCorr := (1/exp((23-6-3)*ln(10)));
+         roundCorr := 2.2204460493e-16;
       end;
     rt_currency :
       begin
@@ -236,7 +262,7 @@ begin
          minlen:=10;
          explen:=0;
          { correction used with comparing to avoid rounding/precision errors }
-         roundCorr := (1/exp((25-6-3)*ln(10)));
+         roundCorr := 1.0842021725e-19;
       end;
     rt_s128real  :
       begin
@@ -245,7 +271,15 @@ begin
          minlen:=10;
          explen:=6;
          { correction used with comparing to avoid rounding/precision errors }
-         roundCorr := (1/exp((25-6-3)*ln(10)));
+         roundCorr := 1.0842021725e-19;
+      end;
+    else
+      begin
+        { keep JVM byte code verifier happy }
+        maxlen:=0;
+        minlen:=0;
+        explen:=0;
+        roundCorr:=0;
       end;
     end;
   { check parameters }
@@ -262,20 +296,20 @@ begin
                   ((TSplitExtended(d).cards[1] and $7fffffff) = 0);
 {$else SUPPORT_EXTENDED}
 {$ifdef SUPPORT_DOUBLE}
-{$ifdef CPUARM}
+{$ifdef FPC_DOUBLE_HILO_SWAPPED}
   { double, format (MSB): 1 Sign bit, 11 bit exponent, 52 bit mantissa }
   { high and low dword are swapped when using the arm fpa }
   sign := ((TSplitDouble(d).cards[0] shr 20) and $800) <> 0;
   expMaximal := ((TSplitDouble(d).cards[0] shr 20) and $7ff) = 2047;
   fraczero:= (TSplitDouble(d).cards[0] and $fffff = 0) and
               (TSplitDouble(d).cards[1] = 0);
-{$else CPUARM}
+{$else FPC_DOUBLE_HILO_SWAPPED}
   { double, format (MSB): 1 Sign bit, 11 bit exponent, 52 bit mantissa }
   sign := ((TSplitDouble(d).cards[1] shr 20) and $800) <> 0;
   expMaximal := ((TSplitDouble(d).cards[1] shr 20) and $7ff) = 2047;
   fraczero := (TSplitDouble(d).cards[1] and $fffff = 0) and
               (TSplitDouble(d).cards[0] = 0);
-{$endif CPUARM}
+{$endif FPC_DOUBLE_HILO_SWAPPED}
 {$else SUPPORT_DOUBLE}
 {$ifdef SUPPORT_SINGLE}
   { single, format (MSB): 1 Sign bit, 8 bit exponent, 23 bit mantissa }
@@ -292,11 +326,19 @@ begin
   {$error sign/NaN/Inf not yet supported for big endian CPU's in str_real}
 {$else SUPPORT_EXTENDED}
 {$ifdef SUPPORT_DOUBLE}
+{$ifdef cpujvm}
+  doublebits := JLDouble.doubleToLongBits(d);
+  sign := doublebits<0;
+  expMaximal := (doublebits shr (32+20)) and $7ff = 2047;
+  fraczero:= (((doublebits shr 32) and $fffff) = 0) and
+             (longint(doublebits)=0);
+{$else cpujvm}
   { double, format (MSB): 1 Sign bit, 11 bit exponent, 52 bit mantissa }
   sign := ((TSplitDouble(d).cards[0] shr 20) and $800) <> 0;
   expMaximal := ((TSplitDouble(d).cards[0] shr 20) and $7ff) = 2047;
   fraczero:= (TSplitDouble(d).cards[0] and $fffff = 0) and
               (TSplitDouble(d).cards[1] = 0);
+{$endif cpujvm}
 {$else SUPPORT_DOUBLE}
 {$ifdef SUPPORT_SINGLE}
   { single, format (MSB): 1 Sign bit, 8 bit exponent, 23 bit mantissa }
@@ -341,9 +383,31 @@ begin
       temp := ' 0';
       { position in the temporary output string }
       spos := 2;
+
+      // workaround to make follow-up things go somewhat faster
+      high_exp10_reduced := 0;
+      case real_type of
+      // blacklist, in order of increasing headache:
+//?     rt_s32real :;   
+          // ? needs additional testing to ensure any reasonable benefit
+          //   without lost of accuracy due to an extra conversion
+        rt_c64bit, rt_currency :;
+          // no much sense to touch them
+      else
+      // acceptable:
+      // ? rt_s32real [see above]
+      //   rt_s64real
+      //   rt_s80real, rt_sc80real
+      // ? rt_s128real [have not tried]
+        high_exp10_reduced := reduce_exponent(d,d);
+      end;
+  
       { get the integer part }
       correct := 0;
       GetIntPart(d);
+
+      inc(correct,high_exp10_reduced); // end of workaround
+
       { now process the fractional part }
       if d > 1.0- roundCorr then
         d := frac(d);
@@ -379,6 +443,12 @@ begin
           for fracCount := 1 to currPrec do
             factor := factor * 10.0;
           corrval := corrval / factor;
+          { for single, we may write more significant digits than are available,
+            so the rounding correction itself can show up -> don't round in that
+            case
+          }
+          if real_type<>rt_s32real then
+            d:=d+d*roundCorr;
           if d >= corrVal then
             d := d + corrVal;
           if int(d) = 1 then
@@ -389,7 +459,7 @@ begin
           { calculate the necessary fractional digits }
           for fracCount := 1 to currPrec do
             begin
-              if d > 1.0- roundCorr then
+              if d > 1.0 then
                 d := frac(d) * 10.0
               else d := d * 10.0;
               inc(spos);
@@ -459,12 +529,15 @@ begin
     else s:=temp;
 end;
 
-{
-  $Log: real2str.inc,v $
-  Revision 1.18  2005/05/14 11:54:00  olle
-    * Fixed typo
 
-  Revision 1.17  2005/02/14 17:13:26  peter
-    * truncate log
+Procedure str_real_iso (len,f : longint; d : ValReal; real_type :treal_type; out s : string);
+  var
+   i : Integer;
+  begin
+    str_real(len,f,d,real_type,s);
+    for i:=1 to Length(s) do
+      if s[i]='E' then
+        s[i]:='e';
+  end;
 
-}
+

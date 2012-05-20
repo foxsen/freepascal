@@ -1,5 +1,4 @@
 {
-    $Id: cpuinfo.pas,v 1.1 2005/02/13 18:56:44 florian Exp $
     Copyright (c) 1998-2002 by the Free Pascal development team
 
     Basic Processor information for the ARM
@@ -31,15 +30,12 @@ Type
    pbestreal=^bestreal;
 
    { possible supported processors for this target }
-   tprocessors =
-      (no_processor,
-       mips32
+   tcputype =
+      (cpu_none,
+       cpu_mips32
       );
 
-   tfputype =
-     (no_fpuprocessor,
-      fpu_fpu
-     );
+   tfputype =(fpu_none,fpu_soft,fpu_mips2,fpu_mips3);
 
 Const
    {# Size of native extended floating point type }
@@ -47,13 +43,14 @@ Const
    {# Size of a multimedia register               }
    mmreg_size = 0;
    { target cpu string (used by compiler options) }
+{$ifdef MIPSEL}
+   target_cpu_string = 'mipsel';
+{$else MIPSEL}
    target_cpu_string = 'mips';
-
+{$endif MIPSEL}
    { calling conventions supported by the code generator }
    supported_calling_conventions : tproccalloptions = [
      pocall_internproc,
-     pocall_compilerproc,
-     pocall_inline,
      pocall_stdcall,
      { same as stdcall only different name mangling }
      pocall_cdecl,
@@ -61,20 +58,22 @@ Const
      pocall_cppdecl
    ];
 
-   processorsstr : array[tprocessors] of string[5] = ('',
+   cputypestr : array[tcputype] of string[6] = ('',
      'MIPS32'
    );
 
-   fputypestr : array[tfputype] of string[6] = ('',
-     'FPU'
+   fputypestr : array[tfputype] of string[9] = ('',
+     'SOFT',
+     'FPU_MIPS2','FPU_MIPS3'
    );
 
+   { Supported optimizations, only used for information }
+   supported_optimizerswitches = [cs_opt_regvar,cs_opt_loopunroll,cs_opt_nodecse];
+
+   level1optimizerswitches = [];
+   level2optimizerswitches = level1optimizerswitches + [cs_opt_regvar,cs_opt_stackframe,cs_opt_nodecse];
+   level3optimizerswitches = level2optimizerswitches + [cs_opt_loopunroll];
 
 Implementation
 
 end.
-{
-  $Log: cpuinfo.pas,v $
-  Revision 1.1  2005/02/13 18:56:44  florian
-    + basic mips stuff
-}

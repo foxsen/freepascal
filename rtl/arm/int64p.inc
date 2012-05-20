@@ -1,5 +1,4 @@
 {
-    $Id: int64p.inc,v 1.5 2005/02/14 17:13:21 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team
 
@@ -15,9 +14,12 @@
  **********************************************************************}
 
 {$define FPC_SYSTEM_HAS_MUL_QWORD}
-function fpc_mul_qword(f1,f2 : qword;checkoverflow : longbool) : qword;assembler;[public,alias: 'FPC_MUL_QWORD']; {$ifdef hascompilerproc} compilerproc; {$endif}
+function fpc_mul_qword(f1,f2 : qword;checkoverflow : longbool) : qword;assembler;nostackframe;[public,alias: 'FPC_MUL_QWORD']; compilerproc;
 asm
+  stmfd sp!,{r4,r5,r6,r14}
   mov r6,#0
+  // r4 = result lo, r5 = result hi
+{$ifdef ENDIAN_LITTLE}
   // lo(f1)*lo(f2)
   umull r4,r5,r0,r2
   // lo(f1)*hi(f2)
@@ -31,10 +33,25 @@ asm
   orrs r6,r6,r0
   mov r0,r4
   mov r1,r5
+{$else}
+  // lo(f1)*lo(f2)
+  umull r4,r5,r1,r3
+  // lo(f1)*hi(f2)
+  umlal r5,r6,r1,r2
+  // overflow?
+  // hi(f1)*hi(f2)
+  mul r1,r0,r2
+  // hi(f1)*lo(f2)
+  umlal r5,r6,r0,r3
+  // check for overflow
+  orrs r6,r6,r1
+  mov r1,r4
+  mov r0,r5
+{$endif}
   // no overflow?
   beq .Lexit
-
-  ldr r2,checkoverflow
+  // checkoverflow?
+  ldr r2,[sp,#16]
   cmp r2,#0
   beq .Lexit
 
@@ -42,15 +59,7 @@ asm
   mov r1,fp
   bl HandleErrorFrame
 .Lexit:
-end ['r4','r5','r6'];
+  ldmfd sp!,{r4,r5,r6,r15}
+end;
 
 
-{
-  $Log: int64p.inc,v $
-  Revision 1.5  2005/02/14 17:13:21  peter
-    * truncate log
-
-  Revision 1.4  2005/01/04 12:57:52  florian
-    * fixed overflow checking for qword*qword
-
-}

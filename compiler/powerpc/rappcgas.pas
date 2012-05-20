@@ -1,5 +1,4 @@
 {
-    $Id: rappcgas.pas,v 1.19 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 1998-2002 by Carl Eric Codere and Peter Vreman
 
     Does the parsing for the PowerPC GNU AS styled inline assembler.
@@ -51,18 +50,18 @@ Unit rappcgas;
       globtype,verbose,
       systems,
       { aasm }
-      cpubase,aasmbase,aasmtai,aasmcpu,
+      cpubase,aasmbase,aasmtai,aasmdata,aasmcpu,
       { symtable }
       symconst,symsym,
       { parser }
       procinfo,
       rabase,rautils,
-      cgbase,cgobj
+      cgbase,cgobj,cgppc
       ;
 
     procedure tppcattreader.ReadSym(oper : tppcoperand);
       var
-         tempstr : string;
+         tempstr, mangledname : string;
          typesize,l,k : aint;
       begin
         tempstr:=actasmpattern;
@@ -84,7 +83,9 @@ Unit rappcgas;
         { record.field ? }
         if actasmtoken=AS_DOT then
          begin
-           BuildRecordOffsetSize(tempstr,l,k);
+           BuildRecordOffsetSize(tempstr,l,k,mangledname,false);
+           if (mangledname<>'') then
+             Message(asmr_e_invalid_reference_syntax);
            inc(oper.opr.ref.offset,l);
          end;
       end;
@@ -102,9 +103,11 @@ Unit rappcgas;
             if actasmtoken=AS_ID then
               begin
                 if upper(actasmpattern)='L' then
-                  oper.opr.ref.refaddr:=addr_lo
+                  oper.opr.ref.refaddr:=addr_low
+                else if upper(actasmpattern)='HI' then
+                  oper.opr.ref.refaddr:=addr_high
                 else if upper(actasmpattern)='HA' then
-                  oper.opr.ref.refaddr:=addr_hi
+                  oper.opr.ref.refaddr:=addr_higha
                 else
                   Message(asmr_e_invalid_reference_syntax);
                 Consume(AS_ID);
@@ -137,6 +140,9 @@ Unit rappcgas;
 
       var
         l : aint;
+        relsym: string;
+        asmsymtyp: tasmsymtype;
+        isflags: tindsymflags;
 
       begin
         Consume(AS_LPAREN);
@@ -171,6 +177,17 @@ Unit rappcgas;
               { (reg)        }
               if actasmtoken=AS_RPAREN then
                Begin
+                 { detect RTOC-based symbol accesses }
+                 if assigned(oper.opr.ref.symbol) and
+                    (oper.opr.ref.base=NR_RTOC) and
+                    (oper.opr.ref.offset=0) then
+                   begin
+                     { replace global symbol reference with TOC entry name
+                       for AIX }
+                     if target_info.system in systems_aix then
+                       tcgppcgen(cg).get_aix_toc_sym(nil,oper.opr.ref.symbol.name,asmsym2indsymflags(oper.opr.ref.symbol),oper.opr.ref,true);
+                     oper.opr.ref.refaddr:=addr_pic_no_got;
+                   end;
                  Consume_RParen;
                  exit;
                end;
@@ -192,21 +209,51 @@ Unit rappcgas;
           AS_ID:
             Begin
               ReadSym(oper);
-              { add a constant expression? }
-              if (actasmtoken=AS_PLUS) then
-               begin
-                 l:=BuildConstExpression(true,true);
-                 case oper.opr.typ of
-                   OPR_CONSTANT :
-                     inc(oper.opr.val,l);
-                   OPR_LOCAL :
-                     inc(oper.opr.localsymofs,l);
-                   OPR_REFERENCE :
-                     inc(oper.opr.ref.offset,l);
-                   else
-                     internalerror(200309202);
-                 end;
-               end;
+              case actasmtoken of
+                AS_PLUS:
+                  begin
+                    { add a constant expression? }
+                    l:=BuildConstExpression(true,true);
+                    case oper.opr.typ of
+                      OPR_CONSTANT :
+                        inc(oper.opr.val,l);
+                      OPR_LOCAL :
+                        inc(oper.opr.localsymofs,l);
+                      OPR_REFERENCE :
+                        inc(oper.opr.ref.offset,l);
+                      else
+                        internalerror(200309202);
+                    end;
+                  end;
+                AS_MINUS:
+                  begin
+                    Consume(AS_MINUS);
+                    BuildConstSymbolExpression(false,true,false,l,relsym,asmsymtyp);
+                    if (relsym<>'') then
+                      begin
+                        if (oper.opr.typ = OPR_REFERENCE) then
+                          oper.opr.ref.relsymbol:=current_asmdata.RefAsmSymbol(relsym)
+                        else
+                          begin
+                            Message(asmr_e_invalid_reference_syntax);
+                            RecoverConsume(false);
+                          end
+                      end
+                    else
+                      begin
+                        case oper.opr.typ of
+                          OPR_CONSTANT :
+                            dec(oper.opr.val,l);
+                          OPR_LOCAL :
+                            dec(oper.opr.localsymofs,l);
+                          OPR_REFERENCE :
+                            dec(oper.opr.ref.offset,l);
+                          else
+                            internalerror(2007092601);
+                        end;
+                      end;
+                  end;
+              end;
               Consume(AS_RPAREN);
               if actasmtoken=AS_AT then
                 ReadAt(oper);
@@ -261,6 +308,7 @@ Unit rappcgas;
 
         procedure MaybeRecordOffset;
           var
+            mangledname: string;
             hasdot  : boolean;
             l,
             toffset,
@@ -274,7 +322,10 @@ Unit rappcgas;
               begin
                 if expr<>'' then
                   begin
-                    BuildRecordOffsetSize(expr,toffset,tsize);
+                    BuildRecordOffsetSize(expr,toffset,tsize,mangledname,false);
+                    if (oper.opr.typ<>OPR_CONSTANT) and
+                       (mangledname<>'') then
+                      Message(asmr_e_wrong_sym_type);
                     inc(l,toffset);
                     oper.SetSize(tsize,true);
                   end;
@@ -294,9 +345,19 @@ Unit rappcgas;
                   inc(oper.opr.localsymofs,l)
                 end;
               OPR_CONSTANT :
-                inc(oper.opr.val,l);
+                if (mangledname<>'') then
+                  begin
+                    if (oper.opr.val<>0) then
+                      Message(asmr_e_wrong_sym_type);
+                    oper.opr.typ:=OPR_SYMBOL;
+                    oper.opr.symbol:=current_asmdata.DefineAsmSymbol(mangledname,AB_EXTERNAL,AT_FUNCTION);
+                  end
+                else
+                  inc(oper.opr.val,l);
               OPR_REFERENCE :
                 inc(oper.opr.ref.offset,l);
+              OPR_SYMBOL:
+                Message(asmr_e_invalid_symbol_ref);
               else
                 internalerror(200309221);
             end;
@@ -612,7 +673,6 @@ Unit rappcgas;
 
     function tppcattreader.is_asmopcode(const s: string):boolean;
       var
-        str2opentry: tstr2opentry;
         cond  : tasmcondflag;
         hs : string;
 
@@ -637,12 +697,11 @@ Unit rappcgas;
             dec(ord(hs[0]));
             actcondition.dirhint:=DH_Plus;
           end;
-        str2opentry:=tstr2opentry(iasmops.search(hs));
-        if assigned(str2opentry) then
+	actopcode := tasmop(ptruint(iasmops.find(hs)));
+        if actopcode <> A_NONE then
           begin
             if actcondition.dirhint<>DH_None then
               message1(asmr_e_unknown_opcode,actasmpattern);
-            actopcode:=str2opentry.op;
             actasmtoken:=AS_OPCODE;
             is_asmopcode:=true;
             exit;
@@ -680,13 +739,39 @@ Unit rappcgas;
 
     procedure tppcattreader.ConvertCalljmp(instr : tppcinstruction);
       begin
-        if instr.Operands[1].opr.typ=OPR_REFERENCE then
+        if instr.Operands[1].opr.typ = OPR_CONSTANT then
+          begin
+            if (instr.operands[1].opr.val > 31) or
+               (instr.operands[2].opr.typ <> OPR_CONSTANT) or
+               (instr.operands[2].opr.val > 31) or
+               not(instr.operands[3].opr.typ in [OPR_REFERENCE,OPR_SYMBOL]) then
+              Message(asmr_e_syn_operand);
+            { BO/BI notation }
+            instr.condition.simple := false;
+            instr.condition.bo := instr.operands[1].opr.val;
+            instr.condition.bi := instr.operands[2].opr.val;
+            instr.operands[1].free;
+            instr.operands[2].free;
+            instr.operands[2] := nil;
+            instr.operands[1] := instr.operands[3];
+            instr.operands[3] := nil;
+            instr.ops := 1;
+          end;
+        if instr.Operands[1].opr.typ = OPR_REFERENCE then
           begin
             instr.Operands[1].opr.ref.refaddr:=addr_full;
             if (instr.Operands[1].opr.ref.base<>NR_NO) or
-              (instr.Operands[1].opr.ref.index<>NR_NO) then
+               (instr.Operands[1].opr.ref.index<>NR_NO) then
               Message(asmr_e_syn_operand);
+            if (target_info.system in systems_dotted_function_names) and
+               assigned(instr.Operands[1].opr.ref.symbol) then
+              instr.Operands[1].opr.ref.symbol:=current_asmdata.DefineAsmSymbol('.'+instr.Operands[1].opr.ref.symbol.name,instr.Operands[1].opr.ref.symbol.bind,AT_FUNCTION);
           end;
+        { regular name is toc entry, .-based name is actual code }
+        if (target_info.system in systems_dotted_function_names) and
+           (instr.Operands[1].opr.typ = OPR_SYMBOL) and
+           (instr.Operands[1].opr.symbol.typ=AT_FUNCTION) then
+          instr.Operands[1].opr.symbol:=current_asmdata.DefineAsmSymbol('.'+instr.Operands[1].opr.symbol.name,instr.Operands[1].opr.symbol.bind,AT_FUNCTION);
       end;
 
 
@@ -732,9 +817,3 @@ initialization
   RegisterAsmMode(asmmode_ppc_att_info);
   RegisterAsmMode(asmmode_ppc_standard_info);
 end.
-{
-  $Log: rappcgas.pas,v $
-  Revision 1.19  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

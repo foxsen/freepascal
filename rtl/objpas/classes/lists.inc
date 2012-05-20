@@ -1,5 +1,4 @@
 {
-    $Id: lists.inc,v 1.11 2005/05/04 06:53:06 michael Exp $
     This file is part of the Free Pascal Run Time Library (rtl)
     Copyright (c) 1999-2005 by the Free Pascal development team
 
@@ -12,45 +11,69 @@
 
  **********************************************************************}
 
-Const
-  // Ratio of Pointer and Word Size.
-  WordRatio = SizeOf(Pointer) Div SizeOf(Word);
+{$if defined(VER2_0) or not defined(FPC_TESTGENERICS)}
+
+{****************************************************************************}
+{*                           TFPListEnumerator                              *}
+{****************************************************************************}
+
+constructor TFPListEnumerator.Create(AList: TFPList);
+begin
+  inherited Create;
+  FList := AList;
+  FPosition := -1;
+end;
+
+function TFPListEnumerator.GetCurrent: Pointer;
+begin
+  Result := FList[FPosition];
+end;
+
+function TFPListEnumerator.MoveNext: Boolean;
+begin
+  Inc(FPosition);
+  Result := FPosition < FList.Count;
+end;
 
 {****************************************************************************}
 {*                           TFPList                                        *}
 {****************************************************************************}
+
+Const
+  // Ratio of Pointer and Word Size.
+  WordRatio = SizeOf(Pointer) Div SizeOf(Word);
 
 procedure TFPList.RaiseIndexError(Index : Integer);
 begin
   Error(SListIndexError, Index);
 end;
 
-function TFPList.Get(Index: Integer): Pointer; {$ifdef HASINLINE} inline; {$endif}
+function TFPList.Get(Index: Integer): Pointer;
 begin
   If (Index < 0) or (Index >= FCount) then
     RaiseIndexError(Index);
   Result:=FList^[Index];
 end;
 
-procedure TFPList.Put(Index: Integer; Item: Pointer); {$ifdef HASINLINE} inline; {$endif}
+procedure TFPList.Put(Index: Integer; Item: Pointer);
 begin
   if (Index < 0) or (Index >= FCount) then
     RaiseIndexError(Index);
   Flist^[Index] := Item;
 end;
 
-function TFPList.Extract(item: Pointer): Pointer;
+function TFPList.Extract(Item: Pointer): Pointer;
 var
   i : Integer;
 begin
-  result := nil;
   i := IndexOf(item);
   if i >= 0 then
    begin
      Result := item;
-     FList^[i] := nil;
      Delete(i);
-   end;
+   end
+  else
+    result := nil;
 end;
 
 procedure TFPList.SetCapacity(NewCapacity: Integer);
@@ -83,9 +106,22 @@ begin
   inherited Destroy;
 end;
 
-function TFPList.Add(Item: Pointer): Integer; {$ifdef HASINLINE} inline; {$endif}
+Procedure TFPList.AddList(AList : TFPList);
+
+Var
+  I : Integer;
+
 begin
-  if FCount = FCapacity then 
+  If (Capacity<Count+AList.Count) then
+    Capacity:=Count+AList.Count;
+  For I:=0 to AList.Count-1 do
+    Add(AList[i]);
+end;
+
+
+function TFPList.Add(Item: Pointer): Integer;
+begin
+  if FCount = FCapacity then
     Self.Expand;
   FList^[FCount] := Item;
   Result := FCount;
@@ -102,7 +138,7 @@ begin
   end;
 end;
 
-procedure TFPList.Delete(Index: Integer); {$ifdef HASINLINE} inline; {$endif}
+procedure TFPList.Delete(Index: Integer);
 begin
   If (Index<0) or (Index>=FCount) then
     Error (SListIndexError, Index);
@@ -116,13 +152,9 @@ begin
   end;
 end;
 
-class procedure TFPList.Error(const Msg: string; Data: Integer);
+class procedure TFPList.Error(const Msg: string; Data: PtrInt);
 begin
-{$ifdef VER1_0}
-  Raise EListError.CreateFmt(Msg,[Data]) at longint(get_caller_addr(get_frame));
-{$else VER1_0}
   Raise EListError.CreateFmt(Msg,[Data]) at get_caller_addr(get_frame);
-{$endif VER1_0}
 end;
 
 procedure TFPList.Exchange(Index1, Index2: Integer);
@@ -138,11 +170,11 @@ begin
   FList^[Index2] := Temp;
 end;
 
-function TFPList.Expand: TFPList;  {$ifdef HASINLINE} inline; {$endif}
+function TFPList.Expand: TFPList;
 var
   IncSize : Longint;
 begin
-  if FCount < FCapacity then exit;
+  if FCount < FCapacity then exit(self);
   IncSize := 4;
   if FCapacity > 3 then IncSize := IncSize + 4;
   if FCapacity > 8 then IncSize := IncSize+8;
@@ -159,14 +191,42 @@ begin
     Result := Items[0];
 end;
 
-function TFPList.IndexOf(Item: Pointer): Integer;
+function TFPList.GetEnumerator: TFPListEnumerator;
 begin
-  Result := 0;
-  while(Result < FCount) and (Flist^[Result] <> Item) do Result := Result + 1;
-  If Result = FCount  then Result := -1;
+  Result := TFPListEnumerator.Create(Self);
 end;
 
-procedure TFPList.Insert(Index: Integer; Item: Pointer);  {$ifdef HASINLINE} inline; {$endif}
+function TFPList.IndexOf(Item: Pointer): Integer;
+
+Var
+  C : Integer;
+
+begin
+  Result:=0;
+  C:=Count;
+  while (Result<C) and (Flist^[Result]<>Item) do
+    Inc(Result);
+  If Result>=C then
+    Result:=-1;
+end;
+
+function TFPList.IndexOfItem(Item: Pointer; Direction: TDirection): Integer;
+
+Var
+  C : Integer;
+
+begin
+  if Direction=fromBeginning then
+    Result:=IndexOf(Item)
+  else
+    begin
+    Result:=Count-1;
+    while (Result >=0) and (Flist^[Result]<>Item) do
+      Result:=Result - 1;
+    end;      
+end;
+
+procedure TFPList.Insert(Index: Integer; Item: Pointer);
 begin
   if (Index < 0) or (Index > FCount )then
     Error(SlistIndexError, Index);
@@ -192,12 +252,13 @@ var
 begin
   if ((CurIndex < 0) or (CurIndex > Count - 1)) then
     Error(SListIndexError, CurIndex);
-  if (NewINdex < 0) then
+  if ((NewIndex < 0) or (NewIndex > Count -1)) then
     Error(SlistIndexError, NewIndex);
   Temp := FList^[CurIndex];
-  FList^[CurIndex] := nil;
-  Self.Delete(CurIndex);
-  Self.Insert(NewIndex, nil);
+  if NewIndex > CurIndex then
+    System.Move(FList^[CurIndex+1], FList^[CurIndex], (NewIndex - CurIndex) * SizeOf(Pointer))
+  else
+    System.Move(FList^[NewIndex], FList^[NewIndex+1], (CurIndex - NewIndex) * SizeOf(Pointer));
   FList^[NewIndex] := Temp;
 end;
 
@@ -209,47 +270,26 @@ begin
 end;
 
 procedure TFPList.Pack;
-Var
-  {Last,I,J,}
-  Runner : Longint;
+var
+  NewCount,
+  i : integer;
+  pdest,
+  psrc : PPointer;
 begin
-  // Not the fastest; but surely correct
-  for Runner := Fcount - 1 downto 0 do
-    if Items[Runner] = Nil then
-      Self.Delete(Runner);
-{ The following may be faster in case of large and defragmented lists
-  If count=0 then exit;
-  Runner:=0;I:=0;
-  TheLast:=Count;
-  while runner<count do
+  NewCount:=0;
+  psrc:=@FList^[0];
+  pdest:=psrc;
+  For I:=0 To FCount-1 Do
     begin
-    // Find first Nil
-    While (FList^[Runner]<>Nil) and (Runner<Count) do Runner:=Runner+1;
-    if Runner<Count do
-      begin
-      // Start searching for non-nil from last known nil+1
-      if i<Runner then I:=Runner+1;
-      While (Flist[I]^=Nil) and (I<Count) do I:=I+1;
-      // Start looking for last non-nil of block.
-      J:=I+1;
-      While (Flist^[J]<>Nil) and (J<Count) do J:=J+1;
-      // Move block and zero out
-      Move (Flist^[I],Flist^[Runner],J*SizeOf(Pointer));
-      FillWord (Flist^[I],(J-I)*WordRatio,0);
-      // Update Runner and Last to point behind last block
-      TheLast:=Runner+(J-I);
-      If J=Count then
-         begin
-         // Shortcut, when J=Count we checked all pointers
-         Runner:=Count
-      else
-         begin
-         Runner:=TheLast;
-         I:=j;
-      end;
+      if assigned(psrc^) then
+        begin
+          pdest^:=psrc^;
+          inc(pdest);
+          inc(NewCount);
+        end;
+      inc(psrc);
     end;
-  Count:=TheLast;
-}
+  FCount:=NewCount;
 end;
 
 // Needed by Sort method.
@@ -290,26 +330,237 @@ begin
   QuickSort(Flist, 0, FCount-1, Compare);
 end;
 
-procedure TFPList.Assign(Obj: TFPList);
+
+procedure TFPList.ForEachCall(proc2call:TListCallback;arg:pointer);
 var
-  i: Integer;
+  i : integer;
+  p : pointer;
 begin
-  Clear;
-  for I := 0 to Obj.Count - 1 do
-    Add(Obj[i]);
+  For I:=0 To Count-1 Do
+    begin
+      p:=FList^[i];
+      if assigned(p) then
+        proc2call(p,arg);
+    end;
 end;
 
 
+procedure TFPList.ForEachCall(proc2call:TListStaticCallback;arg:pointer);
+var
+  i : integer;
+  p : pointer;
+begin
+  For I:=0 To Count-1 Do
+    begin
+      p:=FList^[i];
+      if assigned(p) then
+        proc2call(p,arg);
+    end;
+end;
+
+procedure TFPList.CopyMove (aList : TFPList);
+var r : integer;
+begin
+  Clear;
+  for r := 0 to aList.count-1 do
+    Add (aList[r]);
+end;
+
+procedure TFPList.MergeMove (aList : TFPList);
+var r : integer;
+begin
+  For r := 0 to aList.count-1 do
+    if self.indexof(aList[r]) < 0 then
+      self.Add (aList[r]);
+end;
+
+procedure TFPList.DoCopy(ListA, ListB : TFPList);
+begin
+  if assigned (ListB) then
+    CopyMove (ListB)
+  else
+    CopyMove (ListA);
+end;
+
+procedure TFPList.DoDestUnique(ListA, ListB : TFPList);
+  procedure MoveElements (src, dest : TFPList);
+  var r : integer;
+  begin
+    self.clear;
+    for r := 0 to src.count-1 do
+      if dest.indexof(src[r]) < 0 then
+        self.Add (src[r]);
+  end;
+  
+var dest : TFPList;
+begin
+  if assigned (ListB) then
+    MoveElements (ListB, ListA)
+  else
+    try
+      dest := TFPList.Create;
+      dest.CopyMove (self);
+      MoveElements (ListA, dest)
+    finally
+      dest.Free;
+    end;
+end;
+
+procedure TFPList.DoAnd(ListA, ListB : TFPList);
+var r : integer;
+begin
+  if assigned (ListB) then
+    begin
+    self.clear;
+    for r := 0 to ListA.count-1 do
+      if ListB.indexOf (ListA[r]) >= 0 then
+        self.Add (ListA[r]);
+    end
+  else
+    begin
+    for r := self.Count-1 downto 0 do
+      if ListA.indexof (Self[r]) < 0 then
+        self.delete (r);
+    end;
+end;
+
+procedure TFPList.DoSrcUnique(ListA, ListB : TFPList);
+var r : integer;
+begin
+  if assigned (ListB) then
+    begin
+    self.Clear;
+    for r := 0 to ListA.Count-1 do
+      if ListB.indexof (ListA[r]) < 0 then
+        self.Add (ListA[r]);
+    end
+  else
+    begin
+    for r := self.count-1 downto 0 do
+      if ListA.indexof (self[r]) >= 0 then
+        self.delete (r);
+    end;
+end;
+
+procedure TFPList.DoOr(ListA, ListB : TFPList);
+begin
+  if assigned (ListB) then
+    begin
+    CopyMove (ListA);
+    MergeMove (ListB);
+    end
+  else
+    MergeMove (ListA);
+end;
+
+procedure TFPList.DoXOr(ListA, ListB : TFPList);
+var r : integer;
+    l : TFPList;
+begin
+  if assigned (ListB) then
+    begin
+    self.Clear;
+    for r := 0 to ListA.count-1 do
+      if ListB.indexof (ListA[r]) < 0 then
+        self.Add (ListA[r]);
+    for r := 0 to ListB.count-1 do
+      if ListA.indexof (ListB[r]) < 0 then
+        self.Add (ListB[r]);
+    end
+  else
+    try
+      l := TFPList.Create;
+      l.CopyMove (Self);
+      for r := self.count-1 downto 0 do
+        if listA.indexof (self[r]) >= 0 then
+          self.delete (r);
+      for r := 0 to ListA.count-1 do
+        if l.indexof (ListA[r]) < 0 then
+          self.add (ListA[r]);
+    finally
+      l.Free;
+    end;
+end;
+
+
+procedure TFPList.Assign (ListA: TFPList; AOperator: TListAssignOp=laCopy; ListB: TFPList=nil);
+begin
+  case AOperator of
+    laCopy : DoCopy (ListA, ListB);             // replace dest with src
+    laSrcUnique : DoSrcUnique (ListA, ListB);   // replace dest with src that are not in dest
+    laAnd : DoAnd (ListA, ListB);               // remove from dest that are not in src
+    laDestUnique : DoDestUnique (ListA, ListB); // remove from dest that are in src
+    laOr : DoOr (ListA, ListB);                 // add to dest from src and not in dest
+    laXOr : DoXOr (ListA, ListB);               // add to dest from src and not in dest, remove from dest that are in src
+  end;
+end;
+
+{$else}
+
+{ generics based implementation of TFPList follows }
+
+procedure TFPList.Assign(Source: TFPList);
+begin
+  inherited Assign(Source);
+end;
+
+type
+  TFPPtrListSortCompare = function(const Item1, Item2: Pointer): Integer;
+
+procedure TFPList.Sort(Compare: TListSortCompare);
+begin
+  inherited Sort(TFPPtrListSortCompare(Compare));
+end;
+
+procedure TFPList.ForEachCall(Proc2call: TListCallback; Arg: Pointer);
+var
+  I: integer;
+begin
+  for I:=0 to Count-1 do
+    proc2call(InternalItems[I],arg);
+end;
+
+
+procedure TFPList.ForEachCall(Proc2call: TListStaticCallback; Arg: Pointer);
+var
+  I: integer;
+begin
+  for I:=0 to Count-1 do
+    Proc2call(InternalItems[I], Arg);
+end;
+
+{$endif}
+
 {****************************************************************************}
-{*                TList                                        *}
+{*                TListEnumerator                                           *}
+{****************************************************************************}
+
+constructor TListEnumerator.Create(AList: TList);
+begin
+  inherited Create;
+  FList := AList;
+  FPosition := -1;
+end;
+
+function TListEnumerator.GetCurrent: Pointer;
+begin
+  Result := FList[FPosition];
+end;
+
+function TListEnumerator.MoveNext: Boolean;
+begin
+  Inc(FPosition);
+  Result := FPosition < FList.Count;
+end;
+
+{****************************************************************************}
+{*                TList                                                     *}
 {****************************************************************************}
 
 {  TList = class(TObject)
   private
     FList: TFPList;
 }
-
-
 
 function TList.Get(Index: Integer): Pointer;
 begin
@@ -322,14 +573,23 @@ begin
 end;
 
 procedure TList.Put(Index: Integer; Item: Pointer);
+var p : pointer;
 begin
+  p := get(Index);
   FList.Put(Index, Item);
+  if assigned (p) then
+    Notify (p, lnDeleted);
+  if assigned (Item) then
+    Notify (Item, lnAdded);
 end;
 
 function TList.Extract(item: Pointer): Pointer;
+var c : integer;
 begin
+  c := FList.Count;
   Result := FList.Extract(item);
-  Notify(Result, lnExtracted);
+  if c <> FList.Count then
+    Notify (Result, lnExtracted);
 end;
 
 procedure TList.Notify(Ptr: Pointer; Action: TListNotification);
@@ -353,7 +613,11 @@ end;
 
 procedure TList.SetCount(NewCount: Integer);
 begin
-  FList.SetCount(NewCount);
+  if NewCount < FList.Count then
+    while FList.Count > NewCount do
+      Delete(FList.Count - 1)
+  else
+    FList.SetCount(NewCount);
 end;
 
 constructor TList.Create;
@@ -370,14 +634,27 @@ begin
   inherited Destroy;
 end;
 
-function TList.Add(Item: Pointer): Integer; 
+function TList.Add(Item: Pointer): Integer;
 begin
   Result := FList.Add(Item);
   if Item <> nil then
     Notify(Item, lnAdded);
 end;
 
-procedure TList.Clear; 
+Procedure TList.AddList(AList : TList);
+var
+  I: Integer;
+begin
+  { this only does FList.AddList(AList.FList), avoiding notifications }
+  FList.AddList(AList.FList);
+
+  { make lnAdded notifications }
+  for I := 0 to AList.Count - 1 do
+    if AList[I] <> nil then
+      Notify(AList[I], lnAdded);
+end;            
+
+procedure TList.Clear;
 
 begin
   If Assigned(Flist) then
@@ -385,7 +662,7 @@ begin
       Delete(Count-1);
 end;
 
-procedure TList.Delete(Index: Integer); 
+procedure TList.Delete(Index: Integer);
 
 var P : pointer;
 
@@ -395,13 +672,9 @@ begin
   if assigned(p) then Notify(p, lnDeleted);
 end;
 
-class procedure TList.Error(const Msg: string; Data: Integer);
+class procedure TList.Error(const Msg: string; Data: PtrInt);
 begin
-{$ifdef VER1_0}
-  Raise EListError.CreateFmt(Msg,[Data]) at longint(get_caller_addr(get_frame));
-{$else VER1_0}
   Raise EListError.CreateFmt(Msg,[Data]) at get_caller_addr(get_frame);
-{$endif VER1_0}
 end;
 
 procedure TList.Exchange(Index1, Index2: Integer);
@@ -420,12 +693,17 @@ begin
   Result := FList.First;
 end;
 
+function TList.GetEnumerator: TListEnumerator;
+begin
+  Result := TListEnumerator.Create(Self);
+end;
+
 function TList.IndexOf(Item: Pointer): Integer;
 begin
   Result := FList.IndexOf(Item);
 end;
 
-procedure TList.Insert(Index: Integer; Item: Pointer); 
+procedure TList.Insert(Index: Integer; Item: Pointer);
 begin
   FList.Insert(Index, Item);
   if Item <> nil then
@@ -445,7 +723,7 @@ end;
 function TList.Remove(Item: Pointer): Integer;
 begin
   Result := IndexOf(Item);
-  If Result <> -1 then
+  if Result <> -1 then
     Self.Delete(Result);
 end;
 
@@ -459,14 +737,147 @@ begin
   FList.Sort(Compare);
 end;
 
-procedure TList.Assign(Obj:TList);
+procedure TList.CopyMove (aList : TList);
+var r : integer;
 begin
-  FList.Assign(Obj.FList);
+  Clear;
+  for r := 0 to aList.count-1 do
+    Add (aList[r]);
 end;
+
+procedure TList.MergeMove (aList : TList);
+var r : integer;
+begin
+  For r := 0 to aList.count-1 do
+    if self.indexof(aList[r]) < 0 then
+      self.Add (aList[r]);
+end;
+
+procedure TList.DoCopy(ListA, ListB : TList);
+begin
+  if assigned (ListB) then
+    CopyMove (ListB)
+  else
+    CopyMove (ListA);
+end;
+
+procedure TList.DoDestUnique(ListA, ListB : TList);
+  procedure MoveElements (src, dest : TList);
+  var r : integer;
+  begin
+    self.clear;
+    for r := 0 to src.count-1 do
+      if dest.indexof(src[r]) < 0 then
+        self.Add (src[r]);
+  end;
+  
+var dest : TList;
+begin
+  if assigned (ListB) then
+    MoveElements (ListB, ListA)
+  else
+    try
+      dest := TList.Create;
+      dest.CopyMove (self);
+      MoveElements (ListA, dest)
+    finally
+      dest.Free;
+    end;
+end;
+
+procedure TList.DoAnd(ListA, ListB : TList);
+var r : integer;
+begin
+  if assigned (ListB) then
+    begin
+    self.clear;
+    for r := 0 to ListA.count-1 do
+      if ListB.indexOf (ListA[r]) >= 0 then
+        self.Add (ListA[r]);
+    end
+  else
+    begin
+    for r := self.Count-1 downto 0 do
+      if ListA.indexof (Self[r]) < 0 then
+        self.delete (r);
+    end;
+end;
+
+procedure TList.DoSrcUnique(ListA, ListB : TList);
+var r : integer;
+begin
+  if assigned (ListB) then
+    begin
+    self.Clear;
+    for r := 0 to ListA.Count-1 do
+      if ListB.indexof (ListA[r]) < 0 then
+        self.Add (ListA[r]);
+    end
+  else
+    begin
+    for r := self.count-1 downto 0 do
+      if ListA.indexof (self[r]) >= 0 then
+        self.delete (r);
+    end;
+end;
+
+procedure TList.DoOr(ListA, ListB : TList);
+begin
+  if assigned (ListB) then
+    begin
+    CopyMove (ListA);
+    MergeMove (ListB);
+    end
+  else
+    MergeMove (ListA);
+end;
+
+procedure TList.DoXOr(ListA, ListB : TList);
+var r : integer;
+    l : TList;
+begin
+  if assigned (ListB) then
+    begin
+    self.Clear;
+    for r := 0 to ListA.count-1 do
+      if ListB.indexof (ListA[r]) < 0 then
+        self.Add (ListA[r]);
+    for r := 0 to ListB.count-1 do
+      if ListA.indexof (ListB[r]) < 0 then
+        self.Add (ListB[r]);
+    end
+  else
+    try
+      l := TList.Create;
+      l.CopyMove (Self);
+      for r := self.count-1 downto 0 do
+        if listA.indexof (self[r]) >= 0 then
+          self.delete (r);
+      for r := 0 to ListA.count-1 do
+        if l.indexof (ListA[r]) < 0 then
+          self.add (ListA[r]);
+    finally
+      l.Free;
+    end;
+end;
+
+
+procedure TList.Assign (ListA: TList; AOperator: TListAssignOp=laCopy; ListB: TList=nil);
+begin
+  case AOperator of
+    laCopy : DoCopy (ListA, ListB);             // replace dest with src
+    laSrcUnique : DoSrcUnique (ListA, ListB);   // replace dest with src that are not in dest
+    laAnd : DoAnd (ListA, ListB);               // remove from dest that are not in src
+    laDestUnique : DoDestUnique (ListA, ListB); // remove from dest that are in src
+    laOr : DoOr (ListA, ListB);                 // add to dest from src and not in dest
+    laXOr : DoXOr (ListA, ListB);               // add to dest from src and not in dest, remove from dest that are in src
+  end;
+end;
+
 
 function TList.GetList: PPointerList;
 begin
-  Result := FList.List;
+  Result := PPointerList(FList.List);
 end;
 
 
@@ -476,94 +887,73 @@ end;
 
 
 constructor TThreadList.Create;
-begin
-inherited Create;
-//InitializeCriticalSection(FLock);
-FList := TList.Create;
-end;
-
+  begin
+    inherited Create;
+    FDuplicates:=dupIgnore;
+    InitCriticalSection(FLock);
+    FList:=TList.Create;
+  end;
 
 
 destructor TThreadList.Destroy;
-begin
-  LockList;
-  try
-    FList.Free;
-    inherited Destroy;
-  finally
-    UnlockList;
+  begin
+    LockList;
+    try
+      FList.Free;
+      inherited Destroy;
+    finally
+      UnlockList;
+      DoneCriticalSection(FLock);
+    end;
   end;
-end;
-
 
 
 procedure TThreadList.Add(Item: Pointer);
-begin
-  Locklist;
-  try
-    //make sure it's not already in the list
-    if FList.indexof(Item) = -1 then
-       FList.Add(Item);
-  finally
-  UnlockList;
+  begin
+    LockList;
+    try
+      if (Duplicates=dupAccept) or
+        // make sure it's not already in the list
+        (FList.IndexOf(Item)=-1) then
+         FList.Add(Item)
+       else if (Duplicates=dupError) then
+         FList.Error(SDuplicateItem,PtrUInt(Item));
+    finally
+      UnlockList;
+    end;
   end;
-end;
 
 
 procedure TThreadList.Clear;
-begin
-  Locklist;
-  try
-    FList.Clear;
-  finally
-    UnLockList;
+  begin
+    Locklist;
+    try
+      FList.Clear;
+    finally
+      UnLockList;
+    end;
   end;
-end;
-
 
 
 function TThreadList.LockList: TList;
-
-
-begin
-  Result := FList;
-end;
-
+  begin
+    Result:=FList;
+    System.EnterCriticalSection(FLock);
+  end;
 
 
 procedure TThreadList.Remove(Item: Pointer);
-begin
-  LockList;
-  try
-    FList.Remove(Item);
-  finally
-    UnlockList;
+  begin
+    LockList;
+    try
+      FList.Remove(Item);
+    finally
+      UnlockList;
+    end;
   end;
-end;
-
 
 
 procedure TThreadList.UnlockList;
-begin
-
-end;
-
-
-{
-  $Log: lists.inc,v $
-  Revision 1.11  2005/05/04 06:53:06  michael
-  * Removed TFPList.grow
-
-  Revision 1.10  2005/04/12 10:03:31  marco
-   * notifyer triggered after delete patch
-
-  Revision 1.9  2005/03/16 22:56:05  michael
-  + Fix for TList.Destroy and improved Clear
-
-  Revision 1.8  2005/03/16 20:48:03  michael
-  + Faster TList from Dean Zobec
-
-  Revision 1.7  2005/02/14 17:13:31  peter
-    * truncate log
-
-}
+  begin
+    System.LeaveCriticalSection(FLock);
+  end;

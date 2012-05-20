@@ -1,5 +1,4 @@
 {
-    $Id: crt.pp,v 1.6 2005/05/14 15:01:49 hajny Exp $
 
 }
 
@@ -209,7 +208,7 @@ Begin
 End;
 
 
-Procedure GotoXy(X: Byte; Y: Byte);
+Procedure GotoXy(X: tcrtcoord; Y: tcrtcoord);
 {
   Go to coordinates X,Y in the current window.
 }
@@ -274,7 +273,7 @@ End;
 
 
 
-Function WhereX: Byte;
+Function WhereX: tcrtcoord;
 {
   Return current X-position of cursor.
 }
@@ -287,7 +286,7 @@ End;
 
 
 
-Function WhereY: Byte;
+Function WhereY: tcrtcoord;
 {
   Return current Y-position of cursor.
 }
@@ -753,13 +752,3 @@ begin
 { Enable ctrl-c input (JM) }
 //  __djgpp_set_ctrl_c(0);
 end.
-
-{
-  $Log: crt.pp,v $
-  Revision 1.6  2005/05/14 15:01:49  hajny
-    * TextMode parameter type changed to word for TP/BP compatibility
-
-  Revision 1.5  2005/02/14 17:13:32  peter
-    * truncate log
-
-}

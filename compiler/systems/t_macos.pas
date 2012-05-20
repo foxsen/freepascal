@@ -1,5 +1,4 @@
 {
-    $Id: t_macos.pas,v 1.23 2005/05/14 12:15:18 olle Exp $
     Copyright (c) 2001-2002 by Peter Vreman
 
     This unit implements support import,export,link routines for MacOS.
@@ -31,9 +30,6 @@ interface
 
   type
     timportlibmacos=class(timportlib)
-      procedure preparelib(const s:string);override;
-      procedure importprocedure(aprocdef:tprocdef;const module:string;index:longint;const name:string);override;
-      procedure importvariable(vs:tglobalvarsym;const name,module:string);override;
       procedure generatelib;override;
     end;
 
@@ -49,39 +45,27 @@ interface
 implementation
 
     uses
-       cutils,cclasses,
+       SysUtils,
+       cutils,cfileutl,cclasses,
        globtype,globals,systems,verbose,script,fmodule,i_macos,
+       ogbase,
        symconst;
 
 {*****************************************************************************
                                TIMPORTLIBMACOS
 *****************************************************************************}
 
-procedure timportlibmacos.preparelib(const s : string);
-begin
-end;
-
-
-procedure timportlibmacos.importprocedure(aprocdef:tprocdef;const module:string;index:longint;const name:string);
-begin
-  { insert sharedlibrary }
-  current_module.linkothersharedlibs.add(SplitName(module),link_allways);
-end;
-
-
-procedure timportlibmacos.importvariable(vs:tglobalvarsym;const name,module:string);
-begin
-  { insert sharedlibrary }
-  current_module.linkothersharedlibs.add(SplitName(module),link_allways);
-  { reset the mangledname and turn off the dll_var option }
-  vs.set_mangledname(name);
-  exclude(vs.varoptions,vo_is_dll_var);
-end;
-
-
-procedure timportlibmacos.generatelib;
-begin
-end;
+    procedure timportlibmacos.generatelib;
+      var
+        i : longint;
+        ImportLibrary : TImportLibrary;
+      begin
+        for i:=0 to current_module.ImportLibraryList.Count-1 do
+          begin
+            ImportLibrary:=TImportLibrary(current_module.ImportLibraryList[i]);
+            current_module.linkothersharedlibs.add(ImportLibrary.Name,link_always);
+          end;
+      end;
 
 {*****************************************************************************
                                   TLINKERMPW
@@ -90,7 +74,7 @@ end;
 Constructor TLinkerMPW.Create;
 begin
   Inherited Create;
-  //LibrarySearchPath.AddPath('/lib;/usr/lib;/usr/X11R6/lib',true);
+  //LibrarySearchPath.AddPath(sysrootpath,'/lib;/usr/lib;/usr/X11R6/lib',true);
 end;
 
 
@@ -114,7 +98,7 @@ Var
 begin
   WriteResponseFile:=False;
   { Open link.res file }
-  linkRes:=TLinkRes.Create(outputexedir+Info.ResName);
+  linkRes:=TLinkRes.Create(outputexedir+Info.ResName,true);
 
   with linkRes do
     begin
@@ -150,7 +134,7 @@ begin
       if apptype = app_cui then {If SIOW, to avoid some warnings.}
         Add('-ignoredups __start -ignoredups .__start -ignoredups main -ignoredups .main -ignoredups qd '#182);
 
-      Add('-tocdataref off -sym on -dead on -o '+ ScriptFixFileName(current_module.exefilename^));
+      Add('-tocdataref off -sym on -dead on -o '+ ScriptFixFileName(current_module.exefilename));
 
       Add('Exit If "{Status}" != 0');
 
@@ -166,14 +150,14 @@ begin
       if apptype <> app_tool then
         begin
           Add('Echo "data ''SIZE'' (-1) '#182'{ $'#182'"1080 ' + heapsizestr + ' ' + heapsizestr +
-                                         #182'" '#182'};" | Rez -a -o ' + ScriptFixFileName(current_module.exefilename^));
+                                         #182'" '#182'};" | Rez -a -o ' + ScriptFixFileName(current_module.exefilename));
           Add('Exit If "{Status}" != 0');
         end;
 
       {Add mac resources}
       if apptype = app_cui then
         begin
-          Add('Rez -a "{RIncludes}"SIOW.r -o ' + ScriptFixFileName(current_module.exefilename^));
+          Add('Rez -a "{RIncludes}"SIOW.r -o ' + ScriptFixFileName(current_module.exefilename));
           Add('Exit If "{Status}" != 0');
         end;
 
@@ -181,9 +165,9 @@ begin
         begin
           s := Current_module.ResourceFiles.GetFirst;
           if Copy(s,Length(s)-1,Length(s)) = '.r' then
-            Add('Rez -a ' + s + ' -o ' + ScriptFixFileName(current_module.exefilename^))
+            Add('Rez -a ' + s + ' -o ' + ScriptFixFileName(current_module.exefilename))
           else
-            Add('DeRez ' + s + ' | Rez -a -o ' + ScriptFixFileName(current_module.exefilename^));
+            Add('DeRez ' + s + ' | Rez -a -o ' + ScriptFixFileName(current_module.exefilename));
           Add('Exit If "{Status}" != 0');
         end;
 
@@ -200,37 +184,34 @@ end;
 function TLinkerMPW.MakeExecutable:boolean;
 var
   binstr,
-  cmdstr  : string;
+  cmdstr  : TCmdStr;
   success : boolean;
   DynLinkStr : string[60];
   StaticStr,
   StripStr   : string[40];
-
-  s: string;
-
 begin
   //TODO Only external link in MPW is possible, otherwise yell.
 
-  if not(cs_link_extern in aktglobalswitches) then
-    Message1(exec_i_linking,current_module.exefilename^);
+  if not(cs_link_nolink in current_settings.globalswitches) then
+    Message1(exec_i_linking,current_module.exefilename);
 
 { Create some replacements }
   StripStr:='';
-(*
   StaticStr:='';
   DynLinkStr:='';
-  if (cs_link_staticflag in aktglobalswitches) then
+(*
+  if (cs_link_staticflag in current_settings.globalswitches) then
    StaticStr:='-static';
-  if (cs_link_strip in aktglobalswitches) then
+  if (cs_link_strip in current_settings.globalswitches) then
    StripStr:='-s';
-  If (cs_profile in aktmoduleswitches) or
+  If (cs_profile in current_settings.moduleswitches) or
      ((Info.DynamicLinker<>'') and (not SharedLibFiles.Empty)) then
    DynLinkStr:='-dynamic-linker='+Info.DynamicLinker;
 *)
 
 { Prepare linking }
   SplitBinCmd(Info.ExeCmd[1],binstr,cmdstr);
-  Replace(cmdstr,'$EXE',maybequoted(ScriptFixFileName(current_module.exefilename^)));
+  Replace(cmdstr,'$EXE',maybequoted(ScriptFixFileName(current_module.exefilename)));
   Replace(cmdstr,'$OPT',Info.ExtraOptions);
   Replace(cmdstr,'$RES',maybequoted(ScriptFixFileName(outputexedir+Info.ResName)));
   Replace(cmdstr,'$STATIC',StaticStr);
@@ -240,7 +221,7 @@ begin
         WriteResponseFile(false);
 
         success:= true;
-        if cs_link_on_target in aktglobalswitches then
+        if cs_link_on_target in current_settings.globalswitches then
                 success:=DoExec('SetFile', ' -c ''MPS '' -t ''TEXT'' ' +
                                                                  ScriptFixFileName(outputexedir+Info.ResName),true,false);
 
@@ -249,8 +230,8 @@ begin
                 success:=DoExec('Execute',CmdStr,true,false);
 
 { Remove ReponseFile }
-  if (success) and not(cs_link_extern in aktglobalswitches) then
-    RemoveFile(outputexedir+Info.ResName);
+  if (success) and not(cs_link_nolink in current_settings.globalswitches) then
+    DeleteFile(outputexedir+Info.ResName);
 
   MakeExecutable:=success;   { otherwise a recursive call to link method }
 end;
@@ -272,24 +253,3 @@ initialization
   RegisterImport(system_powerpc_macos,timportlibmacos);
 {$endif powerpc}
 end.
-{
-  $Log: t_macos.pas,v $
-  Revision 1.23  2005/05/14 12:15:18  olle
-    * Fix small issue for link script
-
-  Revision 1.22  2005/03/25 21:55:43  jonas
-    * removed some unused variables
-
-  Revision 1.21  2005/02/14 17:13:10  peter
-    * truncate log
-
-  Revision 1.20  2005/02/08 22:30:32  olle
-    + added SIZE resource facilities
-
-  Revision 1.19  2005/01/24 17:53:12  olle
-    + Mac style resource files can now be included in MacOS
-
-  Revision 1.18  2005/01/09 16:35:41  olle
-    + linker response file is now removed after linking
-
-}

@@ -1,5 +1,4 @@
 {
-    $Id: set.inc,v 1.2 2005/02/14 17:13:32 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2002 by the Free Pascal development team
 
@@ -14,9 +13,3 @@
 
  **********************************************************************}
 
-{
-  $Log: set.inc,v $
-  Revision 1.2  2005/02/14 17:13:32  peter
-    * truncate log
-
-}

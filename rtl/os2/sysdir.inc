@@ -1,5 +1,4 @@
 {
-    $Id: sysdir.inc,v 1.2 2005/02/14 17:13:31 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Florian Klaempfl and Pavel Ozerski
     member of the Free Pascal development team.
@@ -20,64 +19,57 @@
                            Directory Handling
 *****************************************************************************}
 
-procedure MkDir (const S: string);[IOCHECK];
-var buffer:array[0..255] of char;
+Procedure MkDir(s: pchar;len:sizeuint);[IOCheck, public, alias : 'FPC_SYS_MKDIR'];
+var 
     Rc : word;
 begin
-  If (s='') or (InOutRes <> 0) then
-   exit;
-      move(s[1],buffer,length(s));
-      buffer[length(s)]:=#0;
-      allowslash(Pchar(@buffer));
-      Rc := DosCreateDir(buffer,nil);
-      if Rc <> 0 then
-       begin
-         InOutRes := Rc;
-         Errno2Inoutres;
-       end;
+  If not assigned(s) or (len=0) or (InOutRes <> 0) then
+    exit;
+  DoDirSeparators(s);
+  Rc := DosCreateDir(s,nil);
+  if Rc <> 0 then
+    begin
+      InOutRes := Rc;
+      Errno2Inoutres;
+    end;
 end;
 
-
-procedure rmdir(const s : string);[IOCHECK];
-var buffer:array[0..255] of char;
+Procedure RmDir(s: pchar;len:sizeuint);[IOCheck, public, alias : 'FPC_SYS_RMDIR'];
+var 
     Rc : word;
 begin
-  if (s = '.' ) then
+  if (len=1) and (s^ = '.' ) then
     InOutRes := 16;
-  If (s='') or (InOutRes <> 0) then
-   exit;
-      move(s[1],buffer,length(s));
-      buffer[length(s)]:=#0;
-      allowslash(Pchar(@buffer));
-      Rc := DosDeleteDir(buffer);
-      if Rc <> 0 then
-       begin
-         InOutRes := Rc;
-         Errno2Inoutres;
-       end;
+  If not assigned(s) or (len=0) or (InOutRes <> 0) then
+    exit;
+  DoDirSeparators(s);
+  Rc := DosDeleteDir(s);
+  if Rc <> 0 then
+    begin
+      InOutRes := Rc;
+      Errno2Inoutres;
+    end;
 end;
 
 {$ASMMODE INTEL}
 
-procedure ChDir (const S: string);[IOCheck];
+Procedure ChDir(s: pchar;len:sizeuint);[IOCheck, public, alias : 'FPC_SYS_CHDIR'];
 
 var RC: cardinal;
-    Buffer: array [0..255] of char;
 
 begin
-  If (s='') or (InOutRes <> 0) then exit;
-  if (Length (S) >= 2) and (S [2] = ':') then
+  If not assigned(s) or (len=0) or (InOutRes <> 0) then
+    exit;
+  if (Len >= 2) and (S[1] = ':') then
   begin
-    RC := DosSetDefaultDisk ((Ord (S [1]) and not ($20)) - $40);
+    RC := DosSetDefaultDisk ((Ord (S [0]) and not ($20)) - $40);
     if RC <> 0 then
       InOutRes := RC
     else
-      if Length (S) > 2 then
+      if Len > 2 then
       begin
-        Move (S [1], Buffer, Length (S));
-        Buffer [Length (S)] := #0;
-        AllowSlash (PChar (@Buffer));
-        RC := DosSetCurrentDir (@Buffer);
+        DoDirSeparators (s);
+        RC := DosSetCurrentDir (s);
         if RC <> 0 then
         begin
           InOutRes := RC;
@@ -85,10 +77,8 @@ begin
         end;
       end;
   end else begin
-    Move (S [1], Buffer, Length (S));
-    Buffer [Length (S)] := #0;
-    AllowSlash (PChar (@Buffer));
-    RC := DosSetCurrentDir (@Buffer);
+    DoDirSeparators (s);
+    RC := DosSetCurrentDir (s);
     if RC <> 0 then
     begin
       InOutRes:= RC;
@@ -125,8 +115,8 @@ begin
     while (dir[i]<>#0) do
         begin
             { convert path name to DOS }
-            if dir[i]='/' then
-            dir[i]:='\';
+            if dir[i] in AllowDirectorySeparators then
+              dir[i]:=DirectorySeparator;
             dir[0]:=char(i);
             inc(i);
         end;
@@ -140,21 +130,8 @@ begin
             DosQueryCurrentDisk(l, l2);
             dir[1]:=chr(64+l);
         end;
-    if not (FileNameCaseSensitive) then dir:=upcase(dir);
+    if not (FileNameCasePreserving) then dir:=upcase(dir);
 end;
 
 
 
-{
-  $Log: sysdir.inc,v $
-  Revision 1.2  2005/02/14 17:13:31  peter
-    * truncate log
-
-  Revision 1.1  2005/02/06 16:57:18  peter
-    * threads for go32v2,os,emx,netware
-
-  Revision 1.1  2005/02/06 13:06:20  peter
-    * moved file and dir functions to sysfile/sysdir
-    * win32 thread in systemunit
-
-}

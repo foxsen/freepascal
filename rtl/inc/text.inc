@@ -1,5 +1,4 @@
 {
-    $Id: text.inc,v 1.30 2005/04/03 21:10:59 hajny Exp $
     This file is part of the Free Pascal Run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team
 
@@ -34,6 +33,9 @@ Procedure FileWriteFunc(var t:TextRec);
 var
   i : longint;
 Begin
+  { prevent unecessary system call }
+  if t.BufPos=0 then
+    exit;
   i:=Do_Write(t.Handle,t.Bufptr,t.BufPos);
   if i<>t.BufPos then
     InOutRes:=101;
@@ -47,8 +49,8 @@ var
 Begin
   Case t.mode Of
     fmInput : Flags:=$10000;
-   fmOutput : Flags:=$11001;
-   fmAppend : Flags:=$10101;
+    fmOutput : Flags:=$11001;
+    fmAppend : Flags:=$10101;
   else
    begin
      InOutRes:=102;
@@ -63,9 +65,9 @@ Begin
   else
    begin
      t.InOutFunc:=@FileWriteFunc;
-   { Only install flushing if its a NOT a file, and only check if there
-     was no error opening the file, becuase else we always get a bad
-     file handle error 6 (PFV) }
+     { Only install flushing if its a NOT a file, and only check if there
+       was no error opening the file, because else we always get a bad
+       file handle error 6 (PFV) }
      if (InOutRes=0) and
         Do_Isdevice(t.Handle) then
       t.FlushFunc:=@FileWriteFunc;
@@ -73,7 +75,7 @@ Begin
 End;
 
 
-Procedure assign(var t:Text;const s:String);
+Procedure Assign(out t:Text;const s:String);
 Begin
   FillChar(t,SizeOf(TextRec),0);
 { only set things that are not zero }
@@ -82,18 +84,22 @@ Begin
   TextRec(t).BufSize:=TextRecBufSize;
   TextRec(t).Bufptr:=@TextRec(t).Buffer;
   TextRec(t).OpenFunc:=@FileOpenFunc;
-  TextRec(t).LineEnd:=LineEnding;
+  Case DefaultTextLineBreakStyle Of
+    tlbsLF: TextRec(t).LineEnd := #10;
+    tlbsCRLF: TextRec(t).LineEnd := #13#10;
+    tlbsCR: TextRec(t).LineEnd := #13;
+  End;
   Move(s[1],TextRec(t).Name,Length(s));
 End;
 
 
-Procedure assign(var t:Text;p:pchar);
+Procedure Assign(out t:Text;p:pchar);
 begin
   Assign(t,StrPas(p));
 end;
 
 
-Procedure assign(var t:Text;c:char);
+Procedure Assign(out t:Text;c:char);
 begin
   Assign(t,string(c));
 end;
@@ -104,15 +110,17 @@ Begin
   if InOutRes<>0 then
    Exit;
   case TextRec(t).mode of
-    fmInput,fmOutPut,fmAppend:
+    fmInput,fmOutput,fmAppend:
       Begin
         { Write pending buffer }
         If Textrec(t).Mode=fmoutput then
           FileFunc(TextRec(t).InOutFunc)(TextRec(t));
+{$ifdef FPC_HAS_FEATURE_CONSOLEIO}
         { Only close functions not connected to stdout.}
         If ((TextRec(t).Handle<>StdInputHandle) and
             (TextRec(t).Handle<>StdOutputHandle) and
             (TextRec(t).Handle<>StdErrorHandle)) Then
+{$endif FPC_HAS_FEATURE_CONSOLEIO}
           FileFunc(TextRec(t).CloseFunc)(TextRec(t));
         TextRec(t).mode := fmClosed;
         { Reset buffer for safety }
@@ -138,6 +146,11 @@ Begin
   TextRec(t).mode:=mode;
   TextRec(t).bufpos:=0;
   TextRec(t).bufend:=0;
+  {$ifdef FPC_HAS_CPSTRING}
+  { if no codepage is yet assigned then assign default ansi codepage }
+  if TextRec(t).CodePage=CP_ACP then
+    TextRec(t).CodePage:=DefaultSystemCodePage;
+  {$endif}
   FileFunc(TextRec(t).OpenFunc)(TextRec(t));
   { reset the mode to closed when an error has occured }
   if InOutRes<>0 then
@@ -181,7 +194,7 @@ Begin
       InOutRes:=103;
      exit;
    end;
-{ Not the flushfunc but the inoutfunc should be used, becuase that
+{ Not the flushfunc but the inoutfunc should be used, because that
   writes the data, flushfunc doesn't need to be assigned }
   FileFunc(TextRec(t).InOutFunc)(TextRec(t));
 End;
@@ -264,7 +277,9 @@ End;
 
 Function SeekEof (Var t : Text) : Boolean;
 var
-  oldfilepos, oldbufpos, oldbufend, reads: longint;
+  oldfilepos : Int64;
+  oldbufpos, oldbufend : SizeInt;
+  reads: longint;
   isdevice: boolean;
 Begin
   If (InOutRes<>0) then
@@ -307,13 +322,14 @@ Begin
         end;
      end;
     case TextRec(t).Bufptr^[TextRec(t).BufPos] of
-         #26 : if CtrlZMarksEOF then
-                begin
-                 SeekEof := true;
-                 break;
-                end;
-     #10,#13,
-      #9,' ' : ;
+      #26 :
+        if CtrlZMarksEOF then
+          begin
+            SeekEof := true;
+            break;
+          end;
+     #10,#13,#9,' ' :
+       ;
     else
      begin
        SeekEof := false;
@@ -325,7 +341,7 @@ Begin
   { restore file position if not working with a device }
   if not isdevice then
     { if we didn't modify the buffer, simply restore the BufPos and BufEnd  }
-    { (the latter becuase it's now probably set to zero because nothing was }
+    { (the latter because it's now probably set to zero because nothing was }
     {  was read anymore)                                                    }
     if (reads = 0) then
       begin
@@ -417,12 +433,7 @@ Begin
 End;
 
 
-{$ifndef INTERNCONSTINTF}
-Procedure SetTextBuf(Var F : Text; Var Buf);[INTERNPROC: fpc_In_settextbuf_file_x];
-{$endif}
-
-
-Procedure SetTextBuf(Var F : Text; Var Buf; Size : Longint);
+Procedure SetTextBuf(Var F : Text; Var Buf; Size : SizeInt);
 Begin
   TextRec(f).BufPtr:=@Buf;
   TextRec(f).BufSize:=Size;
@@ -435,14 +446,30 @@ Begin
   TextRec(F).LineEnd:=Ending;
 End;
 
+function GetTextCodePage(var T: Text): TSystemCodePage;
+begin
+{$ifdef FPC_HAS_CPSTRING}
+  GetTextCodePage:=TextRec(T).CodePage;
+{$else}
+  GetTextCodePage:=0;
+{$endif}
+end;
 
-Function fpc_get_input:PText;{$ifdef hascompilerproc}compilerproc;{$endif}
+procedure SetTextCodePage(var T: Text; CodePage: TSystemCodePage);
+begin
+{$ifdef FPC_HAS_CPSTRING}
+  TextRec(T).CodePage:=CodePage;
+{$endif}
+end;
+
+
+Function fpc_get_input:PText;compilerproc;
 begin
   fpc_get_input:=@Input;
 end;
 
 
-Function fpc_get_output:PText;{$ifdef hascompilerproc}compilerproc;{$endif}
+Function fpc_get_output:PText;compilerproc;
 begin
   fpc_get_output:=@Output;
 end;
@@ -452,11 +479,11 @@ end;
                                Write(Ln)
 *****************************************************************************}
 
-Procedure fpc_WriteBuffer(var f:Text;const b;len:longint);[Public,Alias:'FPC_WRITEBUFFER'];
+Procedure fpc_WriteBuffer(var f:Text;const b;len:SizeInt);
 var
   p   : pchar;
   left,
-  idx : longint;
+  idx : SizeInt;
 begin
   p:=pchar(@b);
   idx:=0;
@@ -475,7 +502,7 @@ begin
 end;
 
 
-Procedure fpc_WriteBlanks(var f:Text;len:longint);[Public,Alias:'FPC_WRITEBLANKS'];
+Procedure fpc_WriteBlanks(var f:Text;len:longint);
 var
   left : longint;
 begin
@@ -493,14 +520,14 @@ begin
 end;
 
 
-Procedure fpc_Write_End(var f:Text);[Public,Alias:'FPC_WRITE_END']; iocheck; {$ifdef hascompilerproc} compilerproc; {$endif}
+Procedure fpc_Write_End(var f:Text); iocheck; compilerproc;
 begin
   if TextRec(f).FlushFunc<>nil then
    FileFunc(TextRec(f).FlushFunc)(TextRec(f));
 end;
 
 
-Procedure fpc_Writeln_End(var f:Text);[Public,Alias:'FPC_WRITELN_END']; iocheck; {$ifdef hascompilerproc} compilerproc; {$endif}
+Procedure fpc_Writeln_End(var f:Text); iocheck; compilerproc;
 begin
   If InOutRes <> 0 then exit;
   case TextRec(f).mode of
@@ -518,7 +545,7 @@ begin
 end;
 
 
-Procedure fpc_Write_Text_ShortStr(Len : Longint;var f : Text;const s : String); iocheck; [Public,Alias:'FPC_WRITE_TEXT_SHORTSTR']; {$ifdef hascompilerproc} compilerproc; {$endif}
+Procedure fpc_Write_Text_ShortStr(Len : Longint;var f : Text;const s : String); iocheck; [Public,Alias:'FPC_WRITE_TEXT_SHORTSTR']; compilerproc;
 Begin
   If (InOutRes<>0) then
    exit;
@@ -534,11 +561,39 @@ Begin
   end;
 End;
 
+
+Procedure fpc_Write_Text_ShortStr_Iso(Len : Longint;var f : Text;const s : String); iocheck; [Public,Alias:'FPC_WRITE_TEXT_SHORTSTR_ISO']; compilerproc;
+Begin
+  If (InOutRes<>0) then
+   exit;
+  case TextRec(f).mode of
+    fmOutput { fmAppend gets changed to fmOutPut in do_open (JM) }:
+      begin
+        { default value? }
+        If Len=-1 then
+          Len:=length(s);
+
+        If Len>Length(s) Then
+          begin
+            fpc_WriteBlanks(f,Len-Length(s));
+            fpc_WriteBuffer(f,s[1],Length(s));
+          end
+        else
+          fpc_WriteBuffer(f,s[1],Len);
+      end;
+    fmInput: InOutRes:=105
+    else InOutRes:=103;
+  end;
+End;
+
+
 { provide local access to write_str }
 procedure Write_Str(Len : Longint;var f : Text;const s : String); iocheck; [external name 'FPC_WRITE_TEXT_SHORTSTR'];
 
+{ provide local access to write_str_iso }
+procedure Write_Str_Iso(Len : Longint;var f : Text;const s : String); iocheck; [external name 'FPC_WRITE_TEXT_SHORTSTR_ISO'];
 
-Procedure fpc_Write_Text_Pchar_as_Array(Len : Longint;var f : Text;const s : array of char); iocheck; [Public,Alias:'FPC_WRITE_TEXT_PCHAR_AS_ARRAY']; {$ifdef hascompilerproc} compilerproc; {$endif}
+Procedure fpc_Write_Text_Pchar_as_Array(Len : Longint;var f : Text;const s : array of char; zerobased: boolean = true); iocheck; compilerproc;
 var
   ArrayLen : longint;
   p : pchar;
@@ -549,11 +604,16 @@ Begin
     fmOutput { fmAppend gets changed to fmOutPut in do_open (JM) }:
       begin
         p:=pchar(@s);
-        { can't use StrLen, since that one could try to read past the end }
-        { of the heap (JM)                                                }
-        ArrayLen:=IndexByte(p^,high(s)+1,0);
-        { IndexByte returns -1 if not found (JM) }
-        if ArrayLen = -1 then
+        if zerobased then
+          begin
+            { can't use StrLen, since that one could try to read past the end }
+            { of the heap (JM)                                                }
+            ArrayLen:=IndexByte(p^,high(s)+1,0);
+            { IndexByte returns -1 if not found (JM) }
+            if ArrayLen = -1 then
+              ArrayLen := high(s)+1;
+          end
+        else
           ArrayLen := high(s)+1;
         If Len>ArrayLen Then
           fpc_WriteBlanks(f,Len-ArrayLen);
@@ -565,7 +625,48 @@ Begin
 End;
 
 
-Procedure fpc_Write_Text_PChar_As_Pointer(Len : Longint;var f : Text;p : PChar); iocheck; [Public,Alias:'FPC_WRITE_TEXT_PCHAR_AS_POINTER']; {$ifdef hascompilerproc} compilerproc; {$endif}
+Procedure fpc_Write_Text_Pchar_as_Array_Iso(Len : Longint;var f : Text;const s : array of char; zerobased: boolean = true); iocheck; compilerproc;
+var
+  ArrayLen : longint;
+  p : pchar;
+Begin
+  If (InOutRes<>0) then
+   exit;
+  case TextRec(f).mode of
+    fmOutput { fmAppend gets changed to fmOutPut in do_open (JM) }:
+      begin
+        p:=pchar(@s);
+        if zerobased then
+          begin
+            { can't use StrLen, since that one could try to read past the end }
+            { of the heap (JM)                                                }
+            ArrayLen:=IndexByte(p^,high(s)+1,0);
+            { IndexByte returns -1 if not found (JM) }
+            if ArrayLen = -1 then
+              ArrayLen := high(s)+1;
+          end
+        else
+          ArrayLen := high(s)+1;
+
+        { default value? }
+        If Len=-1 then
+          Len:=ArrayLen;
+
+        If Len>ArrayLen Then
+          begin
+            fpc_WriteBlanks(f,Len-ArrayLen);
+            fpc_WriteBuffer(f,p^,ArrayLen);
+          end
+        else
+          fpc_WriteBuffer(f,p^,Len);
+      end;
+    fmInput: InOutRes:=105
+    else InOutRes:=103;
+  end;
+End;
+
+
+Procedure fpc_Write_Text_PChar_As_Pointer(Len : Longint;var f : Text;p : PChar); iocheck; compilerproc;
 var
   PCharLen : longint;
 Begin
@@ -585,12 +686,13 @@ Begin
 End;
 
 
-Procedure fpc_Write_Text_AnsiStr (Len : Longint; Var f : Text; S : AnsiString); iocheck; [Public,alias:'FPC_WRITE_TEXT_ANSISTR']; {$ifdef hascompilerproc} compilerproc; {$endif}
+Procedure fpc_Write_Text_AnsiStr (Len : Longint; Var f : Text; const S : RawByteString); iocheck; [Public,alias:'FPC_WRITE_TEXT_ANSISTR']; compilerproc;
 {
  Writes a AnsiString to the Text file T
 }
 var
-  SLen : longint;
+  SLen: longint;
+  a: RawByteString;
 begin
   If (InOutRes<>0) then
    exit;
@@ -601,7 +703,14 @@ begin
         If Len>SLen Then
           fpc_WriteBlanks(f,Len-SLen);
         if slen > 0 then
-          fpc_WriteBuffer(f,PChar(S)^,SLen);
+          begin
+            {$if defined(FPC_HAS_CPSTRING) and defined(FPC_HAS_FEATURE_ANSISTRINGS)}
+            a:=fpc_AnsiStr_To_AnsiStr(S,TextRec(f).CodePage);
+            fpc_WriteBuffer(f,PAnsiChar(a)^,Length(a));
+            {$else}
+            fpc_WriteBuffer(f,PAnsiChar(s)^,SLen);
+            {$endif}
+          end;
       end;
     fmInput: InOutRes:=105
     else InOutRes:=103;
@@ -609,13 +718,14 @@ begin
 end;
 
 
-{$ifdef HASWIDESTRING}
-Procedure fpc_Write_Text_WideStr (Len : Longint; Var f : Text; S : WideString); iocheck; [Public,alias:'FPC_WRITE_TEXT_WIDESTR']; {$ifdef hascompilerproc} compilerproc; {$endif}
+{$ifdef FPC_HAS_FEATURE_WIDESTRINGS}
+Procedure fpc_Write_Text_UnicodeStr (Len : Longint; Var f : Text; const S : UnicodeString); iocheck; compilerproc;
 {
- Writes a WideString to the Text file T
+ Writes a UnicodeString to the Text file T
 }
 var
-  SLen : longint;
+  SLen: longint;
+  a: RawByteString;
 begin
   If (pointer(S)=nil) or (InOutRes<>0) then
    exit;
@@ -625,15 +735,53 @@ begin
         SLen:=Length(s);
         If Len>SLen Then
           fpc_WriteBlanks(f,Len-SLen);
-        fpc_WriteBuffer(f,PChar(AnsiString(S))^,SLen);
+        {$ifdef FPC_HAS_CPSTRING}
+        WideStringManager.Unicode2AnsiMoveProc(PUnicodeChar(S),a,TextRec(f).CodePage,SLen);
+        {$else}
+        a:=s;
+        {$endif FPC_HAS_CPSTRING}
+        { length(a) can be > slen, e.g. after utf-16 -> utf-8 }
+        fpc_WriteBuffer(f,PAnsiChar(a)^,Length(a));
       end;
     fmInput: InOutRes:=105
     else InOutRes:=103;
   end;
 end;
-{$endif HASWIDESTRING}
+{$endif FPC_HAS_FEATURE_WIDESTRINGS}
 
-Procedure fpc_Write_Text_SInt(Len : Longint;var t : Text;l : ValSInt); iocheck; [Public,Alias:'FPC_WRITE_TEXT_SINT']; {$ifdef hascompilerproc} compilerproc; {$endif}
+
+{$ifndef FPC_WIDESTRING_EQUAL_UNICODESTRING}
+Procedure fpc_Write_Text_WideStr (Len : Longint; Var f : Text; const S : WideString); iocheck; compilerproc;
+{
+ Writes a WideString to the Text file T
+}
+var
+  SLen: longint;
+  a: RawByteString;
+begin
+  If (pointer(S)=nil) or (InOutRes<>0) then
+   exit;
+  case TextRec(f).mode of
+    fmOutput { fmAppend gets changed to fmOutPut in do_open (JM) }:
+      begin
+        SLen:=Length(s);
+        If Len>SLen Then
+          fpc_WriteBlanks(f,Len-SLen);
+        {$ifdef FPC_HAS_CPSTRING}
+        widestringmanager.Wide2AnsiMoveProc(PWideChar(s), a, TextRec(f).CodePage, SLen);
+        {$else}
+        a:=s;
+        {$endif}
+        { length(a) can be > slen, e.g. after utf-16 -> utf-8 }
+        fpc_WriteBuffer(f,PAnsiChar(a)^,Length(a));
+      end;
+    fmInput: InOutRes:=105
+    else InOutRes:=103;
+  end;
+end;
+{$endif FPC_WIDESTRING_EQUAL_UNICODESTRING}
+
+Procedure fpc_Write_Text_SInt(Len : Longint;var t : Text;l : ValSInt); iocheck; compilerproc;
 var
   s : String;
 Begin
@@ -644,7 +792,7 @@ Begin
 End;
 
 
-Procedure fpc_Write_Text_UInt(Len : Longint;var t : Text;l : ValUInt); iocheck; [Public,Alias:'FPC_WRITE_TEXT_UINT']; {$ifdef hascompilerproc} compilerproc; {$endif}
+Procedure fpc_Write_Text_UInt(Len : Longint;var t : Text;l : ValUInt); iocheck; compilerproc;
 var
   s : String;
 Begin
@@ -655,9 +803,39 @@ Begin
 End;
 
 
-{$ifndef CPU64}
+Procedure fpc_Write_Text_SInt_Iso(Len : Longint;var t : Text;l : ValSInt); iocheck; compilerproc;
+var
+  s : String;
+Begin
+  If (InOutRes<>0) then
+   exit;
+  Str(l,s);
+  { default value? }
+  if len=-1 then
+    len:=11
+  else if len<length(s) then
+    len:=length(s);
+  Write_Str_Iso(Len,t,s);
+End;
 
-procedure fpc_write_text_qword(len : longint;var t : text;q : qword); iocheck; [public,alias:'FPC_WRITE_TEXT_QWORD']; {$ifdef hascompilerproc} compilerproc; {$endif}
+
+Procedure fpc_Write_Text_UInt_Iso(Len : Longint;var t : Text;l : ValUInt); iocheck; compilerproc;
+var
+  s : String;
+Begin
+  If (InOutRes<>0) then
+   exit;
+  Str(L,s);
+  { default value? }
+  if len=-1 then
+    len:=11
+  else if len<length(s) then
+    len:=length(s);
+  Write_Str_Iso(Len,t,s);
+End;
+
+{$ifndef CPU64}
+procedure fpc_write_text_qword(len : longint;var t : text;q : qword); iocheck; compilerproc;
 var
   s : string;
 begin
@@ -667,7 +845,8 @@ begin
   write_str(len,t,s);
 end;
 
-procedure fpc_write_text_int64(len : longint;var t : text;i : int64); iocheck; [public,alias:'FPC_WRITE_TEXT_INT64']; {$ifdef hascompilerproc} compilerproc; {$endif}
+
+procedure fpc_write_text_int64(len : longint;var t : text;i : int64); iocheck; compilerproc;
 var
   s : string;
 begin
@@ -677,9 +856,42 @@ begin
   write_str(len,t,s);
 end;
 
+
+procedure fpc_write_text_qword_iso(len : longint;var t : text;q : qword); iocheck; compilerproc;
+var
+  s : string;
+begin
+  if (InOutRes<>0) then
+    exit;
+  str(q,s);
+  { default value? }
+  if len=-1 then
+    len:=20
+  else if len<length(s) then
+    len:=length(s);
+  write_str_iso(len,t,s);
+end;
+
+
+procedure fpc_write_text_int64_iso(len : longint;var t : text;i : int64); iocheck; compilerproc;
+var
+  s : string;
+begin
+  if (InOutRes<>0) then
+   exit;
+  str(i,s);
+  { default value? }
+  if len=-1 then
+    len:=20
+  else if len<length(s) then
+    len:=length(s);
+  write_str_iso(len,t,s);
+end;
+
 {$endif CPU64}
 
-Procedure fpc_Write_Text_Float(rt,fixkomma,Len : Longint;var t : Text;r : ValReal); iocheck; [Public,Alias:'FPC_WRITE_TEXT_FLOAT']; {$ifdef hascompilerproc} compilerproc; {$endif}
+{$ifndef FPUNONE}
+Procedure fpc_Write_Text_Float(rt,fixkomma,Len : Longint;var t : Text;r : ValReal); iocheck; compilerproc;
 var
   s : String;
 Begin
@@ -690,7 +902,50 @@ Begin
 End;
 
 
-Procedure fpc_Write_Text_Boolean(Len : Longint;var t : Text;b : Boolean); iocheck; [Public,Alias:'FPC_WRITE_TEXT_BOOLEAN']; {$ifdef hascompilerproc} compilerproc; {$endif}
+Procedure fpc_Write_Text_Float_iso(rt,fixkomma,Len : Longint;var t : Text;r : ValReal); iocheck; compilerproc;
+var
+  s : String;
+Begin
+  If (InOutRes<>0) then
+   exit;
+  Str_real_iso(Len,fixkomma,r,treal_type(rt),s);
+  Write_Str(Len,t,s);
+End;
+{$endif}
+
+procedure fpc_write_text_enum(typinfo,ord2strindex:pointer;len:sizeint;var t:text;ordinal:longint); iocheck; compilerproc;
+
+var
+    s:string;
+
+begin
+  if textrec(t).mode<>fmoutput then
+    begin
+      if textrec(t).mode=fminput then
+        inoutres:=105
+      else
+        inoutres:=103;
+      exit;
+    end;
+  inoutres := fpc_shortstr_enum_intern(ordinal, len, typinfo, ord2strindex, s);
+  if (inoutres <> 0) then
+    exit;
+  fpc_writeBuffer(t,s[1],length(s));
+end;
+
+{$ifdef FPC_HAS_STR_CURRENCY}
+Procedure fpc_Write_Text_Currency(fixkomma,Len : Longint;var t : Text;c : Currency); iocheck; compilerproc;
+var
+  s : String;
+Begin
+  If (InOutRes<>0) then
+   exit;
+  str(c:Len:fixkomma,s);
+  Write_Str(Len,t,s);
+End;
+{$endif FPC_HAS_STR_CURRENCY}
+
+Procedure fpc_Write_Text_Boolean(Len : Longint;var t : Text;b : Boolean); iocheck; compilerproc;
 Begin
   If (InOutRes<>0) then
    exit;
@@ -702,7 +957,22 @@ Begin
 End;
 
 
-Procedure fpc_Write_Text_Char(Len : Longint;var t : Text;c : Char); iocheck; [Public,Alias:'FPC_WRITE_TEXT_CHAR']; {$ifdef hascompilerproc} compilerproc; {$endif}
+Procedure fpc_Write_Text_Boolean_Iso(Len : Longint;var t : Text;b : Boolean); iocheck; compilerproc;
+Begin
+  If (InOutRes<>0) then
+   exit;
+  { Can't use array[boolean] because b can be >0 ! }
+  { default value? }
+  If Len=-1 then
+    Len:=5;
+  if b then
+    Write_Str_Iso(Len,t,'true')
+  else
+    Write_Str_Iso(Len,t,'false');
+End;
+
+
+Procedure fpc_Write_Text_Char(Len : Longint;var t : Text;c : Char); iocheck; compilerproc;
 Begin
   If (InOutRes<>0) then
     exit;
@@ -716,17 +986,43 @@ Begin
    end;
   If Len>1 Then
     fpc_WriteBlanks(t,Len-1);
-  If TextRec(t).BufPos+1>=TextRec(t).BufSize Then
+  If TextRec(t).BufPos>=TextRec(t).BufSize Then
     FileFunc(TextRec(t).InOutFunc)(TextRec(t));
   TextRec(t).Bufptr^[TextRec(t).BufPos]:=c;
   Inc(TextRec(t).BufPos);
 End;
 
 
-{$ifdef HASWIDECHAR}
-Procedure fpc_Write_Text_WideChar(Len : Longint;var t : Text;c : WideChar); iocheck; [Public,Alias:'FPC_WRITE_TEXT_WIDECHAR']; {$ifdef hascompilerproc} compilerproc; {$endif}
+Procedure fpc_Write_Text_Char_Iso(Len : Longint;var t : Text;c : Char); iocheck; compilerproc;
+Begin
+  If (InOutRes<>0) then
+    exit;
+  if (TextRec(t).mode<>fmOutput) Then
+   begin
+     if TextRec(t).mode=fmClosed then
+      InOutRes:=103
+     else
+      InOutRes:=105;
+     exit;
+   end;
+  { default value? }
+  If Len=-1 then
+    Len:=1;
+  If Len>1 Then
+    fpc_WriteBlanks(t,Len-1)
+  else If Len<1 Then
+    exit;
+  If TextRec(t).BufPos>=TextRec(t).BufSize Then
+    FileFunc(TextRec(t).InOutFunc)(TextRec(t));
+  TextRec(t).Bufptr^[TextRec(t).BufPos]:=c;
+  Inc(TextRec(t).BufPos);
+End;
+
+
+{$ifdef FPC_HAS_FEATURE_WIDESTRINGS}
+Procedure fpc_Write_Text_WideChar(Len : Longint;var t : Text;c : WideChar); iocheck; compilerproc;
 var
-  ch : char;
+  a: RawByteString;
 Begin
   If (InOutRes<>0) then
     exit;
@@ -740,13 +1036,17 @@ Begin
    end;
   If Len>1 Then
     fpc_WriteBlanks(t,Len-1);
-  If TextRec(t).BufPos+1>=TextRec(t).BufSize Then
+  If TextRec(t).BufPos>=TextRec(t).BufSize Then
     FileFunc(TextRec(t).InOutFunc)(TextRec(t));
-  ch:=c;
-  TextRec(t).Bufptr^[TextRec(t).BufPos]:=ch;
-  Inc(TextRec(t).BufPos);
+  { a widechar can be translated into more than a single ansichar }
+  {$ifdef FPC_HAS_CPSTRING}
+  widestringmanager.Wide2AnsiMoveProc(@c,a,TextRec(t).CodePage,1);
+  {$else}
+  a:=c;
+  {$endif}
+  fpc_WriteBuffer(t,PAnsiChar(a)^,Length(a));
 End;
-{$endif HASWIDECHAR}
+{$endif FPC_HAS_FEATURE_WIDESTRINGS}
 
 
 {*****************************************************************************
@@ -814,40 +1114,47 @@ begin
 end;
 
 
-Procedure fpc_Read_End(var f:Text);[Public,Alias:'FPC_READ_END']; iocheck; {$ifdef hascompilerproc} compilerproc; {$endif}
+function CheckRead(var f:Text):Boolean;
+begin
+  CheckRead:=False;
+{ Check error and if file is open and load buf if empty }
+  If (InOutRes<>0) then
+    exit;
+  if (TextRec(f).mode<>fmInput) Then
+    begin
+      case TextRec(f).mode of
+        fmOutPut,fmAppend:
+          InOutRes:=104;
+        else
+          InOutRes:=103;
+      end;
+      exit;
+    end;
+  if TextRec(f).BufPos>=TextRec(f).BufEnd Then
+    FileFunc(TextRec(f).InOutFunc)(TextRec(f));
+  CheckRead:=True;
+end;
+
+
+Procedure fpc_Read_End(var f:Text);[Public,Alias:'FPC_READ_END']; iocheck; compilerproc;
 begin
   if TextRec(f).FlushFunc<>nil then
    FileFunc(TextRec(f).FlushFunc)(TextRec(f));
 end;
 
 
-Procedure fpc_ReadLn_End(var f : Text);[Public,Alias:'FPC_READLN_END']; iocheck; {$ifdef hascompilerproc} compilerproc; {$endif}
+Procedure fpc_ReadLn_End(var f : Text);[Public,Alias:'FPC_READLN_END']; iocheck; compilerproc;
 var prev: char;
 Begin
-{ Check error and if file is open and load buf if empty }
-  If (InOutRes<>0) then
-   exit;
-  if (TextRec(f).mode<>fmInput) Then
-   begin
-     case TextRec(f).mode of
-      fmOutPut,fmAppend:
-        InOutRes:=104
-       else
-         InOutRes:=103;
-     end;
-     exit;
-   end;
-  if TextRec(f).BufPos>=TextRec(f).BufEnd Then
-   begin
-     FileFunc(TextRec(f).InOutFunc)(TextRec(f));
-     if (TextRec(f).BufPos>=TextRec(f).BufEnd) then
-       { Flush if set }
-       begin
-         if (TextRec(f).FlushFunc<>nil) then
-           FileFunc(TextRec(f).FlushFunc)(TextRec(f));
-         exit;
-       end;
-   end;
+  If not CheckRead(f) then
+    exit;
+  if (TextRec(f).BufPos>=TextRec(f).BufEnd) then
+    { Flush if set }
+    begin
+      if (TextRec(f).FlushFunc<>nil) then
+        FileFunc(TextRec(f).FlushFunc)(TextRec(f));
+      exit;
+    end;
   if CtrlZMarksEOF and (TextRec (F).BufPtr^ [TextRec (F).BufPos] = #26) then
    Exit;
   repeat
@@ -888,27 +1195,76 @@ Begin
 End;
 
 
+Procedure fpc_ReadLn_End_Iso(var f : Text);[Public,Alias:'FPC_READLN_END_ISO']; iocheck; compilerproc;
+var prev: char;
+Begin
+  If not CheckRead(f) then
+    exit;
+  if (TextRec(f).BufPos>=TextRec(f).BufEnd) then
+    { Flush if set }
+    begin
+      if (TextRec(f).FlushFunc<>nil) then
+        FileFunc(TextRec(f).FlushFunc)(TextRec(f));
+      exit;
+    end;
+  if TextRec (F).BufPtr^ [TextRec (F).BufPos] = #26 then
+    begin
+      inc(TextRec(f).BufPos);
+      Exit;
+    end;
+  repeat
+    prev := TextRec(f).BufPtr^[TextRec(f).BufPos];
+    inc(TextRec(f).BufPos);
+{ no system uses #10#13 as line seperator (#10 = *nix, #13 = Mac, }
+{ #13#10 = Dos), so if we've got #10, we can safely exit          }
+    if prev = #10 then
+      exit;
+    {$ifdef MACOS}
+    if prev = #13 then
+      {StdInput on macos never have dos line ending, so this is safe.}
+      if TextRec(f).Handle = StdInputHandle then
+        exit;
+    {$endif MACOS}
+    if TextRec(f).BufPos>=TextRec(f).BufEnd Then
+      begin
+        FileFunc(TextRec(f).InOutFunc)(TextRec(f));
+        if (TextRec(f).BufPos>=TextRec(f).BufEnd) then
+          { Flush if set }
+          begin
+           if (TextRec(f).FlushFunc<>nil) then
+             FileFunc(TextRec(f).FlushFunc)(TextRec(f));
+           exit;
+         end;
+      end;
+   if TextRec (F).BufPtr^ [TextRec (F).BufPos] = #26 then
+     begin
+       inc(TextRec(f).BufPos);
+       Exit;
+     end;
+   if (prev=#13) then
+     { is there also a #10 after it? }
+     begin
+       if (TextRec(f).BufPtr^[TextRec(f).BufPos]=#10) then
+         { yes, skip that one as well }
+         inc(TextRec(f).BufPos);
+       exit;
+     end;
+  until false;
+End;
+
+
 Function ReadPCharLen(var f:Text;s:pchar;maxlen:longint):longint;
 var
   sPos,len : Longint;
   p,startp,maxp : pchar;
+  end_of_string:boolean;
 Begin
   ReadPCharLen:=0;
-{ Check error and if file is open }
-  If (InOutRes<>0) then
-   exit;
-  if (TextRec(f).mode<>fmInput) Then
-   begin
-     case TextRec(f).mode of
-       fmOutPut,fmAppend:
-         InOutRes:=104
-       else
-         InOutRes:=103;
-     end;
-     exit;
-   end;
+  If not CheckRead(f) then
+    exit;
 { Read maximal until Maxlen is reached }
   sPos:=0;
+  end_of_string:=false;
   repeat
     If TextRec(f).BufPos>=TextRec(f).BufEnd Then
      begin
@@ -922,136 +1278,225 @@ Begin
     else
      maxp:=@TextRec(f).Bufptr^[TextRec(f).BufEnd];
     startp:=p;
-  { search linefeed }
-    while (p<maxp) and not(P^ in [#10,#13]) do
-     inc(p);
+  { find stop character }
+    while p<maxp do
+      begin
+        { Optimization: Do a quick check for a control character first }
+        if (p^<' ') then
+          begin
+            if (p^ in [#10,#13]) or
+               (ctrlZmarkseof and (p^=#26)) then
+              begin
+                end_of_string:=true;
+                break;
+              end;
+          end;
+        inc(p);
+      end;
   { calculate read bytes }
     len:=p-startp;
     inc(TextRec(f).BufPos,Len);
     Move(startp^,s[sPos],Len);
     inc(sPos,Len);
-  { was it a LF or CR? then leave }
-    if (spos=MaxLen) or
-       ((p<maxp) and (p^ in [#10,#13])) then
-      break;
-  until false;
+  until (spos=MaxLen) or end_of_string;
   ReadPCharLen:=spos;
 End;
 
 
-Procedure fpc_Read_Text_ShortStr(var f : Text;var s : String); iocheck; [Public,Alias:'FPC_READ_TEXT_SHORTSTR']; {$ifdef hascompilerproc} compilerproc; {$endif}
+Procedure fpc_Read_Text_ShortStr(var f : Text;out s : String); iocheck; compilerproc;
 Begin
   s[0]:=chr(ReadPCharLen(f,pchar(@s[1]),high(s)));
 End;
 
 
-Procedure fpc_Read_Text_PChar_As_Pointer(var f : Text;var s : PChar); iocheck; [Public,Alias:'FPC_READ_TEXT_PCHAR_AS_POINTER']; {$ifdef hascompilerproc} compilerproc; {$endif}
+Procedure fpc_Read_Text_PChar_As_Pointer(var f : Text; const s : PChar); iocheck; compilerproc;
 Begin
   pchar(s+ReadPCharLen(f,s,$7fffffff))^:=#0;
 End;
 
 
-Procedure fpc_Read_Text_PChar_As_Array(var f : Text;var s : array of char); iocheck; [Public,Alias:'FPC_READ_TEXT_PCHAR_AS_ARRAY']; {$ifdef hascompilerproc} compilerproc; {$endif}
+Procedure fpc_Read_Text_PChar_As_Array(var f : Text;out s : array of char; zerobased: boolean = false); iocheck; compilerproc;
 var
   len: longint;
 Begin
   len := ReadPCharLen(f,pchar(@s),high(s)+1);
-  if len <= high(s) then
+  if zerobased and
+     (len > high(s)) then
+    len := high(s);
+  if (len <= high(s)) then
     s[len] := #0;
 End;
 
 
-Procedure fpc_Read_Text_AnsiStr(var f : Text;var s : AnsiString); iocheck; [Public,Alias:'FPC_READ_TEXT_ANSISTR']; {$ifdef hascompilerproc} compilerproc; {$endif}
+{$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
+Procedure fpc_Read_Text_AnsiStr(var f : Text;out s : RawByteString{$ifdef FPC_HAS_CPSTRING};cp : TSystemCodePage{$endif FPC_HAS_CPSTRING}); [public, alias: 'FPC_READ_TEXT_ANSISTR']; iocheck; compilerproc;
 var
-  slen,len : longint;
+  slen,len : SizeInt;
 Begin
   slen:=0;
   Repeat
     // SetLength will reallocate the length.
-    SetLength(S,slen+255);
-    len:=ReadPCharLen(f,pchar(Pointer(S)+slen),255);
+    SetLength(s,slen+255);
+    len:=ReadPCharLen(f,pchar(Pointer(s)+slen),255);
     inc(slen,len);
   Until len<255;
   // Set actual length
-  SetLength(S,Slen);
+  SetLength(s,Slen);
+  {$ifdef FPC_HAS_CPSTRING}
+  SetCodePage(s,TextRec(f).CodePage,false);
+  s:=fpc_AnsiStr_To_AnsiStr(s,cp);
+  {$endif FPC_HAS_CPSTRING}
 End;
 
-{$ifdef hascompilerproc}
-procedure fpc_Read_Text_Char(var f : Text; var c: char); iocheck; [Public,Alias:'FPC_READ_TEXT_CHAR'];compilerproc;
-{$else hascompilerproc}
-Function fpc_Read_Text_Char(var f : Text):char;[Public,Alias:'FPC_READ_TEXT_CHAR'];
-{$endif hascompilerproc}
+Procedure fpc_Read_Text_AnsiStr_Intern(var f : Text;out s : RawByteString{$ifdef FPC_HAS_CPSTRING};cp : TSystemCodePage{$endif FPC_HAS_CPSTRING}); [external name 'FPC_READ_TEXT_ANSISTR'];
+{$endif FPC_HAS_FEATURE_ANSISTRINGS}
+
+
+{$ifdef FPC_HAS_FEATURE_WIDESTRINGS}
+Procedure fpc_Read_Text_UnicodeStr(var f : Text;out us : UnicodeString); iocheck; compilerproc;
+var
+  s: RawByteString;
 Begin
-{$ifdef hascompilerproc}
+  // all standard input is assumed to be ansi-encoded
+  fpc_Read_Text_AnsiStr_Intern(f,s{$ifdef FPC_HAS_CPSTRING},DefaultSystemCodePage{$endif FPC_HAS_CPSTRING});
+  // Convert to unicodestring
+  {$ifdef FPC_HAS_CPSTRING}
+  widestringmanager.Ansi2UnicodeMoveProc(PAnsiChar(s),StringCodePage(s),us,Length(s));
+  {$else}
+  us:=s;
+  {$endif}
+End;
+{$endif FPC_HAS_FEATURE_WIDESTRINGS}
+
+{$ifndef FPC_WIDESTRING_EQUAL_UNICODESTRING}
+Procedure fpc_Read_Text_WideStr(var f : Text;out ws : WideString); iocheck; compilerproc;
+var
+  s: RawByteString;
+Begin
+  // all standard input is assumed to be ansi-encoded
+  fpc_Read_Text_AnsiStr_Intern(f,s{$ifdef FPC_HAS_CPSTRING},DefaultSystemCodePage{$endif FPC_HAS_CPSTRING});
+  // Convert to widestring
+  {$ifdef FPC_HAS_CPSTRING}
+  widestringmanager.Ansi2WideMoveProc(PAnsiChar(s),StringCodePage(s),ws,Length(s));
+  {$else}
+  ws:=s;
+  {$endif}
+End;
+{$endif FPC_WIDESTRING_EQUAL_UNICODESTRING}
+
+procedure fpc_Read_Text_Char(var f : Text; out c: char); [public, alias: 'FPC_READ_TEXT_CHAR']; iocheck;compilerproc;
+Begin
   c:=#0;
-{$else hascompilerproc}
-  fpc_Read_Text_Char:=#0;
-{$endif hascompilerproc}
-{ Check error and if file is open }
-  If (InOutRes<>0) then
-   exit;
-  if (TextRec(f).mode<>fmInput) Then
-   begin
-     case TextRec(f).mode of
-       fmOutPut,fmAppend:
-         InOutRes:=104
-       else
-         InOutRes:=103;
-     end;
-     exit;
-   end;
-{ Read next char or EOF }
+  If not CheckRead(f) then
+    exit;
   If TextRec(f).BufPos>=TextRec(f).BufEnd Then
-   begin
-     FileFunc(TextRec(f).InOutFunc)(TextRec(f));
-     If TextRec(f).BufPos>=TextRec(f).BufEnd Then
-{$ifdef hascompilerproc}
-       begin
-         c := #26;
-         exit;
-       end;
-{$else hascompilerproc}
-       exit(#26);
-{$endif hascompilerproc}
-   end;
-{$ifdef hascompilerproc}
+    begin
+      c := #26;
+      exit;
+    end;
   c:=TextRec(f).Bufptr^[TextRec(f).BufPos];
-{$else hascompilerproc}
-  fpc_Read_Text_Char:=TextRec(f).Bufptr^[TextRec(f).BufPos];
-{$endif hascompilerproc}
   inc(TextRec(f).BufPos);
 end;
 
+procedure fpc_Read_Text_Char_intern(var f : Text; out c: char); iocheck; [external name 'FPC_READ_TEXT_CHAR'];
 
-{$ifdef hascompilerproc}
-Procedure fpc_Read_Text_SInt(var f : Text; var l : ValSInt); iocheck; [Public,Alias:'FPC_READ_TEXT_SINT']; compilerproc;
-{$else hascompilerproc}
-Function fpc_Read_Text_SInt(var f : Text):ValSInt;[Public,Alias:'FPC_READ_TEXT_SINT'];
-{$endif hascompilerproc}
+
+{$ifdef FPC_HAS_FEATURE_WIDESTRINGS}
+procedure fpc_Read_Text_WideChar(var f : Text; out wc: widechar); iocheck;compilerproc;
+var
+  ws: widestring;
+  i: longint;
+  { maximum code point length is 6 characters (with UTF-8) }
+  str: array[0..5] of char;
+Begin
+  fillchar(str[0],sizeof(str),0);
+  for i:=low(str) to high(str) do
+    begin
+      fpc_Read_Text_Char_intern(f,str[i]);
+      case widestringmanager.CodePointLengthProc(@str[0],i+1) of
+        -1: { possibly incomplete code point, try with an extra character }
+           ;
+        0: { null character }
+          begin
+            wc:=#0;
+            exit;
+          end;
+        else
+          begin
+            { valid code point -> convert to widestring}
+            {$ifdef FPC_HAS_CPSTRING}
+            widestringmanager.Ansi2WideMoveProc(@str[0],TextRec(f).CodePage,ws,i+1);
+            {$else}
+            widestringmanager.Ansi2WideMoveProc(@str[0],DefaultSystemCodePage,ws,i+1);
+            {$endif}
+            { has to be exactly one widechar }
+            if length(ws)=1 then
+              begin
+                wc:=ws[1];
+                exit
+              end
+            else
+              break;
+          end;
+      end;
+    end;
+  { invalid widechar input }
+  inoutres:=106;
+end;
+{$endif FPC_HAS_FEATURE_WIDESTRINGS}
+
+
+procedure fpc_Read_Text_Char_Iso(var f : Text; out c: char); iocheck;compilerproc;
+Begin
+  c:=' ';
+  If not CheckRead(f) then
+    exit;
+  If TextRec(f).BufPos>=TextRec(f).BufEnd Then
+    begin
+      c:=' ';
+      exit;
+    end;
+  c:=TextRec(f).Bufptr^[TextRec(f).BufPos];
+  inc(TextRec(f).BufPos);
+  if c=#13 then
+    begin
+      c:=' ';
+      If not CheckRead(f) or
+        (TextRec(f).BufPos>=TextRec(f).BufEnd) then
+        exit;
+      If TextRec(f).Bufptr^[TextRec(f).BufPos]=#10 then
+        inc(TextRec(f).BufPos);
+
+      { ignore #26 following a new line }
+      If not CheckRead(f) or
+        (TextRec(f).BufPos>=TextRec(f).BufEnd) then
+        exit;
+      If TextRec(f).Bufptr^[TextRec(f).BufPos]=#26 then
+        inc(TextRec(f).BufPos);
+    end
+  else if c=#10 then
+    begin
+      c:=' ';
+      { ignore #26 following a new line }
+      If not CheckRead(f) or
+        (TextRec(f).BufPos>=TextRec(f).BufEnd) then
+        exit;
+      If TextRec(f).Bufptr^[TextRec(f).BufPos]=#26 then
+        inc(TextRec(f).BufPos);
+      end
+  else if c=#26 then
+    c:=' ';
+end;
+
+
+Procedure fpc_Read_Text_SInt(var f : Text; out l : ValSInt); iocheck; compilerproc;
 var
   hs   : String;
   code : longint;
 Begin
-{$ifdef hascompilerproc}
   l:=0;
-{$else hascompilerproc}
-  fpc_Read_Text_SInt:=0;
-{$endif hascompilerproc}
-{ Leave if error or not open file, else check for empty buf }
-  If (InOutRes<>0) then
-   exit;
-  if (TextRec(f).mode<>fmInput) Then
-   begin
-     case TextRec(f).mode of
-       fmOutPut,fmAppend:
-         InOutRes:=104
-       else
-         InOutRes:=103;
-     end;
-     exit;
-   end;
-  If TextRec(f).BufPos>=TextRec(f).BufEnd Then
-   FileFunc(TextRec(f).InOutFunc)(TextRec(f));
+  If not CheckRead(f) then
+    exit;
   hs:='';
   if IgnoreSpaces(f) then
    begin
@@ -1063,7 +1508,6 @@ Begin
       exit;
      ReadNumeric(f,hs);
    end;
-{$ifdef hascompilerproc}
    if (hs = '') then
     L := 0
    else
@@ -1072,48 +1516,17 @@ Begin
      if Code <> 0 then
       InOutRes:=106;
     end;
-{$else hascompilerproc}
-   if (hs = '') then
-    fpc_Read_Text_SInt := 0
-   else
-    begin
-     Val(hs,fpc_Read_Text_SInt,code);
-     if Code <> 0 then
-      InOutRes:=106;
-    end;
-{$endif hascompilerproc}
 End;
 
 
-{$ifdef hascompilerproc}
-Procedure fpc_Read_Text_UInt(var f : Text; var u : ValUInt);  iocheck; [Public,Alias:'FPC_READ_TEXT_UINT']; compilerproc;
-{$else hascompilerproc}
-Function fpc_Read_Text_UInt(var f : Text):ValUInt;[Public,Alias:'FPC_READ_TEXT_UINT'];
-{$endif hascompilerproc}
+Procedure fpc_Read_Text_UInt(var f : Text; out u : ValUInt);  iocheck; compilerproc;
 var
   hs   : String;
   code : longint;
 Begin
-{$ifdef hascompilerproc}
   u:=0;
-{$else hascompilerproc}
-  fpc_Read_Text_UInt:=0;
-{$endif hascompilerproc}
-{ Leave if error or not open file, else check for empty buf }
-  If (InOutRes<>0) then
-   exit;
-  if (TextRec(f).mode<>fmInput) Then
-   begin
-     case TextRec(f).mode of
-       fmOutPut,fmAppend:
-         InOutRes:=104
-       else
-         InOutRes:=103;
-     end;
-     exit;
-   end;
-  If TextRec(f).BufPos>=TextRec(f).BufEnd Then
-   FileFunc(TextRec(f).InOutFunc)(TextRec(f));
+  If not CheckRead(f) then
+    exit;
   hs:='';
   if IgnoreSpaces(f) then
    begin
@@ -1123,45 +1536,26 @@ Begin
       exit;
      ReadNumeric(f,hs);
    end;
-{$ifdef hascompilerproc}
-  val(hs,u,code);
-{$else hascompilerproc}
-  val(hs,fpc_Read_Text_UInt,code);
-{$endif hascompilerproc}
-  If code<>0 Then
-   InOutRes:=106;
+   if (hs = '') then
+    u := 0
+   else
+    begin
+      val(hs,u,code);
+      If code<>0 Then
+        InOutRes:=106;
+    end;
 End;
 
 
-{$ifdef hascompilerproc}
-procedure fpc_Read_Text_Float(var f : Text; var v : ValReal); iocheck; [Public,Alias:'FPC_READ_TEXT_FLOAT']; compilerproc;
-{$else hascompilerproc}
-Function fpc_Read_Text_Float(var f : Text):ValReal;[Public,Alias:'FPC_READ_TEXT_FLOAT'];
-{$endif hascompilerproc}
+{$ifndef FPUNONE}
+procedure fpc_Read_Text_Float(var f : Text; out v : ValReal); iocheck; compilerproc;
 var
   hs : string;
   code : Word;
 begin
-{$ifdef hascompilerproc}
   v:=0.0;
-{$else hascompilerproc}
-  fpc_Read_Text_Float:=0.0;
-{$endif hascompilerproc}
-{ Leave if error or not open file, else check for empty buf }
-  If (InOutRes<>0) then
-   exit;
-  if (TextRec(f).mode<>fmInput) Then
-   begin
-     case TextRec(f).mode of
-       fmOutPut,fmAppend:
-         InOutRes:=104
-       else
-         InOutRes:=103;
-     end;
-     exit;
-   end;
-  If TextRec(f).BufPos>=TextRec(f).BufEnd Then
-   FileFunc(TextRec(f).InOutFunc)(TextRec(f));
+  If not CheckRead(f) then
+    exit;
   hs:='';
   if IgnoreSpaces(f) then
    begin
@@ -1171,11 +1565,55 @@ begin
       exit;
      ReadNumeric(f,hs);
    end;
-{$ifdef hascompilerproc}
   val(hs,v,code);
-{$else hascompilerproc}
-  val(hs,fpc_Read_Text_Float,code);
-{$endif hascompilerproc}
+  If code<>0 Then
+   InOutRes:=106;
+end;
+{$endif}
+
+procedure fpc_read_text_enum(str2ordindex:pointer;var t:text;out ordinal:longint); iocheck;compilerproc;
+
+var s:string;
+    code:valsint;
+
+begin
+  if not checkread(t) then
+    exit;
+  s:='';
+  if ignorespaces(t) then
+    begin
+      { When spaces were found and we are now at EOF, then we return 0 }
+      if (TextRec(t).BufPos>=TextRec(t).BufEnd) then
+        exit;
+      ReadNumeric(t,s);
+    end;
+  ordinal:=fpc_val_enum_shortstr(str2ordindex,s,code);
+  if code<>0 then
+   InOutRes:=106;
+end;
+
+procedure fpc_Read_Text_Currency(var f : Text; out v : Currency); iocheck; compilerproc;
+var
+  hs : string;
+  code : Word;
+begin
+{$ifdef FPUNONE}
+  v:=0;
+{$else}
+  v:=0.0;
+{$endif}
+  If not CheckRead(f) then
+    exit;
+  hs:='';
+  if IgnoreSpaces(f) then
+   begin
+     { When spaces were found and we are now at EOF,
+       then we return 0 }
+     if (TextRec(f).BufPos>=TextRec(f).BufEnd) then
+      exit;
+     ReadNumeric(f,hs);
+   end;
+  val(hs,v,code);
   If code<>0 Then
    InOutRes:=106;
 end;
@@ -1183,35 +1621,14 @@ end;
 
 {$ifndef cpu64}
 
-{$ifdef hascompilerproc}
-procedure fpc_Read_Text_QWord(var f : text; var q : qword); iocheck; [public,alias:'FPC_READ_TEXT_QWORD']; compilerproc;
-{$else hascompilerproc}
-function fpc_Read_Text_QWord(var f : text) : qword;[public,alias:'FPC_READ_TEXT_QWORD'];
-{$endif hascompilerproc}
+procedure fpc_Read_Text_QWord(var f : text; out q : qword); iocheck; compilerproc;
 var
   hs   : String;
   code : longint;
 Begin
-{$ifdef hascompilerproc}
   q:=0;
-{$else hascompilerproc}
-  fpc_Read_Text_QWord:=0;
-{$endif hascompilerproc}
-  { Leave if error or not open file, else check for empty buf }
-  If (InOutRes<>0) then
-   exit;
-  if (TextRec(f).mode<>fmInput) Then
-   begin
-     case TextRec(f).mode of
-       fmOutPut,fmAppend:
-         InOutRes:=104
-       else
-         InOutRes:=103;
-     end;
-     exit;
-   end;
-  If TextRec(f).BufPos>=TextRec(f).BufEnd Then
-   FileFunc(TextRec(f).InOutFunc)(TextRec(f));
+  If not CheckRead(f) then
+    exit;
   hs:='';
   if IgnoreSpaces(f) then
    begin
@@ -1221,44 +1638,19 @@ Begin
       exit;
      ReadNumeric(f,hs);
    end;
-{$ifdef hascompilerproc}
   val(hs,q,code);
-{$else hascompilerproc}
-  val(hs,fpc_Read_Text_QWord,code);
-{$endif hascompilerproc}
   If code<>0 Then
    InOutRes:=106;
 End;
 
-{$ifdef hascompilerproc}
-procedure fpc_Read_Text_Int64(var f : text; var i : int64); iocheck; [public,alias:'FPC_READ_TEXT_INT64']; compilerproc;
-{$else hascompilerproc}
-function fpc_Read_Text_Int64(var f : text) : int64;[public,alias:'FPC_READ_TEXT_INT64']; {$ifdef hascompilerproc} compilerproc; {$endif}
-{$endif hascompilerproc}
+procedure fpc_Read_Text_Int64(var f : text; out i : int64); iocheck; compilerproc;
 var
   hs   : String;
   code : Longint;
 Begin
-{$ifdef hascompilerproc}
   i:=0;
-{$else hascompilerproc}
-  fpc_Read_Text_Int64:=0;
-{$endif hascompilerproc}
-{ Leave if error or not open file, else check for empty buf }
-  If (InOutRes<>0) then
-   exit;
-  if (TextRec(f).mode<>fmInput) Then
-   begin
-     case TextRec(f).mode of
-       fmOutPut,fmAppend:
-         InOutRes:=104
-       else
-         InOutRes:=103;
-     end;
-     exit;
-   end;
-  If TextRec(f).BufPos>=TextRec(f).BufEnd Then
-   FileFunc(TextRec(f).InOutFunc)(TextRec(f));
+  If not CheckRead(f) then
+    exit;
   hs:='';
   if IgnoreSpaces(f) then
    begin
@@ -1268,11 +1660,7 @@ Begin
       exit;
      ReadNumeric(f,hs);
    end;
-{$ifdef hascompilerproc}
   Val(hs,i,code);
-{$else hascompilerproc}
-  Val(hs,fpc_Read_Text_Int64,code);
-{$endif hascompilerproc}
   If code<>0 Then
    InOutRes:=106;
 End;
@@ -1280,11 +1668,353 @@ End;
 {$endif CPU64}
 
 
+
+{*****************************************************************************
+                              WriteStr/ReadStr
+*****************************************************************************}
+
+const
+  { pointer to target string }
+  StrPtrIndex = 1;
+  { temporary destination for writerstr, because the original value of the
+    destination may be used in the writestr expression }
+  TempWriteStrDestIndex = 9;
+  ShortStrLenIndex = 17;
+  { how many bytes of the string have been processed already (used for readstr) }
+  BytesReadIndex = 17;
+
+threadvar
+  ReadWriteStrText: textrec;
+
+procedure WriteStrShort(var t: textrec);
+var
+  str: pshortstring;
+  newbytes,
+  oldlen: longint;
+begin
+  if (t.bufpos=0) then
+    exit;
+  str:=pshortstring(ppointer(@t.userdata[TempWriteStrDestIndex])^);
+  newbytes:=t.BufPos;
+  oldlen:=length(str^);
+  if (oldlen+t.bufpos > t.userdata[ShortStrLenIndex]) then
+    begin
+      newbytes:=t.userdata[ShortStrLenIndex]-oldlen;
+{$ifdef writestr_iolencheck}
+      // GPC only gives an io error if {$no-truncate-strings} is active
+      // FPC does not have this setting (it never gives errors when a
+      // a string expression is truncated)
+
+      { "disk full" }
+      inoutres:=101;
+{$endif}
+    end;
+  setlength(str^,length(str^)+newbytes);
+  move(t.bufptr^,str^[oldlen+1],newbytes);
+  t.bufpos:=0;
+end;
+
+
+procedure WriteStrShortFlush(var t: textrec);
+begin
+  { move written data from internal buffer to temporary string (don't move
+    directly from buffer to final string, because the temporary string may
+    already contain data in case the textbuf was smaller than the string
+    length) }
+  WriteStrShort(t);
+  { move written data to original string }
+  move(PPointer(@t.userdata[TempWriteStrDestIndex])^^,
+       PPointer(@t.userdata[StrPtrIndex])^^,
+       t.userdata[ShortStrLenIndex]+1);
+  { free temporary buffer }
+  freemem(PPointer(@t.userdata[TempWriteStrDestIndex])^);
+end;
+
+
+
+{$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
+procedure WriteStrAnsi(var t: textrec);
+var
+  str: pansistring;
+  oldlen: longint;
+begin
+  if (t.bufpos=0) then
+    exit;
+  str:=pansistring(@t.userdata[TempWriteStrDestIndex]);
+  oldlen:=length(str^);
+  setlength(str^,oldlen+t.bufpos);
+  move(t.bufptr^,str^[oldlen+1],t.bufpos);
+  t.bufpos:=0;
+end;
+
+
+procedure WriteStrAnsiFlush(var t: textrec);
+begin
+  { see comment in WriteStrShortFlush }
+  WriteStrAnsi(t);
+  pansistring(ppointer(@t.userdata[StrPtrIndex])^)^:=
+    pansistring(@t.userdata[TempWriteStrDestIndex])^;
+  { free memory/finalize temp }
+  pansistring(@t.userdata[TempWriteStrDestIndex])^:='';
+end;
+{$endif FPC_HAS_FEATURE_ANSISTRINGS}
+
+
+{$ifdef FPC_HAS_FEATURE_WIDESTRINGS}
+procedure WriteStrUnicode(var t: textrec);
+var
+  temp: ansistring;
+  str: punicodestring;
+begin
+  if (t.bufpos=0) then
+    exit;
+  str:=punicodestring(@t.userdata[TempWriteStrDestIndex]);
+  setlength(temp,t.bufpos);
+  move(t.bufptr^,temp[1],t.bufpos);
+  str^:=str^+temp;
+  t.bufpos:=0;
+end;
+
+
+procedure WriteStrUnicodeFlush(var t: textrec);
+begin
+  { see comment in WriteStrShortFlush }
+  WriteStrUnicode(t);
+  punicodestring(ppointer(@t.userdata[StrPtrIndex])^)^:=
+    punicodestring(@t.userdata[TempWriteStrDestIndex])^;
+  { free memory/finalize temp }
+  punicodestring(@t.userdata[TempWriteStrDestIndex])^:='';
+end;
+{$endif FPC_HAS_FEATURE_WIDESTRINGS}
+
+{$ifndef FPC_WIDESTRING_EQUAL_UNICODESTRING}
+procedure WriteStrWide(var t: textrec);
+var
+  temp: ansistring;
+  str: pwidestring;
+begin
+  if (t.bufpos=0) then
+    exit;
+  str:=pwidestring(@t.userdata[TempWriteStrDestIndex]);
+  setlength(temp,t.bufpos);
+  move(t.bufptr^,temp[1],t.bufpos);
+  str^:=str^+temp;
+  t.bufpos:=0;
+end;
+
+
+procedure WriteStrWideFlush(var t: textrec);
+begin
+  { see comment in WriteStrShortFlush }
+  WriteStrWide(t);
+  pwidestring(ppointer(@t.userdata[StrPtrIndex])^)^:=
+    pwidestring(@t.userdata[TempWriteStrDestIndex])^;
+  { free memory/finalize temp }
+  finalize(pwidestring(@t.userdata[TempWriteStrDestIndex])^);
+end;
+{$endif FPC_WIDESTRING_EQUAL_UNICODESTRING}
+
+procedure SetupWriteStrCommon(out t: textrec);
+begin
+  // initialise
+  Assign(text(t),'');
+  t.mode:=fmOutput;
+  t.OpenFunc:=nil;
+  t.CloseFunc:=nil;
+  {$ifdef FPC_HAS_CPSTRING}
+  t.CodePage:=DefaultSystemCodePage;
+  {$endif}
+end;
+
+
+function fpc_SetupWriteStr_Shortstr(var s: shortstring): PText; compilerproc;
+begin
+  setupwritestrcommon(ReadWriteStrText);
+  PPointer(@ReadWriteStrText.userdata[StrPtrIndex])^:=@s;
+
+  { temporary destination (see comments for TempWriteStrDestIndex) }
+  getmem(PPointer(@ReadWriteStrText.userdata[TempWriteStrDestIndex])^,high(s)+1);
+  setlength(pshortstring(ppointer(@ReadWriteStrText.userdata[TempWriteStrDestIndex])^)^,0);
+
+  ReadWriteStrText.userdata[ShortStrLenIndex]:=high(s);
+  ReadWriteStrText.InOutFunc:=@WriteStrShort;
+  ReadWriteStrText.FlushFunc:=@WriteStrShortFlush;
+  result:=@ReadWriteStrText;
+end;
+
+
+{$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
+function fpc_SetupWriteStr_Ansistr(var s: ansistring): PText; compilerproc;
+begin
+  setupwritestrcommon(ReadWriteStrText);
+  PPointer(@ReadWriteStrText.userdata[StrPtrIndex])^:=@s;
+
+  { temp destination ansistring, nil = empty string }
+  PPointer(@ReadWriteStrText.userdata[TempWriteStrDestIndex])^:=nil;
+
+  ReadWriteStrText.InOutFunc:=@WriteStrAnsi;
+  ReadWriteStrText.FlushFunc:=@WriteStrAnsiFlush;
+  result:=@ReadWriteStrText;
+end;
+{$endif FPC_HAS_FEATURE_ANSISTRINGS}
+
+
+{$ifdef FPC_HAS_FEATURE_WIDESTRINGS}
+function fpc_SetupWriteStr_Unicodestr(var s: unicodestring): PText; compilerproc;
+begin
+  setupwritestrcommon(ReadWriteStrText);
+  PPointer(@ReadWriteStrText.userdata[StrPtrIndex])^:=@s;
+
+  { temp destination unicodestring, nil = empty string }
+  PPointer(@ReadWriteStrText.userdata[TempWriteStrDestIndex])^:=nil;
+
+  ReadWriteStrText.InOutFunc:=@WriteStrUnicode;
+  ReadWriteStrText.FlushFunc:=@WriteStrUnicodeFlush;
+  result:=@ReadWriteStrText;
+end;
+{$endif FPC_HAS_FEATURE_WIDESTRINGS}
+
+
+{$ifndef FPC_WIDESTRING_EQUAL_UNICODESTRING}
+function fpc_SetupWriteStr_Widestr(var s: widestring): PText; compilerproc;
+begin
+  setupwritestrcommon(ReadWriteStrText);
+  PPointer(@ReadWriteStrText.userdata[StrPtrIndex])^:=@s;
+
+  { temp destination widestring }
+  PWideString(@ReadWriteStrText.userdata[TempWriteStrDestIndex])^:='';
+
+  ReadWriteStrText.InOutFunc:=@WriteStrWide;
+  ReadWriteStrText.FlushFunc:=@WriteStrWideFlush;
+  result:=@ReadWriteStrText;
+end;
+{$endif FPC_WIDESTRING_EQUAL_UNICODESTRING}
+
+
+{$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
+procedure ReadAnsiStrFinal(var t: textrec);
+begin
+  { finalise the temp ansistring }
+  PAnsiString(@t.userdata[StrPtrIndex])^ := '';
+end;
+{$endif FPC_HAS_FEATURE_ANSISTRINGS}
+
+
+procedure ReadStrCommon(var t: textrec; strdata: pchar; len: sizeint);
+var
+  newbytes: sizeint;
+begin
+  newbytes := len - PSizeInt(@t.userdata[BytesReadIndex])^;
+  if (t.BufSize <= newbytes) then
+    newbytes := t.BufSize;
+  if (newbytes > 0) then
+    begin
+      move(strdata[PSizeInt(@t.userdata[BytesReadIndex])^],t.BufPtr^,newbytes);
+      inc(PSizeInt(@t.userdata[BytesReadIndex])^,newbytes);
+    end;
+  t.BufEnd:=newbytes;
+  t.BufPos:=0;
+end;
+
+
+procedure ReadStrAnsi(var t: textrec);
+var
+  str: pansistring;
+begin
+  str:=pansistring(@t.userdata[StrPtrIndex]);
+  ReadStrCommon(t,@str^[1],length(str^));
+end;
+
+
+procedure SetupReadStrCommon(out t: textrec);
+begin
+  // initialise
+  Assign(text(t),'');
+  t.mode:=fmInput;
+  t.OpenFunc:=nil;
+  t.CloseFunc:=nil;
+  {$ifdef FPC_HAS_CPSTRING}
+  t.CodePage:=DefaultSystemCodePage;
+  {$endif}
+  PSizeInt(@t.userdata[BytesReadIndex])^:=0;
+end;
+
+
+{$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
+function fpc_SetupReadStr_Ansistr(const s: ansistring): PText; [public, alias: 'FPC_SETUPREADSTR_ANSISTR']; compilerproc;
+begin
+  setupreadstrcommon(ReadWriteStrText);
+  { we need a reference, because 's' may be a temporary expression }
+  PAnsiString(@ReadWriteStrText.userdata[StrPtrIndex])^:=s;
+  ReadWriteStrText.InOutFunc:=@ReadStrAnsi;
+  { this is called at the end, by fpc_read_end }
+  ReadWriteStrText.FlushFunc:=@ReadAnsiStrFinal;
+  result:=@ReadWriteStrText;
+end;
+
+function fpc_SetupReadStr_Ansistr_Intern(const s: ansistring): PText; [external name 'FPC_SETUPREADSTR_ANSISTR'];
+{$endif FPC_HAS_FEATURE_ANSISTRINGS}
+
+
+function fpc_SetupReadStr_Shortstr(const s: shortstring): PText; compilerproc;
+begin
+  { the reason we convert the short string to ansistring, is because the semantics of
+    readstr are defined as:
+
+    *********************
+    Apart from the restrictions imposed by requirements given in this clause,
+    the execution of readstr(e,v 1 ,...,v n ) where e denotes a
+    string-expression and v 1 ,...,v n denote variable-accesses possessing the
+    char-type (or a subrange of char-type), the integer-type (or a subrange of
+    integer-type), the real-type, a fixed-string-type, or a
+    variable-string-type, shall be equivalent to
+
+            begin
+            rewrite(f);
+            writeln(f, e);
+            reset(f);
+            read(f, v 1 ,...,v n )
+            end
+    *********************
+
+    This means that any side effects caused by the evaluation of v 1 .. v n
+    must not affect the value of e (= our argument s) -> we need a copy of it.
+    An ansistring is the easiest way to get a threadsafe copy, and allows us
+    to use the other ansistring readstr helpers too.
+  }
+{$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
+  result:=fpc_SetupReadStr_Ansistr_Intern(s);
+{$else FPC_HAS_FEATURE_ANSISTRINGS}
+  runerror(217);
+{$endif FPC_HAS_FEATURE_ANSISTRINGS}
+end;
+
+
+{$ifdef FPC_HAS_FEATURE_WIDESTRINGS}
+function fpc_SetupReadStr_Unicodestr(const s: unicodestring): PText; compilerproc;
+begin
+  { we use an ansistring to avoid code duplication, and let the    }
+  { assignment convert the widestring to an equivalent ansistring  }
+  result:=fpc_SetupReadStr_Ansistr_Intern(s);
+end;
+{$endif FPC_HAS_FEATURE_WIDESTRINGS}
+
+
+{$ifndef FPC_WIDESTRING_EQUAL_UNICODESTRING}
+function fpc_SetupReadStr_Widestr(const s: widestring): PText; compilerproc;
+begin
+  { we use an ansistring to avoid code duplication, and let the    }
+  { assignment convert the widestring to an equivalent ansistring  }
+  result:=fpc_SetupReadStr_Ansistr_Intern(s);
+end;
+{$endif FPC_WIDESTRING_EQUAL_UNICODESTRING}
+
+
 {*****************************************************************************
                                Initializing
 *****************************************************************************}
 
-procedure OpenStdIO(var f:text;mode,hdl:longint);
+procedure OpenStdIO(var f:text;mode:longint;hdl:thandle);
 begin
   Assign(f,'');
   TextRec(f).Handle:=hdl;
@@ -1292,11 +2022,20 @@ begin
   TextRec(f).Closefunc:=@FileCloseFunc;
   case mode of
     fmInput :
-      TextRec(f).InOutFunc:=@FileReadFunc;
+      begin
+        TextRec(f).InOutFunc:=@FileReadFunc;
+      {$if defined(FPC_HAS_CPSTRING) and defined(FPC_HAS_FEATURE_WIDESTRINGS)}
+        TextRec(f).CodePage:=WideStringManager.GetStandardCodePageProc(scpConsoleInput);
+      {$endif}
+      end;
     fmOutput :
       begin
         TextRec(f).InOutFunc:=@FileWriteFunc;
-        TextRec(f).FlushFunc:=@FileWriteFunc;
+        {$if defined(FPC_HAS_CPSTRING) and defined(FPC_HAS_FEATURE_WIDESTRINGS)}
+        TextRec(f).CodePage:=WideStringManager.GetStandardCodePageProc(scpConsoleOutput);
+      {$endif}
+        if Do_Isdevice(hdl) then
+          TextRec(f).FlushFunc:=@FileWriteFunc;
       end;
   else
    HandleError(102);
@@ -1304,12 +2043,3 @@ begin
 end;
 
 
-{
-  $Log: text.inc,v $
-  Revision 1.30  2005/04/03 21:10:59  hajny
-    * EOF_CTRLZ conditional define replaced with CtrlZMarksEOF, #26 handling made more consistent (fix for bug 2453)
-
-  Revision 1.29  2005/02/14 17:13:29  peter
-    * truncate log
-
-}

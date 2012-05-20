@@ -1,5 +1,4 @@
 {
-    $Id: sysutils.pp,v 1.10 2005/02/26 14:38:14 florian Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2004 by the Free Pascal development team.
 
@@ -18,6 +17,7 @@ unit sysutils;
 interface
 
 {$MODE objfpc}
+{$MODESWITCH OUT}
 { force ansistrings }
 {$H+}
 
@@ -37,6 +37,7 @@ TYPE
   END;
 
 {$DEFINE HAS_SLEEP}
+{$DEFINE HAS_OSERROR}
 { Include platform independent interface part }
 {$i sysutilh.inc}
 
@@ -74,6 +75,10 @@ implementation
   uses
     sysconst;
 
+{$DEFINE FPC_FEXPAND_DRIVES}
+{$DEFINE FPC_FEXPAND_VOLUMES}
+{$DEFINE FPC_FEXPAND_NO_DEFAULT_PATHS}
+
 { Include platform independent implementation part }
 {$i sysutils.inc}
 
@@ -82,7 +87,7 @@ implementation
                               File Functions
 ****************************************************************************}
 
-Function FileOpen (Const FileName : string; Mode : Integer) : Longint;
+Function FileOpen (Const FileName : string; Mode : Integer) : THandle;
 VAR NWOpenFlags : longint;
 BEGIN
   NWOpenFlags:=0;
@@ -97,75 +102,85 @@ BEGIN
 end;
 
 
-Function FileCreate (Const FileName : String) : Longint;
+Function FileCreate (Const FileName : String) : THandle;
 begin
   FileCreate:=Fpopen(Pchar(FileName),O_RdWr or O_Creat or O_Trunc or O_Binary);
   if FileCreate >= 0 then
     FileSetAttr (Filename, 0);  // dont know why but open always sets ReadOnly flag
 end;
 
-Function FileCreate (Const FileName : String; mode:longint) : Longint;
+Function FileCreate (Const FileName : String; rights:longint) : THandle;
 begin
   FileCreate:=FileCreate (FileName);
 end;
 
 
-Function FileRead (Handle : Longint; Var Buffer; Count : longint) : Longint;
+Function FileCreate (Const FileName : String; ShareMode:longint; rights : longint) : THandle;
+begin
+  FileCreate:=FileCreate (FileName);
+end;
+
+
+Function FileRead (Handle : THandle; Out Buffer; Count : longint) : Longint;
 begin
   FileRead:=libc.fpread (Handle,@Buffer,Count);
 end;
 
 
-Function FileWrite (Handle : Longint; const Buffer; Count : Longint) : Longint;
+Function FileWrite (Handle : THandle; const Buffer; Count : Longint) : Longint;
 begin
   FileWrite:=libc.fpwrite (Handle,@Buffer,Count);
 end;
 
 
-Function FileSeek (Handle,FOffset,Origin : Longint) : Longint;
+Function FileSeek (Handle : THandle; FOffset,Origin : Longint) : Longint;
 begin
   FileSeek:=libc.fplseek (Handle,FOffset,Origin);
 end;
 
 
-Function FileSeek (Handle : Longint; FOffset,Origin : Int64) : Int64;
+Function FileSeek (Handle : THandle; FOffset: Int64; Origin: Longint) : Int64;
 begin
   FileSeek:=libc.fplseek64 (Handle,FOffset,Origin);
 end;
 
 
-Procedure FileClose (Handle : Longint);
+Procedure FileClose (Handle : THandle);
 begin
   libc.fpclose(Handle);
 end;
 
-Function FileTruncate (Handle,Size: Longint) : boolean;
+Function FileTruncate (Handle : THandle; Size: Int64) : boolean;
 begin
-  FileTruncate:=(libc.fpchsize(Handle,Size) = 0);
+  if Size > high (longint) then
+   FileTruncate := false
+{$WARNING Possible support for 64-bit FS to be checked!}
+  else
+   FileTruncate:=(libc.fpchsize(Handle,Size) = 0);
 end;
 
-Function FileLock (Handle,FOffset,FLen : Longint) : Longint;
+Function FileLock (Handle : THandle; FOffset,FLen : Longint) : Longint;
 begin
   {$warning FileLock not implemented}
   //FileLock := _lock (Handle,FOffset,FLen);
   FileLock := -1;
 end;
 
-Function FileLock (Handle : Longint; FOffset,FLen : Int64) : Longint;
+Function FileLock (Handle : THandle; FOffset,FLen : Int64) : Longint;
 begin
   {$warning need to add 64bit FileLock call }
   //FileLock := FileLock (Handle, longint(FOffset),longint(FLen));
   FileLock := -1;
 end;
 
-Function FileUnlock (Handle,FOffset,FLen : Longint) : Longint;
+Function FileUnlock (Handle : THandle; FOffset,FLen : Longint) : Longint;
 begin
   //FileUnlock := _unlock (Handle,FOffset,FLen);
   {$warning FileUnLock not implemented}
   FileUnlock := -1;
 end;
 
-Function FileUnlock (Handle : Longint; FOffset,FLen : Int64) : Longint;
+Function FileUnlock (Handle : THandle; FOffset,FLen : Int64) : Longint;
 begin
   {$warning need to add 64bit FileUnlock call }
   //FileUnlock := FileUnlock (Handle, longint(FOffset),longint(FLen));
@@ -238,7 +253,7 @@ begin
   end;
 end;
 
-function findfirst(const path : string;attr : longint;var Rslt : TsearchRec) : longint;
+function findfirst(const path : string;attr : longint; out Rslt : TsearchRec) : longint;
 var
   path0 : string;
   p     : longint;
@@ -250,7 +265,7 @@ begin
   end;
   Rslt.FindData._attr := attr;
   p := length (path);
-  while (p > 0) and (not (path[p] in ['\','/'])) do
+  while (p > 0) and (not (path[p] in AllowDirectorySeparators)) do
     dec (p);
   if p > 0 then
   begin
@@ -312,7 +327,7 @@ end;
 
 
 
-Function FileGetDate (Handle : Longint) : Longint;
+Function FileGetDate (Handle : THandle) : Longint;
 Var Info : TStat;
     _PTM : PTM;
 begin
@@ -330,7 +345,7 @@ begin
 end;
 
 
-Function FileSetDate (Handle,Age : Longint) : Longint;
+Function FileSetDate (Handle : THandle; Age : Longint) : Longint;
 Begin
   {dont know how to do that, utime needs filename}
   result := -1;
@@ -499,7 +514,7 @@ end;
                               Misc Functions
 ****************************************************************************}
 
-procedure Beep;
+procedure SysBeep;
 begin
   RingBell;
 end;
@@ -510,7 +525,7 @@ end;
 ****************************************************************************}
 
 Procedure GetLocalTime(var SystemTime: TSystemTime);
-var t : TTime;
+var t : TTime_t;
     tm: Ttm;
 begin
   libc.time(t);
@@ -585,7 +600,7 @@ begin
 end;
 
 
-function ExecuteProcess(Const Path: AnsiString; Const ComLine: AnsiString):integer;
+function ExecuteProcess(Const Path: AnsiString; Const ComLine: AnsiString;Flags:TExecuteFlags=[]):integer;
 var
   params:array of AnsiString;
   count,i: longint;
@@ -625,6 +640,12 @@ begin
   result := ExecuteProcess (Path, params);
 end;
 
+Function GetLastOSError : Integer;
+
+begin
+  Result:=Integer(GetLastError);
+end;
+
 
 {******************************************************************************
                                --- Exec ---
@@ -632,7 +653,7 @@ end;
 
 const maxargs=256;
 function ExecuteProcess (const Path: AnsiString;
-                                  const ComLine: array of AnsiString): integer;
+                                  const ComLine: array of AnsiString;Flags:TExecuteFlags=[]): integer;
 var c : comstr;
     i : integer;
     args : array[0..maxargs+1] of pchar;
@@ -697,16 +718,3 @@ Initialization
 Finalization
   DoneExceptions;
 end.
-{
-
-  $Log: sysutils.pp,v $
-  Revision 1.10  2005/02/26 14:38:14  florian
-    + SysLocale
-
-  Revision 1.9  2005/02/14 17:13:30  peter
-    * truncate log
-
-  Revision 1.8  2005/01/04 11:25:34  armin
-  * rtl code cleanup, compat fixes between clib and libc
-
-}

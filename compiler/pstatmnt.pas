@@ -1,5 +1,4 @@
 {
-    $Id: pstatmnt.pas,v 1.156 2005/03/25 22:20:19 peter Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl
 
     Does the parsing of the statements
@@ -40,25 +39,27 @@ implementation
 
     uses
        { common }
-       cutils,
+       cutils,cclasses,
        { global }
-       globtype,globals,verbose,
+       globtype,globals,verbose,constexp,
        systems,
        { aasm }
-       cpubase,aasmbase,aasmtai,
+       cpubase,aasmbase,aasmtai,aasmdata,
        { symtable }
        symconst,symbase,symtype,symdef,symsym,symtable,defutil,defcmp,
        paramgr,symutil,
        { pass 1 }
        pass_1,htypechk,
-       nutils,nbas,nmat,nadd,ncal,nmem,nset,ncnv,ninl,ncon,nld,nflw,
+       nutils,ngenutil,nbas,nmat,nadd,ncal,nmem,nset,ncnv,ninl,ncon,nld,nflw,
        { parser }
        scanner,
        pbase,pexpr,
        { codegen }
        procinfo,cgbase,
        { assembler reader }
-       rabase
+       rabase,
+       { wide- and unicodestrings}
+       widestr
        ;
 
 
@@ -70,7 +71,7 @@ implementation
          ex,if_a,else_a : tnode;
       begin
          consume(_IF);
-         ex:=comp_expr(true);
+         ex:=comp_expr(true,false);
          consume(_THEN);
          if token<>_ELSE then
            if_a:=statement
@@ -119,20 +120,33 @@ implementation
          caseexpr,p : tnode;
          blockid : longint;
          hl1,hl2 : TConstExprInt;
-         casedeferror : boolean;
+         sl1,sl2 : tstringconstnode;
+         casedeferror, caseofstring : boolean;
          casenode : tcasenode;
       begin
          consume(_CASE);
-         caseexpr:=comp_expr(true);
+         caseexpr:=comp_expr(true,false);
          { determines result type }
-         do_resulttypepass(caseexpr);
-         set_varstate(caseexpr,vs_used,[vsf_must_be_valid]);
+         do_typecheckpass(caseexpr);
+         { variants must be accepted, but first they must be converted to integer }
+         if caseexpr.resultdef.typ=variantdef then
+           begin
+             caseexpr:=ctypeconvnode.create_internal(caseexpr,sinttype);
+             do_typecheckpass(caseexpr);
+           end;
+         set_varstate(caseexpr,vs_read,[vsf_must_be_valid]);
          casedeferror:=false;
-         casedef:=caseexpr.resulttype.def;
+         casedef:=caseexpr.resultdef;
+         { case of string must be rejected in delphi-, }
+         { tp7/bp7-, mac-compatibility modes.          }
+         caseofstring :=
+           ([m_delphi, m_mac, m_tp7] * current_settings.modeswitches = []) and
+           is_string(casedef);
+
          if (not assigned(casedef)) or
-            not(is_ordinal(casedef)) then
+            ( not(is_ordinal(casedef)) and (not caseofstring) ) then
           begin
-            CGMessage(type_e_ordinal_expr_expected);
+            CGMessage(type_e_ordinal_or_string_expr_expected);
             { create a correct tree }
             caseexpr.free;
             caseexpr:=cordconstnode.create(0,u32inttype,false);
@@ -147,56 +161,105 @@ implementation
          repeat
            { maybe an instruction has more case labels }
            repeat
-             p:=expr;
+             p:=expr(true);
              if is_widechar(casedef) then
                begin
                   if (p.nodetype=rangen) then
                     begin
                        trangenode(p).left:=ctypeconvnode.create(trangenode(p).left,cwidechartype);
                        trangenode(p).right:=ctypeconvnode.create(trangenode(p).right,cwidechartype);
-                       do_resulttypepass(trangenode(p).left);
-                       do_resulttypepass(trangenode(p).right);
+                       do_typecheckpass(trangenode(p).left);
+                       do_typecheckpass(trangenode(p).right);
                     end
                   else
                     begin
                        p:=ctypeconvnode.create(p,cwidechartype);
-                       do_resulttypepass(p);
+                       do_typecheckpass(p);
                     end;
-               end;
-
-             hl1:=0;
-             hl2:=0;
-             if (p.nodetype=rangen) then
-               begin
-                  { type checking for case statements }
-                  if is_subequal(casedef, trangenode(p).left.resulttype.def) and
-                     is_subequal(casedef, trangenode(p).right.resulttype.def) then
-                    begin
-                      hl1:=get_ordinal_value(trangenode(p).left);
-                      hl2:=get_ordinal_value(trangenode(p).right);
-                      if hl1>hl2 then
-                        CGMessage(parser_e_case_lower_less_than_upper_bound);
-                      if not casedeferror then
-                       begin
-                         testrange(casedef,hl1,false);
-                         testrange(casedef,hl2,false);
-                       end;
-                    end
-                  else
-                    CGMessage(parser_e_case_mismatch);
-                  casenode.addlabel(blockid,hl1,hl2);
                end
              else
                begin
-                  { type checking for case statements }
-                  if not is_subequal(casedef, p.resulttype.def) then
-                    CGMessage(parser_e_case_mismatch);
-                  hl1:=get_ordinal_value(p);
-                  if not casedeferror then
-                    testrange(casedef,hl1,false);
-                  casenode.addlabel(blockid,hl1,hl1);
+                 if is_char(casedef) and is_widechar(p.resultdef) then
+                   begin
+                      if (p.nodetype=ordconstn) then
+                        begin
+                           p:=ctypeconvnode.create(p,cansichartype);
+                           do_typecheckpass(p);
+                        end
+                      else if (p.nodetype=rangen) then
+                        begin
+                           trangenode(p).left:=ctypeconvnode.create(trangenode(p).left,cansichartype);
+                           trangenode(p).right:=ctypeconvnode.create(trangenode(p).right,cansichartype);
+                           do_typecheckpass(trangenode(p).left);
+                           do_typecheckpass(trangenode(p).right);
+                        end;
+                   end;
+               end;
+             hl1:=0;
+             hl2:=0;
+             sl1:=nil;
+             sl2:=nil;
+             if (p.nodetype=rangen) then
+               begin
+                 { type check for string case statements }
+                 if caseofstring and
+                   is_conststring_or_constcharnode(trangenode(p).left) and
+                   is_conststring_or_constcharnode(trangenode(p).right) then
+                 begin
+                   { we need stringconstnodes, even if expression contains single chars }
+                   sl1 := get_string_value(trangenode(p).left, tstringdef(casedef));
+                   sl2 := get_string_value(trangenode(p).right, tstringdef(casedef));
+                   if sl1.fullcompare(sl2) > 0 then
+                     CGMessage(parser_e_case_lower_less_than_upper_bound);
+                 end
+                 { type checking for ordinal case statements }
+                 else if (not caseofstring) and
+                   is_subequal(casedef, trangenode(p).left.resultdef) and
+                   is_subequal(casedef, trangenode(p).right.resultdef) then
+                   begin
+                     hl1:=get_ordinal_value(trangenode(p).left);
+                     hl2:=get_ordinal_value(trangenode(p).right);
+                     if hl1>hl2 then
+                       CGMessage(parser_e_case_lower_less_than_upper_bound);
+                     if not casedeferror then
+                       begin
+                         testrange(casedef,hl1,false,false);
+                         testrange(casedef,hl2,false,false);
+                       end;
+                   end
+                 else
+                   CGMessage(parser_e_case_mismatch);
+
+                 if caseofstring then
+                   casenode.addlabel(blockid,sl1,sl2)
+                 else
+                   casenode.addlabel(blockid,hl1,hl2);
+               end
+             else
+               begin
+                 { type check for string case statements }
+                 if (caseofstring and (not is_conststring_or_constcharnode(p))) or
+                 { type checking for ordinal case statements }
+                   ((not caseofstring) and (not is_subequal(casedef, p.resultdef))) then
+                   CGMessage(parser_e_case_mismatch);
+
+                 if caseofstring then
+                   begin
+                     sl1:=get_string_value(p, tstringdef(casedef));
+                     casenode.addlabel(blockid,sl1,sl1);
+                   end
+                 else
+                   begin
+                     hl1:=get_ordinal_value(p);
+                     if not casedeferror then
+                       testrange(casedef,hl1,false,false);
+                     casenode.addlabel(blockid,hl1,hl1);
+                   end;
                end;
              p.free;
+             sl1.free;
+             sl2.free;
+
              if token=_COMMA then
                consume(_COMMA)
              else
@@ -255,7 +318,7 @@ implementation
          consume(_UNTIL);
 
          first:=cblocknode.create(first);
-         p_e:=comp_expr(true);
+         p_e:=comp_expr(true,false);
          result:=cwhilerepeatnode.create(p_e,first,false,true);
       end;
 
@@ -267,7 +330,7 @@ implementation
 
       begin
          consume(_WHILE);
-         p_e:=comp_expr(true);
+         p_e:=comp_expr(true,false);
          consume(_DO);
          p_a:=statement;
          result:=cwhilerepeatnode.create(p_e,p_a,true,false);
@@ -276,183 +339,252 @@ implementation
 
     function for_statement : tnode;
 
-        procedure check_range(hp:tnode);
-        begin
-{$ifndef cpu64bit}
-          if hp.nodetype=ordconstn then
+        procedure check_range(hp:tnode; fordef: tdef);
+          begin
+            if (hp.nodetype=ordconstn) and
+               (fordef.typ<>errordef) then
+              testrange(fordef,tordconstnode(hp).value,false,true);
+          end;
+
+        function for_loop_create(hloopvar: tnode): tnode;
+          var
+             hp,
+             hblock,
+             hto,hfrom : tnode;
+             backward : boolean;
+             loopvarsym : tabstractvarsym;
+          begin
+             { Check loop variable }
+             loopvarsym:=nil;
+
+             { variable must be an ordinal, int64 is not allowed for 32bit targets }
+             if not(is_ordinal(hloopvar.resultdef))
+    {$ifndef cpu64bitaddr}
+                or is_64bitint(hloopvar.resultdef)
+    {$endif not cpu64bitaddr}
+                then
+               MessagePos(hloopvar.fileinfo,type_e_ordinal_expr_expected);
+
+             hp:=hloopvar;
+             while assigned(hp) and
+                   (
+                    { record/object fields and array elements are allowed }
+                    { in tp7 mode only                                    }
+                    (
+                     (m_tp7 in current_settings.modeswitches) and
+                     (
+                      ((hp.nodetype=subscriptn) and
+                       ((tsubscriptnode(hp).left.resultdef.typ=recorddef) or
+                        is_object(tsubscriptnode(hp).left.resultdef))
+                      ) or
+                      { constant array index }
+                      (
+                       (hp.nodetype=vecn) and
+                       is_constintnode(tvecnode(hp).right)
+                      )
+                     )
+                    ) or
+                    { equal typeconversions }
+                    (
+                     (hp.nodetype=typeconvn) and
+                     (ttypeconvnode(hp).convtype=tc_equal)
+                    )
+                   ) do
+               begin
+                 { Use the recordfield for loopvarsym }
+                 if not assigned(loopvarsym) and
+                    (hp.nodetype=subscriptn) then
+                   loopvarsym:=tsubscriptnode(hp).vs;
+                 hp:=tunarynode(hp).left;
+               end;
+
+             if assigned(hp) and
+                (hp.nodetype=loadn) then
+               begin
+                 case tloadnode(hp).symtableentry.typ of
+                   staticvarsym,
+                   localvarsym,
+                   paravarsym :
+                     begin
+                       { we need a simple loadn:
+                           1. The load must be in a global symtable or
+                               in the same level as the para of the current proc.
+                           2. value variables (no const,out or var)
+                           3. No threadvar, readonly or typedconst
+                       }
+                       if (
+                           (tloadnode(hp).symtable.symtablelevel=main_program_level) or
+                           (tloadnode(hp).symtable.symtablelevel=current_procinfo.procdef.parast.symtablelevel)
+                          ) and
+                          (tabstractvarsym(tloadnode(hp).symtableentry).varspez=vs_value) and
+                          ([vo_is_thread_var,vo_is_typed_const] * tabstractvarsym(tloadnode(hp).symtableentry).varoptions=[]) then
+                         begin
+                           { Assigning for-loop variable is only allowed in tp7 and macpas }
+                           if ([m_tp7,m_mac] * current_settings.modeswitches = []) then
+                             begin
+                               if not assigned(loopvarsym) then
+                                 loopvarsym:=tabstractvarsym(tloadnode(hp).symtableentry);
+                               include(loopvarsym.varoptions,vo_is_loop_counter);
+                             end;
+                         end
+                       else
+                         begin
+                           { Typed const is allowed in tp7 }
+                           if not(m_tp7 in current_settings.modeswitches) or
+                              not(vo_is_typed_const in tabstractvarsym(tloadnode(hp).symtableentry).varoptions) then
+                             MessagePos(hp.fileinfo,type_e_illegal_count_var);
+                         end;
+                     end;
+                   else
+                     MessagePos(hp.fileinfo,type_e_illegal_count_var);
+                 end;
+               end
+             else
+               MessagePos(hloopvar.fileinfo,type_e_illegal_count_var);
+
+             hfrom:=comp_expr(true,false);
+
+             if try_to_consume(_DOWNTO) then
+               backward:=true
+             else
+               begin
+                 consume(_TO);
+                 backward:=false;
+               end;
+
+             hto:=comp_expr(true,false);
+             consume(_DO);
+
+             { Check if the constants fit in the range }
+             check_range(hfrom,hloopvar.resultdef);
+             check_range(hto,hloopvar.resultdef);
+
+             { first set the varstate for from and to, so
+               uses of loopvar in those expressions will also
+               trigger a warning when it is not used yet. This
+               needs to be done before the instruction block is
+               parsed to have a valid hloopvar }
+             typecheckpass(hfrom);
+             set_varstate(hfrom,vs_read,[vsf_must_be_valid]);
+             typecheckpass(hto);
+             set_varstate(hto,vs_read,[vsf_must_be_valid]);
+             typecheckpass(hloopvar);
+             { in two steps, because vs_readwritten may turn on vsf_must_be_valid }
+             { for some subnodes                                                  }
+             set_varstate(hloopvar,vs_written,[]);
+             set_varstate(hloopvar,vs_read,[vsf_must_be_valid]);
+
+             { ... now the instruction block }
+             hblock:=statement;
+
+             { variable is not used for loop counter anymore }
+             if assigned(loopvarsym) then
+               exclude(loopvarsym.varoptions,vo_is_loop_counter);
+
+             result:=cfornode.create(hloopvar,hfrom,hto,hblock,backward);
+          end;
+
+
+          function for_in_loop_create(hloopvar: tnode): tnode;
+            var
+              expr: tnode;
             begin
-              if (tordconstnode(hp).value<low(longint)) or
-                 (tordconstnode(hp).value>high(longint)) then
-                begin
-                  CGMessage(parser_e_range_check_error);
-                  { recover, prevent more warnings/errors }
-                  tordconstnode(hp).value:=0;
-                end;
+              expr:=comp_expr(true,false);
+
+              consume(_DO);
+
+              set_varstate(hloopvar,vs_written,[]);
+              set_varstate(hloopvar,vs_read,[vsf_must_be_valid]);
+
+              result:=create_for_in_loop(hloopvar,statement,expr);
+
+              expr.free;
             end;
-{$endif cpu64bit}
-        end;
+
 
       var
-         hp,
-         hloopvar,
-         hblock,
-         hto,hfrom : tnode;
-         backward : boolean;
-         loopvarsym : tabstractvarsym;
+         hloopvar: tnode;
       begin
          { parse loop header }
          consume(_FOR);
 
-         hloopvar:=factor(false);
+         hloopvar:=factor(false,false);
+         valid_for_loopvar(hloopvar,true);
 
-         { Check loop variable }
-         loopvarsym:=nil;
-
-         { variable must be an ordinal, int64 is not allowed for 32bit targets }
-         if not(is_ordinal(hloopvar.resulttype.def))
-{$ifndef cpu64bit}
-            or is_64bitint(hloopvar.resulttype.def)
-{$endif cpu64bit}
-            then
-           MessagePos(hloopvar.fileinfo,type_e_ordinal_expr_expected);
-
-         hp:=hloopvar;
-         while assigned(hp) and
-               (
-                { record/object fields are allowed in tp7 mode only }
-                (
-                 (m_tp7 in aktmodeswitches) and
-                 (hp.nodetype=subscriptn) and
-                 ((tsubscriptnode(hp).left.resulttype.def.deftype=recorddef) or
-                  is_object(tsubscriptnode(hp).left.resulttype.def))
-                ) or
-                { constant array index }
-                (
-                 (hp.nodetype=vecn) and
-                 is_constintnode(tvecnode(hp).right)
-                ) or
-                { equal typeconversions }
-                (
-                 (hp.nodetype=typeconvn) and
-                 (ttypeconvnode(hp).convtype=tc_equal)
-                )
-               ) do
-           begin
-             { Use the recordfield for loopvarsym }
-             if not assigned(loopvarsym) and
-                (hp.nodetype=subscriptn) then
-               loopvarsym:=tsubscriptnode(hp).vs;
-             hp:=tunarynode(hp).left;
-           end;
-
-         if assigned(hp) and
-            (hp.nodetype=loadn) then
-           begin
-             case tloadnode(hp).symtableentry.typ of
-               globalvarsym,
-               localvarsym,
-               paravarsym :
-                 begin
-                   { we need a simple loadn and the load must be in a global symtable or
-                     in the same level as the para of the current proc }
-                   if (
-                       (tloadnode(hp).symtable.symtablelevel=main_program_level) or
-                       (tloadnode(hp).symtable.symtablelevel=current_procinfo.procdef.parast.symtablelevel)
-                      ) and
-                      not(
-                          ((tabstractvarsym(tloadnode(hp).symtableentry).varspez in [vs_var,vs_out]) or
-                           (vo_is_thread_var in tabstractvarsym(tloadnode(hp).symtableentry).varoptions))
-                         ) then
-                     begin
-                       { Assigning for-loop variable is only allowed in tp7 }
-                       if not(m_tp7 in aktmodeswitches) then
-                         begin
-                           if not assigned(loopvarsym) then
-                             loopvarsym:=tabstractvarsym(tloadnode(hp).symtableentry);
-                           include(loopvarsym.varoptions,vo_is_loop_counter);
-                         end;
-                     end
-                   else
-                     MessagePos(hp.fileinfo,type_e_illegal_count_var);
-                 end;
-               typedconstsym :
-                 begin
-                   { Bad programming, only allowed in tp7 mode }
-                   if not(m_tp7 in aktmodeswitches) then
-                     MessagePos(hp.fileinfo,type_e_illegal_count_var);
-                 end;
-               else
-                 MessagePos(hp.fileinfo,type_e_illegal_count_var);
-             end;
-           end
+         if try_to_consume(_ASSIGNMENT) then
+           result:=for_loop_create(hloopvar)
+         else if try_to_consume(_IN) then
+           result:=for_in_loop_create(hloopvar)
          else
-           MessagePos(hloopvar.fileinfo,type_e_illegal_count_var);
-
-         consume(_ASSIGNMENT);
-
-         hfrom:=comp_expr(true);
-
-         if try_to_consume(_DOWNTO) then
-           backward:=true
-         else
-           begin
-             consume(_TO);
-             backward:=false;
-           end;
-
-         hto:=comp_expr(true);
-         consume(_DO);
-
-         { Check if the constants fit in the range }
-         check_range(hfrom);
-         check_range(hto);
-
-         { first set the varstate for from and to, so
-           uses of loopvar in those expressions will also
-           trigger a warning when it is not used yet. This
-           needs to be done before the instruction block is
-           parsed to have a valid hloopvar }
-         resulttypepass(hfrom);
-         set_varstate(hfrom,vs_used,[vsf_must_be_valid]);
-         resulttypepass(hto);
-         set_varstate(hto,vs_used,[vsf_must_be_valid]);
-         resulttypepass(hloopvar);
-         set_varstate(hloopvar,vs_used,[]);
-
-         { ... now the instruction block }
-         hblock:=statement;
-
-         { variable is not used for loop counter anymore }
-         if assigned(loopvarsym) then
-           exclude(loopvarsym.varoptions,vo_is_loop_counter);
-
-         result:=cfornode.create(hloopvar,hfrom,hto,hblock,backward);
+           consume(_ASSIGNMENT); // fail
       end;
 
 
     function _with_statement : tnode;
 
       var
-         right,p : tnode;
-         i,levelcount : longint;
-         withsymtable,symtab : tsymtable;
-         obj : tobjectdef;
-         hp : tnode;
+         p   : tnode;
+         i   : longint;
+         st  : TSymtable;
          newblock : tblocknode;
          newstatement : tstatementnode;
-         calltempp,
-         loadp : ttempcreatenode;
-         refp : tnode;
-         htype : ttype;
+         calltempnode,
+         tempnode : ttempcreatenode;
+         valuenode,
+         hp,
+         refnode  : tnode;
+         hdef : tdef;
+         extendeddef : tabstractrecorddef;
+         helperdef : tobjectdef;
          hasimplicitderef : boolean;
+         withsymtablelist : TFPObjectList;
+
+         procedure pushobjchild(withdef,obj:tobjectdef);
+         var
+           parenthelperdef : tobjectdef;
+         begin
+           if not assigned(obj) then
+             exit;
+           pushobjchild(withdef,obj.childof);
+           { we need to look for helpers that were defined for the parent
+             class as well }
+           search_last_objectpascal_helper(obj,current_structdef,parenthelperdef);
+           { push the symtables of the helper's parents in reverse order }
+           if assigned(parenthelperdef) then
+             pushobjchild(withdef,parenthelperdef.childof);
+           { keep the original tobjectdef as owner, because that is used for
+             visibility of the symtable }
+           st:=twithsymtable.create(withdef,obj.symtable.SymList,refnode.getcopy);
+           symtablestack.push(st);
+           withsymtablelist.add(st);
+           { push the symtable of the helper }
+           if assigned(parenthelperdef) then
+             begin
+               st:=twithsymtable.create(withdef,parenthelperdef.symtable.SymList,refnode.getcopy);
+               symtablestack.push(st);
+               withsymtablelist.add(st);
+             end;
+         end;
+
+
       begin
-         p:=comp_expr(true);
-         do_resulttypepass(p);
-         right:=nil;
-         if (not codegenerror) and
-            (p.resulttype.def.deftype in [objectdef,recorddef]) then
+         p:=comp_expr(true,false);
+         do_typecheckpass(p);
+
+         if (p.nodetype=vecn) and
+            (nf_memseg in p.flags) then
+           CGMessage(parser_e_no_with_for_variable_in_other_segments);
+
+         { "with procvar" can never mean anything, so always try
+           to call it in case it returns a record/object/... }
+         maybe_call_procvar(p,false);
+
+         if (p.resultdef.typ in [objectdef,recorddef,classrefdef]) then
           begin
             newblock:=nil;
+            valuenode:=nil;
+            tempnode:=nil;
+
             { ignore nodes that don't add instructions in the tree }
             hp:=p;
             while { equal type conversions }
@@ -471,114 +603,151 @@ implementation
                 (tloadnode(hp).symtable=current_procinfo.procdef.localst) or
                 (tloadnode(hp).symtable=current_procinfo.procdef.parast) or
                 (tloadnode(hp).symtable.symtabletype in [staticsymtable,globalsymtable])
-               ) then
-             begin
-               { simple load, we can reference direct }
-               loadp:=nil;
-               refp:=p;
-             end
+               ) and
+               { MacPas objects are mapped to classes, and the MacPas compilers
+                 interpret with-statements with MacPas objects the same way
+                 as records (the object referenced by the with-statement
+                 must remain constant)
+               }
+               not(is_class(hp.resultdef) and
+                   (m_mac in current_settings.modeswitches)) then
+              begin
+                { simple load, we can reference direct }
+                refnode:=p;
+              end
             else
-             begin
-               calltempp:=nil;
-               { complex load, load in temp first }
-               newblock:=internalstatements(newstatement);
-               { when right is a call then load it first in a temp }
-               if p.nodetype=calln then
-                 begin
-                   calltempp:=ctempcreatenode.create(p.resulttype,p.resulttype.def.size,tt_persistent,false);
-                   addstatement(newstatement,calltempp);
-                   addstatement(newstatement,cassignmentnode.create(
-                       ctemprefnode.create(calltempp),
-                       p));
-                   p:=ctemprefnode.create(calltempp);
-                   resulttypepass(p);
-                 end;
-               { classes and interfaces have implicit dereferencing }
-               hasimplicitderef:=is_class_or_interface(p.resulttype.def);
-               if hasimplicitderef then
-                 htype:=p.resulttype
-               else
-                 htype.setdef(tpointerdef.create(p.resulttype));
-{$ifdef WITHNODEDEBUG}
-               { we can't generate debuginfo for a withnode stored in a }
-               { register                                               }
-               if (cs_debuginfo in aktmoduleswitches) then
-                 loadp:=ctempcreatenode.create(htype,sizeof(aint),tt_persistent,false)
-               else
-{$endif WITHNODEDEBUG}
-                 loadp:=ctempcreatenode.create(htype,sizeof(aint),tt_persistent,true);
-               resulttypepass(loadp);
-               if hasimplicitderef then
-                begin
-                  hp:=p;
-                  refp:=ctemprefnode.create(loadp);
-                end
-               else
-                begin
-                  hp:=caddrnode.create_internal(p);
-                  refp:=cderefnode.create(ctemprefnode.create(loadp));
-                end;
-               addstatement(newstatement,loadp);
-               addstatement(newstatement,cassignmentnode.create(
-                   ctemprefnode.create(loadp),
-                   hp));
-               resulttypepass(refp);
-             end;
+              begin
+                calltempnode:=nil;
+                { complex load, load in temp first }
+                newblock:=internalstatements(newstatement);
+                { when we can't take the address of p, load it in a temp }
+                { since we may need its address later on                 }
+                if not valid_for_addr(p,false) then
+                  begin
+                    calltempnode:=ctempcreatenode.create(p.resultdef,p.resultdef.size,tt_persistent,true);
+                    addstatement(newstatement,calltempnode);
+                    addstatement(newstatement,cassignmentnode.create(
+                        ctemprefnode.create(calltempnode),
+                        p));
+                    p:=ctemprefnode.create(calltempnode);
+                    typecheckpass(p);
+                  end;
+                { several object types have implicit dereferencing }
+                hasimplicitderef:=is_implicit_pointer_object_type(p.resultdef) or
+                                  (p.resultdef.typ = classrefdef);
+                if hasimplicitderef then
+                  hdef:=p.resultdef
+                else
+                  hdef:=tpointerdef.create(p.resultdef);
+                { load address of the value in a temp }
+                tempnode:=ctempcreatenode.create_withnode(hdef,sizeof(pint),tt_persistent,true,p);
+                typecheckpass(tnode(tempnode));
+                valuenode:=p;
+                refnode:=ctemprefnode.create(tempnode);
+                fillchar(refnode.fileinfo,sizeof(tfileposinfo),0);
+                { add address call for valuenode and deref for refnode if this
+                  is not done implicitly }
+                if not hasimplicitderef then
+                  begin
+                    valuenode:=caddrnode.create_internal_nomark(valuenode);
+                    include(valuenode.flags,nf_typedaddr);
+                    refnode:=cderefnode.create(refnode);
+                    fillchar(refnode.fileinfo,sizeof(tfileposinfo),0);
+                  end;
+                addstatement(newstatement,tempnode);
+                addstatement(newstatement,cassignmentnode.create(
+                    ctemprefnode.create(tempnode),
+                    valuenode));
+                typecheckpass(refnode);
+              end;
 
-            case p.resulttype.def.deftype of
+            { do we have a helper for this type? }
+            if p.resultdef.typ=classrefdef then
+              extendeddef:=tobjectdef(tclassrefdef(p.resultdef).pointeddef)
+            else
+              extendeddef:=tabstractrecorddef(p.resultdef);
+            search_last_objectpascal_helper(extendeddef,current_structdef,helperdef);
+            { Note: the symtable of the helper is pushed after the following
+                    "case", the symtables of the helper's parents are passed in
+                    the "case" branches }
+
+            withsymtablelist:=TFPObjectList.create(true);
+            case p.resultdef.typ of
               objectdef :
                 begin
-                   obj:=tobjectdef(p.resulttype.def);
-                   withsymtable:=twithsymtable.Create(obj,obj.symtable.symsearch,refp);
-                   { include also all parent symtables }
-                   levelcount:=1;
-                   obj:=obj.childof;
-                   symtab:=withsymtable;
-                   while assigned(obj) do
-                    begin
-                      { keep the original tobjectdef as owner, because that is used for
-                        visibility of the symtable }
-                      symtab.next:=twithsymtable.create(tobjectdef(p.resulttype.def),obj.symtable.symsearch,refp.getcopy);
-                      symtab:=symtab.next;
-                      obj:=obj.childof;
-                      inc(levelcount);
-                    end;
-                   symtab.next:=symtablestack;
-                   symtablestack:=withsymtable;
+                   { push symtables of all parents in reverse order }
+                   pushobjchild(tobjectdef(p.resultdef),tobjectdef(p.resultdef).childof);
+                   { push symtables of all parents of the helper in reverse order }
+                   if assigned(helperdef) then
+                     pushobjchild(helperdef,helperdef.childof);
+                   { push object symtable }
+                   st:=twithsymtable.Create(tobjectdef(p.resultdef),tobjectdef(p.resultdef).symtable.SymList,refnode);
+                   symtablestack.push(st);
+                   withsymtablelist.add(st);
                  end;
+              classrefdef :
+                begin
+                   { push symtables of all parents in reverse order }
+                   pushobjchild(tobjectdef(tclassrefdef(p.resultdef).pointeddef),tobjectdef(tclassrefdef(p.resultdef).pointeddef).childof);
+                   { push symtables of all parents of the helper in reverse order }
+                   if assigned(helperdef) then
+                     pushobjchild(helperdef,helperdef.childof);
+                   { push object symtable }
+                   st:=twithsymtable.Create(tobjectdef(tclassrefdef(p.resultdef).pointeddef),tobjectdef(tclassrefdef(p.resultdef).pointeddef).symtable.SymList,refnode);
+                   symtablestack.push(st);
+                   withsymtablelist.add(st);
+                end;
               recorddef :
                 begin
-                   symtab:=trecorddef(p.resulttype.def).symtable;
-                   levelcount:=1;
-                   withsymtable:=twithsymtable.create(trecorddef(p.resulttype.def),symtab.symsearch,refp);
-                   withsymtable.next:=symtablestack;
-                   symtablestack:=withsymtable;
+                   { push symtables of all parents of the helper in reverse order }
+                   if assigned(helperdef) then
+                     pushobjchild(helperdef,helperdef.childof);
+                   { push record symtable }
+                   st:=twithsymtable.create(trecorddef(p.resultdef),trecorddef(p.resultdef).symtable.SymList,refnode);
+                   symtablestack.push(st);
+                   withsymtablelist.add(st);
                 end;
+              else
+                internalerror(200601271);
             end;
+
+            { push helper symtable }
+            if assigned(helperdef) then
+              begin
+                st:=twithsymtable.Create(helperdef,helperdef.symtable.SymList,refnode.getcopy);
+                symtablestack.push(st);
+                withsymtablelist.add(st);
+              end;
+
             if try_to_consume(_COMMA) then
-              right:=_with_statement()
+              p:=_with_statement()
             else
               begin
                 consume(_DO);
                 if token<>_SEMICOLON then
-                  right:=statement
+                  p:=statement
                 else
-                  right:=cerrornode.create;
+                  p:=cnothingnode.create;
               end;
-            { remove symtables from the stack }
-            for i:=1 to levelcount do
-              symtablestack:=symtablestack.next;
-            p:=cwithnode.create(right,twithsymtable(withsymtable),levelcount,refp);
+
+            { remove symtables in reverse order from the stack }
+            for i:=withsymtablelist.count-1 downto 0 do
+              symtablestack.pop(TSymtable(withsymtablelist[i]));
+            withsymtablelist.free;
+
+//            p:=cwithnode.create(right,twithsymtable(withsymtable),levelcount,refnode);
+
             { Finalize complex withnode with destroy of temp }
             if assigned(newblock) then
              begin
                addstatement(newstatement,p);
-               addstatement(newstatement,ctempdeletenode.create(loadp));
-               if assigned(calltempp) then
-                 addstatement(newstatement,ctempdeletenode.create(calltempp));
+               if assigned(tempnode) then
+                 addstatement(newstatement,ctempdeletenode.create(tempnode));
+               if assigned(calltempnode) then
+                 addstatement(newstatement,ctempdeletenode.create(calltempnode));
                p:=newblock;
              end;
-            _with_statement:=p;
+            result:=p;
           end
          else
           begin
@@ -597,7 +766,7 @@ implementation
                if token<>_SEMICOLON then
                 statement;
              end;
-            _with_statement:=nil;
+            result:=nil;
           end;
       end;
 
@@ -610,10 +779,8 @@ implementation
 
 
     function raise_statement : tnode;
-
       var
          p,pobj,paddr,pframe : tnode;
-
       begin
          pobj:=nil;
          paddr:=nil;
@@ -622,12 +789,12 @@ implementation
          if not(token in endtokens) then
            begin
               { object }
-              pobj:=comp_expr(true);
+              pobj:=comp_expr(true,false);
               if try_to_consume(_AT) then
                 begin
-                   paddr:=comp_expr(true);
+                   paddr:=comp_expr(true,false);
                    if try_to_consume(_COMMA) then
-                     pframe:=comp_expr(true);
+                     pframe:=comp_expr(true,false);
                 end;
            end
          else
@@ -641,22 +808,20 @@ implementation
 
 
     function try_statement : tnode;
-
       var
          p_try_block,p_finally_block,first,last,
          p_default,p_specific,hp : tnode;
-         ot : ttype;
+         ot : tDef;
          sym : tlocalvarsym;
          old_block_type : tblock_type;
-         exceptsymtable : tsymtable;
-         objname,objrealname : stringid;
+         excepTSymtable : TSymtable;
+         objname,objrealname : TIDString;
          srsym : tsym;
-         srsymtable : tsymtable;
-         oldaktexceptblock: integer;
-
+         srsymtable : TSymtable;
+         t:ttoken;
+         unit_found:boolean;
+         oldcurrent_exceptblock: integer;
       begin
-         include(current_procinfo.flags,pi_uses_exceptions);
-
          p_default:=nil;
          p_specific:=nil;
 
@@ -664,8 +829,10 @@ implementation
          consume(_TRY);
          first:=nil;
          inc(exceptblockcounter);
-         oldaktexceptblock := aktexceptblock;
-         aktexceptblock := exceptblockcounter;
+         oldcurrent_exceptblock := current_exceptblock;
+         current_exceptblock := exceptblockcounter;
+         old_block_type := block_type;
+         block_type := bt_body;
 
          while (token<>_FINALLY) and (token<>_EXCEPT) do
            begin
@@ -688,24 +855,23 @@ implementation
          if try_to_consume(_FINALLY) then
            begin
               inc(exceptblockcounter);
-              aktexceptblock := exceptblockcounter;
+              current_exceptblock := exceptblockcounter;
               p_finally_block:=statements_til_end;
               try_statement:=ctryfinallynode.create(p_try_block,p_finally_block);
            end
          else
            begin
               consume(_EXCEPT);
-              old_block_type:=block_type;
               block_type:=bt_except;
               inc(exceptblockcounter);
-              aktexceptblock := exceptblockcounter;
-              ot:=generrortype;
+              current_exceptblock := exceptblockcounter;
+              ot:=generrordef;
               p_specific:=nil;
               if (idtoken=_ON) then
                 { catch specific exceptions }
                 begin
                    repeat
-                     consume(_ID);
+                     consume(_ON);
                      if token=_ID then
                        begin
                           objname:=pattern;
@@ -719,67 +885,63 @@ implementation
                             begin
                                consume_sym(srsym,srsymtable);
                                if (srsym.typ=typesym) and
-                                  is_class(ttypesym(srsym).restype.def) then
+                                  (is_class(ttypesym(srsym).typedef) or
+                                   is_javaclass(ttypesym(srsym).typedef)) then
                                  begin
-                                    ot:=ttypesym(srsym).restype;
+                                    ot:=ttypesym(srsym).typedef;
                                     sym:=tlocalvarsym.create(objrealname,vs_value,ot,[]);
                                  end
                                else
                                  begin
-                                    sym:=tlocalvarsym.create(objrealname,vs_value,generrortype,[]);
+                                    sym:=tlocalvarsym.create(objrealname,vs_value,generrordef,[]);
                                     if (srsym.typ=typesym) then
-                                      Message1(type_e_class_type_expected,ttypesym(srsym).restype.def.typename)
+                                      Message1(type_e_class_type_expected,ttypesym(srsym).typedef.typename)
                                     else
-                                      Message1(type_e_class_type_expected,ot.def.typename);
+                                      Message1(type_e_class_type_expected,ot.typename);
                                  end;
-                               exceptsymtable:=tstt_exceptsymtable.create;
-                               exceptsymtable.insert(sym);
-                               { insert the exception symtable stack }
-                               exceptsymtable.next:=symtablestack;
-                               symtablestack:=exceptsymtable;
                             end
                           else
                             begin
                                { check if type is valid, must be done here because
                                  with "e: Exception" the e is not necessary }
-                               if srsym=nil then
-                                begin
-                                  identifier_not_found(objrealname);
-                                  srsym:=generrorsym;
-                                end;
+
                                { support unit.identifier }
-                               if srsym.typ=unitsym then
+                               unit_found:=try_consume_unitsym(srsym,srsymtable,t,false);
+                               if srsym=nil then
                                  begin
-                                    consume(_POINT);
-                                    srsym:=searchsymonlyin(tunitsym(srsym).unitsymtable,pattern);
-                                    if srsym=nil then
-                                     begin
-                                       identifier_not_found(orgpattern);
-                                       srsym:=generrorsym;
-                                     end;
-                                    consume(_ID);
+                                   identifier_not_found(orgpattern);
+                                   srsym:=generrorsym;
                                  end;
+                               if unit_found then
+                                 consume(t);
                                { check if type is valid, must be done here because
                                  with "e: Exception" the e is not necessary }
                                if (srsym.typ=typesym) and
-                                  is_class(ttypesym(srsym).restype.def) then
-                                 ot:=ttypesym(srsym).restype
+                                  (is_class(ttypesym(srsym).typedef) or
+                                   is_javaclass(ttypesym(srsym).typedef)) then
+                                 ot:=ttypesym(srsym).typedef
                                else
                                  begin
-                                    ot:=generrortype;
+                                    ot:=generrordef;
                                     if (srsym.typ=typesym) then
-                                      Message1(type_e_class_type_expected,ttypesym(srsym).restype.def.typename)
+                                      Message1(type_e_class_type_expected,ttypesym(srsym).typedef.typename)
                                     else
-                                      Message1(type_e_class_type_expected,ot.def.typename);
+                                      Message1(type_e_class_type_expected,ot.typename);
                                  end;
-                               exceptsymtable:=nil;
+                               { create dummy symbol so we don't need a special
+                                 case in ncgflw, and so that we always know the
+                                 type }
+                               sym:=tlocalvarsym.create('$exceptsym',vs_value,ot,[]);
                             end;
+                          excepTSymtable:=tstt_excepTSymtable.create;
+                          excepTSymtable.insert(sym);
+                          symtablestack.push(excepTSymtable);
                        end
                      else
                        consume(_ID);
                      consume(_DO);
                      hp:=connode.create(nil,statement);
-                     if ot.def.deftype=errordef then
+                     if ot.typ=errordef then
                        begin
                           hp.free;
                           hp:=cerrornode.create;
@@ -799,15 +961,15 @@ implementation
                      { that last and hp are errornodes (JM)                            }
                      if last.nodetype = onn then
                        begin
-                         tonnode(last).excepttype:=tobjectdef(ot.def);
-                         tonnode(last).exceptsymtable:=exceptsymtable;
+                         tonnode(last).excepttype:=tobjectdef(ot);
+                         tonnode(last).excepTSymtable:=excepTSymtable;
                        end;
                      { remove exception symtable }
-                     if assigned(exceptsymtable) then
+                     if assigned(excepTSymtable) then
                        begin
-                         symtablestack:=symtablestack.next;
+                         symtablestack.pop(excepTSymtable);
                          if last.nodetype <> onn then
-                           exceptsymtable.free;
+                           excepTSymtable.free;
                        end;
                      if not try_to_consume(_SEMICOLON) then
                         break;
@@ -827,10 +989,10 @@ implementation
                    p_default:=statements_til_end;
                 end;
 
-              block_type:=old_block_type;
               try_statement:=ctryexceptnode.create(p_try_block,p_specific,p_default);
            end;
-         aktexceptblock := oldaktexceptblock;
+         block_type:=old_block_type;
+         current_exceptblock := oldcurrent_exceptblock;
       end;
 
 
@@ -840,12 +1002,15 @@ implementation
         Marker  : tai;
         reg     : tregister;
         asmreader : tbaseasmreader;
+        entrypos : tfileposinfo;
       begin
          Inside_asm_statement:=true;
-         if assigned(asmmodeinfos[aktasmmode]) then
+         if assigned(asmmodeinfos[current_settings.asmmode]) then
            begin
-             asmreader:=asmmodeinfos[aktasmmode]^.casmreader.create;
-             asmstat:=casmnode.create(asmreader.assemble as taasmoutput);
+             asmreader:=asmmodeinfos[current_settings.asmmode]^.casmreader.create;
+             entrypos:=current_filepos;
+             asmstat:=casmnode.create(asmreader.assemble as TAsmList);
+             asmstat.fileinfo:=entrypos;
              asmreader.free;
            end
          else
@@ -860,15 +1025,21 @@ implementation
          { END is read, got a list of changed registers? }
          if try_to_consume(_LECKKLAMMER) then
            begin
+{$ifdef cpunofpu}
+             asmstat.used_regs_fpu:=[0..first_int_imreg-1];
+{$else cpunofpu}
              asmstat.used_regs_fpu:=[0..first_fpu_imreg-1];
+{$endif cpunofpu}
              if token<>_RECKKLAMMER then
               begin
+                if po_assembler in current_procinfo.procdef.procoptions then
+                  Message(parser_w_register_list_ignored);
                 repeat
                   { it's possible to specify the modified registers }
-                  reg:=std_regnum_search(lower(pattern));
+                  reg:=std_regnum_search(lower(cstringpattern));
                   if reg<>NR_NO then
                     begin
-                      if getregtype(reg)=R_INTREGISTER then
+                      if (getregtype(reg)=R_INTREGISTER) and not(po_assembler in current_procinfo.procdef.procoptions) then
                         include(asmstat.used_regs_int,getsupreg(reg));
                     end
                   else
@@ -890,9 +1061,9 @@ implementation
            this is needed for the optimizer }
          If Assigned(AsmStat.p_asm) Then
            Begin
-             Marker := Tai_Marker.Create(AsmBlockStart);
+             Marker := Tai_Marker.Create(mark_AsmBlockStart);
              AsmStat.p_asm.Insert(Marker);
-             Marker := Tai_Marker.Create(AsmBlockEnd);
+             Marker := Tai_Marker.Create(mark_AsmBlockEnd);
              AsmStat.p_asm.Concat(Marker);
            End;
          Inside_asm_statement:=false;
@@ -902,38 +1073,46 @@ implementation
 
     function statement : tnode;
       var
-         p       : tnode;
-         code    : tnode;
-         filepos : tfileposinfo;
-         srsym   : tsym;
-         srsymtable : tsymtable;
-         s       : stringid;
+         p,
+         code       : tnode;
+         filepos    : tfileposinfo;
+         srsym      : tsym;
+         srsymtable : TSymtable;
+         s          : TIDString;
       begin
-         filepos:=akttokenpos;
+         filepos:=current_tokenpos;
          case token of
            _GOTO :
              begin
-                if not(cs_support_goto in aktmoduleswitches)then
-                 Message(sym_e_goto_and_label_not_supported);
+                if not(cs_support_goto in current_settings.moduleswitches) then
+                  Message(sym_e_goto_and_label_not_supported);
                 consume(_GOTO);
                 if (token<>_INTCONST) and (token<>_ID) then
                   begin
-                     Message(sym_e_label_not_found);
-                     code:=cerrornode.create;
+                    Message(sym_e_label_not_found);
+                    code:=cerrornode.create;
                   end
                 else
                   begin
                      if token=_ID then
-                      consume_sym(srsym,srsymtable)
+                       consume_sym(srsym,srsymtable)
                      else
                       begin
+                        if token<>_INTCONST then
+                          internalerror(201008021);
+
+                        { strip leading 0's in iso mode }
+                        if m_iso in current_settings.modeswitches then
+                          while pattern[1]='0' do
+                            delete(pattern,1,1);
+
                         searchsym(pattern,srsym,srsymtable);
                         if srsym=nil then
-                         begin
-                           identifier_not_found(pattern);
-                           srsym:=generrorsym;
-                           srsymtable:=nil;
-                         end;
+                          begin
+                            identifier_not_found(pattern);
+                            srsym:=generrorsym;
+                            srsymtable:=nil;
+                          end;
                         consume(token);
                       end;
 
@@ -944,11 +1123,16 @@ implementation
                        end
                      else
                        begin
-                         { goto is only allowed to labels within the current scope }
+                         { goto outside the current scope? }
                          if srsym.owner<>current_procinfo.procdef.localst then
-                           CGMessage(parser_e_goto_outside_proc);
+                           begin
+                             { allowed? }
+                             if not(m_non_local_goto in current_settings.modeswitches) then
+                               Message(parser_e_goto_outside_proc);
+                             include(current_procinfo.flags,pi_has_global_goto);
+                           end;
                          code:=cgotonode.create(tlabelsym(srsym));
-                         tgotonode(code).labsym:=tlabelsym(srsym);
+                         tgotonode(code).labelsym:=tlabelsym(srsym);
                          { set flag that this label is used }
                          tlabelsym(srsym).used:=true;
                        end;
@@ -983,7 +1167,7 @@ implementation
                 if (current_procinfo.procdef.proctypeoption<>potype_constructor) then
                   Message(parser_e_fail_only_in_constructor);
                 consume(_FAIL);
-                code:=call_fail_node;
+                code:=cnodeutils.call_fail_node;
              end;
            _ASM :
              code:=_asm_statement;
@@ -991,7 +1175,10 @@ implementation
              Message(scan_f_end_of_file);
          else
            begin
-             p:=expr;
+             { don't typecheck yet, because that will also simplify, which may
+               result in not detecting certain kinds of syntax errors --
+               see mantis #15594 }
+             p:=expr(false);
              { save the pattern here for latter usage, the label could be "000",
                even if we read an expression, the pattern is still valid if it's really
                a label (FK)
@@ -1004,15 +1191,30 @@ implementation
              if (p.nodetype=ordconstn) and
                 try_to_consume(_COLON) then
               begin
+                { in iso mode, 0003: is equal to 3: }
+                if m_iso in current_settings.modeswitches then
+                  searchsym(tostr(tordconstnode(p).value),srsym,srsymtable)
+                else
+                  searchsym(s,srsym,srsymtable);
                 p.free;
-                searchsym(s,srsym,srsymtable);
+
                 if assigned(srsym) and
                    (srsym.typ=labelsym) then
                  begin
                    if tlabelsym(srsym).defined then
-                    Message(sym_e_label_already_defined);
+                     Message(sym_e_label_already_defined);
+                   if symtablestack.top.symtablelevel<>srsymtable.symtablelevel then
+                     begin
+                       tlabelsym(srsym).nonlocal:=true;
+                       exclude(current_procinfo.procdef.procoptions,po_inline);
+                     end;
+                   if tlabelsym(srsym).nonlocal and
+                     (current_procinfo.procdef.proctypeoption in [potype_unitinit,potype_unitfinalize]) then
+                     Message(sym_e_interprocgoto_into_init_final_code_not_allowed);
+
                    tlabelsym(srsym).defined:=true;
-                   p:=clabelnode.create(tlabelsym(srsym),nil);
+                   p:=clabelnode.create(nil,tlabelsym(srsym));
+                   tlabelsym(srsym).code:=p;
                  end
                 else
                  begin
@@ -1029,8 +1231,8 @@ implementation
                    tlabelnode(p).left:=cnothingnode.create
                  else
                    tlabelnode(p).left:=statement();
-                 { be sure to have left also resulttypepass }
-                 resulttypepass(tlabelnode(p).left);
+                 { be sure to have left also typecheckpass }
+                 typecheckpass(tlabelnode(p).left);
                end
              else
 
@@ -1042,23 +1244,42 @@ implementation
              { blockn support because a read/write is changed into a blocknode }
              { with a separate statement for each read/write operation (JM)    }
              { the same is true for val() if the third parameter is not 32 bit }
-             if not(p.nodetype in [nothingn,calln,ifn,assignn,breakn,inlinen,
-                                   continuen,labeln,blockn,exitn]) then
+             if not(p.nodetype in [nothingn,errorn,calln,ifn,assignn,breakn,inlinen,
+                                   continuen,labeln,blockn,exitn]) or
+                ((p.nodetype=inlinen) and
+                 not is_void(p.resultdef)) or
+                ((p.nodetype=calln) and
+                 (assigned(tcallnode(p).procdefinition)) and
+                 (tcallnode(p).procdefinition.proctypeoption=potype_operator)) then
                Message(parser_e_illegal_expression);
+
+             if not assigned(p.resultdef) then
+               do_typecheckpass(p);
 
              { Specify that we don't use the value returned by the call.
                This is used for :
                 - dispose of temp stack space
-                - dispose on FPU stack }
+                - dispose on FPU stack
+                - extended syntax checking }
              if (p.nodetype=calln) then
-               exclude(tcallnode(p).callnodeflags,cnf_return_value_used);
+               begin
+                 exclude(tcallnode(p).callnodeflags,cnf_return_value_used);
 
+                 { in $x- state, the function result must not be ignored }
+                 if not(cs_extsyntax in current_settings.moduleswitches) and
+                    not(is_void(p.resultdef)) and
+                    { can be nil in case there was an error in the expression }
+                    assigned(tcallnode(p).procdefinition) and
+                    not((tcallnode(p).procdefinition.proctypeoption=potype_constructor) and
+                        is_object(tprocdef(tcallnode(p).procdefinition).struct)) then
+                   Message(parser_e_illegal_expression);
+               end;
              code:=p;
            end;
          end;
          if assigned(code) then
            begin
-             resulttypepass(code);
+             typecheckpass(code);
              code.fileinfo:=filepos;
            end;
          statement:=code;
@@ -1073,7 +1294,7 @@ implementation
 
       begin
          first:=nil;
-         filepos:=akttokenpos;
+         filepos:=current_tokenpos;
          consume(starttoken);
 
          while not(token in [_END,_FINALIZATION]) do
@@ -1118,14 +1339,21 @@ implementation
     function assembler_block : tnode;
       var
         p : tnode;
+{$ifndef arm}
         locals : longint;
+{$endif arm}
+        srsym : tsym;
       begin
          { Rename the funcret so that recursive calls are possible }
-         if not is_void(current_procinfo.procdef.rettype.def) then
-           symtablestack.rename(current_procinfo.procdef.resultname,'$hiddenresult');
+         if not is_void(current_procinfo.procdef.returndef) then
+           begin
+             srsym:=TSym(current_procinfo.procdef.localst.Find(current_procinfo.procdef.procsym.name));
+             if assigned(srsym) then
+               srsym.realname:='$hiddenresult';
+           end;
 
          { delphi uses register calling for assembler methods }
-         if (m_delphi in aktmodeswitches) and
+         if (m_delphi in current_settings.modeswitches) and
             (po_assembler in current_procinfo.procdef.procoptions) and
             not(po_hascallingconvention in current_procinfo.procdef.procoptions) then
            current_procinfo.procdef.proccalloption:=pocall_register;
@@ -1136,8 +1364,7 @@ implementation
          include(current_procinfo.flags,pi_is_assembler);
          p:=_asm_statement;
 
-{$ifndef sparc}
-{$ifndef arm}
+{$if not(defined(sparc)) and not(defined(arm)) and not(defined(avr))}
          if (po_assembler in current_procinfo.procdef.procoptions) then
            begin
              { set the framepointer to esp for assembler functions when the
@@ -1148,60 +1375,34 @@ implementation
                - target processor has optional frame pointer save
                  (vm, i386, vm only currently)
              }
-             locals:=0;
-             current_procinfo.procdef.localst.foreach_static(@count_locals,@locals);
-             current_procinfo.procdef.parast.foreach_static(@count_locals,@locals);
+             locals:=tabstractlocalsymtable(current_procinfo.procdef.parast).count_locals;
+             if (current_procinfo.procdef.localst.symtabletype=localsymtable) then
+               inc(locals,tabstractlocalsymtable(current_procinfo.procdef.localst).count_locals);
              if (locals=0) and
-                (current_procinfo.procdef.owner.symtabletype<>objectsymtable) and
+                not (current_procinfo.procdef.owner.symtabletype in [ObjectSymtable,recordsymtable]) and
                 (not assigned(current_procinfo.procdef.funcretsym) or
-                 (tabstractvarsym(current_procinfo.procdef.funcretsym).refcount<=1)) and
-                not(paramanager.ret_in_param(current_procinfo.procdef.rettype.def,current_procinfo.procdef.proccalloption)) then
+                 (tabstractvarsym(current_procinfo.procdef.funcretsym).refs<=1)) and
+                not(paramanager.ret_in_param(current_procinfo.procdef.returndef,current_procinfo.procdef.proccalloption)) then
                begin
                  { Only need to set the framepointer, the locals will
-                   be inserted with the correct reference in tcgasmnode.pass_2 }
+                   be inserted with the correct reference in tcgasmnode.pass_generate_code }
                  current_procinfo.framepointer:=NR_STACK_POINTER_REG;
                end;
            end;
-{$endif arm}
-{$endif sparc}
+{$endif not(defined(sparc)) and not(defined(arm)) and not(defined(avr))}
 
         { Flag the result as assigned when it is returned in a
           register.
         }
         if assigned(current_procinfo.procdef.funcretsym) and
-           (not paramanager.ret_in_param(current_procinfo.procdef.rettype.def,current_procinfo.procdef.proccalloption)) then
-          tabstractvarsym(current_procinfo.procdef.funcretsym).varstate:=vs_assigned;
+           (not paramanager.ret_in_param(current_procinfo.procdef.returndef,current_procinfo.procdef.proccalloption)) then
+          tabstractvarsym(current_procinfo.procdef.funcretsym).varstate:=vs_initialised;
 
         { because the END is already read we need to get the
           last_endtoken_filepos here (PFV) }
-        last_endtoken_filepos:=akttokenpos;
+        last_endtoken_filepos:=current_tokenpos;
 
         assembler_block:=p;
       end;
 
 end.
-{
-  $Log: pstatmnt.pas,v $
-  Revision 1.156  2005/03/25 22:20:19  peter
-    * add hint when passing an uninitialized variable to a var parameter
-
-  Revision 1.155  2005/02/14 17:13:07  peter
-    * truncate log
-
-  Revision 1.154  2005/02/11 16:24:59  peter
-    * don't set varstate to vs_used for record in with at start yet
-
-  Revision 1.153  2005/02/08 21:25:14  florian
-    * fixed usage of 000 as label
-
-  Revision 1.152  2005/02/03 17:10:58  peter
-    * check for-loop constants ranges
-
-  Revision 1.151  2005/01/31 20:23:53  peter
-    * set varstate before parsing the instruction block in for statements
-
-  Revision 1.150  2005/01/31 16:16:21  peter
-    * for-node cleanup, checking for uninitialzed from and to values
-      is now supported
-
-}

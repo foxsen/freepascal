@@ -1,5 +1,4 @@
 {
-    $Id: int64.inc,v 1.29 2005/02/14 17:13:22 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team
 
@@ -34,7 +33,7 @@
 {$ifdef  FPC_INCLUDE_SOFTWARE_SHIFT_INT64}
 
 {$ifndef FPC_SYSTEM_HAS_SHL_QWORD}
-    function fpc_shl_qword(value,shift : qword) : qword; [public,alias: 'FPC_SHL_QWORD']; {$ifdef hascompilerproc} compilerproc; {$endif}
+    function fpc_shl_qword(value,shift : qword) : qword; [public,alias: 'FPC_SHL_QWORD']; compilerproc;
       begin
         shift:=shift and 63;
         if shift=0 then
@@ -54,7 +53,7 @@
 
 
 {$ifndef FPC_SYSTEM_HAS_SHR_QWORD}
-   function fpc_shr_qword(value,shift : qword) : qword; [public,alias: 'FPC_SHR_QWORD']; {$ifdef hascompilerproc} compilerproc; {$endif}
+   function fpc_shr_qword(value,shift : qword) : qword; [public,alias: 'FPC_SHR_QWORD']; compilerproc;
       begin
         shift:=shift and 63;
         if shift=0 then
@@ -74,7 +73,7 @@
 
 
 {$ifndef FPC_SYSTEM_HAS_SHL_INT64}
-    function fpc_shl_int64(value,shift : int64) : int64; [public,alias: 'FPC_SHL_INT64']; {$ifdef hascompilerproc} compilerproc; {$endif}
+    function fpc_shl_int64(value,shift : int64) : int64; [public,alias: 'FPC_SHL_INT64']; compilerproc;
       begin
         shift:=shift and 63;
         if shift=0 then
@@ -94,7 +93,7 @@
 
 
 {$ifndef FPC_SYSTEM_HAS_SHR_INT64}
-    function fpc_shr_int64(value,shift : int64) : int64; [public,alias: 'FPC_SHR_INT64']; {$ifdef hascompilerproc} compilerproc; {$endif}
+    function fpc_shr_int64(value,shift : int64) : int64; [public,alias: 'FPC_SHR_INT64']; compilerproc;
       begin
         shift:=shift and 63;
         if shift=0 then
@@ -146,7 +145,7 @@
 
 
 {$ifndef FPC_SYSTEM_HAS_DIV_QWORD}
-    function fpc_div_qword(n,z : qword) : qword;[public,alias: 'FPC_DIV_QWORD']; {$ifdef hascompilerproc} compilerproc; {$endif}
+    function fpc_div_qword(n,z : qword) : qword;[public,alias: 'FPC_DIV_QWORD']; compilerproc;
 
       var
          shift,lzz,lzn : longint;
@@ -178,7 +177,7 @@
 
 
 {$ifndef FPC_SYSTEM_HAS_MOD_QWORD}
-    function fpc_mod_qword(n,z : qword) : qword;[public,alias: 'FPC_MOD_QWORD']; {$ifdef hascompilerproc} compilerproc; {$endif}
+    function fpc_mod_qword(n,z : qword) : qword;[public,alias: 'FPC_MOD_QWORD']; compilerproc;
 
       var
          shift,lzz,lzn : longint;
@@ -211,7 +210,7 @@
 
 
 {$ifndef FPC_SYSTEM_HAS_DIV_INT64}
-    function fpc_div_int64(n,z : int64) : int64;[public,alias: 'FPC_DIV_INT64']; {$ifdef hascompilerproc} compilerproc; {$endif}
+    function fpc_div_int64(n,z : int64) : int64;[public,alias: 'FPC_DIV_INT64']; compilerproc;
 
       var
          sign : boolean;
@@ -249,7 +248,7 @@
 
 
 {$ifndef FPC_SYSTEM_HAS_MOD_INT64}
-    function fpc_mod_int64(n,z : int64) : int64;[public,alias: 'FPC_MOD_INT64']; {$ifdef hascompilerproc} compilerproc; {$endif}
+    function fpc_mod_int64(n,z : int64) : int64;[public,alias: 'FPC_MOD_INT64']; compilerproc;
 
       var
          signed : boolean;
@@ -285,7 +284,7 @@
     { multiplies two qwords
       the longbool for checkoverflow avoids a misaligned stack
     }
-    function fpc_mul_qword(f1,f2 : qword;checkoverflow : longbool) : qword;[public,alias: 'FPC_MUL_QWORD']; {$ifdef hascompilerproc} compilerproc; {$endif}
+    function fpc_mul_qword(f1,f2 : qword;checkoverflow : longbool) : qword;[public,alias: 'FPC_MUL_QWORD']; compilerproc;
 
       var
          _f1,bitpos : qword;
@@ -309,10 +308,8 @@
                   ((_f1>fpc_mul_qword) or (f1>fpc_mul_qword)))) then
                   HandleErrorFrame(215,get_frame);
               end;
-{$ifndef VER1_0}
             { when bootstrapping, we forget about overflow checking for qword :) }
             f1overflowed:=f1overflowed or ((f1 and (1 shl 63))<>0);
-{$endif VER1_0}
             f1:=f1 shl 1;
             bitpos:=bitpos shl 1;
           end;
@@ -321,7 +318,7 @@
 
 
 {$ifndef FPC_SYSTEM_HAS_MUL_INT64}
-    function fpc_mul_int64(f1,f2 : int64;checkoverflow : longbool) : int64;[public,alias: 'FPC_MUL_INT64']; {$ifdef hascompilerproc} compilerproc; {$endif}
+    function fpc_mul_int64(f1,f2 : int64;checkoverflow : longbool) : int64;[public,alias: 'FPC_MUL_INT64']; compilerproc;
 
       var
          sign : boolean;
@@ -351,8 +348,8 @@
               ((q1>q3) or (q2>q3) or
                 { the bit 63 can be only set if we have $80000000 00000000 }
                 { and sign is true                                         }
-                ((tqwordrec(q3).high and dword($80000000))<>0) and
-                 ((q3<>(qword(1) shl 63)) or not(sign))
+                (q3 shr 63<>0) and
+                 ((q3<>qword(qword(1) shl 63)) or not(sign))
                 ) then
                 HandleErrorFrame(215,get_frame);
 
@@ -364,9 +361,3 @@
       end;
 {$endif FPC_SYSTEM_HAS_MUL_INT64}
 
-{
-  $Log: int64.inc,v $
-  Revision 1.29  2005/02/14 17:13:22  peter
-    * truncate log
-
-}

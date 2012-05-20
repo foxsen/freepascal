@@ -1,5 +1,4 @@
 {
-    $Id: threadvr.inc,v 1.5 2005/02/14 17:13:29 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Michael Van Canneyt
     member of the Free Pascal development team
@@ -20,7 +19,6 @@
                            Threadvar support
 *****************************************************************************}
 
-{$ifdef HASTHREADVAR}
 
 type
   pltvInitEntry = ^ltvInitEntry;
@@ -33,9 +31,12 @@ type
     count  : dword;
     tables : packed array [1..32767] of pltvInitEntry;
   end;
+  PltvInitTablesTable = ^TltvInitTablesTable;
 
+{$ifndef FPC_HAS_INDIRECT_MAIN_INFORMATION}
 var
   ThreadvarTablesTable : TltvInitTablesTable; external name 'FPC_THREADVARTABLES';
+{$endif FPC_HAS_INDIRECT_MAIN_INFORMATION}
 
 procedure init_unit_threadvars (tableEntry : pltvInitEntry);
 begin
@@ -51,11 +52,18 @@ procedure init_all_unit_threadvars;
 var
   i : integer;
 begin
+{$ifdef FPC_HAS_INDIRECT_MAIN_INFORMATION}
+  with PltvInitTablesTable(EntryInformation.ThreadvarTablesTable)^ do
+{$else FPC_HAS_INDIRECT_MAIN_INFORMATION}
+  with ThreadvarTablesTable do
+{$endif FPC_HAS_INDIRECT_MAIN_INFORMATION}
+  begin
 {$ifdef DEBUG_MT}
-  WriteLn ('init_all_unit_threadvars (',ThreadvarTablesTable.count,') units');
+    WriteLn ('init_all_unit_threadvars (',count,') units');
 {$endif}
-  for i := 1 to ThreadvarTablesTable.count do
-    init_unit_threadvars (ThreadvarTablesTable.tables[i]);
+    for i := 1 to count do
+      init_unit_threadvars (tables[i]);
+  end;
 end;
 
 
@@ -78,11 +86,18 @@ procedure copy_all_unit_threadvars;
 var
   i : integer;
 begin
+{$ifdef FPC_HAS_INDIRECT_MAIN_INFORMATION}
+  with PltvInitTablesTable(EntryInformation.ThreadvarTablesTable)^ do
+{$else FPC_HAS_INDIRECT_MAIN_INFORMATION}
+  with ThreadvarTablesTable do
+{$endif FPC_HAS_INDIRECT_MAIN_INFORMATION}
+  begin
 {$ifdef DEBUG_MT}
-  WriteLn ('copy_all_unit_threadvars (',ThreadvarTablesTable.count,') units');
+    WriteLn ('copy_all_unit_threadvars (',count,') units');
 {$endif}
-  for i := 1 to ThreadvarTablesTable.count do
-    copy_unit_threadvars (ThreadvarTablesTable.tables[i]);
+    for i := 1 to count do
+      copy_unit_threadvars (tables[i]);
+  end;
 end;
 
 procedure InitThreadVars(RelocProc : Pointer);
@@ -96,16 +111,11 @@ begin
    copy_all_unit_threadvars;
    { install threadvar handler }
    fpc_threadvar_relocate_proc:=RelocProc;
+{$ifdef FPC_HAS_FEATURE_HEAP}
+{$ifndef HAS_MEMORYMANAGER}
+   RelocateHeap;
+{$endif HAS_MEMORYMANAGER}
+{$endif}
 end;
 
-{$endif HASTHREADVAR}
 
-{
-  $Log: threadvr.inc,v $
-  Revision 1.5  2005/02/14 17:13:29  peter
-    * truncate log
-
-  Revision 1.4  2005/02/05 23:49:49  florian
-    * threadvars on x86_64 fixed
-
-}

@@ -1,5 +1,4 @@
 {
-    $Id: cpubase.pas,v 1.36 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl
 
     Contains the base types for the m68k
@@ -39,8 +38,8 @@ unit cpubase;
     type
     {  warning: CPU32 opcodes are not fully compatible with the MC68020. }
        { 68000 only opcodes }
-       tasmop = (a_abcd,
-         a_add,a_adda,a_addi,a_addq,a_addx,a_and,a_andi,
+       tasmop = (a_none,
+         a_abcd,a_add,a_adda,a_addi,a_addq,a_addx,a_and,a_andi,
          a_asl,a_asr,a_bcc,a_bcs,a_beq,a_bge,a_bgt,a_bhi,
          a_ble,a_bls,a_blt,a_bmi,a_bne,a_bpl,a_bvc,a_bvs,
          a_bchg,a_bclr,a_bra,a_bset,a_bsr,a_btst,a_chk,
@@ -86,7 +85,7 @@ unit cpubase;
          { (this may include 68040 mmu instructions)          }
          a_frestore,a_fsave,a_pflush,a_pflusha,a_pload,a_pmove,a_ptest,
          { useful for assembly language output }
-         a_label,a_none,a_dbxx,a_sxx,a_bxx,a_fbxx);
+         a_label,a_dbxx,a_sxx,a_bxx,a_fbxx);
 
       {# This should define the array of instructions as string }
       op2strtable=array[tasmop] of string[11];
@@ -109,7 +108,7 @@ unit cpubase;
       { Available Superregisters }
       {$i r68ksup.inc}
 
-      { No Subregisters }
+      { ? whatever... }
       R_SUBWHOLE = R_SUBNONE;
 
       { Available Registers }
@@ -128,7 +127,9 @@ unit cpubase;
       first_mm_supreg    = 0;
       first_mm_imreg     = 0;
 
-{$WARNING TODO FIX BSSTART}
+      maxfpuregs = 8;
+
+{ TODO: FIX BSSTART}
       regnumber_count_bsstart = 16;
 
       regnumber_table : array[tregisterindex] of tregister = (
@@ -140,13 +141,14 @@ unit cpubase;
       );
 
       regdwarf_table : array[tregisterindex] of shortint = (
-{$warning TODO reused stabs values!}
+{ TODO: reused stabs values!}
         {$i r68ksta.inc}
       );
 
       { registers which may be destroyed by calls }
-      VOLATILE_INTREGISTERS = [];
+      VOLATILE_INTREGISTERS = [RS_D0,RS_D1];
       VOLATILE_FPUREGISTERS = [];
+      VOLATILE_ADDRESSREGISTER = [RS_A0,RS_A1];
 
     type
       totherregisterset = set of tregisterindex;
@@ -167,12 +169,6 @@ unit cpubase;
       cond2str:array[TAsmCond] of string[3]=('',
         'cc','ls','cs','lt','eq','mi','f','ne',
         'ge','pl','gt','t','hi','vc','le','vs'
-      );
-
-      inverse_cond:array[TAsmCond] of TAsmCond=(C_None,
-{$warning TODO, this is just a copy!}
-         C_CC,C_LS,C_CS,C_LT,C_EQ,C_MI,C_F,C_NE,
-         C_GE,C_PL,C_GT,C_T,C_HI,C_VC,C_LE,C_VS
       );
 
 {*****************************************************************************
@@ -222,8 +218,10 @@ unit cpubase;
 
       {# Defines the default address size for a processor, }
       OS_ADDR = OS_32;
-      {# the natural int size for a processor,             }
+      {# the natural int size for a processor,
+         has to match osuinttype/ossinttype as initialized in psystem }
       OS_INT = OS_32;
+      OS_SINT = OS_S32;
       {# the maximum float size for a processor,           }
       OS_FLOAT = OS_F64;
       {# the size of a vector register for a processor     }
@@ -256,19 +254,22 @@ unit cpubase;
       NR_STACK_POINTER_REG = NR_SP;
       RS_STACK_POINTER_REG = RS_SP;
       {# Frame pointer register }
-      NR_FRAME_POINTER_REG = NR_A6;
-      RS_FRAME_POINTER_REG = RS_A6;
+{ TODO: FIX ME!!! frame pointer is A5 on Amiga, but A6 on unixes?}
+      NR_FRAME_POINTER_REG = NR_A5;
+      RS_FRAME_POINTER_REG = RS_A5;
+
       {# Register for addressing absolute data in a position independant way,
          such as in PIC code. The exact meaning is ABI specific. For
          further information look at GCC source : PIC_OFFSET_TABLE_REGNUM
       }
+{ TODO: FIX ME!!! pic offset reg conflicts with frame pointer?}
       NR_PIC_OFFSET_REG = NR_A5;
       { Return address for DWARF }
-{$warning TODO just a guess!}
+{ TODO: just a guess!}
       NR_RETURN_ADDRESS_REG = NR_A0;
       { Results are returned in this register (32-bit values) }
       NR_FUNCTION_RETURN_REG = NR_D0;
-      RS_FUNCTION_RETURN_REG = NR_D0;
+      RS_FUNCTION_RETURN_REG = RS_D0;
       { Low part of 64bit return value }
       NR_FUNCTION_RETURN64_LOW_REG = NR_D0;
       RS_FUNCTION_RETURN64_LOW_REG = RS_D0;
@@ -301,6 +302,9 @@ unit cpubase;
       }
       saved_standard_registers : array[0..5] of tsuperregister = (RS_D2,RS_D3,RS_D4,RS_D5,RS_D6,RS_D7);
       saved_standard_address_registers : array[0..3] of tsuperregister = (RS_A2,RS_A3,RS_A4,RS_A5);
+      
+      { this is only for the generic code which is not used for this architecture }
+      saved_mm_registers : array[0..0] of tsuperregister = (RS_NO);
 
       {# Required parameter alignment when calling a routine declared as
          stdcall and cdecl. The alignment value should be the one defined
@@ -325,7 +329,7 @@ unit cpubase;
 
     procedure inverse_flags(var r : TResFlags);
     function  flags_to_cond(const f: TResFlags) : TAsmCond;
-    function cgsize2subreg(s:Tcgsize):Tsubregister;
+    function cgsize2subreg(regtype: tregistertype; s:Tcgsize):Tsubregister;
     function reg_cgsize(const reg: tregister): tcgsize;
 
     function findreg_by_number(r:Tregister):tregisterindex;
@@ -333,6 +337,10 @@ unit cpubase;
     function std_regname(r:Tregister):string;
 
     function isaddressregister(reg : tregister) : boolean;
+
+    function inverse_cond(const c: TAsmCond): TAsmCond; {$ifdef USEINLINE}inline;{$endif USEINLINE}
+    function conditions_equal(const c1, c2: TAsmCond): boolean; {$ifdef USEINLINE}inline;{$endif USEINLINE}
+    function dwarf_reg(r:tregister):shortint;
 
 implementation
 
@@ -400,17 +408,43 @@ implementation
         flags_to_cond := flags2cond[f];
       end;
 
-    function cgsize2subreg(s:Tcgsize):Tsubregister;
+    function cgsize2subreg(regtype: tregistertype; s:Tcgsize):Tsubregister;
+      var p: pointer;
       begin
         case s of
+          OS_NO: begin
+{ TODO: FIX ME!!! results in bad code generation}
+            cgsize2subreg:=R_SUBWHOLE;
+            end;
+
           OS_8,OS_S8:
-            cgsize2subreg:=R_SUBL;
+            cgsize2subreg:=R_SUBWHOLE;
           OS_16,OS_S16:
-            cgsize2subreg:=R_SUBW;
+            cgsize2subreg:=R_SUBWHOLE;
           OS_32,OS_S32:
-            cgsize2subreg:=R_SUBD;
-          else
-            internalerror(200301231);
+            cgsize2subreg:=R_SUBWHOLE;
+          OS_64,OS_S64:
+            begin
+//             writeln('64bit regsize?');
+             cgsize2subreg:=R_SUBWHOLE;
+            end;
+          OS_F32 :
+            cgsize2subreg:=R_SUBFS;
+          OS_F64 :
+            cgsize2subreg:=R_SUBFD;
+{
+            begin
+              // is this correct? (KB)
+              cgsize2subreg:=R_SUBNONE;
+            end;
+}
+          else begin
+            writeln('M68K: invalid register size');
+    // this supposed to be debug
+    //        p:=nil; dword(p^):=0;
+    //        internalerror(200301231);
+            cgsize2subreg:=R_SUBWHOLE;
+          end;
         end;
       end;
 
@@ -422,7 +456,7 @@ implementation
           R_INTREGISTER :
             result:=OS_32;
           R_FPUREGISTER :
-            result:=OS_F32;
+            result:=OS_F64;
           else
             internalerror(200303181);
         end;
@@ -459,16 +493,29 @@ implementation
       end;
 
 
+    function inverse_cond(const c: TAsmCond): TAsmCond; {$ifdef USEINLINE}inline;{$endif USEINLINE}
+      const
+        inverse:array[TAsmCond] of TAsmCond=(C_None,
+{ TODO: TODO, this is just a copy!}
+           C_CC,C_LS,C_CS,C_LT,C_EQ,C_MI,C_F,C_NE,
+           C_GE,C_PL,C_GT,C_T,C_HI,C_VC,C_LE,C_VS
+        );
+      begin
+        result := inverse[c];
+      end;
+
+
+    function conditions_equal(const c1, c2: TAsmCond): boolean; {$ifdef USEINLINE}inline;{$endif USEINLINE}
+      begin
+        result := c1 = c2;
+      end;
+
+
+    function dwarf_reg(r:tregister):shortint;
+      begin
+        result:=regdwarf_table[findreg_by_number(r)];
+        if result=-1 then
+          internalerror(200603251);
+      end;
+
 end.
-{
-  $Log: cpubase.pas,v $
-  Revision 1.36  2005/02/14 17:13:10  peter
-    * truncate log
-
-  Revision 1.35  2005/01/20 16:38:45  peter
-    * load jmp_buf_size from system unit
-
-  Revision 1.34  2005/01/08 04:10:36  karoly
-    * made m68k to compile again
-
-}

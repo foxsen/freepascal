@@ -1,5 +1,4 @@
 {
-    $Id: crt.pp,v 1.6 2005/05/14 15:01:49 hajny Exp $
     Copyright (c) 1999-2001 by the Free Pascal development team.
 
     Borland Pascal 7 Compatible CRT Unit for Netware, tested with
@@ -199,7 +198,7 @@ Begin
 End;
 
 
-Procedure GotoXy(X: Byte; Y: Byte);
+Procedure GotoXy(X: tcrtcoord; Y: tcrtcoord);
 {
   Go to coordinates X,Y in the current window.
 }
@@ -280,7 +279,7 @@ End;
 
 
 
-Function WhereX: Byte;
+Function WhereX: tcrtcoord;
 {
   Return current X-position of cursor.
 }
@@ -293,7 +292,7 @@ End;
 
 
 
-Function WhereY: Byte;
+Function WhereY: tcrtcoord;
 {
   Return current Y-position of cursor.
 }
@@ -652,4 +651,3 @@ begin
   _SetCtrlCharCheckMode (CheckBreak);
   _SetAutoScreenDestructionMode (TRUE);
 end.
-

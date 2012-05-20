@@ -1,5 +1,4 @@
 {
-    $Id: sysutils.pp,v 1.28 2005/02/26 14:38:14 florian Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Florian Klaempfl
     member of the Free Pascal development team
@@ -14,10 +13,14 @@
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
  **********************************************************************}
+
+{$inline on}
+
 unit sysutils;
 interface
 
 {$MODE objfpc}
+{$MODESWITCH out}
 { force ansistrings }
 {$H+}
 
@@ -33,6 +36,9 @@ implementation
 
   uses
     sysconst;
+
+{$DEFINE FPC_FEXPAND_UNC} (* UNC paths are supported *)
+{$DEFINE FPC_FEXPAND_DRIVES} (* Full paths begin with drive specification *)
 
 { Include platform independent implementation part }
 {$i sysutils.inc}
@@ -124,13 +130,19 @@ begin
 end;
 
 
-Function FileCreate (Const FileName : String; Mode:longint) : Longint;
+Function FileCreate (Const FileName : String; ShareMode:longint; Rights : longint) : Longint;
 begin
   FileCreate:=FileCreate(FileName);
 end;
 
 
-Function FileRead (Handle : Longint; Var Buffer; Count : longint) : Longint;
+Function FileCreate (Const FileName : String; Rights:longint) : Longint;
+begin
+  FileCreate:=FileCreate(FileName);
+end;
+
+
+Function FileRead (Handle : Longint; Out Buffer; Count : longint) : Longint;
 var
   regs     : registers;
   size,
@@ -154,7 +166,7 @@ begin
         Result:=-1;
         exit;
       end;
-     syscopyfromdos(Longint(@Buffer)+readsize,lo(regs.realeax));
+     syscopyfromdos(Longint(dword(@Buffer)+readsize),lo(regs.realeax));
      inc(readsize,lo(regs.realeax));
      dec(Count,lo(regs.realeax));
      { stop when not the specified size is read }
@@ -178,7 +190,7 @@ begin
       size:=tb_size
      else
       size:=Count;
-     syscopytodos(Longint(@Buffer)+writesize,size);
+     syscopytodos(Longint(dword(@Buffer)+writesize),size);
      regs.realecx:=size;
      regs.realedx:=tb_offset;
      regs.realds:=tb_segment;
@@ -219,7 +231,7 @@ begin
 end;
 
 
-Function FileSeek (Handle : Longint; FOffset,Origin : Int64) : Int64;
+Function FileSeek (Handle : Longint; FOffset: Int64; Origin: Integer) : Int64;
 begin
   {$warning need to add 64bit call }
   FileSeek:=FileSeek(Handle,Longint(FOffset),Longint(Origin));
@@ -238,18 +250,23 @@ begin
 end;
 
 
-Function FileTruncate (Handle,Size: Longint) : boolean;
+Function FileTruncate (Handle: THandle; Size: Int64) : boolean;
 var
   regs : trealregs;
 begin
-  FileSeek(Handle,Size,0);
-  Regs.realecx := 0;
-  Regs.realedx := tb_offset;
-  Regs.ds := tb_segment;
-  Regs.ebx := Handle;
-  Regs.eax:=$4000;
-  RealIntr($21, Regs);
-  FileTruncate:=(regs.realflags and carryflag)=0;
+  if Size > high (longint) then
+   FileTruncate := false
+  else
+   begin
+    FileSeek(Handle,Size,0);
+    Regs.realecx := 0;
+    Regs.realedx := tb_offset;
+    Regs.ds := tb_segment;
+    Regs.ebx := Handle;
+    Regs.eax:=$4000;
+    RealIntr($21, Regs);
+    FileTruncate:=(regs.realflags and carryflag)=0;
+   end;
 end;
 
 
@@ -267,38 +284,63 @@ begin
 end;
 
 
-Function FileExists (Const FileName : String) : Boolean;
-Var
-  Sr : Searchrec;
+function FileExists (const FileName: string): boolean;
+var
+  L: longint;
 begin
-  DOS.FindFirst(FileName,$3f,sr);
-  if DosError = 0 then
-   begin
-     { No volumeid,directory }
-     Result:=(sr.attr and $18)=0;
-     Dos.FindClose(sr);
-   end
+  if FileName = '' then
+   Result := false
   else
-   Result:=false;
+   begin
+    L := FileGetAttr (FileName);
+    Result := (L >= 0) and (L and (faDirectory or faVolumeID) = 0);
+(* Neither VolumeIDs nor directories are files. *)
+   end;
 end;
 
 
 Function DirectoryExists (Const Directory : String) : Boolean;
 Var
-  Sr : Searchrec;
+  Dir : String;
+  drive : byte;
+  FADir, StoredIORes : longint;
 begin
-  DOS.FindFirst(Directory,$3f,sr);
-  if DosError = 0 then
-   begin
-     Result:=(sr.attr and $10)=$10;
-     Dos.FindClose(sr);
-   end
-  else
-   Result:=false;
+  Dir:=Directory;
+  if (length(dir)=2) and (dir[2]=':') and
+     ((dir[1] in ['A'..'Z']) or (dir[1] in ['a'..'z'])) then
+    begin
+      { We want to test GetCurDir }
+      if dir[1] in ['A'..'Z'] then
+        drive:=ord(dir[1])-ord('A')+1
+      else
+        drive:=ord(dir[1])-ord('a')+1;
+{$push}
+{$I-}
+      StoredIORes:=InOutRes;
+      InOutRes:=0;
+      GetDir(drive,dir);
+      if InOutRes <> 0 then
+        begin
+          InOutRes:=StoredIORes;
+          result:=false;
+          exit;
+        end;
+    end;
+{$pop}
+  if (Length (Dir) > 1) and
+    (Dir [Length (Dir)] in AllowDirectorySeparators) and
+(* Do not remove '\' after ':' (root directory of a drive)
+   or in '\\' (invalid path, possibly broken UNC path). *)
+     not (Dir [Length (Dir) - 1] in (AllowDriveSeparators + AllowDirectorySeparators)) then
+    dir:=copy(dir,1,length(dir)-1);
+(* FileGetAttr returns -1 on error *)
+  FADir := FileGetAttr (Dir);
+  Result := (FADir <> -1) and
+            ((FADir and faDirectory) = faDirectory);
 end;
 
 
-Function FindFirst (Const Path : String; Attr : Longint; Var Rslt : TSearchRec) : Longint;
+Function FindFirst (Const Path : String; Attr : Longint; out Rslt : TSearchRec) : Longint;
 
 Var Sr : PSearchrec;
 
@@ -495,43 +537,9 @@ function do_diskdata(drive : byte; Free : BOOLEAN) : Int64;
 VAR S    : String;
     Rec  : ExtendedFat32FreeSpaceRec;
     regs : registers;
-BEGIN
- if (swap(dosversion)>=$070A) AND LFNSupport then
+
+  procedure OldDosDiskData;
   begin
-   DosError:=0;
-   S:='C:\'#0;
-   if Drive=0 then
-    begin
-     GetDir(Drive,S);
-     Setlength(S,4);
-     S[4]:=#0;
-    end
-   else
-    S[1]:=chr(Drive+64);
-   Rec.Strucversion:=0;
-   dosmemput(tb_segment,tb_offset,Rec,SIZEOF(ExtendedFat32FreeSpaceRec));
-   dosmemput(tb_segment,tb_offset+Sizeof(ExtendedFat32FreeSpaceRec)+1,S[1],4);
-   regs.dx:=tb_offset+Sizeof(ExtendedFat32FreeSpaceRec)+1;
-   regs.ds:=tb_segment;
-   regs.di:=tb_offset;
-   regs.es:=tb_segment;
-   regs.cx:=Sizeof(ExtendedFat32FreeSpaceRec);
-   regs.ax:=$7303;
-   msdos(regs);
-   if regs.ax<>$ffff then
-    begin
-      copyfromdos(rec,Sizeof(ExtendedFat32FreeSpaceRec));
-      if Free then
-       Do_DiskData:=int64(rec.AvailAllocUnits)*rec.SecPerClus*rec.BytePerSec
-      else
-       Do_DiskData:=int64(rec.TotalAllocUnits)*rec.SecPerClus*rec.BytePerSec;
-    end
-   else
-    Do_DiskData:=-1;
-  end
- else
-  begin
-   DosError:=0;
    regs.dl:=drive;
    regs.ah:=$36;
    msdos(regs);
@@ -545,6 +553,46 @@ BEGIN
    else
     do_diskdata:=-1;
   end;
+
+BEGIN
+ if LFNSupport then
+  begin
+   S:='C:\'#0;
+   if Drive=0 then
+    begin
+     GetDir(Drive,S);
+     Setlength(S,4);
+     S[4]:=#0;
+    end
+   else
+    S[1]:=chr(Drive+64);
+   Rec.Strucversion:=0;
+   Rec.RetSize := 0;
+   dosmemput(tb_segment,tb_offset,Rec,SIZEOF(ExtendedFat32FreeSpaceRec));
+   dosmemput(tb_segment,tb_offset+Sizeof(ExtendedFat32FreeSpaceRec)+1,S[1],4);
+   regs.dx:=tb_offset+Sizeof(ExtendedFat32FreeSpaceRec)+1;
+   regs.ds:=tb_segment;
+   regs.di:=tb_offset;
+   regs.es:=tb_segment;
+   regs.cx:=Sizeof(ExtendedFat32FreeSpaceRec);
+   regs.ax:=$7303;
+   msdos(regs);
+   if (regs.flags and fcarry) = 0 then {No error clausule in int except cf}
+    begin
+     copyfromdos(rec,Sizeof(ExtendedFat32FreeSpaceRec));
+     if Rec.RetSize = 0 then (* Error - "FAT32" function not supported! *)
+      OldDosDiskData
+     else
+      if Free then
+       Do_DiskData:=int64(rec.AvailAllocUnits)*rec.SecPerClus*rec.BytePerSec
+      else
+       Do_DiskData:=int64(rec.TotalAllocUnits)*rec.SecPerClus*rec.BytePerSec;
+    end
+   else
+    OldDosDiskData;
+  end
+ else
+  OldDosDiskData;
 end;
 
 
@@ -619,7 +667,7 @@ end ;
                               Misc Functions
 ****************************************************************************}
 
-procedure Beep;
+procedure sysBeep;
 begin
 end;
 
@@ -753,13 +801,13 @@ begin
 end;
 
 
-function ExecuteProcess(Const Path: AnsiString; Const ComLine: AnsiString):integer;
+function ExecuteProcess(Const Path: AnsiString; Const ComLine: AnsiString;Flags:TExecuteFlags=[]):integer;
 var
   e : EOSError;
   CommandLine: AnsiString;
 
 begin
-  dos.exec(path,comline);
+  dos.exec_ansistring(path,comline);
 
   if (Dos.DosError <> 0) then
     begin
@@ -776,7 +824,7 @@ end;
 
 
 function ExecuteProcess (const Path: AnsiString;
-                                  const ComLine: array of AnsiString): integer;
+                                  const ComLine: array of AnsiString;Flags:TExecuteFlags=[]): integer;
 
 var
   CommandLine: AnsiString;
@@ -828,15 +876,7 @@ end;
 Initialization
   InitExceptions;       { Initialize exceptions. OS independent }
   InitInternational;    { Initialize internationalization settings }
+  OnBeep:=@SysBeep;
 Finalization
   DoneExceptions;
 end.
-{
-  $Log: sysutils.pp,v $
-  Revision 1.28  2005/02/26 14:38:14  florian
-    + SysLocale
-
-  Revision 1.27  2005/02/14 17:13:22  peter
-    * truncate log
-
-}

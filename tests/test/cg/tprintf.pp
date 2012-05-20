@@ -6,10 +6,27 @@
 uses
   strings;
 
-{$ifdef win32}
-{ $linklib msvcrt}
-procedure printf(const formatstr : pchar; const args : array of const);cdecl; external 'msvcrt.dll' name 'printf';
-procedure sprintf(p : pchar;const formatstr : pchar; const args : array of const);cdecl; external 'msvcrt.dll' name 'sprintf';
+{$ifdef FPC_HAS_TYPE_EXTENDED}
+{$define TEST_EXTENDED}
+{$endif FPC_HAS_TYPE_EXTENDED}
+
+{$ifdef beos}
+  {it seems that BeOS doesn't support extended...}
+  {$undef TEST_EXTENDED}
+{$endif beos}
+
+{$ifdef WINDOWS}
+const
+{$ifdef wince}
+  CrtLib = 'coredll.dll';
+{$else}
+  { the msvcrt.dll doesn't support extended because MS-C doesn't }
+  {$undef TEST_EXTENDED}
+  CrtLib = 'msvcrt.dll';
+{$endif}
+
+procedure printf(const formatstr : pchar; const args : array of const);cdecl; external CrtLib name 'printf';
+procedure sprintf(p : pchar;const formatstr : pchar; const args : array of const);cdecl; external CrtLib name 'sprintf';
 const
   int64prefix='I64';
 {$else}
@@ -83,21 +100,23 @@ begin
     end;
 
   Writeln('Testing with single double argument');
-  printf('Text containing double: %f'+lineending,[d]);
-  sprintf(p,'Text containing double: %f'+lineending,[d]);
+  printf('Text containing double: %lf'+lineending,[d]);
+  sprintf(p,'Text containing double: %lf'+lineending,[d]);
   if strpos(p,'double: 45.4')=nil then
     begin
       writeln('The output of sprintf for double is wrong: ',p);
       has_errors:=true;
     end;
 
-  printf('Text containing long double: %f'+lineending,[e]);
-  sprintf(p,'Text containing long double: %f'+lineending,[e]);
+{$ifdef TEST_EXTENDED}
+  printf('Text containing long double: %Lf'+lineending,[e]);
+  sprintf(p,'Text containing long double: %Lf'+lineending,[e]);
   if strpos(p,'long double: 74.7')=nil then
     begin
       writeln('The output of sprintf for long double is wrong:',p);
       has_errors:=true;
     end;
+{$endif TEST_EXTENDED}
 
   Writeln('Testing with combined pchar argument');
   printf('Text containing "%s" and "%s" text'+lineending,[s,s2]);
@@ -137,8 +156,8 @@ begin
     end;
 
   Writeln('Testing with single double argument');
-  printf('Text containing double: %f"%s"'+lineending,[d,s2]);
-  sprintf(p,'Text containing double: %f"%s"'+lineending,[d,s2]);
+  printf('Text containing double: %lf"%s"'+lineending,[d,s2]);
+  sprintf(p,'Text containing double: %lf"%s"'+lineending,[d,s2]);
   if (strpos(p,'double: 45.4')=nil) or
      (strpos(p,'"next"')=nil) then
     begin
@@ -146,14 +165,16 @@ begin
       has_errors:=true;
     end;
 
-  printf('Text containing long double: %f"%s"'+lineending,[e,s2]);
-  sprintf(p,'Text containing long double: %f"%s"'+lineending,[e,s2]);
+{$ifdef TEST_EXTENDED}
+  printf('Text containing long double: %Lf"%s"'+lineending,[e,s2]);
+  sprintf(p,'Text containing long double: %Lf"%s"'+lineending,[e,s2]);
   if (strpos(p,'long double: 74.7')=nil) or
      (strpos(p,'"next"')=nil) then
     begin
       writeln('The output of sprintf for long double is wrong:',p);
       has_errors:=true;
     end;
+{$endif TEST_EXTENDED}
 
   if has_errors then
     halt(1);

@@ -1,5 +1,4 @@
 {
-    $Id: mkx86ins.pp,v 1.7 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 1998-2002 by Peter Vreman and Florian Klaempfl
 
     Convert i386ins.dat from Nasm to a .inc file for usage with
@@ -13,38 +12,16 @@
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
  **********************************************************************}
+{$mode objfpc}
 program mkx86ins;
 
 const
-  Version = '1.5.0';
-
+  Version = '1.6.0';
+  max_operands = 4;
 var
    s : string;
    i : longint;
    x86_64 : boolean;
-
-{$ifndef FPC}
-  procedure readln(var t:text;var s:string);
-  var
-    c : char;
-    i : longint;
-  begin
-    c:=#0;
-    i:=0;
-    while (not eof(t)) and (c<>#10) do
-     begin
-       read(t,c);
-       if c<>#10 then
-        begin
-          inc(i);
-          s[i]:=c;
-        end;
-     end;
-    if (i>0) and (s[i]=#13) then
-     dec(i);
-    s[0]:=chr(i);
-  end;
-{$endif}
 
     function lower(const s : string) : string;
     {
@@ -77,35 +54,48 @@ var
       end;
 
 
-function formatop(s:string):string;
+function formatop(s:string;allowsizeonly:boolean):string;
    const
-     replaces=19;
+     replaces=26;
      replacetab : array[1..replaces,1..2] of string[32]=(
        (':',' or ot_colon'),
-       ('mem8','mem or ot_bits8'),
-       ('mem16','mem or ot_bits16'),
-       ('mem32','mem or ot_bits32'),
-       ('mem64','mem or ot_bits64'),
-       ('mem80','mem or ot_bits80'),
+       ('reg','regnorm'),
+       ('regmem','rm_gpr'),
+       ('rm8','rm_gpr or ot_bits8'),
+       ('rm16','rm_gpr or ot_bits16'),
+       ('rm32','rm_gpr or ot_bits32'),
+       ('rm64','rm_gpr or ot_bits64'),
+       ('rm80','rm_gpr or ot_bits80'),
+       ('mem8','memory or ot_bits8'),
+       ('mem16','memory or ot_bits16'),
+       ('mem32','memory or ot_bits32'),
+       ('mem64','memory or ot_bits64'),
+       ('mem80','memory or ot_bits80'),
        ('mem','memory'),
        ('memory_offs','mem_offs'),
-       ('imm8','imm or ot_bits8'),
-       ('imm16','imm or ot_bits16'),
-       ('imm32','imm or ot_bits32'),
-       ('imm64','imm or ot_bits64'),
-       ('imm80','imm or ot_bits80'),
+       ('imm8','immediate or ot_bits8'),
+       ('imm16','immediate or ot_bits16'),
+       ('imm32','immediate or ot_bits32'),
+       ('imm64','immediate or ot_bits64'),
+       ('imm80','immediate or ot_bits80'),
        ('imm','immediate'),
-       ('rm8','regmem or ot_bits8'),
-       ('rm16','regmem or ot_bits16'),
-       ('rm32','regmem or ot_bits32'),
-       ('rm64','regmem or ot_bits64'),
-       ('rm80','regmem or ot_bits80')
+       ('8','bits8'),
+       ('16','bits16'),
+       ('32','bits32'),
+       ('64','bits64'),
+       ('80','bits80')
      );
   var
     i : longint;
   begin
     for i:=1to replaces do
-     replace(s,replacetab[i,1],replacetab[i,2]);
+      begin
+        if s=replacetab[i,1] then
+          begin
+            s:=replacetab[i,2];
+            break;
+          end;
+      end;
     formatop:=s;
   end;
 
@@ -114,8 +104,6 @@ function readnumber : longint;
 
   var
      base : longint;
-     result : longint;
-
   begin
      result:=0;
      if s[i]='\' then
@@ -142,7 +130,6 @@ function readnumber : longint;
           end;
           inc(i);
        end;
-     readnumber:=result;
   end;
 
 function tostr(l : longint) : string;
@@ -157,9 +144,6 @@ function tostr(l : longint) : string;
 
 function readstr : string;
 
-  var
-     result : string;
-
   begin
      result:='';
      while (s[i] in ['0'..'9','A'..'Z','a'..'z','_']) and (i<=length(s)) do
@@ -167,7 +151,6 @@ function readstr : string;
           result:=result+s[i];
           inc(i);
        end;
-     readstr:=result;
   end;
 
 procedure skipspace;
@@ -177,7 +160,7 @@ procedure skipspace;
        inc(i);
   end;
 
-procedure openinc(var f:text;const fn:string);
+procedure openinc(out f:text;const fn:string);
 begin
   writeln('creating ',fn);
   assign(f,fn);
@@ -209,14 +192,14 @@ var
    infile,insfile : text;
    { instruction fields }
    skip : boolean;
-   last,
+   literalcount,
    ops    : longint;
    intopcode,
    attopcode,
    opcode,
    codes,
    flags   : string;
-   optypes : array[1..3] of string;
+   optypes : array[1..max_operands] of string;
 begin
    writeln('Nasm Instruction Table Converter Version ',Version);
    x86_64:=paramstr(1)='x86_64';
@@ -291,6 +274,11 @@ begin
                     dec(attopcode[0]);
                     attsuffix:='attsufINT';
                   end;
+                'Y' :
+                  begin
+                    dec(attopcode[0]);
+                    attsuffix:='attsufINTdual';
+                  end;
                 'F' :
                   begin
                     dec(attopcode[0]);
@@ -337,9 +325,8 @@ begin
          runerror(234);
         { clear }
         ops:=0;
-        optypes[1]:='';
-        optypes[2]:='';
-        optypes[3]:='';
+        for i:=low(optypes) to high(optypes) do
+          optypes[i]:='';
         codes:='';
         flags:='';
         skip:=false;
@@ -350,45 +337,45 @@ begin
           if (hs='void') or (hs='ignore') then
             break;
           inc(ops);
-          optypes[ops]:=optypes[ops]+'ot_'+formatop(hs);
-          if s[i]=':' then
-            begin
-               inc(i);
-               optypes[ops]:=optypes[ops]+' or ot_'+formatop(readstr);
-            end;
+          optypes[ops]:=optypes[ops]+'ot_'+formatop(hs,false);
           while s[i]='|' do
             begin
                inc(i);
-               optypes[ops]:=optypes[ops]+' or ot_'+formatop(readstr);
+               optypes[ops]:=optypes[ops]+' or ot_'+formatop(readstr,true);
             end;
-          if s[i]=',' then
+          if s[i] in [',',':'] then
             inc(i)
           else
             break;
         until false;
-        for j:=1 to 3-ops do
-          optypes[3-j+1]:='ot_none';
+        for j:=1 to max_operands-ops do
+          optypes[max_operands-j+1]:='ot_none';
         { codes }
         skipspace;
         j:=0;
-        last:=0;
+        literalcount:=0;
         if s[i] in ['\','0'..'9'] then
           begin
              while not(s[i] in [' ',#9]) do
                begin
                  code:=readnumber;
                  { for some codes we want also to change the optypes, but not
-                   if the last byte was a 1 then this byte belongs to a direct
-                   copy }
-                 if last<>1 then
-                  begin
-                    case code of
-                      12,13,14 :
-                        optypes[code-11]:=optypes[code-11]+' or ot_signed';
-                    end;
-                  end;
+                   if the code belongs to a literal sequence }
+                 if (literalcount=0) and (code>=1) and (code<=3) then
+                   literalcount:=code
+                 else
+                   begin
+                     if literalcount>0 then
+                       dec(literalcount)
+                     else
+                       begin
+                         case code of
+                           12,13,14 :
+                             optypes[code-11]:=optypes[code-11]+' or ot_signed';
+                         end;
+                       end;
+                   end;
                  codes:=codes+'#'+tostr(code);
-                 last:=code;
                  inc(j);
                end;
           end
@@ -435,7 +422,7 @@ begin
             writeln(insfile,'  (');
             writeln(insfile,'    opcode  : ',opcode,';');
             writeln(insfile,'    ops     : ',ops,';');
-            writeln(insfile,'    optypes : (',optypes[1],',',optypes[2],',',optypes[3],');');
+            writeln(insfile,'    optypes : (',optypes[1],',',optypes[2],',',optypes[3],',',optypes[4],');');
             writeln(insfile,'    code    : ',codes,';');
             writeln(insfile,'    flags   : ',flags);
             write(insfile,'  )');
@@ -451,11 +438,5 @@ begin
    writeln(nopfile,insns,';');
    close(nopfile);
    closeinc(propfile);
-   writeln(insns,' nodes procesed (maxinfolen=',maxinfolen,')');
+   writeln(insns,' nodes processed (maxinfolen=',maxinfolen,')');
 end.
-{
-  $Log: mkx86ins.pp,v $
-  Revision 1.7  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

@@ -1,5 +1,4 @@
 {
-    $Id: rgcpu.pas,v 1.4 2005/02/14 17:13:09 peter Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl
 
     This unit implements the powerpc specific class for the register
@@ -29,14 +28,14 @@ unit rgcpu;
   interface
 
      uses
-       aasmbase,aasmtai,
+       aasmbase,aasmtai,aasmdata,
        cpubase,
        rgobj;
 
      type
        trgcpu = class(trgobj)
-         function getcpuregisterint(list: taasmoutput; reg: tregister): tregister; override;
-         procedure ungetregisterint(list: taasmoutput; reg: tregister); override;
+         function getcpuregisterint(list: TAsmList; reg: tregister): tregister; override;
+         procedure ungetregisterint(list: TAsmList; reg: tregister); override;
        end;
 
   implementation
@@ -44,7 +43,7 @@ unit rgcpu;
     uses
       cgobj;
 
-    function trgcpu.getcpuregisterint(list: taasmoutput; reg: tregister): tregister;
+    function trgcpu.getcpuregisterint(list: TAsmList; reg: tregister): tregister;
 
       begin
         if reg = R_0 then
@@ -56,7 +55,7 @@ unit rgcpu;
       end;
 
 
-    procedure trgcpu.ungetregisterint(list: taasmoutput; reg: tregister);
+    procedure trgcpu.ungetregisterint(list: TAsmList; reg: tregister);
 
       begin
         if reg = R_0 then
@@ -68,10 +67,3 @@ unit rgcpu;
 initialization
   rg := trgcpu.create;
 end.
-
-{
-  $Log: rgcpu.pas,v $
-  Revision 1.4  2005/02/14 17:13:09  peter
-    * truncate log
-
-}

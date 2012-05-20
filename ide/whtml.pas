@@ -1,5 +1,4 @@
 {
-    $Id: whtml.pas,v 1.6 2005/02/14 17:13:19 peter Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 1998 by Berczi Gabor
 
@@ -23,6 +22,7 @@ type
     PTextFile = ^TTextFile;
     TTextFile = object(TObject)
       function GetLine(Idx: sw_integer; var S: string): boolean; virtual;
+      function GetFileName : string; virtual;
     end;
 
     PMemoryTextFile = ^TMemoryTextFile;
@@ -30,6 +30,8 @@ type
       constructor Init;
       procedure   AddLine(const S: string); virtual;
       function    GetLine(Idx: sw_integer; var S: string): boolean; virtual;
+      function    GetFileName : string; virtual;
+      function    GetLineCount : sw_integer;
       destructor  Done; virtual;
     private
       Lines : PUnsortedStrCollection;
@@ -38,6 +40,9 @@ type
     PDOSTextFile = ^TDOSTextFile;
     TDOSTextFile = object(TMemoryTextFile)
       constructor Init(AFileName: string);
+      function GetFileName : string; virtual;
+    private
+      DosFileName : string;
     end;
 
     PSGMLParser = ^TSGMLParser;
@@ -49,6 +54,7 @@ type
     public
       Line,LinePos: sw_integer;
       procedure   DocSoftBreak; virtual;
+      function    GetFileName : string;
       function    DocAddTextChar(C: char): boolean; virtual;
       procedure   DocAddText(S: string); virtual;
       procedure   DocProcessTag(Tag: string); virtual;
@@ -56,6 +62,7 @@ type
       function    DocDecodeNamedEntity(Name: string; var Entity: string): boolean; virtual;
     private
       CurTag: string;
+      FileName : string;
       InTag,InComment,InString: boolean;
     end;
 
@@ -69,6 +76,7 @@ type
       function    DocDecodeNamedEntity(Name: string; var E: string): boolean; virtual;
     public
       TagName,TagParams: string;
+      DisableCrossIndexing : boolean;
       procedure   DocUnknownTag; virtual;
       procedure   DocTYPE; virtual;
       procedure   DocHTML(Entered: boolean); virtual;
@@ -92,12 +100,14 @@ type
       procedure   DocStrong(Entered: boolean); virtual;
       procedure   DocTeleType(Entered: boolean); virtual;
       procedure   DocVariable(Entered: boolean); virtual;
+      procedure   DocSpan(Entered: boolean); virtual;
+      procedure   DocDiv(Entered: boolean); virtual;
       procedure   DocList(Entered: boolean); virtual;
       procedure   DocOrderedList(Entered: boolean); virtual;
-      procedure   DocListItem; virtual;
+      procedure   DocListItem(Entered: boolean); virtual;
       procedure   DocDefList(Entered: boolean); virtual;
-      procedure   DocDefTerm; virtual;
-      procedure   DocDefExp; virtual;
+      procedure   DocDefTerm(Entered: boolean); virtual;
+      procedure   DocDefExp(Entered: boolean); virtual;
       procedure   DocTable(Entered: boolean); virtual;
       procedure   DocTableRow(Entered: boolean); virtual;
       procedure   DocTableHeaderItem(Entered: boolean); virtual;
@@ -105,9 +115,22 @@ type
       procedure   DocHorizontalRuler; virtual;
     end;
 
+Type
+    PTopicLinkCollection = ^TTopicLinkCollection;
+    TTopicLinkCollection = object(TStringCollection)
+      procedure   Insert(Item: Pointer); virtual;
+      function    At(Index: sw_Integer): PString;
+      function    AddItem(Item: string): sw_integer;
+    end;
+
+function EncodeHTMLCtx(FileID: integer; LinkNo: word): longint;
+procedure DecodeHTMLCtx(Ctx: longint; var FileID: word; var LinkNo: word);
+
+
 implementation
 
-uses WUtils;
+uses
+  WUtils;
 
 function TTextFile.GetLine(Idx: sw_integer; var S: string): boolean;
 begin
@@ -115,10 +138,26 @@ begin
   GetLine:=false;
 end;
 
+function TTextFile.GetFileName : string;
+begin
+  GetFileName:='unknown';
+end;
+
 constructor TMemoryTextFile.Init;
 begin
   inherited Init;
   New(Lines, Init(500,500));
+end;
+
+
+function TMemoryTextFile.GetFileName : string;
+begin
+  GetFileName:='unknown';
+end;
+
+function TMemoryTextFile.GetLineCount : sw_integer;
+begin
+  GetLineCount:=Lines^.Count;
 end;
 
 procedure TMemoryTextFile.AddLine(const S: string);
@@ -141,55 +180,54 @@ end;
 
 destructor TMemoryTextFile.Done;
 begin
+  if Lines<>nil then
+    Dispose(Lines, Done);
+  Lines:=nil;
   inherited Done;
-  if Lines<>nil then Dispose(Lines, Done); Lines:=nil;
 end;
 
 constructor TDOSTextFile.Init(AFileName: string);
-(*{$ifdef TPUNIXLF}
-  procedure readln(var t:text;var s:string);
-  var
-    c : char;
-    i : longint;
-  begin
-    c:=#0;
-    i:=0;
-    while (not eof(t)) and (c<>#10) and (i<255) do
-     begin
-       read(t,c);
-       if (i<255) and (c<>#10) then
-   begin
-     inc(i);
-     s[i]:=c;
-   end;
-     end;
-    if (i>0) and (s[i]=#13) then
-       dec(i);
-    s[0]:=chr(i);
-   end;
-{$endif}*)
-var f: text;
+var f: file;
+    linecomplete,hasCR: boolean;
     S: string;
+    OldFMode : Integer;
 begin
   inherited Init;
   if AFileName='' then Fail;
 {$I-}
   Assign(f,AFileName);
-  Reset(f);
+  OldFMode:= FileMode;
+  FileMode:= 0;
+  Reset(f,1);
+  FileMode:= OldFMode;
   if IOResult<>0 then Fail;
+  DosFileName:=AFileName;
+  Dispose(Lines,Done);
   New(Lines, Init(500,2000));
   while (Eof(f)=false) and (IOResult=0) do
     begin
-      readln(f,S); { this is the one in WUTILS.PAS }
+      ReadlnFromFile(f,S,linecomplete,hasCR,true);
       AddLine(S);
     end;
   Close(f);
 {$I+}
 end;
 
+function TDosTextFile.GetFileName : string;
+begin
+  GetFileName:=DosFileName;
+end;
+
+
 constructor TSGMLParser.Init;
 begin
   inherited Init;
+  FileName:='';
+end;
+
+function TSGMLParser.GetFileName : string;
+begin
+  GetFileName:=FileName;
 end;
 
 function TSGMLParser.Process(HTMLFile: PTextFile): boolean;
@@ -199,12 +237,13 @@ begin
   if HTMLFile=nil then Exit;
   InTag:=false; InComment:=false; InString:=false; CurTag:='';
   Line:=0; OK:=true;
+  FileName:=HTMLFile^.GetFileName;
   repeat
     LineOK:=HTMLFile^.GetLine(Line,S);
     if LineOK then
       begin
-        OK:=ProcessLine(S);
         Inc(Line);
+        OK:=ProcessLine(S);
       end;
   until (LineOK=false) or (OK=false);
   Process:=OK;
@@ -296,9 +335,13 @@ begin
     end;
   { whtml does not depend on whelp,
     so I can not use hscLineBreak here. PM }
-  if InTag and InString then
-    CurTag:=CurTag+#0
-  else if WasThereAnyText then DocSoftBreak;
+  if InTag then
+    begin
+      if InString then
+        CurTag:=CurTag+#0;
+    end
+  else if WasThereAnyText then
+    DocSoftBreak;
 
   ProcessLine:=true;
 end;
@@ -353,29 +396,51 @@ end;
 
 function THTMLParser.DocDecodeNamedEntity(Name: string; var E: string): boolean;
 var Found: boolean;
-    Code: integer;
-    CC: integer;
+    Code: word;
+    CC: word;
 begin
-  Found:=true; Code:=-1;
+  Found:=true; Code:=$ffff;
   Name:=LowCaseStr(Name);
   if copy(Name,1,1)='#' then
     begin
-      Val(copy(Name,2,255),Code,CC);
-      if CC<>0 then Code:=-1;
+      if Name[2]='x' then
+        Val('$'+copy(Name,3,255),Code,CC)
+      else
+        Val(copy(Name,2,255),Code,CC);
+      if CC<>0 then
+        begin
+{$ifdef DEBUG}
+          DebugMessage(FileName,'NamedEntity '+Name+' not converted',1,1);
+{$endif DEBUG}
+          Code:=$ffff;
+        end;
     end;
-  if               (Name='lt')     then E:='<'   else { less-than sign                }
-  if               (Name='gt')     then E:='>'   else { greater-than sign              }
-  if               (Name='amp')    then E:='&'   else { ampersand                     }
-  if               (Name='quot')   then E:='"'   else { double quote sign             }
+  { #0 to #127 is same for Unicode and Code page 437 }
+  if (code<=127) then
+    begin
+      E:=chr(code);
+      DocDecodeNamedEntity:=true;
+      exit;
+    end;
+  if (Code=$22{34}) or (Name='quot')   then E:='"'   else { double quote sign             }
+  if (Code=$26{38}) or (Name='amp')    then E:='&'   else { ampersand                     }
+  if (Code=$27{39}) or (Name='apos')    then E:='''' else { apostrophe  }
+  if (Code=$3C{60}) or (Name='lt')     then E:='<'   else { less-than sign                }
+  if (Code=$3E{62}) or (Name='gt')     then E:='>'   else { greater-than sign              }
+  if (Code=$5B)                    then E:='['   else { [ }
+  if (Code=$5C)                    then E:='\'   else { \ }
+  if (Code=$5D)                    then E:=']'   else { ] }
+  if (Code=$5E)                    then E:='^'   else { ^ }
+  if (Code=$5F)                    then E:='_'   else { _ }
   if (Code=160) or (Name='nbsp')   then E:=#255  else { no-break space                }
-  if (Code=161) or (Name='iexcl')  then E:='≠'   else { inverted excalamation mark    }
+  if (Code=161) or (Name='iexcl')  then E:='≠'   else { inverted exclamation mark    }
   if (Code=162) or (Name='cent')   then E:='õ'   else { cent sign                     }
   if (Code=163) or (Name='pound')  then E:='ú'   else { pound sterling sign           }
   if (Code=164) or (Name='curren') then E:='$'   else { general currency sign         }
-  if (Code=165) or (Name='yen')    then E:='ù'   else { yen sign                      }
+  if (Code=165) or (Name='yen')    then E:=''   else { yen sign                      }
   if (Code=166) or (Name='brvbar') then E:='|'   else { broken vertical bar           }
-(*  if (Code=167) or (Name='sect')   then E:=#255  else { section sign                  }*)
-(*  if (Code=168) or (Name='uml')    then E:=#255  else { umlaut  (dieresis)            }*)
+  if (Code=167) or (Name='sect')   then E:=''   else { section sign                  }
+  if (Code=168) or (Name='uml')    then E:='"'   else { umlaut  (dieresis)            }
   if (Code=169) or (Name='copy')   then E:='(C)' else { copyright sign                }
 (*  if (Code=170) or (Name='ordf')   then E:=#255  else { ordinal indicator, feminine   }*)
   if (Code=171) or (Name='laquo')  then E:='"'   else { angle quotation mark -left    }
@@ -404,11 +469,11 @@ begin
   if (Code=194) or (Name='Acirc')  then E:='A'   else { capital A, circumflex accent  }
   if (Code=195) or (Name='Atilde') then E:='A'   else { capital A, tilde accent       }
   if (Code=196) or (Name='Auml')   then E:='é'   else { capital A, dieresis or umlaut }
-  if (Code=197) or (Name='Aring')  then E:='è'   else { capital A, ring               }
-  if (Code=198) or (Name='AElig')  then E:='AE'  else { capital AE diphthong          }
-(*  if (Code=199) or (Name='Ccedil') then E:='?'   else { capital C, cedilla            }*)
-  if (Code=200) or (Name='Egrave') then E:='ê'   else { capital E, grave accent       }
-  if (Code=201) or (Name='Eacute') then E:='ê'   else { capital E, acute accent       }
+  if (Code=197) or (Name='Aring')  then E:=''   else { capital A, ring               }
+  if (Code=198) or (Name='AElig')  then E:='í'   else { capital AE diphthong          }
+  if (Code=199) or (Name='Ccedil') then E:='Ä'   else { capital C, cedilla            }
+  if (Code=200) or (Name='Egrave') then E:=''   else { capital E, grave accent       }
+  if (Code=201) or (Name='Eacute') then E:=''   else { capital E, acute accent       }
   if (Code=202) or (Name='Ecirc')  then E:='E'   else { capital E, circumflex accent  }
   if (Code=203) or (Name='Euml')   then E:='E'   else { capital E, dieresis or umlaut }
   if (Code=204) or (Name='Igrave') then E:='I'   else { capital I, grave accent       }
@@ -438,12 +503,12 @@ begin
   if (Code=228) or (Name='auml')   then E:='Ñ'   else { small a, dieresis or umlaut   }
   if (Code=229) or (Name='aring')  then E:='Ü'   else { small a, ring                 }
   if (Code=230) or (Name='aelig')  then E:='ae'  else { small ae, diphthong           }
-(*  if (Code=231) or (Name='ccedil') then E:='?'   else { small c, cedilla              }*)
+  if (Code=231) or (Name='ccedil') then E:='á'   else { small c, cedilla              }
   if (Code=232) or (Name='egrave') then E:='ä'   else { small e, grave accent         }
   if (Code=233) or (Name='eacute') then E:='Ç'   else { small e, acute accent         }
   if (Code=234) or (Name='ecirc')  then E:='à'   else { small e, circumflex accent    }
   if (Code=235) or (Name='euml')   then E:='â'   else { small e, dieresis or umlaut   }
-  if (Code=236) or (Name='igrave') then E:='ç'   else { small i, grave accent         }
+  if (Code=236) or (Name='igrave') then E:=''   else { small i, grave accent         }
   if (Code=237) or (Name='iacute') then E:='°'   else { small i, acute accent         }
   if (Code=238) or (Name='icirc')  then E:='å'   else { small i, circumflex accent    }
   if (Code=239) or (Name='iuml')   then E:='ã'   else { small i, dieresis or umlaut   }
@@ -459,13 +524,33 @@ begin
   if (Code=249) or (Name='ugrave') then E:='ó'   else { small u, grave accent         }
   if (Code=250) or (Name='uacute') then E:='£'   else { small u, acute accent         }
   if (Code=251) or (Name='ucirc')  then E:='ñ'   else { small u, circumflex accent    }
-  if (Code=252) or (Name='uuml')   then E:='Å'   else { small u, dieresis or umlaut   }
+  if (Code=252) or (Name='uuml')   then E:=''   else { small u, dieresis or umlaut   }
   if (Code=253) or (Name='yacute') then E:='y'   else { small y, acute accent         }
 (*  if (Code=254) or (Name='thorn')  then E:='?'   else { small thorn, Icelandic        }*)
   if (Code=255) or (Name='yuml')   then E:='y'   else { small y, dieresis or umlaut   }
-  if (Code=8217) then E:=''''   else                  { acute accent as generated by TeXH   }
+  { Special codes appearing in TeXH generated files }
+  if (code=$2c6{710}) or (Name='circ')  then E:='^' else      { Modifier Letter Circumflex Accent }
+  if (code=$2dc{732}) or (Name='tilde') then E:='~' else      { Small tilde }
+  if (code=$2013{8211}) or (Name='endash') then E:='-' else   { En dash }
+  if (code=$2014{8212}) or (Name='emdash') then E:='--' else  { Em dash }
+  if (Code=$2018{8216}) or (Name='lsquo') then E:='`'  else   { Acute accent as generated by TeXH   }
+  if (Code=$2019{8217}) or (Name='rsquo') then E:='''' else   { acute accent as generated by TeXH   }
+  if (code=$201C{8220}) or (Name='ldquo') then E:='''''' else { left double quotation marks }
+  if (code=$201D{8221}) or (Name='rdquo') then E:='``' else   { right double quotation marks }
+  if (code=$2026{8230}) or (Name='hellip') then E:='...' else { horizontal ellipsis }
+  if (Code=$FB00) then E:='ff'  else                  { ff together }
+  if (Code=$FB01) then E:='fi'  else                  { fi together }
+  if (Code=$FB02) then E:='fl'  else                  { fl together }
+  if (Code=$FB03) then E:='ffi' else                  { ffi together }
+  if (Code=$FB04) then E:='ffl' else                  { ffl together }
   Found:=false;
   DocDecodeNamedEntity:=Found;
+{$ifdef DEBUG}
+  if (Code<>$ffff) and not found then
+    begin
+      DebugMessage(FileName,'NamedEntity '+Name+' not handled',1,1);
+    end;
+{$endif DEBUG}
 end;
 
 procedure THTMLParser.DocProcessTag(Tag: string);
@@ -481,6 +566,12 @@ begin
   UTagName:=UpcaseStr(TagName);
   NotEndTag:=copy(TagName,1,1)<>'/';
   if NotEndTag then ETagName:=UTagName else ETagName:=copy(UTagName,2,255);
+  { <BR/> is also a Break tag... }
+  if Copy(ETagName,Length(ETagName),1)='/' then
+    begin
+      ETagName:=copy(ETagName,1,Length(ETagName)-1);
+      NotEndTag:=false;
+    end;
 
   if (UTagName='!DOCTYPE') then DocTYPE else
   { Section tags }
@@ -510,14 +601,16 @@ begin
   if (ETagName='STRONG') then DocStrong(NotEndTag) else
   if (ETagName='TT') then DocTeleType(NotEndTag) else
   if (ETagName='VAR') then DocVariable(NotEndTag) else
+  if (ETagName='SPAN') then DocSpan(NotEndTag) else
+  if (ETagName='DIV') then DocDiv(NotEndTag) else
   { Unordered & ordered lists }
   if (ETagName='UL') then DocList(NotEndTag) else
   if (ETagName='OL') then DocOrderedList(NotEndTag) else
-  if (UTagName='LI') then DocListItem else
+  if (ETagName='LI') then DocListItem(NotEndTag) else
   { Definition list }
   if (ETagName='DL') then DocDefList(NotEndTag) else
-  if (UTagName='DT') then DocDefTerm else
-  if (UTagName='DD') then DocDefExp else
+  if (ETagName='DT') then DocDefTerm(NotEndTag) else
+  if (ETagName='DD') then DocDefExp(NotEndTag) else
   { Table }
   if (ETagName='TABLE') then DocTable(NotEndTag) else
   if (ETagName='TR') then DocTableRow(NotEndTag) else
@@ -537,7 +630,9 @@ var Found: boolean;
     InStr: boolean;
     I: sw_integer;
 begin
-  Found:=false; Name:=UpcaseStr(Name);
+  Found:=false;
+  Name:=UpcaseStr(Name);
+  Value:='';
   S:=TagParams;
   repeat
     InStr:=false;
@@ -545,7 +640,10 @@ begin
     S:=Trim(S); I:=1;
     while (I<=length(S)) and (S[I]<>'=') do
       begin
-        ParamName:=ParamName+S[I];
+        if S[I]=' ' then
+          ParamName:=''
+        else
+          ParamName:=ParamName+S[I];
         Inc(I);
       end;
     ParamName:=Trim(ParamName);
@@ -674,6 +772,37 @@ procedure THTMLParser.DocVariable(Entered: boolean);
 begin
 end;
 
+procedure THTMLParser.DocSpan(Entered: boolean);
+begin
+end;
+
+procedure THTMLParser.DocDiv(Entered: boolean);
+var
+  S: String;
+begin
+  if Entered then
+    begin
+      if DocGetTagParam('CLASS',S) then
+        if S='crosslinks' then
+          begin
+            DisableCrossIndexing:=true;
+{$ifdef DEBUG}
+          DebugMessage(GetFileName,'Crosslinks found',Line,LinePos);
+{$endif DEBUG}
+          end;
+    end
+  else
+    begin
+{$ifdef DEBUG}
+      if DisableCrossIndexing then
+        begin
+          DebugMessage(GetFileName,'Crosslinks end found',Line,LinePos);
+        end;
+{$endif DEBUG}
+      DisableCrossIndexing:=false;
+    end;
+end;
+
 procedure THTMLParser.DocList(Entered: boolean);
 begin
 end;
@@ -682,7 +811,7 @@ procedure THTMLParser.DocOrderedList(Entered: boolean);
 begin
 end;
 
-procedure THTMLParser.DocListItem;
+procedure THTMLParser.DocListItem(Entered: boolean);
 begin
 end;
 
@@ -690,17 +819,41 @@ procedure THTMLParser.DocDefList(Entered: boolean);
 begin
 end;
 
-procedure THTMLParser.DocDefTerm;
+procedure THTMLParser.DocDefTerm(Entered: boolean);
 begin
 end;
 
-procedure THTMLParser.DocDefExp;
+procedure THTMLParser.DocDefExp(Entered: boolean);
 begin
 end;
 
 procedure THTMLParser.DocTable(Entered: boolean);
+var
+  S: String;
 begin
+  if Entered then
+    begin
+      if DocGetTagParam('CLASS',S) then
+        if S='bar' then
+          begin
+            DisableCrossIndexing:=true;
+{$ifdef DEBUG}
+          DebugMessage(GetFileName,'Bar table found, cross indexing disabled ',Line,LinePos);
+{$endif DEBUG}
+          end;
+    end
+  else
+    begin
+{$ifdef DEBUG}
+      if DisableCrossIndexing then
+        begin
+          DebugMessage(GetFileName,'Bar table end found',Line,LinePos);
+        end;
+{$endif DEBUG}
+      DisableCrossIndexing:=false;
+    end;
 end;
+
 
 procedure THTMLParser.DocTableRow(Entered: boolean);
 begin
@@ -718,12 +871,47 @@ procedure THTMLParser.DocHorizontalRuler;
 begin
 end;
 
+function EncodeHTMLCtx(FileID: integer; LinkNo: word): longint;
+var Ctx: longint;
+begin
+  Ctx:=(longint(FileID) shl 16)+LinkNo;
+  EncodeHTMLCtx:=Ctx;
+end;
+
+procedure DecodeHTMLCtx(Ctx: longint; var FileID: word; var LinkNo: word);
+begin
+  if (Ctx shr 16)=0 then
+    begin
+      FileID:=$ffff; LinkNo:=0;
+    end
+  else
+    begin
+      FileID:=Ctx shr 16; LinkNo:=Ctx and $ffff;
+    end;
+end;
+
+
+procedure TTopicLinkCollection.Insert(Item: Pointer);
+begin
+  AtInsert(Count,Item);
+end;
+
+function TTopicLinkCollection.At(Index: sw_Integer): PString;
+begin
+  At:=inherited At(Index);
+end;
+
+function TTopicLinkCollection.AddItem(Item: string): sw_integer;
+var Idx: sw_integer;
+begin
+  if Item='' then Idx:=-1 else
+  if Search(@Item,Idx)=false then
+    begin
+      AtInsert(Count,NewStr(Item));
+      Idx:=Count-1;
+    end;
+  AddItem:=Idx;
+end;
 
 
 END.
-{
-  $Log: whtml.pas,v $
-  Revision 1.6  2005/02/14 17:13:19  peter
-    * truncate log
-
-}

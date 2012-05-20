@@ -1,6 +1,5 @@
 {
-    $Id: i_linux.pas,v 1.37 2005/03/20 22:36:45 olle Exp $
-    Copyright (c) 1998-2002 by Peter Vreman
+    Copyright (c) 1998-2008 by Peter Vreman
 
     This unit implements support information structures for linux
 
@@ -22,10 +21,12 @@
 { This unit implements support information structures for linux. }
 unit i_linux;
 
+{$i fpcdefs.inc}
+
   interface
 
     uses
-       systems;
+       systems, rescmn;
 
     const
        system_i386_linux_info : tsysteminfo =
@@ -33,7 +34,13 @@ unit i_linux;
             system       : system_i386_LINUX;
             name         : 'Linux for i386';
             shortname    : 'Linux';
-            flags        : [tf_needs_symbol_size,tf_pic_uses_got{,tf_smartlink_sections}];
+            flags        : [tf_needs_symbol_size,tf_pic_uses_got{,tf_smartlink_sections}{,tf_winlikewidestring},
+{$ifdef segment_threadvars}
+                            tf_section_threadvars,
+{$endif segment_threadvars}
+                            tf_needs_symbol_type,tf_files_case_sensitive,
+                            tf_smartlink_library,tf_needs_dwarf_cfi,tf_has_winlike_resources,
+                            tf_safecall_exceptions, tf_safecall_clearstack];
             cpu          : cpu_i386;
             unit_env     : 'LINUXUNITS';
             extradefines : 'UNIX;HASUNIX';
@@ -55,17 +62,18 @@ unit i_linux;
             staticClibext : '.a';
             staticClibprefix : 'lib';
             sharedClibprefix : 'lib';
-            p_ext_support : false;
+            importlibprefix : 'libimp';
+            importlibext : '.a';
             Cprefix      : '';
             newline      : #10;
             dirsep       : '/';
-            files_case_relevent : true;
             assem        : as_i386_elf32;
             assemextern  : as_gas;
             link         : nil;
             linkextern   : nil;
             ar           : ar_gnu_ar;
-            res          : res_none;
+            res          : res_elf;
+            dbg          : dbg_stabs;
             script       : script_unix;
             endian       : endian_little;
             alignment    :
@@ -76,213 +84,26 @@ unit i_linux;
                 constalignmin   : 0;
                 constalignmax   : 8;
                 varalignmin     : 0;
-                varalignmax     : 8;
+                varalignmax     : 16;
                 localalignmin   : 4;
-                localalignmax   : 4;
+                localalignmax   : 8;
                 recordalignmin  : 0;
-                recordalignmax  : 4;
+                recordalignmax  : 16;
                 maxCrecordalign : 4
               );
             first_parm_offset : 8;
-            stacksize    : 262144;
-            DllScanSupported:false;
-            use_function_relative_addresses : true;
+            stacksize    : 8*1024*1024;
             abi : abi_default
           );
 
-       system_m68k_linux_info : tsysteminfo =
+       system_x86_6432_linux_info : tsysteminfo =
           (
-            system       : system_m68k_linux;
-            name         : 'Linux for m68k';
-            shortname    : 'Linux';
-            flags        : [tf_needs_symbol_size];
-            cpu          : cpu_m68k;
-            unit_env     : 'LINUXUNITS';
-            extradefines : 'UNIX;HASUNIX';
-            exeext       : '';
-            defext       : '';
-            scriptext    : '.sh';
-            smartext     : '.sl';
-            unitext      : '.ppu';
-            unitlibext   : '.ppl';
-            asmext       : '.s';
-            objext       : '.o';
-            resext       : '.res';
-            resobjext    : '.or';
-            sharedlibext : '.so';
-            staticlibext : '.a';
-            staticlibprefix : 'libp';
-            sharedlibprefix : 'lib';
-            sharedClibext : '.so';
-            staticClibext : '.a';
-            staticClibprefix : 'lib';
-            sharedClibprefix : 'lib';
-            p_ext_support : false;
-            Cprefix      : '';
-            newline      : #10;
-            dirsep       : '/';
-            files_case_relevent : true;
-            assem        : as_gas;
-            assemextern  : as_gas;
-            link         : nil;
-            linkextern   : nil;
-            ar           : ar_gnu_ar;
-            res          : res_none;
-            script       : script_unix;
-            endian       : endian_big;
-            alignment    :
-              (
-                procalign       : 4;
-                loopalign       : 4;
-                jumpalign       : 0;
-                constalignmin   : 0;
-                constalignmax   : 4;
-                varalignmin     : 0;
-                varalignmax     : 4;
-                localalignmin   : 4;
-                localalignmax   : 4;
-                recordalignmin  : 0;
-                recordalignmax  : 2;
-                maxCrecordalign : 4
-              );
-            first_parm_offset : 8;
-            stacksize    : 32*1024*1024;
-            DllScanSupported:false;
-            use_function_relative_addresses : true;
-            abi : abi_default
-          );
-
-       system_powerpc_linux_info : tsysteminfo =
-          (
-            system       : system_powerpc_LINUX;
-            name         : 'Linux for PowerPC';
-            shortname    : 'Linux';
-            flags        : [tf_needs_symbol_size];
-            cpu          : cpu_powerpc;
-            unit_env     : '';
-            extradefines : 'UNIX;HASUNIX';
-            exeext       : '';
-            defext       : '.def';
-            scriptext    : '.sh';
-            smartext     : '.sl';
-            unitext      : '.ppu';
-            unitlibext   : '.ppl';
-            asmext       : '.s';
-            objext       : '.o';
-            resext       : '.res';
-            resobjext    : '.or';
-            sharedlibext : '.so';
-            staticlibext : '.a';
-            staticlibprefix : 'libp';
-            sharedlibprefix : 'lib';
-            sharedClibext : '.so';
-            staticClibext : '.a';
-            staticClibprefix : 'lib';
-            sharedClibprefix : 'lib';
-            p_ext_support : false;
-            Cprefix      : '';
-            newline      : #10;
-            dirsep       : '/';
-            files_case_relevent : true;
-            assem        : as_gas;
-            assemextern  : as_gas;
-            link         : nil;
-            linkextern   : nil;
-            ar           : ar_gnu_ar;
-            res          : res_none;
-            script       : script_unix;
-            endian       : endian_big;
-            alignment    :
-              (
-                procalign       : 4;
-                loopalign       : 4;
-                jumpalign       : 0;
-                constalignmin   : 0;
-                constalignmax   : 4;
-                varalignmin     : 0;
-                varalignmax     : 4;
-                localalignmin   : 4;
-                localalignmax   : 4;
-                recordalignmin  : 0;
-                recordalignmax  : 4;
-                maxCrecordalign : 8
-              );
-            first_parm_offset : 8;
-            stacksize    : 32*1024*1024;
-            DllScanSupported:false;
-            use_function_relative_addresses : true;
-            abi : abi_powerpc_sysv;
-          );
-
-       system_alpha_linux_info : tsysteminfo =
-          (
-            system       : system_alpha_LINUX;
-            name         : 'Linux for Alpha';
-            shortname    : 'Linux';
-            flags        : [tf_needs_symbol_size];
-            cpu          : cpu_alpha;
-            unit_env     : 'LINUXUNITS';
-            extradefines : 'UNIX;HASUNIX';
-            exeext       : '';
-            defext       : '.def';
-            scriptext    : '.sh';
-            smartext     : '.sl';
-            unitext      : '.ppu';
-            unitlibext   : '.ppl';
-            asmext       : '.s';
-            objext       : '.o';
-            resext       : '.res';
-            resobjext    : '.or';
-            sharedlibext : '.so';
-            staticlibext : '.a';
-            staticlibprefix : 'libp';
-            sharedlibprefix : 'lib';
-            sharedClibext : '.so';
-            staticClibext : '.a';
-            staticClibprefix : 'lib';
-            sharedClibprefix : 'lib';
-            p_ext_support : false;
-            Cprefix      : '';
-            newline      : #10;
-            dirsep       : '/';
-            files_case_relevent : true;
-            assem        : as_gas;
-            assemextern  : as_gas;
-            link         : nil;
-            linkextern   : nil;
-            ar           : ar_gnu_ar;
-            res          : res_none;
-            script       : script_unix;
-            endian       : endian_little;
-            alignment    :
-              (
-                procalign       : 4;
-                loopalign       : 4;
-                jumpalign       : 0;
-                constalignmin   : 0;
-                constalignmax   : 4;
-                varalignmin     : 0;
-                varalignmax     : 4;
-                localalignmin   : 4;
-                localalignmax   : 4;
-                recordalignmin  : 0;
-                recordalignmax  : 2;
-                maxCrecordalign : 4
-              );
-            first_parm_offset : 8;
-            stacksize    : 32*1024*1024;
-            DllScanSupported:false;
-            use_function_relative_addresses : true;
-            abi : abi_default
-          );
-
-       system_x86_64_linux_info : tsysteminfo =
-          (
-            system       : system_x86_64_LINUX;
-            name         : 'Linux for x86-64';
-            shortname    : 'Linux';
-            flags        : [tf_needs_symbol_size,tf_needs_dwarf_cfi,
-                            tf_library_needs_pic];
+            system       : system_x86_6432_LINUX;
+            name         : 'Linux for x64_6432';
+            shortname    : 'Linux6432';
+            flags        : [tf_needs_symbol_size,tf_needs_symbol_type,tf_files_case_sensitive,
+                            tf_pic_uses_got{,tf_smartlink_sections},
+                            tf_smartlink_library,tf_has_winlike_resources];
             cpu          : cpu_x86_64;
             unit_env     : 'LINUXUNITS';
             extradefines : 'UNIX;HASUNIX';
@@ -304,38 +125,348 @@ unit i_linux;
             staticClibext : '.a';
             staticClibprefix : 'lib';
             sharedClibprefix : 'lib';
-            p_ext_support : false;
+            importlibprefix : 'libimp';
+            importlibext : '.a';
             Cprefix      : '';
             newline      : #10;
             dirsep       : '/';
-            files_case_relevent : true;
+            assem        : as_i386_elf32;
+            assemextern  : as_gas;
+            link         : nil;
+            linkextern   : nil;
+            ar           : ar_gnu_ar;
+            res          : res_elf;
+            dbg          : dbg_stabs;
+            script       : script_unix;
+            endian       : endian_little;
+            alignment    :
+              (
+                procalign       : 16;
+                loopalign       : 4;
+                jumpalign       : 0;
+                constalignmin   : 0;
+                constalignmax   : 16;
+                varalignmin     : 0;
+                varalignmax     : 16;
+                localalignmin   : 4;
+                localalignmax   : 8;
+                recordalignmin  : 0;
+                recordalignmax  : 16;
+                maxCrecordalign : 4
+              );
+            first_parm_offset : 8;
+            stacksize    : 8*1024*1024;
+            abi : abi_default
+          );
+
+       system_m68k_linux_info : tsysteminfo =
+          (
+            system       : system_m68k_linux;
+            name         : 'Linux for m68k';
+            shortname    : 'Linux';
+            flags        : [tf_needs_symbol_size,tf_needs_symbol_type,tf_files_case_sensitive,
+                            tf_smartlink_library,tf_has_winlike_resources];
+            cpu          : cpu_m68k;
+            unit_env     : 'LINUXUNITS';
+            extradefines : 'UNIX;HASUNIX';
+            exeext       : '';
+            defext       : '';
+            scriptext    : '.sh';
+            smartext     : '.sl';
+            unitext      : '.ppu';
+            unitlibext   : '.ppl';
+            asmext       : '.s';
+            objext       : '.o';
+            resext       : '.res';
+            resobjext    : '.or';
+            sharedlibext : '.so';
+            staticlibext : '.a';
+            staticlibprefix : 'libp';
+            sharedlibprefix : 'lib';
+            sharedClibext : '.so';
+            staticClibext : '.a';
+            staticClibprefix : 'lib';
+            sharedClibprefix : 'lib';
+            importlibprefix : 'libimp';
+            importlibext : '.a';
+            Cprefix      : '';
+            newline      : #10;
+            dirsep       : '/';
             assem        : as_gas;
             assemextern  : as_gas;
             link         : nil;
             linkextern   : nil;
             ar           : ar_gnu_ar;
-            res          : res_none;
+            res          : res_elf;
+            dbg          : dbg_stabs;
             script       : script_unix;
-            endian       : endian_little;
+            endian       : endian_big;
+            alignment    :
+              (
+                procalign       : 4;
+                loopalign       : 4;
+                jumpalign       : 0;
+                constalignmin   : 0;
+                constalignmax   : 4;
+                varalignmin     : 0;
+                varalignmax     : 4;
+                localalignmin   : 4;
+                localalignmax   : 4;
+                recordalignmin  : 0;
+                recordalignmax  : 2;
+                maxCrecordalign : 4
+              );
+            first_parm_offset : 8;
+            stacksize    : 32*1024*1024;
+            abi : abi_default
+          );
+
+       system_powerpc_linux_info : tsysteminfo =
+          (
+            system       : system_powerpc_LINUX;
+            name         : 'Linux for PowerPC';
+            shortname    : 'Linux';
+            flags        : [tf_needs_symbol_size,tf_needs_symbol_type,tf_files_case_sensitive,
+                            tf_smartlink_library,tf_has_winlike_resources];
+            cpu          : cpu_powerpc;
+            unit_env     : '';
+            extradefines : 'UNIX;HASUNIX';
+            exeext       : '';
+            defext       : '.def';
+            scriptext    : '.sh';
+            smartext     : '.sl';
+            unitext      : '.ppu';
+            unitlibext   : '.ppl';
+            asmext       : '.s';
+            objext       : '.o';
+            resext       : '.res';
+            resobjext    : '.or';
+            sharedlibext : '.so';
+            staticlibext : '.a';
+            staticlibprefix : 'libp';
+            sharedlibprefix : 'lib';
+            sharedClibext : '.so';
+            staticClibext : '.a';
+            staticClibprefix : 'lib';
+            sharedClibprefix : 'lib';
+            importlibprefix : 'libimp';
+            importlibext : '.a';
+            Cprefix      : '';
+            newline      : #10;
+            dirsep       : '/';
+            assem        : as_gas;
+            assemextern  : as_gas;
+            link         : nil;
+            linkextern   : nil;
+            ar           : ar_gnu_ar;
+            res          : res_elf;
+            dbg          : dbg_stabs;
+            script       : script_unix;
+            endian       : endian_big;
+            alignment    :
+              (
+                procalign       : 4;
+                loopalign       : 4;
+                jumpalign       : 0;
+                constalignmin   : 0;
+                constalignmax   : 4;
+                varalignmin     : 0;
+                varalignmax     : 4;
+                localalignmin   : 4;
+                localalignmax   : 4;
+                recordalignmin  : 0;
+                recordalignmax  : 4;
+                maxCrecordalign : 8
+              );
+            first_parm_offset : 8;
+            stacksize    : 32*1024*1024;
+            abi : abi_powerpc_sysv;
+          );
+
+       system_powerpc64_linux_info : tsysteminfo =
+          (
+            system       : system_powerpc64_LINUX;
+            name         : 'Linux for PowerPC64';
+            shortname    : 'Linux';
+            flags        : [tf_needs_symbol_size,tf_needs_symbol_type,tf_files_case_sensitive,
+                            tf_requires_proper_alignment,tf_smartlink_sections,tf_has_winlike_resources];
+            cpu          : cpu_powerpc64;
+            unit_env     : '';
+            extradefines : 'UNIX;HASUNIX';
+            exeext       : '';
+            defext       : '.def';
+            scriptext    : '.sh';
+            smartext     : '.sl';
+            unitext      : '.ppu';
+            unitlibext   : '.ppl';
+            asmext       : '.s';
+            objext       : '.o';
+            resext       : '.res';
+            resobjext    : '.or';
+            sharedlibext : '.so';
+            staticlibext : '.a';
+            staticlibprefix : 'libp';
+            sharedlibprefix : 'lib';
+            sharedClibext : '.so';
+            staticClibext : '.a';
+            staticClibprefix : 'lib';
+            sharedClibprefix : 'lib';
+            importlibprefix : 'libimp';
+            importlibext : '.a';
+            Cprefix      : '';
+            newline      : #10;
+            dirsep       : '/';
+            assem        : as_gas;
+            assemextern  : as_gas;
+            link         : nil;
+            linkextern   : nil;
+            ar           : ar_gnu_ar;
+            res          : res_elf;
+            dbg          : dbg_dwarf2;
+            script       : script_unix;
+            endian       : endian_big;
             alignment    :
               (
                 procalign       : 8;
                 loopalign       : 4;
                 jumpalign       : 0;
+                constalignmin   : 4;
+                constalignmax   : 16;
+                varalignmin     : 4;
+                varalignmax     : 16;
+                localalignmin   : 0;
+                localalignmax   : 16;
+                recordalignmin  : 0;
+                recordalignmax  : 16;
+                maxCrecordalign : 16
+              );
+            first_parm_offset : 8;
+            stacksize    : 10*1024*1024;
+            abi : abi_powerpc_sysv
+          );
+
+       system_alpha_linux_info : tsysteminfo =
+          (
+            system       : system_alpha_LINUX;
+            name         : 'Linux for Alpha';
+            shortname    : 'Linux';
+            flags        : [tf_needs_symbol_size,tf_needs_symbol_type,tf_files_case_sensitive,
+                            tf_smartlink_library,tf_has_winlike_resources];
+            cpu          : cpu_alpha;
+            unit_env     : 'LINUXUNITS';
+            extradefines : 'UNIX;HASUNIX';
+            exeext       : '';
+            defext       : '.def';
+            scriptext    : '.sh';
+            smartext     : '.sl';
+            unitext      : '.ppu';
+            unitlibext   : '.ppl';
+            asmext       : '.s';
+            objext       : '.o';
+            resext       : '.res';
+            resobjext    : '.or';
+            sharedlibext : '.so';
+            staticlibext : '.a';
+            staticlibprefix : 'libp';
+            sharedlibprefix : 'lib';
+            sharedClibext : '.so';
+            staticClibext : '.a';
+            staticClibprefix : 'lib';
+            sharedClibprefix : 'lib';
+            importlibprefix : 'libimp';
+            importlibext : '.a';
+            Cprefix      : '';
+            newline      : #10;
+            dirsep       : '/';
+            assem        : as_gas;
+            assemextern  : as_gas;
+            link         : nil;
+            linkextern   : nil;
+            ar           : ar_gnu_ar;
+            res          : res_elf;
+            dbg          : dbg_stabs;
+            script       : script_unix;
+            endian       : endian_little;
+            alignment    :
+              (
+                procalign       : 4;
+                loopalign       : 4;
+                jumpalign       : 0;
+                constalignmin   : 0;
+                constalignmax   : 4;
+                varalignmin     : 0;
+                varalignmax     : 4;
+                localalignmin   : 4;
+                localalignmax   : 4;
+                recordalignmin  : 0;
+                recordalignmax  : 2;
+                maxCrecordalign : 4
+              );
+            first_parm_offset : 8;
+            stacksize    : 32*1024*1024;
+            abi : abi_default
+          );
+
+       system_x86_64_linux_info : tsysteminfo =
+          (
+            system       : system_x86_64_LINUX;
+            name         : 'Linux for x86-64';
+            shortname    : 'Linux';
+            flags        : [tf_needs_symbol_size,tf_needs_dwarf_cfi,tf_smartlink_library,
+                            tf_library_needs_pic,tf_needs_symbol_type,tf_files_case_sensitive,
+                            tf_has_winlike_resources,tf_safecall_exceptions,tf_safecall_clearstack];
+            cpu          : cpu_x86_64;
+            unit_env     : 'LINUXUNITS';
+            extradefines : 'UNIX;HASUNIX';
+            exeext       : '';
+            defext       : '.def';
+            scriptext    : '.sh';
+            smartext     : '.sl';
+            unitext      : '.ppu';
+            unitlibext   : '.ppl';
+            asmext       : '.s';
+            objext       : '.o';
+            resext       : '.res';
+            resobjext    : '.or';
+            sharedlibext : '.so';
+            staticlibext : '.a';
+            staticlibprefix : 'libp';
+            sharedlibprefix : 'lib';
+            sharedClibext : '.so';
+            staticClibext : '.a';
+            staticClibprefix : 'lib';
+            sharedClibprefix : 'lib';
+            importlibprefix : 'libimp';
+            importlibext : '.a';
+            Cprefix      : '';
+            newline      : #10;
+            dirsep       : '/';
+            assem        : as_x86_64_elf64;
+            assemextern  : as_gas;
+            link         : nil;
+            linkextern   : nil;
+            ar           : ar_gnu_ar;
+            res          : res_elf;
+            dbg          : dbg_dwarf2;
+            script       : script_unix;
+            endian       : endian_little;
+            alignment    :
+              (
+                procalign       : 16;
+                loopalign       : 8;
+                jumpalign       : 0;
                 constalignmin   : 0;
                 constalignmax   : 8;
                 varalignmin     : 0;
-                varalignmax     : 8;
+                varalignmax     : 16;
                 localalignmin   : 4;
-                localalignmax   : 8;
+                localalignmax   : 16;
                 recordalignmin  : 0;
-                recordalignmax  : 8;
-                maxCrecordalign : 8
+                recordalignmax  : 16;
+                maxCrecordalign : 16
               );
             first_parm_offset : 16;
-            stacksize    : 256*1024;
-            DllScanSupported:false;
-            use_function_relative_addresses : true;
+            stacksize    : 8*1024*1024;
             abi : abi_default
           );
 
@@ -344,7 +475,10 @@ unit i_linux;
             system       : system_SPARC_Linux;
             name         : 'Linux for SPARC';
             shortname    : 'Linux';
-            flags        : [tf_needs_symbol_size,tf_library_needs_pic];
+            flags        : [tf_needs_symbol_size,tf_library_needs_pic,tf_smartlink_sections,
+                            tf_needs_symbol_type,tf_files_case_sensitive,tf_smartlink_library,
+                            tf_requires_proper_alignment,
+                            tf_has_winlike_resources];
             cpu          : cpu_SPARC;
             unit_env     : 'LINUXUNITS';
             extradefines : 'UNIX;HASUNIX';
@@ -366,19 +500,84 @@ unit i_linux;
             staticClibext : '.a';
             staticClibprefix : 'lib';
             sharedClibprefix : 'lib';
-            p_ext_support : false;
+            importlibprefix : 'libimp';
+            importlibext : '.a';
             Cprefix      : '';
             newline      : #10;
             dirsep       : '/';
-            files_case_relevent : true;
             assem        : as_gas;
             assemextern  : as_gas;
             link         : nil;
             linkextern   : nil;
             ar           : ar_gnu_ar;
-            res          : res_none;
+            res          : res_elf;
+            dbg          : dbg_stabs;
             script       : script_unix;
             endian       : endian_big;
+            alignment    :
+              (
+                procalign       : 4;
+                loopalign       : 4;
+                jumpalign       : 0;
+                constalignmin   : 4;
+                constalignmax   : 8;
+                varalignmin     : 4;
+                varalignmax     : 8;
+                localalignmin   : 4;
+                localalignmax   : 8;
+                recordalignmin  : 0;
+                recordalignmax  : 8;
+                maxCrecordalign : 8
+              );
+            first_parm_offset : 92;
+            stacksize    : 8*1024*1024;
+            abi : abi_default
+          );
+
+{$ifdef FPC_ARMHF}
+       system_arm_linux_info : tsysteminfo =
+          (
+            system       : system_arm_Linux;
+            name         : 'Linux for ARMHF';
+            shortname    : 'Linux';
+            flags        : [tf_needs_symbol_size,tf_needs_symbol_type,tf_files_case_sensitive,
+                            tf_requires_proper_alignment,
+                            tf_smartlink_sections,tf_smartlink_library,tf_has_winlike_resources];
+            cpu          : cpu_arm;
+            unit_env     : 'LINUXUNITS';
+            extradefines : 'UNIX;HASUNIX;CPUARMHF';
+            exeext       : '';
+            defext       : '.def';
+            scriptext    : '.sh';
+            smartext     : '.sl';
+            unitext      : '.ppu';
+            unitlibext   : '.ppl';
+            asmext       : '.s';
+            objext       : '.o';
+            resext       : '.res';
+            resobjext    : '.or';
+            sharedlibext : '.so';
+            staticlibext : '.a';
+            staticlibprefix : 'libp';
+            sharedlibprefix : 'lib';
+            sharedClibext : '.so';
+            staticClibext : '.a';
+            staticClibprefix : 'lib';
+            sharedClibprefix : 'lib';
+            importlibprefix : 'libimp';
+            importlibext : '.a';
+            Cprefix      : '';
+            newline      : #10;
+            dirsep       : '/';
+            assem        : as_gas;
+            assemextern  : as_gas;
+            link         : nil;
+            linkextern   : nil;
+            ar           : ar_gnu_ar;
+            res          : res_elf;
+            dbg          : dbg_stabs;
+            script       : script_unix;
+            endian       : endian_little;
             alignment    :
               (
                 procalign       : 4;
@@ -394,19 +593,147 @@ unit i_linux;
                 recordalignmax  : 8;
                 maxCrecordalign : 8
               );
-            first_parm_offset : 92;
-            stacksize    : 262144;
-            DllScanSupported:false;
-            use_function_relative_addresses : true;
+            first_parm_offset : 8;
+            stacksize    : 8*1024*1024;
+            abi : abi_eabihf
+          );
+{$else FPC_ARMHF}
+{$ifdef FPC_ARMEL}
+       system_arm_linux_info : tsysteminfo =
+          (
+            system       : system_arm_Linux;
+            name         : 'Linux for ARMEL';
+            shortname    : 'Linux';
+            flags        : [tf_needs_symbol_size,tf_needs_symbol_type,tf_files_case_sensitive,
+                            tf_requires_proper_alignment,
+                            tf_smartlink_sections,tf_smartlink_library,tf_has_winlike_resources];
+            cpu          : cpu_arm;
+            unit_env     : 'LINUXUNITS';
+            extradefines : 'UNIX;HASUNIX;CPUARMEL';
+            exeext       : '';
+            defext       : '.def';
+            scriptext    : '.sh';
+            smartext     : '.sl';
+            unitext      : '.ppu';
+            unitlibext   : '.ppl';
+            asmext       : '.s';
+            objext       : '.o';
+            resext       : '.res';
+            resobjext    : '.or';
+            sharedlibext : '.so';
+            staticlibext : '.a';
+            staticlibprefix : 'libp';
+            sharedlibprefix : 'lib';
+            sharedClibext : '.so';
+            staticClibext : '.a';
+            staticClibprefix : 'lib';
+            sharedClibprefix : 'lib';
+            importlibprefix : 'libimp';
+            importlibext : '.a';
+            Cprefix      : '';
+            newline      : #10;
+            dirsep       : '/';
+            assem        : as_gas;
+            assemextern  : as_gas;
+            link         : nil;
+            linkextern   : nil;
+            ar           : ar_gnu_ar;
+            res          : res_elf;
+            dbg          : dbg_stabs;
+            script       : script_unix;
+            endian       : endian_little;
+            alignment    :
+              (
+                procalign       : 4;
+                loopalign       : 4;
+                jumpalign       : 0;
+                constalignmin   : 0;
+                constalignmax   : 8;
+                varalignmin     : 0;
+                varalignmax     : 8;
+                localalignmin   : 4;
+                localalignmax   : 8;
+                recordalignmin  : 0;
+                recordalignmax  : 8;
+                maxCrecordalign : 8
+              );
+            first_parm_offset : 8;
+            stacksize    : 8*1024*1024;
+            abi : abi_eabi
+          );
+{$else FPC_ARMEL}
+{$ifdef FPC_ARMEB}
+       system_arm_linux_info : tsysteminfo =
+          (
+            system       : system_arm_Linux;
+            name         : 'Linux for ARMEB';
+            shortname    : 'Linux';
+            flags        : [tf_needs_symbol_size,tf_needs_symbol_type,tf_files_case_sensitive,
+                            tf_requires_proper_alignment,
+                            tf_smartlink_sections,tf_smartlink_library,tf_has_winlike_resources];
+            cpu          : cpu_arm;
+            unit_env     : 'LINUXUNITS';
+            extradefines : 'UNIX;HASUNIX;CPUARMEB';
+            exeext       : '';
+            defext       : '.def';
+            scriptext    : '.sh';
+            smartext     : '.sl';
+            unitext      : '.ppu';
+            unitlibext   : '.ppl';
+            asmext       : '.s';
+            objext       : '.o';
+            resext       : '.res';
+            resobjext    : '.or';
+            sharedlibext : '.so';
+            staticlibext : '.a';
+            staticlibprefix : 'libp';
+            sharedlibprefix : 'lib';
+            sharedClibext : '.so';
+            staticClibext : '.a';
+            staticClibprefix : 'lib';
+            sharedClibprefix : 'lib';
+            importlibprefix : 'libimp';
+            importlibext : '.a';
+            Cprefix      : '';
+            newline      : #10;
+            dirsep       : '/';
+            assem        : as_gas;
+            assemextern  : as_gas;
+            link         : nil;
+            linkextern   : nil;
+            ar           : ar_gnu_ar;
+            res          : res_elf;
+            dbg          : dbg_stabs;
+            script       : script_unix;
+            endian       : endian_big;
+            alignment    :
+              (
+                procalign       : 4;
+                loopalign       : 4;
+                jumpalign       : 0;
+                constalignmin   : 0;
+                constalignmax   : 4;
+                varalignmin     : 0;
+                varalignmax     : 4;
+                localalignmin   : 4;
+                localalignmax   : 8;
+                recordalignmin  : 0;
+                recordalignmax  : 4;
+                maxCrecordalign : 4
+              );
+            first_parm_offset : 8;
+            stacksize    : 8*1024*1024;
             abi : abi_default
           );
-
+{$else FPC_ARMEB}
        system_arm_linux_info : tsysteminfo =
           (
             system       : system_arm_Linux;
             name         : 'Linux for ARM';
             shortname    : 'Linux';
-            flags        : [tf_needs_symbol_size];
+            flags        : [tf_needs_symbol_size,tf_needs_symbol_type,tf_files_case_sensitive,
+                            tf_requires_proper_alignment,
+                            tf_smartlink_sections,tf_smartlink_library,tf_has_winlike_resources];
             cpu          : cpu_arm;
             unit_env     : 'LINUXUNITS';
             extradefines : 'UNIX;HASUNIX';
@@ -428,17 +755,18 @@ unit i_linux;
             staticClibext : '.a';
             staticClibprefix : 'lib';
             sharedClibprefix : 'lib';
-            p_ext_support : false;
+            importlibprefix : 'libimp';
+            importlibext : '.a';
             Cprefix      : '';
             newline      : #10;
             dirsep       : '/';
-            files_case_relevent : true;
             assem        : as_gas;
             assemextern  : as_gas;
             link         : nil;
             linkextern   : nil;
             ar           : ar_gnu_ar;
-            res          : res_none;
+            res          : res_elf;
+            dbg          : dbg_stabs;
             script       : script_unix;
             endian       : endian_little;
             alignment    :
@@ -451,15 +779,144 @@ unit i_linux;
                 varalignmin     : 0;
                 varalignmax     : 4;
                 localalignmin   : 4;
-                localalignmax   : 8;
+                localalignmax   : 4;
                 recordalignmin  : 0;
                 recordalignmax  : 4;
                 maxCrecordalign : 4
               );
             first_parm_offset : 8;
-            stacksize    : 262144;
-            DllScanSupported:false;
-            use_function_relative_addresses : true;
+            stacksize    : 8*1024*1024;
+            abi : abi_default
+          );
+{$endif FPC_ARMEB}
+{$endif FPC_ARMEL}
+{$endif FPC_ARMHF}
+
+       system_mips_linux_info : tsysteminfo =
+          (
+            system       : system_mips_LINUX;
+            name         : 'Linux for MIPS';
+            shortname    : 'Linux';
+            flags        : [tf_needs_symbol_size,tf_needs_symbol_type,tf_files_case_sensitive,
+                            tf_requires_proper_alignment,
+                            tf_smartlink_sections,tf_smartlink_library,tf_has_winlike_resources];
+            cpu          : cpu_mips;
+            unit_env     : 'LINUXUNITS';
+            extradefines : 'UNIX;HASUNIX;CPUMIPS32';
+            exeext       : '';
+            defext       : '.def';
+            scriptext    : '.sh';
+            smartext     : '.sl';
+            unitext      : '.ppu';
+            unitlibext   : '.ppl';
+            asmext       : '.s';
+            objext       : '.o';
+            resext       : '.res';
+            resobjext    : '.or';
+            sharedlibext : '.so';
+            staticlibext : '.a';
+            staticlibprefix : 'libp';
+            sharedlibprefix : 'lib';
+            sharedClibext : '.so';
+            staticClibext : '.a';
+            staticClibprefix : 'lib';
+            sharedClibprefix : 'lib';
+            importlibprefix : 'libimp';
+            importlibext : '.a';
+//            p_ext_support : false;
+            Cprefix      : '';
+            newline      : #10;
+            dirsep       : '/';
+            assem        : as_gas;
+            assemextern  : as_gas;
+            link         : nil;
+            linkextern   : nil;
+            ar           : ar_gnu_ar;
+            res          : res_none;
+            dbg          : dbg_stabs;
+            script       : script_unix;
+            endian       : endian_big;
+            alignment    :
+              (
+                procalign       : 4;
+                loopalign       : 4;
+                jumpalign       : 0;
+                constalignmin   : 0;
+                constalignmax   : 8;
+                varalignmin     : 0;
+                varalignmax     : 8;
+                localalignmin   : 4;
+                localalignmax   : 8;
+                recordalignmin  : 0;
+                recordalignmax  : 2;
+                maxCrecordalign : 4
+              );
+            first_parm_offset : 8;
+            stacksize    : 32*1024*1024;
+            abi : abi_default
+          );
+
+       system_mipsel_linux_info : tsysteminfo =
+          (
+            system       : system_mipsel_LINUX;
+            name         : 'Linux for MIPSEL';
+            shortname    : 'Linux';
+            flags        : [tf_needs_symbol_size,tf_needs_symbol_type,tf_files_case_sensitive,
+                            tf_requires_proper_alignment,
+                            tf_smartlink_sections,tf_smartlink_library,tf_has_winlike_resources];
+            cpu          : cpu_mipsel;
+            unit_env     : 'LINUXUNITS';
+            extradefines : 'UNIX;HASUNIX;MIPSEL;CPUMIPS32';
+            exeext       : '';
+            defext       : '.def';
+            scriptext    : '.sh';
+            smartext     : '.sl';
+            unitext      : '.ppu';
+            unitlibext   : '.ppl';
+            asmext       : '.s';
+            objext       : '.o';
+            resext       : '.res';
+            resobjext    : '.or';
+            sharedlibext : '.so';
+            staticlibext : '.a';
+            staticlibprefix : 'libp';
+            sharedlibprefix : 'lib';
+            sharedClibext : '.so';
+            staticClibext : '.a';
+            staticClibprefix : 'lib';
+            sharedClibprefix : 'lib';
+            importlibprefix : 'libimp';
+            importlibext : '.a';
+//            p_ext_support : false;
+            Cprefix      : '';
+            newline      : #10;
+            dirsep       : '/';
+            assem        : as_gas;
+            assemextern  : as_gas;
+            link         : nil;
+            linkextern   : nil;
+            ar           : ar_gnu_ar;
+            res          : res_none;
+            dbg          : dbg_stabs;
+            script       : script_unix;
+            endian       : endian_little;
+            alignment    :
+              (
+                procalign       : 4;
+                loopalign       : 4;
+                jumpalign       : 0;
+                constalignmin   : 0;
+                constalignmax   : 8;
+                varalignmin     : 0;
+                varalignmax     : 8;
+                localalignmin   : 4;
+                localalignmax   : 8;
+                recordalignmin  : 0;
+                recordalignmax  : 2;
+                maxCrecordalign : 4
+              );
+            first_parm_offset : 8;
+            stacksize    : 32*1024*1024;
             abi : abi_default
           );
 
@@ -494,33 +951,24 @@ initialization
     set_source_info(system_sparc_linux_info);
   {$endif linux}
 {$endif CPUSPARC}
-{$ifdef CPUPOWERPC}
+{$ifdef CPUPOWERPC32}
   {$ifdef linux}
     set_source_info(system_powerpc_linux_info);
   {$endif linux}
-{$endif CPUPOWERPC}
+{$endif CPUPOWERPC32}
+{$ifdef CPUPOWERPC64}
+  {$ifdef linux}
+    set_source_info(system_powerpc64_linux_info);
+  {$endif linux}
+{$endif CPUPOWERPC64}
 {$ifdef CPUARM}
   {$ifdef linux}
     set_source_info(system_arm_linux_info);
   {$endif linux}
 {$endif CPUARM}
+{$ifdef CPUMIPS}
+  {$ifdef linux}
+    set_source_info(system_mipsel_linux_info);
+  {$endif linux}
+{$endif CPUMIPS}
 end.
-{
-  $Log: i_linux.pas,v $
-  Revision 1.37  2005/03/20 22:36:45  olle
-    * Cleaned up handling of source file extension.
-    + Added support for .p extension for macos and darwin
-
-  Revision 1.36  2005/02/14 17:13:10  peter
-    * truncate log
-
-  Revision 1.35  2005/02/06 00:05:56  florian
-    + x86_64 pic draft
-
-  Revision 1.34  2005/01/30 17:45:38  florian
-    * better alignment on linux
-
-  Revision 1.33  2005/01/25 18:48:15  peter
-    * tf_pic_uses_got added
-
-}

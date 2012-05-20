@@ -1,5 +1,4 @@
 {
-    $Id: fpusrscr.pas,v 1.38 2005/02/14 17:13:18 peter Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 1998 by Berczi Gabor
 
@@ -19,16 +18,15 @@ unit FPUsrScr;
 interface
 
 uses
-{$ifdef win32}
+{$ifdef Windows}
   windows,
-{$endif win32}
+{$endif Windows}
 {$ifdef Unix}
-  {$ifdef VER1_0}
-    linux,
-  {$else}
-    baseunix,
-    termio,
-  {$endif}
+  baseunix,
+  termio,
+{$ifdef linux}
+  linuxvcs,
+{$endif}
 {$endif}
   video,Objects;
 
@@ -61,6 +59,36 @@ type
 {$IFDEF netwlibc}
     PNWLScreen = ^TNWLScreen;
     TNWLScreen = object(TScreen)
+      function    GetWidth: integer; virtual;
+      function    GetHeight: integer; virtual;
+      procedure   GetLine(Line: integer; var Text, Attr: string); virtual;
+      procedure   GetCursorPos(var P: TPoint); virtual;
+      { remember the initial video screen }
+      procedure   Capture; virtual;
+      { restore the initial video mode }
+      procedure   Restore; virtual;
+      { saves the current IDE screen }
+      procedure   SaveIDEScreen; virtual;
+      { saves the current console screen }
+      procedure   SaveConsoleScreen; virtual;
+      { restores the saved console screen }
+      procedure   SwitchToConsoleScreen; virtual;
+      { restores the saved IDE screen }
+      procedure   SwitchBackToIDEScreen; virtual;
+    end;
+{$ENDIF}
+
+{$IFDEF AMIGA}
+  {$DEFINE AMIGASCREEN}
+{$ENDIF}
+
+{$IFDEF MORPHOS}
+  {$DEFINE AMIGASCREEN}
+{$ENDIF}
+
+{$IFDEF AMIGASCREEN}
+    PAmigaScreen = ^TAmigaScreen;
+    TAmigaScreen = object(TScreen)
       function    GetWidth: integer; virtual;
       function    GetHeight: integer; virtual;
       procedure   GetLine(Line: integer; var Text, Attr: string); virtual;
@@ -195,9 +223,9 @@ type
     end;
 {$endif}
 
-{$ifdef win32}
-    PWin32Screen = ^TWin32Screen;
-    TWin32Screen = object(TScreen)
+{$ifdef Windows}
+    PWindowsScreen = ^TWindowsScreen;
+    TWindowsScreen = object(TScreen)
       constructor Init;
       destructor  Done; virtual;
     public
@@ -223,6 +251,10 @@ type
       ConsoleMode,IdeMode      : Dword;
       IdeScreenMode : TVideoMode;
       procedure BufferCopy(src,dest : THandle);
+{$ifdef debug}
+      procedure Complain(St : string);
+      Procedure SetConsoleMode(FH : Handle;Mode : DWord);
+{$endif debug}
     end;
 {$endif}
 
@@ -235,15 +267,8 @@ implementation
 
 uses
   Dos,WUtils
-(*  {$ifdef TP}
-    {$ifdef DPMI}
-    ,WinAPI
-    {$endif}
-  {$endif}*)
-  {$ifdef FPC}
-    {$ifdef GO32V2}
-    ,Dpmiexcp, Go32
-    {$endif}
+  {$ifdef GO32V2}
+  ,Dpmiexcp, Go32
   {$endif}
     ,Drivers,App
   {$ifdef USE_GRAPH_SWITCH}
@@ -453,11 +478,7 @@ begin
       GetMem(VIDEBuffer,IDEVideoInfo.ScreenSize);
       VIDEBufferSize:=IDEVideoInfo.ScreenSize;
     end;
-{$ifdef FPC}
   DosmemGet(VSeg,SOfs,VIDEBuffer^,IDEVideoInfo.ScreenSize);
-{$else}
-  Move(ptr(VSeg,SOfs)^,VIDEBuffer^,IDEVideoInfo.ScreenSize);
-{$endif}
 end;
 
 procedure TDosScreen.SaveConsoleScreen;
@@ -541,11 +562,7 @@ begin
     else
      VSeg:=SegB800;
     SOfs:=MemW[Seg0040:$4e];
-{$ifdef FPC}
     DosmemGet(VSeg,SOfs,VBuffer^,ConsoleVideoInfo.ScreenSize);
-{$else}
-    Move(ptr(VSeg,SOfs)^,VBuffer^,ConsoleVideoInfo.ScreenSize);
-{$endif}
   end;
 end;
 
@@ -604,12 +621,8 @@ begin
       else
         VSeg:=SegB800;
       SOfs:=MemW[Seg0040:$4e];
-{$ifdef FPC}
       DosmemPut(VSeg,SOfs,VBuffer^,ConsoleVideoInfo.ScreenSize);
       djgpp_set_ctrl_c(Ctrl_c_state);
-{$else}
-      Move(VBuffer^,ptr(VSeg,SOfs)^,ConsoleVideoInfo.ScreenSize);
-{$endif}
     end;
 end;
 
@@ -625,12 +638,8 @@ begin
    VSeg:=SegB800;
   SOfs:=MemW[Seg0040:$4e];
   if assigned(VIDEBuffer) then
-{$ifdef FPC}
-    DosmemPut(VSeg,SOfs,VIDEBuffer^,IDEVideoInfo.ScreenSize);
-    Ctrl_c_state := djgpp_set_ctrl_c(false);
-{$else}
-    Move(VIDEBuffer^,ptr(VSeg,SOfs)^,IDEVideoInfo.ScreenSize);
-{$endif}
+  DosmemPut(VSeg,SOfs,VIDEBuffer^,IDEVideoInfo.ScreenSize);
+  Ctrl_c_state := djgpp_set_ctrl_c(false);
   { Its difficult to know
     the state of the mouse
     so simply show it always
@@ -664,11 +673,6 @@ end;
 procedure TDOSScreen.GetVideoMode(var MI: TDOSVideoInfo);
 var
   r: registers;
-{$ifdef TP}
-  P: pointer;
-  Sel: longint;
-(*  {$I realintr.inc} *)
-{$endif}
 begin
   if (MI.StateSize>0) and (MI.StateBuf<>nil) then
      begin FreeMem(MI.StateBuf,MI.StateSize); MI.StateBuf:=nil; end;
@@ -693,42 +697,12 @@ begin
     CurPos.X:=r.dl; CurPos.Y:=r.dh;
     CurShapeT:=r.ch; CurShapeB:=r.cl;
   end;
-
-(*
-{$ifdef TP}
-  { check VGA functions }
-  MI.StateSize:=0;
-  r.ah:=$1c; r.al:=0; r.cx:=7; intr($10,r);
-  if (r.al=$1c) and ((r.flags and fCarry)=0) and (r.bx>0) then
-  begin
-    MI.StateSize:=r.bx;
-    GetMem(MI.StateBuf,MI.StateSize); FillChar(MI.StateBuf^,MI.StateSize,0);
-    P:=MI.StateBuf;
-{$ifdef DPMI}
-    Sel:=GlobalDosAlloc(MI.StateSize);
-    P:=Ptr(Sel shr 16,0);
-{$endif}
-    r.ah:=$1c; r.al:=1; r.cx:=7;
-    r.es:=PtrRec(P).Seg; r.bx:=PtrRec(P).Ofs;
-    {$ifdef DPMI}realintr($10,r);{$else}intr($10,r);{$endif}
-{$ifdef DPMI}
-    Move(Ptr(Sel and $ffff,0)^,MI.StateBuf^,MI.StateSize);
-    GlobalDosFree(Sel and $ffff);
-{$endif}
-  end;
-{$endif}
-*)
 end;
 
 
 procedure TDOSScreen.SetVideoMode(MI: TDOSVideoInfo);
 var r: registers;
     CM: TDOSVideoInfo;
-{$ifdef TP}
-    P: pointer;
-    Sel: longint;
-{$I realintr.inc}
-{$endif}
 begin
   FillChar(CM,sizeof(CM),0);
   GetVideoMode(CM);
@@ -752,26 +726,6 @@ begin
   r.ah:=$05; r.al:=MI.Page; intr($10,r);
   r.ah:=$02; r.bh:=MI.Page; r.dl:=MI.CurPos.X; r.dh:=MI.CurPos.Y; intr($10,r);
   r.ah:=$01; r.ch:=MI.CurShapeT; r.cl:=MI.CurShapeB; intr($10,r);
-
-  (*
-{$ifdef TP}
-  if (MI.StateSize>0) and (MI.StateBuf<>nil) then
-  begin
-    P:=MI.StateBuf;
-{$ifdef DPMI}
-    Sel:=GlobalDosAlloc(MI.StateSize);
-    Move(MI.StateBuf^,ptr(Sel and $ffff,0)^,MI.StateSize);
-    P:=Ptr(Sel shr 16,0);
-{$endif}
-    r.ah:=$1c; r.al:=2; r.cx:=7;
-    r.es:=PtrRec(P).Seg; r.bx:=PtrRec(P).Ofs;
-    {$ifdef DPMI}realintr($10,r);{$else}intr($10,r);{$endif}
-{$ifdef DPMI}
-    GlobalDosFree(Sel and $ffff);
-{$endif}
-  end;
-{$endif}
-*)
 end;
 
 {$endif}
@@ -796,22 +750,25 @@ begin
   TTYFd:=-1;
   IsXterm:=getenv('TERM')='xterm';
   ThisTTY:=TTYName(stdinputhandle);
-  if Not IsXterm and {$ifdef ver1_0}IsATTY(stdinputhandle){$else}(IsATTY(stdinputhandle)<>-1){$endif} then
+  if Not IsXterm and (IsATTY(stdinputhandle)<>-1) then
     begin
       Console:=TTyNetwork;  {Default: Network or other vtxxx tty}
-      if (Copy(ThisTTY, 1, 8) = '/dev/tty') and (ThisTTY[9]<>'p') Then
+      if ((Copy(ThisTTY, 1, 8) = '/dev/tty') and (ThisTTY[9]<>'p')) or (Copy(ThisTTY,1,8)='/dev/vc/') Then
         begin
           Case ThisTTY[9] of
             '0'..'9' :
               begin { running Linux on native console or native-emulation }
+{$ifdef linux}
                 FName:='/dev/vcsa' + ThisTTY[9];
-{$ifdef ver1_0}
-                TTYFd:=fdOpen(FName, &666, Open_RdWr); { open console }
-{$else}
                 TTYFd:=fpOpen(FName, &666, O_RdWr); { open console }
-{$endif}
+                if TTYFd = -1 then
+                begin
+                  if try_grab_vcsa then
+                    TTYFd:=fpOpen(FName, &666, O_RdWr); { try again }
+                end;
                 If TTYFd <>-1 Then
                   Console:=ttyLinux;
+{$endif}
               end;
          'v'  :  { check for (Free?)BSD native}
                 If (ThisTTY[10]>='0') and (ThisTTY[10]<='9') Then
@@ -820,7 +777,7 @@ begin
        end;
      If Copy(GetEnv('TERM'),1,6)='cons25' Then
        Console:=ttyFreeBSD;
-     {$ifdef ver1_0}ioctl{$else}fpioctl{$endif}(stdinputhandle, TIOCGWINSZ, @WS);
+     fpioctl(stdinputhandle, TIOCGWINSZ, @WS);
      if WS.ws_Col=0 then
        WS.ws_Col:=80;
      if WS.ws_Row=0 then
@@ -911,11 +868,11 @@ begin
     write(#27'7'#27'[?47h')
   else if (TTYfd<>-1) then
     begin
-     {$ifdef ver1_0}fdSeek{$else}fpLSeek{$endif}(TTYFd, 0, Seek_Set);
-     {$ifdef ver1_0}fdread{$else}fpread{$endif}(TTYFd,ConsHeight,sizeof(byte));
-     {$ifdef ver1_0}fdread{$else}fpread{$endif}(TTYFd,ConsWidth,sizeof(byte));
-     {$ifdef ver1_0}fdread{$else}fpread{$endif}(TTYFd,ConsCursorX,sizeof(byte));
-     {$ifdef ver1_0}fdread{$else}fpread{$endif}(TTYFd,ConsCursorY,sizeof(byte));
+     fpLSeek(TTYFd, 0, Seek_Set);
+     fpread(TTYFd,ConsHeight,sizeof(byte));
+     fpread(TTYFd,ConsWidth,sizeof(byte));
+     fpread(TTYFd,ConsCursorX,sizeof(byte));
+     fpread(TTYFd,ConsCursorY,sizeof(byte));
      NewSize:=ConsWidth*ConsHeight*sizeof(word);
      if (NewSize<>ConsVideoBufSize) and
         assigned(ConsVideoBuf) then
@@ -926,7 +883,7 @@ begin
      If not assigned(ConsVideoBuf) then
        GetMem(ConsVideoBuf,NewSize);
      ConsVideoBufSize:=NewSize;
-     {$ifdef ver1_0}fdread{$else}fpread{$endif}(TTYFd,ConsVideoBuf^,ConsVideoBufSize);
+     fpread(TTYFd,ConsVideoBuf^,ConsVideoBufSize);
     end
   else
     begin
@@ -936,11 +893,7 @@ begin
       ConsCursorY:=0;
       ConsVideoBuf:=nil;
     end;
-{$ifdef ver1_0}
-  ConsTioValid:=TCGetAttr(1,ConsTio);
-{$else}
   ConsTioValid:=(TCGetAttr(1,ConsTio)<>-1);
-{$endif}
 end;
 
 
@@ -953,10 +906,10 @@ begin
     end
   else if (TTyfd<>-1) then
     begin
-      {$ifdef ver1_0}fdSeek{$else}fplSeek{$endif}(TTYFd, 2, Seek_Set);
-      {$ifdef ver1_0}fdwrite{$else}fpwrite{$endif}(TTYFd, ConsCursorX, sizeof(byte));
-      {$ifdef ver1_0}fdwrite{$else}fpwrite{$endif}(TTYFd, ConsCursorY, sizeof(byte));
-      {$ifdef ver1_0}fdwrite{$else}fpwrite{$endif}(TTYFd, ConsVideoBuf^,ConsVideoBufSize);
+      fplSeek(TTYFd, 2, Seek_Set);
+      fpwrite(TTYFd, ConsCursorX, sizeof(byte));
+      fpwrite(TTYFd, ConsCursorY, sizeof(byte));
+      fpwrite(TTYFd, ConsVideoBuf^,ConsVideoBufSize);
       { FreeMem(ConsVideoBuf,ConsVideoBufSize);
       ConsVideoBuf:=nil; }
     end;
@@ -976,10 +929,19 @@ end;
 {$endif}
 
 {****************************************************************************
-                                 TWin32Screen
+                                 TWindowsScreen
 ****************************************************************************}
 
-{$ifdef win32}
+{$ifdef Windows}
+
+{ Seems to be missing in windows unit PM }
+const
+  ENABLE_INSERT_MODE     = $20;
+  ENABLE_QUICK_EDIT_MODE = $40;
+  ENABLE_EXTENDED_FLAGS  = $80;
+  ENABLE_AUTO_POSITION   = $100;
+
+
 
 procedure UpdateFileHandles;
 begin
@@ -991,7 +953,7 @@ begin
   {TextRec(StdErr).Handle:=StdErrorHandle;}
 end;
 
-constructor TWin32Screen.Init;
+constructor TWindowsScreen.Init;
 var
   SecurityAttr : Security_attributes;
   BigWin : Coord;
@@ -1017,13 +979,14 @@ begin
   GetConsoleMode(GetStdHandle(cardinal(Std_Input_Handle)), @ConsoleMode);
   IdeMode:=ConsoleMode;
 {$ifdef debug}
-{define win32bigwin}
+  Complain('Starting ConsoleMode is $'+hexstr(ConsoleMode,8));
+{define Windowsbigwin}
 {$endif debug}
-{$ifdef win32bigwin}
+{$ifdef Windowsbigwin}
   GetConsoleScreenBufferInfo(StartScreenBufferHandle,
     @ConsoleScreenBufferInfo);
   BigWin.X:=ConsoleScreenBufferInfo.dwSize.X;
-  BigWin.Y:=200;
+  BigWin.Y:=ConsoleScreenBufferInfo.srwindow.bottom-ConsoleScreenBufferInfo.srwindow.top; // mants 15779 was 200
   { Try to allow to store more info }
   res:=SetConsoleScreenBufferSize(NewScreenBufferHandle,BigWin);
   if not res then
@@ -1031,13 +994,19 @@ begin
   res:=SetConsoleScreenBufferSize(StartScreenBufferHandle,BigWin);
   if not res then
     error:=GetLastError;
-{$endif win32bigwin}
+{$endif Windowsbigwin}
   GetConsoleScreenBufferInfo(StartScreenBufferHandle,
     @ConsoleScreenBufferInfo);
   { make sure that the IDE Screen Handle has the maximum display size
     this removes the scroll bars if it is maximized }
+
+  BigWin.X:=ConsoleScreenBufferInfo.dwSize.X;
+  BigWin.Y:=ConsoleScreenBufferInfo.srwindow.bottom-ConsoleScreenBufferInfo.srwindow.top;
   res:=SetConsoleScreenBufferSize(NewScreenBufferHandle,
-         ConsoleScreenBufferInfo.dwMaximumWindowSize);
+     BigWin);
+// mants 15779 : was
+//  res:=SetConsoleScreenBufferSize(NewScreenBufferHandle,
+//         ConsoleScreenBufferInfo.dwMaximumWindowSize);
   if not res then
     error:=GetLastError;
   IDEScreenBufferHandle:=NewScreenBufferHandle;
@@ -1047,7 +1016,7 @@ begin
   SwitchBackToIDEScreen;
 end;
 
-destructor TWin32Screen.Done;
+destructor TWindowsScreen.Done;
 begin
   { copy the Dos buffer content into the original ScreenBuffer
     which remains the startup std_output_handle PM }
@@ -1061,7 +1030,7 @@ begin
   inherited Done;
 end;
 
-function TWin32Screen.GetWidth: integer;
+function TWindowsScreen.GetWidth: integer;
 var
   ConsoleScreenBufferInfo : Console_screen_buffer_info;
 begin
@@ -1070,7 +1039,7 @@ begin
   GetWidth:=ConsoleScreenBufferInfo.dwSize.X;
 end;
 
-function TWin32Screen.GetHeight: integer;
+function TWindowsScreen.GetHeight: integer;
 var
   ConsoleScreenBufferInfo : Console_screen_buffer_info;
 begin
@@ -1079,7 +1048,7 @@ begin
   GetHeight:=ConsoleScreenBufferInfo.dwSize.Y;
 end;
 
-function TWin32Screen.CanScroll : boolean;
+function TWindowsScreen.CanScroll : boolean;
 var
   ConsoleScreenBufferInfo : Console_screen_buffer_info;
   BufferLines : longint;
@@ -1093,7 +1062,7 @@ begin
   CanScroll:=(BufferLines>WindowLines);
 end;
 
-function TWin32Screen.Scroll(i : integer) : integer;
+function TWindowsScreen.Scroll(i : integer) : integer;
 var
   ConsoleScreenBufferInfo : Console_screen_buffer_info;
   ConsoleWindow : Small_rect;
@@ -1117,7 +1086,7 @@ begin
     Scroll:=0;
 end;
 
-procedure TWin32Screen.GetLine(Line: integer; var Text, Attr: string);
+procedure TWindowsScreen.GetLine(Line: integer; var Text, Attr: string);
 type
   CharInfoArray = Array [0..255] of Char_Info;
 var
@@ -1154,7 +1123,7 @@ begin
 end;
 
 
-procedure TWin32Screen.GetCursorPos(var P: TPoint);
+procedure TWindowsScreen.GetCursorPos(var P: TPoint);
 var
   ConsoleScreenBufferInfo : Console_screen_buffer_info;
 begin
@@ -1164,7 +1133,7 @@ begin
   P.Y:=ConsoleScreenBufferInfo.dwCursorPosition.Y;
 end;
 
-procedure TWin32Screen.BufferCopy(Src, Dest : THandle);
+procedure TWindowsScreen.BufferCopy(Src, Dest : THandle);
 type
   CharInfoArray = Array [0..256*255-1] of Char_Info;
 var
@@ -1244,7 +1213,7 @@ begin
   SetConsoleCursorPosition(Dest, ConsoleScreenBufferInfo.dwCursorPosition);
 end;
 
-procedure TWin32Screen.Capture;
+procedure TWindowsScreen.Capture;
 begin
   {if StartScreenBufferHandle=IdeScreenBufferHandle then
     BufferCopy(IDEScreenBufferHandle,DosScreenBufferHandle)
@@ -1253,33 +1222,44 @@ begin
   SaveConsoleScreen;
 end;
 
-procedure TWin32Screen.Restore;
+procedure TWindowsScreen.Restore;
 begin
   SwitchToConsoleScreen;
 end;
 
-{ dummy for win32 as the Buffer screen
+{ dummy for Windows as the Buffer screen
   do hold all the info }
-procedure TWin32Screen.SaveIDEScreen;
+procedure TWindowsScreen.SaveIDEScreen;
+var
+  NowIdeMode : Dword;
 begin
   IdeScreenMode:=ScreenMode;
-  GetConsoleMode(GetStdHandle(cardinal(Std_Input_Handle)), @IdeMode);
+  GetConsoleMode(GetStdHandle(cardinal(Std_Input_Handle)), @NowIdeMode);
+{$ifdef debug}
+  Complain('IDE ConsoleMode is $'+hexstr(NowIdeMode,8));
+  if NowIdeMode<>IdeMode then
+    Complain('is not equal to IDEMode  $'+hexstr(IdeMode,8));
+{$endif debug}
+  IdeMode:=NowIdeMode;
   { set the dummy buffer as active already now PM }
   SetStdHandle(cardinal(Std_Output_Handle),DummyScreenBufferHandle);
   UpdateFileHandles;
 end;
 
-{ dummy for win32 as the Buffer screen
+{ dummy for Windows as the Buffer screen
   do hold all the info }
-procedure TWin32Screen.SaveConsoleScreen;
+procedure TWindowsScreen.SaveConsoleScreen;
 begin
   GetConsoleMode(GetStdHandle(cardinal(Std_Input_Handle)), @ConsoleMode);
+{$ifdef debug}
+  Complain('ConsoleMode now is $'+hexstr(ConsoleMode,8));
+{$endif debug}
   { set the dummy buffer as active already now PM }
   SetStdHandle(cardinal(Std_Output_Handle),DummyScreenBufferHandle);
   UpdateFileHandles;
 end;
 
-procedure TWin32Screen.SwitchToConsoleScreen;
+procedure TWindowsScreen.SwitchToConsoleScreen;
 begin
   SetConsoleActiveScreenBuffer(DosScreenBufferHandle);
   SetStdHandle(cardinal(Std_Output_Handle),DosScreenBufferHandle);
@@ -1288,7 +1268,7 @@ begin
   IDEActive:=false;
 end;
 
-procedure TWin32Screen.SwitchBackToIDEScreen;
+procedure TWindowsScreen.SwitchBackToIDEScreen;
 var
   ConsoleScreenBufferInfo : Console_screen_buffer_info;
   WindowPos : Small_rect;
@@ -1303,7 +1283,14 @@ begin
   { Needed to force InitSystemMsg to use the right console handle }
   DoneEvents;
   InitEvents;
-  IdeMode:=(IdeMode or ENABLE_MOUSE_INPUT or ENABLE_WINDOW_INPUT) and not ENABLE_PROCESSED_INPUT;
+  IdeMode:=({IdeMode or }ENABLE_MOUSE_INPUT or
+                   ENABLE_WINDOW_INPUT or
+                   ENABLE_EXTENDED_FLAGS)
+           and not (ENABLE_PROCESSED_INPUT or
+                    ENABLE_LINE_INPUT or
+                    ENABLE_ECHO_INPUT or
+                    ENABLE_INSERT_MODE or
+                    ENABLE_QUICK_EDIT_MODE);
   SetConsoleMode(GetStdHandle(cardinal(Std_Input_Handle)), IdeMode);
   WindowPos.left:=0;
   WindowPos.right:=ConsoleScreenBufferInfo.srWindow.right
@@ -1330,6 +1317,39 @@ begin
     Application^.SetScreenVideoMode(IdeScreenMode);
   IDEActive:=true;
 end;
+
+{$ifdef debug}
+
+procedure TWindowsScreen.Complain(St : string);
+begin
+  if IDEActive then
+    DebugMessage('',St,0,0)
+  else
+    Writeln(stderr,St);
+end;
+
+procedure TWindowsScreen.SetConsoleMode(FH : Handle;Mode: DWord);
+var
+  Test: DWord;
+begin
+  If not Windows.SetConsoleMode(FH,Mode) then
+    begin
+      Complain('SetConsoleMode call failed GetLastError='+IntToStr(GetLastError));
+    end
+  else
+    begin
+      if not GetConsoleMode(FH,Test) then
+        begin
+          Complain('GetConsoleMode call failed GetLastError='+IntToStr(GetLastError));
+        end
+      else if (Test<>Mode) then
+        begin
+          Complain('GetConsoleMode result '+IntToStr(Test)+' <> '+
+            IntToStr(Mode));
+        end;
+    end;
+end;
+{$endif DEBUG}
 
 {$endif}
 
@@ -1469,6 +1489,67 @@ end;
 
 
 {****************************************************************************
+                                 TAmigaScreen
+****************************************************************************}
+
+
+{$IFDEF AMIGASCREEN}
+function TAmigaScreen.GetWidth: integer;
+begin
+  GetWidth:=80;
+end;
+
+function TAmigaScreen.GetHeight: integer;
+begin
+  GetHeight:=25;
+end;
+
+procedure TAmigaScreen.GetLine(Line: integer; var Text, Attr: string);
+begin
+  Text:='                                                                               ';
+  Attr:='                                                                               ';
+end;
+
+procedure TAmigaScreen.GetCursorPos(var P: TPoint);
+begin
+  P.X:=1;
+  P.Y:=1;
+end;
+
+{ remember the initial video screen }
+procedure TAmigaScreen.Capture;
+begin
+end;
+
+{ restore the initial video mode }
+procedure TAmigaScreen.Restore;
+begin
+end;
+
+{ saves the current IDE screen }
+procedure TAmigaScreen.SaveIDEScreen;
+begin
+end;
+
+{ saves the current console screen }
+procedure TAmigaScreen.SaveConsoleScreen;
+begin
+end;
+
+{ restores the saved console screen }
+procedure TAmigaScreen.SwitchToConsoleScreen;
+begin
+end;
+
+{ restores the saved IDE screen }
+procedure TAmigaScreen.SwitchBackToIDEScreen;
+begin
+end;
+
+{$ENDIF}
+
+
+{****************************************************************************
                                  Initialize
 ****************************************************************************}
 
@@ -1481,8 +1562,8 @@ begin
     UserScreen:=New(PLinuxScreen, Init);
   {$else}
 
-    {$ifdef Win32}
-      UserScreen:=New(PWin32Screen, Init);
+    {$ifdef Windows}
+      UserScreen:=New(PWindowsScreen, Init);
     {$else}
       {$ifdef OS2}
         UserScreen:=New(POS2Screen, Init);
@@ -1490,10 +1571,14 @@ begin
         {$ifdef netwlibc}
           UserScreen:=New(PNWLScreen, Init);
         {$else}
-          UserScreen:=New(PScreen, Init);
+          {$ifdef AMIGASCREEN}
+            UserScreen:=nil; //New(PAmigaScreen, Init);
+          {$else}
+            UserScreen:=New(PScreen, Init);
+          {$endif AMIGASCREEN}
         {$endif netwlibc}
       {$endif OS2}
-    {$endif Win32}
+    {$endif Windows}
   {$endif Unix}
 {$endif Dos}
 end;
@@ -1510,9 +1595,3 @@ begin
 end;
 
 end.
-{
-  $Log: fpusrscr.pas,v $
-  Revision 1.38  2005/02/14 17:13:18  peter
-    * truncate log
-
-}

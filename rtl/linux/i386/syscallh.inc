@@ -1,5 +1,4 @@
 {
-    $Id: syscallh.inc,v 1.7 2005/02/14 17:13:30 peter Exp $
     Copyright (c) 2002 by Marco van de Voort
 
     Header for syscall in system unit for i386 *BSD.
@@ -33,20 +32,11 @@ Type
 // 64-bit machines don't have only 64-bit params.
 
   TSysParam  = Longint;
-
-function Do_SysCall(sysnr:TSysParam):TSysResult;  {$ifndef VER1_0} oldfpccall; {$endif} external name 'FPC_SYSCALL0';
-function Do_SysCall(sysnr,param1:TSysParam):TSysResult; {$ifndef VER1_0} oldfpccall; {$endif} external name 'FPC_SYSCALL1';
-function Do_SysCall(sysnr,param1,param2:TSysParam):TSysResult;  {$ifndef VER1_0} oldfpccall; {$endif} external name 'FPC_SYSCALL2';
-function Do_SysCall(sysnr,param1,param2,param3:TSysParam):TSysResult; {$ifndef VER1_0} oldfpccall; {$endif} external name 'FPC_SYSCALL3';
-function Do_SysCall(sysnr,param1,param2,param3,param4:TSysParam):TSysResult; {$ifndef VER1_0} oldfpccall; {$endif} external name 'FPC_SYSCALL4';
-function Do_SysCall(sysnr,param1,param2,param3,param4,param5:TSysParam):TSysResult;  {$ifndef VER1_0} oldfpccall; {$endif} external name 'FPC_SYSCALL5';
-{$ifdef notsupported}
-function Do_SysCall(sysnr,param1,param2,param3,param4,param5,param6:TSysParam):TSysResult;  {$ifndef VER1_0} oldfpccall; {$endif} external name 'FPC_SYSCALL6';
-{$endif notsupported}
-
-{
-  $Log: syscallh.inc,v $
-  Revision 1.7  2005/02/14 17:13:30  peter
-    * truncate log
-
-}
+  
+function Do_SysCall(sysnr:TSysParam):TSysResult; register; external name 'FPC_SYSCALL0';
+function Do_SysCall(sysnr,param1:TSysParam):TSysResult; register; external name 'FPC_SYSCALL1';
+function Do_SysCall(sysnr,param1,param2:TSysParam):TSysResult; register; external name 'FPC_SYSCALL2';
+function Do_SysCall(sysnr,param1,param2,param3:TSysParam):TSysResult; register; external name 'FPC_SYSCALL3';
+function Do_SysCall(sysnr,param1,param2,param3,param4:TSysParam):TSysResult; register; external name 'FPC_SYSCALL4';
+function Do_SysCall(sysnr,param1,param2,param3,param4,param5:TSysParam):TSysResult; register; external name 'FPC_SYSCALL5';
+function Do_SysCall(sysnr,param1,param2,param3,param4,param5,param6:TSysParam):TSysResult; register; external name 'FPC_SYSCALL6';

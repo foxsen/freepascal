@@ -1,5 +1,4 @@
 #
-#   $Id: dllprt0.as,v 1.3 2004/07/03 21:50:31 daniel Exp $
 #   This file is part of the Free Pascal run time library.
 #   Copyright (c) 2001 by Peter Vreman
 #
@@ -20,9 +19,9 @@
         .globl  _startlib
         .type   _startlib,@function
 _startlib:
-        .globl  FPC_LIB_START
-        .type   FPC_LIB_START,@function
-FPC_LIB_START:
+        .globl  FPC_SHARED_LIB_START
+        .type   FPC_SHARED_LIB_START,@function
+FPC_SHARED_LIB_START:
         pushl   %ebp
         movl    %esp,%ebp
 
@@ -34,7 +33,10 @@ FPC_LIB_START:
         movl    %eax,operatingsystem_parameter_argc    /* Move the argument counter    */
         movl    %ecx,operatingsystem_parameter_argv    /* Move the argument pointer    */
 
-        movb    $1,U_SYSTEM_ISLIBRARY
+        movb    $1,operatingsystem_islibrary
+
+        /* Save initial stackpointer */
+        movl    %esp,__stkptr
 
         call    PASCALMAIN
 
@@ -45,6 +47,10 @@ FPC_LIB_START:
         .type   _haltproc,@function
 _haltproc:
 _haltproc2:             # GAS <= 2.15 bug: generates larger jump if a label is exported
+        .globl  FPC_SHARED_LIB_EXIT
+        .type   FPC_SHARED_LIB_EXIT,@function
+FPC_SHARED_LIB_EXIT:
+	call	lib_exit
         xorl    %eax,%eax
         incl    %eax                    /* eax=1, exit call */
         movzwl  operatingsystem_result,%ebx
@@ -52,16 +58,22 @@ _haltproc2:             # GAS <= 2.15 bug: generates larger jump if a label is e
         jmp     _haltproc2
 
 .bss
-        .comm operatingsystem_parameter_envp,4
-        .comm operatingsystem_parameter_argc,4
-        .comm operatingsystem_parameter_argv,4
+        .type   __stkptr,@object
+        .size   __stkptr,4
+        .global __stkptr
+__stkptr:
+        .skip   4
 
-#
-# $Log: dllprt0.as,v $
-# Revision 1.3  2004/07/03 21:50:31  daniel
-#   * Modified bootstrap code so separate prt0.as/prt0_10.as files are no
-#     longer necessary
-#
-# Revision 1.2  2002/09/07 16:01:20  peter
-#   * old logs removed and tabs fixed
-#
+        .type operatingsystem_parameters,@object
+        .size operatingsystem_parameters,12
+operatingsystem_parameters:
+        .skip 3*4
+
+        .global operatingsystem_parameter_envp
+        .global operatingsystem_parameter_argc
+        .global operatingsystem_parameter_argv
+        .set operatingsystem_parameter_envp,operatingsystem_parameters+0
+        .set operatingsystem_parameter_argc,operatingsystem_parameters+4
+        .set operatingsystem_parameter_argv,operatingsystem_parameters+8
+
+.section .note.GNU-stack,"",%progbits

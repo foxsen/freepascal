@@ -1,5 +1,4 @@
 {
-    $Id: dos.pp,v 1.7 2005/02/14 17:13:30 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2004 by the Free Pascal development team.
 
@@ -98,7 +97,7 @@ end;
 
 procedure getdate(var year,month,mday,wday : word);
 var
-  t  : TTime;
+  t  : TTime_t;
   tm : Ttm;
 begin
   time(t); localtime_r(t,tm);
@@ -119,7 +118,7 @@ end;
 
 procedure gettime(var hour,minute,second,sec100 : word);
 var
-  t  : TTime;
+  t  : TTime_t;
   tm : Ttm;
 begin
   time(t); localtime_r(t,tm);
@@ -144,7 +143,7 @@ var
   tz : TimeZone;
 begin
   FPGetTimeOfDay (tv, tz);
-  GetMsCount := tv.tv_Sec * 1000 + tv.tv_uSec div 1000;
+  GetMsCount := int64 (tv.tv_Sec) * 1000 + tv.tv_uSec div 1000;
 end;
 
 
@@ -216,9 +215,9 @@ end;
 ******************************************************************************}
 
 function getvolnum (drive : byte) : longint;
-var dir : STRING[255];
+{var dir : STRING[255];
     P,PS,
-    V   : LONGINT;
+    V   : LONGINT;}
 begin
   {if drive = 0 then
   begin  // get volume name from current directory (i.e. SERVER-NAME/VOL2:TEST)
@@ -275,17 +274,17 @@ end;
 
 
 function disksize(drive : byte) : int64;
-VAR Buf                 : ARRAY [0..255] OF CHAR;
+{VAR Buf                 : ARRAY [0..255] OF CHAR;
     TotalBlocks         : WORD;
     SectorsPerBlock     : WORD;
     availableBlocks     : WORD;
     totalDirectorySlots : WORD;
     availableDirSlots   : WORD;
     volumeisRemovable   : WORD;
-    volumeNumber        : LONGINT;
+    volumeNumber        : LONGINT;}
 begin
-  volumeNumber := getvolnum (drive);
   (*
+  volumeNumber := getvolnum (drive);
   if volumeNumber >= 0 then
   begin
     {i think thats not the right function but for others i need a connection handle}
@@ -381,7 +380,7 @@ begin
   end;
   f._attr := attr;
   p := length (path);
-  while (p > 0) and (not (path[p] in ['\','/'])) do
+  while (p > 0) and (not (path[p] in AllowDirectorySeparators)) do
     dec (p);
   if p > 0 then
   begin
@@ -473,8 +472,7 @@ begin
   else
     begin
        { allow backslash as slash }
-       for i:=1 to length(dirlist) do
-         if dirlist[i]='\' then dirlist[i]:='/';
+       DoDirSeparators(dirlist);
        repeat
          p1:=pos(';',dirlist);
          if p1<>0 then
@@ -660,9 +658,7 @@ begin
       inc (i);
       res := GetSearchPathElement (i, isdosPath, @SearchElement[0]);
     end;
-    for i := 1 to length(GetEnv) do
-      if GetEnv[i] = '\' then
-        GetEnv[i] := '/';
+    DoDirSeparators(getenv);
   end else
   begin
     strpcopy(envvar0,envvar);
@@ -687,13 +683,3 @@ End;
 
 
 end.
-{
-  $Log: dos.pp,v $
-  Revision 1.7  2005/02/14 17:13:30  peter
-    * truncate log
-
-  Revision 1.6  2005/01/14 20:59:15  armin
-  * forgot to remove debug output in fsearch
-
-}
-

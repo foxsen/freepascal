@@ -1,5 +1,4 @@
 {
-    $Id: objects.pp,v 1.37 2005/02/14 17:13:25 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by the Free Pascal development team.
 
@@ -48,7 +47,6 @@ UNIT Objects;
 
 {==== Compiler directives ===========================================}
 {$H-} { No ansistrings }
-{$E+} { Emulation is on }
 {$X+} { Extended syntax is ok }
 {$R-} { Disable range checking }
 {$ifndef Unix}
@@ -57,6 +55,7 @@ UNIT Objects;
 {$I-} { Disable IO Checking }
 {$Q-} { Disable Overflow Checking }
 {$V-} { Turn off strict VAR strings }
+{$INLINE ON} {Turn on inlining.}
 {====================================================================}
 
 {$ifdef win32}
@@ -577,8 +576,8 @@ TYPE
   VMT      Pointer to the VMT (obtained by TypeOf()).
   returns  Pointer to the instance.
 }
-function CallVoidConstructor(Ctor: pointer; Obj: pointer; VMT: pointer): pointer;
-function CallPointerConstructor(Ctor: pointer; Obj: pointer; VMT: pointer; Param1: pointer): pointer;
+function CallVoidConstructor(Ctor: pointer; Obj: pointer; VMT: pointer): pointer;inline;
+function CallPointerConstructor(Ctor: pointer; Obj: pointer; VMT: pointer; Param1: pointer): pointer;inline;
 
 { Method calls.
 
@@ -586,8 +585,8 @@ function CallPointerConstructor(Ctor: pointer; Obj: pointer; VMT: pointer; Param
   Obj      Pointer to the instance. NIL if new instance to be allocated.
   returns  Pointer to the instance.
 }
-function CallVoidMethod(Method: pointer; Obj: pointer): pointer;
-function CallPointerMethod(Method: pointer; Obj: pointer; Param1: pointer): pointer;
+function CallVoidMethod(Method: pointer; Obj: pointer): pointer;inline;
+function CallPointerMethod(Method: pointer; Obj: pointer; Param1: pointer): pointer;inline;
 
 { Local-function/procedure calls.
 
@@ -595,8 +594,8 @@ function CallPointerMethod(Method: pointer; Obj: pointer; Param1: pointer): poin
   Frame    Frame pointer of the wrapping function.
 }
 
-function CallVoidLocal(Func: pointer; Frame: Pointer): pointer;
-function CallPointerLocal(Func: pointer; Frame: Pointer; Param1: pointer): pointer;
+function CallVoidLocal(Func: pointer; Frame: Pointer): pointer;inline;
+function CallPointerLocal(Func: pointer; Frame: Pointer; Param1: pointer): pointer;inline;
 
 { Calls of functions/procedures local to methods.
 
@@ -604,8 +603,8 @@ function CallPointerLocal(Func: pointer; Frame: Pointer; Param1: pointer): point
   Frame    Frame pointer of the wrapping method.
   Obj      Pointer to the object that the method belongs to.
 }
-function CallVoidMethodLocal(Func: pointer; Frame: Pointer; Obj: pointer): pointer;
-function CallPointerMethodLocal(Func: pointer; Frame: Pointer; Obj: pointer; Param1: pointer): pointer;
+function CallVoidMethodLocal(Func: pointer; Frame: Pointer; Obj: pointer): pointer;inline;
+function CallPointerMethodLocal(Func: pointer; Frame: Pointer; Obj: pointer; Param1: pointer): pointer;inline;
 
 
 {+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++}
@@ -748,92 +747,33 @@ type
   PointerMethod = function(Obj: pointer; Param1: pointer): pointer;
 
 
-function CallVoidConstructor(Ctor: pointer; Obj: pointer; VMT: pointer): pointer;
+function CallVoidConstructor(Ctor: pointer; Obj: pointer; VMT: pointer): pointer;inline;
 begin
-{$ifdef VER1_0}
-  asm
-{$ifdef cpui386}
-        movl Obj, %esi
-{$endif}
-{$ifdef cpum68k}
-        move.l Obj, a5
-{$endif}
-  end;
-  CallVoidConstructor := VoidConstructor(Ctor)(VMT, Obj);
-{$else}
   CallVoidConstructor := VoidConstructor(Ctor)(Obj, VMT);
-{$endif}
 end;
 
 
-function CallPointerConstructor(Ctor: pointer; Obj: pointer; VMT: pointer; Param1: pointer): pointer;
+function CallPointerConstructor(Ctor: pointer; Obj: pointer; VMT: pointer; Param1: pointer): pointer;inline;
 {$undef FPC_CallPointerConstructor_Implemented}
 begin
-{$ifdef VER1_0}
-  asm
-{$ifdef cpui386}
-{$define FPC_CallPointerConstructor_Implemented}
-        movl Obj, %esi
-{$endif}
-{$ifdef cpum68k}
-{$define FPC_CallPointerConstructor_Implemented}
-        move.l Obj, a5
-{$endif}
-  end;
-  CallPointerConstructor := PointerConstructor(Ctor)(VMT, Obj, Param1)
-{$else}
-  { 1.1 does not esi to be loaded }
   {$define FPC_CallPointerConstructor_Implemented}
   CallPointerConstructor := PointerConstructor(Ctor)(Obj, VMT, Param1)
-{$endif}
 end;
 {$ifndef FPC_CallPointerConstructor_Implemented}
 {$error CallPointerConstructor function not implemented}
 {$endif not FPC_CallPointerConstructor_Implemented}
 
 
-function CallVoidMethod(Method: pointer; Obj: pointer): pointer;
+function CallVoidMethod(Method: pointer; Obj: pointer): pointer;inline;
 begin
-{$ifdef VER1_0}
-  { load the object pointer }
-{$ifdef CPUI386}
-  asm
-        movl Obj, %esi
-  end;
-{$endif CPUI386}
-{$ifdef CPU68K}
-  asm
-        move.l Obj, a5
-  end;
-{$endif CPU68K}
-{$endif VER1_0}
   CallVoidMethod := VoidMethod(Method)(Obj)
 end;
 
 
-function CallPointerMethod(Method: pointer; Obj: pointer; Param1: pointer): pointer;
+function CallPointerMethod(Method: pointer; Obj: pointer; Param1: pointer): pointer;inline;
 {$undef FPC_CallPointerMethod_Implemented}
 begin
-{$ifdef VER1_0}
-  asm
-{$ifdef cpui386}
 {$define FPC_CallPointerMethod_Implemented}
-        movl Obj, %esi
-{$endif}
-{$ifdef cpum68k}
-{$define FPC_CallPointerMethod_Implemented}
-        move.l Obj, a5
-{$endif}
-{$ifdef cpupowerpc}
-{$define FPC_CallPointerMethod_Implemented}
-{ for the powerpc, we don't need to load self, because we use standard calling conventions
-  so self should be in a register anyways }
-{$endif}
-  end;
-{$else}
-{ 1.1 does not esi to be loaded }
-{$define FPC_CallPointerMethod_Implemented}
-{$endif}
   CallPointerMethod := PointerMethod(Method)(Obj, Param1)
 end;
 {$ifndef FPC_CallPointerMethod_Implemented}
@@ -841,52 +781,26 @@ end;
 {$endif not FPC_CallPointerMethod_Implemented}
 
 
-function CallVoidLocal(Func: pointer; Frame: Pointer): pointer;
+function CallVoidLocal(Func: pointer; Frame: Pointer): pointer;inline;
 begin
   CallVoidLocal := VoidLocal(Func)(Frame)
 end;
 
 
-function CallPointerLocal(Func: pointer; Frame: Pointer; Param1: pointer): pointer;
+function CallPointerLocal(Func: pointer; Frame: Pointer; Param1: pointer): pointer;inline;
 begin
   CallPointerLocal := PointerLocal(Func)(Frame, Param1)
 end;
 
 
-function CallVoidMethodLocal(Func: pointer; Frame: Pointer; Obj: pointer): pointer;
+function CallVoidMethodLocal(Func: pointer; Frame: Pointer; Obj: pointer): pointer;inline;
 begin
-{$ifdef VER1_0}
-  { load the object pointer }
-{$ifdef CPUI386}
-  asm
-        movl Obj, %esi
-  end;
-{$endif CPUI386}
-{$ifdef CPU68K}
-  asm
-        move.l Obj, a5
-  end;
-{$endif CPU68K}
-{$endif VER1_0}
   CallVoidMethodLocal := VoidMethodLocal(Func)(Frame)
 end;
 
 
-function CallPointerMethodLocal(Func: pointer; Frame: Pointer; Obj: pointer; Param1: pointer): pointer;
+function CallPointerMethodLocal(Func: pointer; Frame: Pointer; Obj: pointer; Param1: pointer): pointer;inline;
 begin
-{$ifdef VER1_0}
-  { load the object pointer }
-{$ifdef CPUI386}
-  asm
-        movl Obj, %esi
-  end;
-{$endif CPUI386}
-{$ifdef CPU68K}
-  asm
-        move.l Obj, a5
-  end;
-{$endif CPU68K}
-{$endif VER1_0}
   CallPointerMethodLocal := PointerMethodLocal(Func)(Frame, Param1)
 end;
 
@@ -1047,8 +961,8 @@ TYPE
 CONSTRUCTOR TObject.Init;
 VAR LinkSize: LongInt; Dummy: DummyObject;
 BEGIN
-   LinkSize := PtrInt(@Dummy.Data)-PtrInt(@Dummy);  { Calc VMT link size }
-   FillChar(Pointer(PtrInt(@Self)+LinkSize)^,
+   LinkSize := Pbyte(@Dummy.Data)-Pbyte(@Dummy);  { Calc VMT link size }
+   FillChar((Pbyte(@Self)+LinkSize)^,
      SizeOf(Self)-LinkSize, #0);                      { Clear data fields }
 END;
 
@@ -1066,13 +980,14 @@ END;
 FUNCTION TObject.Is_Object(P:Pointer):Boolean;
 TYPE
    PVMT=^VMT;
+   PPVMT=^PVMT;
    VMT=RECORD
      Size,NegSize:Longint;
      ParentLink:PVMT;
    END;
-VAR SP:^PVMT; Q:PVMT;
+VAR SP:PPVMT; Q:PVMT;
 BEGIN
-   SP:=@SELF;
+   SP:=PPVMT(@SELF);
    Q:=SP^;
    Is_Object:=False;
    While Q<>Nil Do Begin
@@ -1334,10 +1249,8 @@ END;
 {                         TDosStream OBJECT METHODS                         }
 {+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++}
 
-{$IFOPT I+}
-{$DEFINE IO_CHECK_ON}
+{$PUSH}
 {$I-}
-{$ENDIF}
 
 {--TDosStream---------------------------------------------------------------}
 {  Init -> Platforms DOS/DPMI/WIN/OS2 - Checked 16May96 LdB                 }
@@ -1742,10 +1655,7 @@ BEGIN
    End;
 END;
 
-{$IFDEF IO_CHECK_ON}
-{$UNDEF IO_CHECK_ON}
-{$I+}
-{$ENDIF}
+{$POP} //{$i-} for TDosStream, TBufStream
 
 {+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++}
 {                        TMemoryStream OBJECT METHODS                       }
@@ -1986,13 +1896,17 @@ END;
 {--TCollection--------------------------------------------------------------}
 {  LastThat -> Platforms DOS/DPMI/WIN/OS2 - Checked 22May96 LdB             }
 {---------------------------------------------------------------------------}
+
+{$PUSH}
+{$W+}
+
 FUNCTION TCollection.LastThat (Test: Pointer): Pointer;
 VAR I: LongInt;
 
 BEGIN
    For I := Count DownTo 1 Do
      Begin                   { Down from last item }
-       IF Boolean(Byte(ptrint(CallPointerLocal(Test,get_caller_frame(get_frame),Items^[I-1])))) THEN
+       IF Boolean(Byte(ptruint(CallPointerLocal(Test,get_caller_frame(get_frame),Items^[I-1])))) THEN
        Begin          { Test each item }
          LastThat := Items^[I-1];                     { Return item }
          Exit;                                        { Now exit }
@@ -2001,6 +1915,7 @@ BEGIN
    LastThat := Nil;                                   { None passed test }
 END;
 
+
 {--TCollection--------------------------------------------------------------}
 {  FirstThat -> Platforms DOS/DPMI/WIN/OS2 - Checked 22May96 LdB            }
 {---------------------------------------------------------------------------}
@@ -2008,7 +1923,7 @@ FUNCTION TCollection.FirstThat (Test: Pointer): Pointer;
 VAR I: LongInt;
 BEGIN
    For I := 1 To Count Do Begin                       { Up from first item }
-     IF Boolean(Byte(ptrint(CallPointerLocal(Test,get_caller_frame(get_frame),Items^[I-1])))) THEN
+     IF Boolean(Byte(ptruint(CallPointerLocal(Test,get_caller_frame(get_frame),Items^[I-1])))) THEN
        Begin          { Test each item }
        FirstThat := Items^[I-1];                      { Return item }
        Exit;                                          { Now exit }
@@ -2016,6 +1931,8 @@ BEGIN
    End;
    FirstThat := Nil;                                  { None passed test }
 END;
+
+{$POP}
 
 {--TCollection--------------------------------------------------------------}
 {  Pack -> Platforms DOS/DPMI/WIN/OS2 - Checked 22May96 LdB                 }
@@ -2118,12 +2035,17 @@ END;
 {--TCollection--------------------------------------------------------------}
 {  ForEach -> Platforms DOS/DPMI/WIN/OS2 - Checked 22May96 LdB              }
 {---------------------------------------------------------------------------}
+
+{$PUSH}
+{$W+}
 PROCEDURE TCollection.ForEach (Action: Pointer);
 VAR I: LongInt;
 BEGIN
    For I := 1 To Count Do                             { Up from first item }
     CallPointerLocal(Action,get_caller_frame(get_frame),Items^[I-1]);   { Call with each item }
 END;
+{$POP}
+
 
 {--TCollection--------------------------------------------------------------}
 {  SetLimit -> Platforms DOS/DPMI/WIN/OS2 - Checked 22May96 LdB             }
@@ -2306,6 +2228,9 @@ BEGIN
    Search := False;                                   { Preset failure }
    L := 0;                                            { Start count }
    H := Count - 1;                                    { End count }
+   Index := 0;
+   if Count=0 then
+     exit;
    While (L <= H) Do Begin
      I := (L + H) SHR 1;                              { Mid point }
      C := Compare(KeyOf(Items^[I]), Key);             { Compare with key }
@@ -3003,9 +2928,3 @@ END;
 BEGIN
   invalidhandle:=UnusedHandle;
 END.
-{
-  $Log: objects.pp,v $
-  Revision 1.37  2005/02/14 17:13:25  peter
-    * truncate log
-
-}

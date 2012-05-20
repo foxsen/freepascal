@@ -1,5 +1,4 @@
 {
-    $Id: i_wdosx.pas,v 1.10 2005/03/20 22:36:45 olle Exp $
     Copyright (c) 1998-2002 by Peter Vreman
 
     This unit implements support information structures for win32
@@ -22,6 +21,8 @@
 { This unit implements support information structures for wdosx. }
 unit i_wdosx;
 
+{$i fpcdefs.inc}
+
   interface
 
     uses
@@ -33,7 +34,7 @@ unit i_wdosx;
             system       : system_i386_wdosx;
             name         : 'WDOSX DOS extender';
             shortname    : 'WDOSX';
-            flags        : [tf_use_8_3];
+            flags        : [tf_use_8_3,tf_has_dllscanner];
             cpu          : cpu_i386;
             unit_env     : 'WDOSXUNITS';
             extradefines : 'MSWINDOWS';
@@ -55,17 +56,18 @@ unit i_wdosx;
             staticClibext : '.a';
             staticClibprefix : 'lib';
             sharedClibprefix : '';
-            p_ext_support : false;
+            importlibprefix : 'libimp';
+            importlibext : '.a';
             Cprefix      : '_';
             newline      : #13#10;
             dirsep       : '\';
-            files_case_relevent : false;
             assem        : as_i386_pecoffwdosx;
             assemextern  : as_gas;
             link         : nil;
             linkextern   : nil;
             ar           : ar_gnu_ar;
             res          : res_gnu_windres;
+            dbg          : dbg_stabs;
             script       : script_dos;
             endian       : endian_little;
             alignment    :
@@ -85,8 +87,7 @@ unit i_wdosx;
               );
             first_parm_offset : 8;
             stacksize    : 32*1024*1024;
-            DllScanSupported:true;
-            use_function_relative_addresses : true
+            abi          : abi_default;
           );
 
   implementation
@@ -100,13 +101,3 @@ initialization
   {$endif WIN32}
 {$endif CPU86}
 end.
-{
-  $Log: i_wdosx.pas,v $
-  Revision 1.10  2005/03/20 22:36:45  olle
-    * Cleaned up handling of source file extension.
-    + Added support for .p extension for macos and darwin
-
-  Revision 1.9  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

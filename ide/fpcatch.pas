@@ -1,5 +1,4 @@
 {
-    $Id: fpcatch.pas,v 1.13 2005/04/02 23:56:54 hajny Exp $
     Copyright (c) 1997-98 by Michael Van Canneyt
 
     Unit to catch segmentation faults and Ctrl-C and exit gracefully
@@ -20,20 +19,20 @@ interface
 
 {$ifdef Unix}
 uses
-  {$ifdef VER1_0}
-    linux;
-  {$else}
-    baseunix,
-    unix;
-  {$endif}
+  baseunix,
+  unix;
 {$endif}
 {$ifdef go32v2}
 uses
   dpmiexcp;
 {$endif}
-{$ifdef win32}
+{$ifdef Windows}
 uses
-  windows, signals;
+  windows
+  {$ifdef HasSignal}
+    ,signals
+  {$endif}
+  ;
 {$endif}
 
 {$ifdef HasSignal}
@@ -92,10 +91,18 @@ uses
   drivers,
   FVConsts,
   dos,app,msgbox,
-  FPString,FPCompil,FPIDE;
+  FPCompil,FPIDE;
 
 Const
   LastCtrlC : longint = 0;
+
+
+{$ifdef useresstrings}
+resourcestring
+{$else}
+const
+{$endif}
+      msg_quitconfirm         = 'Do You really want to quit?';
 
 {$ifdef DEBUG}
 
@@ -120,11 +127,15 @@ end;
 {$endif DEBUG}
 
 {$ifdef HasSignal}
-{$ifdef Unix}
+{$ifndef SignalIsFunction}
 Procedure Catchsignal(Sig : Longint);cdecl;
-{$else}
-Function Catchsignal(Sig : longint):longint;
-{$endif}
+{$else SignalIsFunction}
+  {$ifdef SignalIsCdecl}
+  Function Catchsignal(Sig : longint):longint; cdecl;
+  {$else not SignalIsCdecl}
+  Function Catchsignal(Sig : longint):longint;
+  {$endif not SignalIsCdecl}
+{$endif SignalIsFunction}
 var MustQuit: boolean;
 begin
   case Sig of
@@ -167,14 +178,12 @@ begin
                IF NOT CtrlCPressed and Assigned(Application) then
                  begin
                    MustQuit:=false;
-{$ifdef FPC}
                    if GetDosTicks>LastCtrlC+10 then
                      begin
                        CtrlCPressed:=true;
                        Keyboard.PutKeyEvent((kbCtrl shl 16) or kbCtrlC);
                        LastCtrlC:=GetDosTicks;
                      end;
-{$endif FPC}
                  end
                else
                  begin
@@ -194,9 +203,9 @@ begin
                 end;
              end;
   end;
-{$ifndef Unix}
+{$ifdef SignalIsFunction}
   CatchSignal:=0;
-{$endif}
+{$endif SignalIsFunction}
 end;
 {$endif def HasSignal}
 
@@ -205,29 +214,42 @@ Const
   CatchSignalsEnabled : boolean = false;
 
 Procedure EnableCatchSignals;
-{$ifdef win32}
+{$ifdef Windows}
   var Mode: DWORD;
-{$endif win32}
+{$endif Windows}
 begin
   if CatchSignalsEnabled then
     exit;
-{$ifdef win32}
+{$ifdef Windows}
   if GetConsoleMode(GetStdHandle(cardinal(Std_Input_Handle)), @Mode) then
-    SetConsoleMode(GetStdHandle(cardinal(Std_Input_Handle)), (Mode or ENABLE_MOUSE_INPUT) and not ENABLE_PROCESSED_INPUT);
-{$endif win32}
+    begin
+{$ifdef DEBUG}
+      Writeln(stderr,'Starting value of ConsoleMode is $',hexstr(Mode,8));
+{$endif DEBUG}
+      SetConsoleMode(GetStdHandle(cardinal(Std_Input_Handle)),
+        (Mode or ENABLE_MOUSE_INPUT) and not ENABLE_PROCESSED_INPUT);
+{$ifdef DEBUG}
+    end
+  else
+    begin
+      Writeln(stderr,'Call to GetConsoleMode failed, GetLastError=',
+        GetLastError);
+{$endif DEBUG}
+    end;
+{$endif Windows}
 {$ifdef go32v2}
-  djgpp_set_ctrl_c(false);
+  {
+    I think that it was an error to put that here PM
+    djgpp_set_ctrl_c(false);
+    at least since that this is now handled in fpusrscr.pas unit
+  }
 {$endif go32v2}
 {$ifdef HasSignal}
-{$ifndef TP}
-  NewSignal:=SignalHandler(@CatchSignal);
-{$else TP}
-  NewSignal:=SignalHandler(CatchSignal);
-{$endif TP}
-  OldSigSegm:={$ifdef unix}{$ifdef ver1_0}Signal{$else}fpSignal{$endif}{$else}Signal{$endif}(SIGSEGV,NewSignal);
-  OldSigInt:={$ifdef unix}{$ifdef ver1_0}Signal{$else}fpSignal{$endif}{$else}Signal{$endif}(SIGINT,NewSignal);
-  OldSigFPE:={$ifdef unix}{$ifdef ver1_0}Signal{$else}fpSignal{$endif}{$else}Signal{$endif}(SIGFPE,NewSignal);
-  OldSigILL:={$ifdef unix}{$ifdef ver1_0}Signal{$else}fpSignal{$endif}{$else}Signal{$endif}(SIGILL,NewSignal);
+  NewSignal:=@CatchSignal;
+  OldSigSegm:={$ifdef unix}fpSignal{$else}Signal{$endif}(SIGSEGV,NewSignal);
+  OldSigInt:={$ifdef unix}fpSignal{$else}Signal{$endif}(SIGINT,NewSignal);
+  OldSigFPE:={$ifdef unix}fpSignal{$else}Signal{$endif}(SIGFPE,NewSignal);
+  OldSigILL:={$ifdef unix}fpSignal{$else}Signal{$endif}(SIGILL,NewSignal);
   CatchSignalsEnabled:=true;
 {$endif}
 end;
@@ -237,22 +259,12 @@ begin
 {$ifdef HasSignal}
   if not CatchSignalsEnabled then
     exit;
-  {$ifdef unix}{$ifdef ver1_0}Signal{$else}fpSignal{$endif}{$else}Signal{$endif}(SIGSEGV,OldSigSegm);
-  {$ifdef unix}{$ifdef ver1_0}Signal{$else}fpSignal{$endif}{$else}Signal{$endif}(SIGINT,OldSigInt);
-  {$ifdef unix}{$ifdef ver1_0}Signal{$else}fpSignal{$endif}{$else}Signal{$endif}(SIGFPE,OldSigFPE);
-  {$ifdef unix}{$ifdef ver1_0}Signal{$else}fpSignal{$endif}{$else}Signal{$endif}(SIGILL,OldSigILL);
+  {$ifdef unix}fpSignal{$else}Signal{$endif}(SIGSEGV,OldSigSegm);
+  {$ifdef unix}fpSignal{$else}Signal{$endif}(SIGINT,OldSigInt);
+  {$ifdef unix}fpSignal{$else}Signal{$endif}(SIGFPE,OldSigFPE);
+  {$ifdef unix}fpSignal{$else}Signal{$endif}(SIGILL,OldSigILL);
   CatchSignalsEnabled:=false;
 {$endif}
 end;
 
 end.
-
-{
-  $Log: fpcatch.pas,v $
-  Revision 1.13  2005/04/02 23:56:54  hajny
-    * fix for targets missing exception handler implementation
-
-  Revision 1.12  2005/02/14 17:13:18  peter
-    * truncate log
-
-}

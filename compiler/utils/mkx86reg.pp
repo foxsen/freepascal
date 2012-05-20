@@ -1,5 +1,4 @@
 {
-    $Id: mkx86reg.pp,v 1.6 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 1998-2002 by Peter Vreman and Florian Klaempfl
 
     Convert i386reg.dat to several .inc files for usage with
@@ -31,29 +30,6 @@ var s : string;
     nasm_regname_index:array[0..max_regcount-1] of byte;
     x86_64 : boolean;
     fileprefix : string;
-
-{$ifndef FPC}
-  procedure readln(var t:text;var s:string);
-  var
-    c : char;
-    i : longint;
-  begin
-    c:=#0;
-    i:=0;
-    while (not eof(t)) and (c<>#10) do
-     begin
-       read(t,c);
-       if c<>#10 then
-        begin
-          inc(i);
-          s[i]:=c;
-        end;
-     end;
-    if (i>0) and (s[i]=#13) then
-     dec(i);
-    s[0]:=chr(i);
-  end;
-{$endif}
 
 function tostr(l : longint) : string;
 
@@ -92,7 +68,7 @@ procedure skipspace;
        inc(i);
   end;
 
-procedure openinc(var f:text;const fn:string);
+procedure openinc(out f:text;const fn:string);
 begin
   writeln('creating ',fn);
   assign(f,fn);
@@ -344,11 +320,8 @@ begin
   openinc(numfile,fileprefix+'num.inc');
   openinc(stdfile,fileprefix+'std.inc');
   openinc(attfile,fileprefix+'att.inc');
-  if not(x86_64) then
-    begin
-      openinc(intfile,fileprefix+'int.inc');
-      openinc(nasmfile,fileprefix+'nasm.inc');
-    end;
+  openinc(intfile,fileprefix+'int.inc');
+  openinc(nasmfile,fileprefix+'nasm.inc');
   openinc(stabfile,fileprefix+'stab.inc');
   openinc(dwrffile,fileprefix+'dwrf.inc');
   openinc(otfile,fileprefix+'ot.inc');
@@ -357,11 +330,8 @@ begin
   openinc(rnifile,fileprefix+'rni.inc');
   openinc(srifile,fileprefix+'sri.inc');
   openinc(arifile,fileprefix+'ari.inc');
-  if not(x86_64) then
-    begin
-      openinc(nrifile,fileprefix+'nri.inc');
-      openinc(irifile,fileprefix+'iri.inc');
-    end;
+  openinc(irifile,fileprefix+'iri.inc');
+  openinc(nrifile,fileprefix+'nri.inc');
   first:=true;
   for i:=0 to regcount-1 do
     begin
@@ -370,11 +340,8 @@ begin
           writeln(numfile,',');
           writeln(stdfile,',');
           writeln(attfile,',');
-          if not(x86_64) then
-            begin
-              writeln(intfile,',');
-              writeln(nasmfile,',');
-            end;
+          writeln(intfile,',');
+          writeln(nasmfile,',');
           writeln(stabfile,',');
           writeln(dwrffile,',');
           writeln(otfile,',');
@@ -382,11 +349,8 @@ begin
           writeln(rnifile,',');
           writeln(srifile,',');
           writeln(arifile,',');
-          if not(x86_64) then
-            begin
-              writeln(irifile,',');
-              writeln(nrifile,',');
-            end;
+          writeln(irifile,',');
+          writeln(nrifile,',');
         end
       else
         first:=false;
@@ -394,12 +358,14 @@ begin
       write(numfile,'tregister(',numbers[i],')');
       write(stdfile,'''',stdnames[i],'''');
       write(attfile,'''',attnames[i],'''');
-      if not(x86_64) then
-        begin
-          write(intfile,'''',intnames[i],'''');
-          write(nasmfile,'''',nasmnames[i],'''');
-        end;
-      write(stabfile,stabs[i]);
+      write(intfile,'''',intnames[i],'''');
+      write(nasmfile,'''',nasmnames[i],'''');
+      { stabs uses the same register numbering as dwarf
+        for x86_64 CPU }
+      if x86_64 then
+        write(stabfile,dwarf64[i])
+      else
+        write(stabfile,stabs[i]);
       if x86_64 then
         write(dwrffile,dwarf64[i])
       else
@@ -409,23 +375,16 @@ begin
       write(rnifile,regnumber_index[i]);
       write(srifile,std_regname_index[i]);
       write(arifile,att_regname_index[i]);
-
-      if not(x86_64) then
-        begin
-          write(irifile,int_regname_index[i]);
-          write(nrifile,nasm_regname_index[i]);
-        end;
+      write(irifile,int_regname_index[i]);
+      write(nrifile,nasm_regname_index[i]);
     end;
   write(norfile,regcount);
   close(confile);
   closeinc(numfile);
   closeinc(attfile);
   closeinc(stdfile);
-  if not(x86_64) then
-    begin
-      closeinc(intfile);
-      closeinc(nasmfile);
-    end;
+  closeinc(intfile);
+  closeinc(nasmfile);
   closeinc(stabfile);
   closeinc(dwrffile);
   closeinc(otfile);
@@ -434,23 +393,40 @@ begin
   closeinc(rnifile);
   closeinc(srifile);
   closeinc(arifile);
-  if not(x86_64) then
-    begin
-      closeinc(nrifile);
-      closeinc(irifile);
-    end;
+  closeinc(irifile);
+  closeinc(nrifile);
   writeln('Done!');
-  writeln(regcount,' registers procesed');
+  writeln(regcount,' registers processed');
 end;
 
 
 begin
    writeln('Register Table Converter Version ',Version);
-   x86_64:=paramstr(1)='x86_64';
-   if x86_64 then
-     fileprefix:='r8664'
+   if paramcount=0 then
+     begin
+       x86_64:=false;
+     end
    else
-     fileprefix:='r386';
+     begin
+       x86_64:=paramstr(1)='x86_64';
+       if (paramcount<>1) or
+          ((paramstr(1)<>'i386') and (paramstr(1)<>'x86_64')) then
+         begin
+           writeln('Usage: ',paramstr(0));
+           writeln('Only one optional parameter is allowed: i386 or x86_64');
+           halt(1);
+         end;
+     end;
+   if x86_64 then
+     begin
+       fileprefix:='r8664';
+       writeln('Processing for CPU x86_64');
+     end
+   else
+     begin
+       fileprefix:='r386';
+       writeln('Processing for CPU i386');
+     end;
    line:=0;
    regcount:=0;
    read_x86reg_file;
@@ -458,18 +434,10 @@ begin
    while 2*regcount_bsstart<regcount do
      regcount_bsstart:=regcount_bsstart*2;
    build_regnum_index;
+   build_int_regname_index;
    if not(x86_64) then
-     begin
-       build_int_regname_index;
-       build_nasm_regname_index;
-     end;
+     build_nasm_regname_index;
    build_std_regname_index;
    build_att_regname_index;
    write_inc_files;
 end.
-{
-  $Log: mkx86reg.pp,v $
-  Revision 1.6  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

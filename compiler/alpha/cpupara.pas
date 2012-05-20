@@ -1,5 +1,4 @@
 {
-    $Id: cpupara.pas,v 1.4 2005/02/14 17:13:09 peter Exp $
     Copyright (c) 2002 by Florian Klaempfl
 
     Alpha specific calling conventions
@@ -71,7 +70,7 @@ unit cpupara;
          { Later, the LOC_REFERENCE is in most cases changed into LOC_REGISTER
            if push_addr_param for the def is true
          }
-         case p.deftype of
+         case p.typ of
             orddef:
               getparaloc:=LOC_REGISTER;
             floatdef:
@@ -135,9 +134,9 @@ unit cpupara;
          // nextmmreg:=R_M1;
          stack_offset:=0;
          { pointer for structured results ? }
-         if not is_void(p.rettype.def) then
+         if not is_void(p.returndef) then
            begin
-              if not(ret_in_reg(p.rettype.def)) then
+              if not(ret_in_reg(p.returndef)) then
                 inc(nextintreg);
            end;
 
@@ -249,13 +248,13 @@ unit cpupara;
 
     function talphaparamanager.getfuncretparaloc(p : tabstractprocdef) : tparalocation;
       begin
-         case p.rettype.def.deftype of
+         case p.returndef.typ of
             orddef,
             enumdef:
               begin
                 getfuncretparaloc.loc:=LOC_REGISTER;
                 getfuncretparaloc.register:=R_3;
-                getfuncretparaloc.size:=def_cgsize(p.rettype.def);
+                getfuncretparaloc.size:=def_cgsize(p.returndef);
                 if getfuncretparaloc.size in [OS_S64,OS_64] then
                   getfuncretparaloc.register64.reghi:=R_4;
               end;
@@ -263,7 +262,7 @@ unit cpupara;
               begin
                 getfuncretparaloc.loc:=LOC_FPUREGISTER;
                 getfuncretparaloc.register:=R_F1;
-                getfuncretparaloc.size:=def_cgsize(p.rettype.def);
+                getfuncretparaloc.size:=def_cgsize(p.returndef);
               end;
             pointerdef,
             formaldef,
@@ -289,9 +288,3 @@ unit cpupara;
 begin
    paramanager:=talphaparamanager.create;
 end.
-{
-  $Log: cpupara.pas,v $
-  Revision 1.4  2005/02/14 17:13:09  peter
-    * truncate log
-
-}

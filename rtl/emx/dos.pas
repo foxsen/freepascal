@@ -1,6 +1,5 @@
 {****************************************************************************
 
-    $Id: dos.pas,v 1.17 2005/02/14 17:13:22 peter Exp $
 
                          Free Pascal Runtime-Library
                               DOS unit for EMX
@@ -102,11 +101,7 @@ const
 function GetEnvPChar (EnvVar: string): PChar;
 
 
-{$ifdef HASTHREADVAR}
 threadvar
-{$else HASTHREADVAR}
-var
-{$endif HASTHREADVAR}
 (* For compatibility with VP/2, used for runflags in Exec procedure. *)
     ExecFlags: cardinal;
 
@@ -127,11 +122,7 @@ const
 {$I dos.inc}
 
 
-{$ifdef HASTHREADVAR}
 threadvar
-{$else HASTHREADVAR}
-var
-{$endif HASTHREADVAR}
   LastSR: SearchRec;
 
 var
@@ -189,8 +180,7 @@ begin
             else
                 begin
                     { allow slash as backslash }
-                    for i:=1 to length(dirlist) do
-                       if dirlist[i]='/' then dirlist[i]:='\';
+                    DoDirSeparators(dirlist);
                     repeat
                         p1:=pos(';',dirlist);
                         if p1<>0 then
@@ -204,8 +194,8 @@ begin
                                 dirlist:='';
                             end;
                         if (newdir<>'') and
-                         not (newdir[length(newdir)] in ['\',':']) then
-                            newdir:=newdir+'\';
+                         not (newdir[length(newdir)] in AllowDirectorySeparators+AllowDriveSeparators) then
+                            newdir:=newdir+DirectorySeparator;
                         if CheckFile (NewDir + Path + #0) then
                             NewDir := NewDir + Path
                         else
@@ -1077,10 +1067,3 @@ begin
  LastDosExitCode := 0;
  ExecFlags := 0;
 end.
-
-{
-  $Log: dos.pas,v $
-  Revision 1.17  2005/02/14 17:13:22  peter
-    * truncate log
-
-}

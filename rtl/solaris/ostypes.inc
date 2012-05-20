@@ -1,5 +1,4 @@
 {
-    $Id: ostypes.inc,v 1.4 2005/02/14 17:13:31 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2001 by Free Pascal development team
 
@@ -36,37 +35,47 @@ CONST
     ST_FSTYPSZ = 16;           {* array size for file system type name *}
 
 TYPE
-    blksize_t = longint;
-    blkcnt_t = longint;
+    blksize_t = clong;
+    blkcnt_t = clong;
 
    { file characteristics services }
    stat = packed record { verify the alignment of the members }
      st_dev : dev_t;
+{$ifndef CPU64}
      st_pad1 : array[1..3] of longint;  { reserve for dev expansion }
+{$endif ndef CPU64}
      st_ino : ino_t;
      st_mode : mode_t;
      st_nlink : nlink_t;
      st_uid : uid_t;
      st_gid : gid_t;
      st_rdev : dev_t;
+{$ifndef CPU64}
      st_pad2 : array[1..2] of longint;
+{$endif ndef CPU64}
      st_size : off_t;
+{$ifndef CPU64}
      st_pad3 : longint;   {* reserve pad for future off_t expansion *}
+{$endif ndef CPU64}
      st_atime : time_t;
-     st_atimens : longint;    { access time nanosecond field         }
+     st_atimens : clong;    { access time nanosecond field         }
      st_mtime : time_t;
-     st_mtimens : longint;    { modification time nanosecond field   }
+     st_mtimens : clong;    { modification time nanosecond field   }
      st_ctime : time_t;
-     st_ctimens : longint;    { modification time nanosecond field   }
+     st_ctimens : clong;    { modification time nanosecond field   }
      st_blksize : blksize_t;
      st_blocks : blkcnt_t;
      st_fstype : array[0..ST_FSTYPSZ-1] of char;
+{$ifndef CPU64}
      st_pad4 : array[1..8] of longint;
+{$endif ndef CPU64}
    end;
    TStat             = Stat;
    PStat             = ^Stat;
 
    flock    = record
+                l_type  : cshort;       { lock type: read/write, etc. }
+                l_whence: cshort;       { type of l_start }
                 {$ifdef 64bitfs}
                 l_start : off64_t;      { starting offset }
                 l_len   : off64_t;      { len = 0 means until end of file }
@@ -74,9 +83,9 @@ TYPE
                 l_start : off_t;        { starting offset }
                 l_len   : off_t;        { len = 0 means until end of file }
                 {$endif}
+                l_sysid : cint;
                 l_pid   : pid_t;        { lock owner }
-                l_type  : cshort;       { lock type: read/write, etc. }
-                l_whence: cshort;       { type of l_start }
+                l_pas   : array[0..3] of clong;
                 end;
    TFlock   = flock;
    pFlock   = ^flock;
@@ -109,19 +118,36 @@ TYPE
    { directory services }
    pdirent = ^dirent;
    dirent = packed record    { directory entry record - verify alignment }
-     d_ino : ino_t;                  {* "inode number" of entry *}
-     d_off : off_t;                  {* offset of disk directory entry *}
-     d_reclen : word;                {* length of this record *}
-     d_name : array[0..255] of char; { name of file            }
+     case integer of
+       1 : (
+             d_ino : ino_t;                  {* "inode number" of entry *}
+             d_off : off_t;                  {* offset of disk directory entry *}
+             d_reclen : word;                {* length of this record *}
+             d_name : array[0..255] of char; { name of file            }
+            );
+       { overlay with alias }
+       2 : (
+            d_fileno : ino_t;
+           ); 
    end;
 
 
    pdir = ^dir;
    dir = packed record
-    d_fd : cint;               {* file descriptor *}
-    d_loc : cint;              {* offset in block *}
-    d_size : cint;             {* amount of valid data *}
-    d_buf : pchar;             { directory block   }
+    case integer of
+      1 : (
+           d_fd : cint;               {* file descriptor *}
+           d_loc : cint;              {* offset in block *}
+           d_size : cint;             {* amount of valid data *}
+           d_buf : pchar;             { directory block   }
+          );
+      { overlay for posix compatibility }
+      2 : (
+           dd_fd : cint;               {* file descriptor *}
+           dd_loc : cint;              {* offset in block *}
+           dd_size : cint;             {* amount of valid data *}
+           dd_buf : pchar;             { directory block   }
+          );
    end;
 
 
@@ -181,28 +207,71 @@ Const
   S_IFWHT = 57344;
   S_ISVTX = 512;
 
-CONST
+  { For File control mechanism }
+  F_GetFd  = 1;
+  F_SetFd  = 2;
+  F_GetFl  = 3;
+  F_SetFl  = 4;
+  F_GetLk  = 14;
+  F_SetLk  = 6;
+  F_SetLkW = 7;
+  F_SetOwn = 23;
+  F_GetOwn = 24;
+
+Const
  { Constansts for MMAP }
+ {$ifdef FPC_IS_SYSTEM}
   MAP_PRIVATE   =2;
-  MAP_ANONYMOUS =$1000;
+ {$endif}
+  MAP_ANONYMOUS =$100;
 
-
+type
+  rlim_t = cULong;
+  PRLimit = ^TRLimit;
+  TRLimit = record
+    rlim_cur : rlim_t;
+    rlim_max : rlim_t;
+  end;
 
 {$i signal.inc}
 
+  iovec = record
+            iov_base : pointer;
+	    iov_len  : size_t;
+	   end;
+  tiovec=iovec;
+  piovec=^tiovec;		
 
-{
-  $Log: ostypes.inc,v $
-  Revision 1.4  2005/02/14 17:13:31  peter
-    * truncate log
+ tms = packed record
+         tms_utime  : clock_t;  { User CPU time }
+         tms_stime  : clock_t;  { System CPU time }
+         tms_cutime : clock_t;  { User CPU time of terminated child procs }
+         tms_cstime : clock_t;  { System CPU time of terminated child procs }
+         end;
+ TTms= tms;
+ pTms= ^tms;
 
-  Revision 1.3  2005/02/14 16:32:41  peter
-    * solaris updates
+const
+  POLLIN      = $0001;
+  POLLPRI     = $0002;
+  POLLOUT     = $0004;
+  POLLERR     = $0008;
+  POLLHUP     = $0010;
+  POLLNVAL    = $0020;
 
-  Revision 1.2  2005/02/13 22:13:20  peter
-    * get solaris back in shape
+  { XOpen, XPG 4.2 }
+  POLLRDNORM  = $0040;
+  POLLRDBAND  = $0080;
+  POLLWRNORM  = POLLOUT;
+  POLLWRBAND  = $0100;
 
-  Revision 1.1  2005/02/10 17:30:54  peter
-    * renamed to solaris
+type
+  pollfd = record
+    fd: cint;
+    events: cshort;
+    revents: cshort;
+  end;
+  tpollfd = pollfd;
+  ppollfd = ^pollfd;
 
-}
+

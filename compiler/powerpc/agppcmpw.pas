@@ -1,5 +1,4 @@
 {
-    $Id: agppcmpw.pas,v 1.44 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 2002 by Florian Klaempfl
 
     This unit implements an asmoutput class for PowerPC with MPW syntax
@@ -26,31 +25,31 @@
 unit agppcmpw;
 
 {$i fpcdefs.inc}
+ { We know that use_PR is a const boolean
+   but we don't care about this warning }
+ {$WARN 6018 OFF}
 
 interface
 
     uses
-       aasmtai,
+       aasmtai,aasmdata,
        globals,aasmbase,aasmcpu,assemble,
        cpubase;
 
     type
       TPPCMPWAssembler = class(TExternalAssembler)
-        procedure WriteTree(p:TAAsmoutput);override;
+        procedure WriteTree(p:TAsmList);override;
         procedure WriteAsmList;override;
         Function  DoAssemble:boolean;override;
         procedure WriteExternals;
-{$ifdef GDB}
-        procedure WriteFileLineInfo(var fileinfo : tfileposinfo);
-        procedure WriteFileEndInfo;
-{$endif}
         procedure WriteAsmFileHeader;
       private
+        cur_CSECT_name: String;
+        cur_CSECT_class: String;
+
         procedure WriteInstruction(hp : tai);
         procedure WriteProcedureHeader(var hp:tai);
         procedure WriteDataHeader(var s:string; isExported, isConst:boolean);
-        cur_CSECT_name: String;
-        cur_CSECT_class: String;
       end;
 
 
@@ -72,25 +71,52 @@ interface
       const_storage_class = '';
       var_storage_class = '';
 
-      secnames : array[TAsmSectionType] of string[10] = (
+      secnames : array[TAsmSectiontype] of string[10] = (
         '',      {none}
+        '',      {user}
         'csect', {code}
         'csect', {data}
         'csect', {read only data}
-        'csect', {bss}
-        'csect','csect','csect','csect','','','','','','','',''
+        'csect', {read only data - no relocations}
+        'csect', {bss} 'csect', '',
+        'csect','csect','csect','csect','csect',
+        'csect','csect','csect',
+         '','','','','','','','','','','','','','',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        ''
       );
-
-{$ifdef GDB}
-var
-      n_line       : byte;     { different types of source lines }
-      linecount,
-      includecount : longint;
-      funcname     : pchar;
-      stabslastfileinfo : tfileposinfo;
-      isInFunction: Boolean;
-      firstLineInFunction: longint;
-{$endif}
 
     type
       t64bitarray = array[0..7] of byte;
@@ -252,8 +278,11 @@ var
       end;
     end;
 
-    function branchmode(o: tasmop): string[4];
-      var tempstr: string[4];
+    type
+      topstr = string[4];
+
+    function branchmode(o: tasmop): topstr;
+      var tempstr: topstr;
       begin
         tempstr := '';
         case o of
@@ -453,25 +482,6 @@ var
       t[3]:= b;
     end;
 
-   function fixline(s:string):string;
-   {
-     return s with all leading and ending spaces and tabs removed
-   }
-     var
-       i,j,k : longint;
-     begin
-       i:=length(s);
-       while (i>0) and (s[i] in [#9,' ']) do
-        dec(i);
-       j:=1;
-       while (j<i) and (s[j] in [#9,' ']) do
-        inc(j);
-       for k:=j to i do
-        if s[k] in [#0..#31,#127..#255] then
-         s[k]:='.';
-       fixline:=Copy(s,j,i-j+1);
-     end;
-
     Function PadTabs(const p:string;addch:char):string;
     var
       s : string;
@@ -560,7 +570,7 @@ var
               GetAdjacentTaiSymbol:= true;
               Break;
             end;
-          ait_stab_function_name:
+          ait_function_name:
             hp:=tai(hp.next);
           else
             begin
@@ -611,16 +621,6 @@ var
       AsmWrite(s);
       AsmWriteLn('[PR]');
 
-      {$ifdef GDB}
-      if ((cs_debuginfo in aktmoduleswitches) or
-           (cs_gdb_lineinfo in aktglobalswitches)) then
-        begin
-          //info for debuggers:
-          firstLineInFunction:= stabslastfileinfo.line;
-          AsmWriteLn(#9'beginf ' + tostr(firstLineInFunction));
-          isInFunction:= true;
-        end;
-      {$endif}
       {Write all labels: }
       hp:= first;
       repeat
@@ -687,113 +687,22 @@ var
       AsmLn;
     end;
 
-    var
-      LasTSec : TAsmSectionType;
-      lastfileinfo : tfileposinfo;
-      infile,
-      lastinfile   : tinputfile;
-
     const
-      ait_const2str:array[ait_const_32bit..ait_const_8bit] of string[8]=
+      ait_const2str:array[aitconst_32bit..aitconst_8bit] of string[8]=
         (#9'dc.l'#9,#9'dc.w'#9,#9'dc.b'#9);
 
 
-{$ifdef GDB}
-    procedure TPPCMPWAssembler.WriteFileLineInfo(var fileinfo : tfileposinfo);
-        var
-          curr_n : byte;
-        begin
-          if not ((cs_debuginfo in aktmoduleswitches) or
-             (cs_gdb_lineinfo in aktglobalswitches)) then
-           exit;
-        { file changed ? (must be before line info) }
-          if (fileinfo.fileindex<>0) and
-             (stabslastfileinfo.fileindex<>fileinfo.fileindex) then
-           begin
-             infile:=current_module.sourcefiles.get_file(fileinfo.fileindex);
-             if assigned(infile) then
-              begin
-              (*
-                if includecount=0 then
-                 curr_n:=n_sourcefile
-                else
-                 curr_n:=n_includefile;
-                if (infile.path^<>'') then
-                 begin
-                   AsmWriteLn(#9'.stabs "'+lower(BsToSlash(FixPath(infile.path^,false)))+'",'+
-                     tostr(curr_n)+',0,0,'+target_asm.labelprefix+'text'+ToStr(IncludeCount));
-                 end;
-
-                AsmWriteLn(#9'.stabs "'+lower(FixFileName(infile.name^))+'",'+
-                  tostr(curr_n)+',0,0,'+target_asm.labelprefix+'text'+ToStr(IncludeCount));
-              *)
-              AsmWriteLn(#9'file '''+lower(FixFileName(infile.name^))+'''');
-
-              (*
-                AsmWriteLn(target_asm.labelprefix+'text'+ToStr(IncludeCount)+':');
-              *)
-
-                inc(includecount);
-                { force new line info }
-                stabslastfileinfo.line:=-1;
-              end;
-           end;
-        { line changed ? }
-          if (stabslastfileinfo.line<>fileinfo.line) and (fileinfo.line<>0) then
-           begin
-            (*
-             if (n_line=n_textline) and assigned(funcname) and
-                (target_info.use_function_relative_addresses) then
-              begin
-                AsmWriteLn(target_asm.labelprefix+'l'+tostr(linecount)+':');
-                AsmWrite(#9'.stabn '+tostr(n_line)+',0,'+tostr(fileinfo.line)+','+
-                           target_asm.labelprefix+'l'+tostr(linecount)+' - ');
-                AsmWritePChar(FuncName);
-                AsmLn;
-                inc(linecount);
-              end
-             else
-              AsmWriteLn(#9'.stabd'#9+tostr(n_line)+',0,'+tostr(fileinfo.line));
-            *)
-            if isInFunction then
-              AsmWriteln(#9'line '+ tostr(fileinfo.line - firstLineInFunction + 1));
-          end;
-          stabslastfileinfo:=fileinfo;
-        end;
-
-      procedure TPPCMPWAssembler.WriteFileEndInfo;
-
-        begin
-          if not ((cs_debuginfo in aktmoduleswitches) or
-             (cs_gdb_lineinfo in aktglobalswitches)) then
-           exit;
-          AsmLn;
-          (*
-          AsmWriteLn(ait_section2str(sec_code));
-          AsmWriteLn(#9'.stabs "",'+tostr(n_sourcefile)+',0,0,'+target_asm.labelprefix+'etext');
-          AsmWriteLn(target_asm.labelprefix+'etext:');
-          *)
-        end;
-
-{$endif}
-
-    procedure TPPCMPWAssembler.WriteTree(p:TAAsmoutput);
+    procedure TPPCMPWAssembler.WriteTree(p:TAsmList);
     var
-      s,
-      prefix,
-      suffix   : string;
+      s        : string;
       hp       : tai;
-      hp1      : tailineinfo;
       counter,
       lines,
       InlineLevel : longint;
       i,j,l    : longint;
-      consttyp : taitype;
-      found,
+      consttype : taiconst_type;
       do_line,DoNotSplitLine,
       quoted   : boolean;
-      sep      : char;
-      replaced : boolean;
       sin      : single;
       d        : double;
 
@@ -801,69 +710,21 @@ var
       if not assigned(p) then
        exit;
       InlineLevel:=0;
-      { lineinfo is only needed for codesegment (PFV) }
-      do_line:=((cs_asm_source in aktglobalswitches) or
-                (cs_lineinfo in aktmoduleswitches))
-                 and (p=codesegment);
+      { lineinfo is only needed for al_procedures (PFV) }
+      do_line:=((cs_asm_source in current_settings.globalswitches) or
+                (cs_lineinfo in current_settings.moduleswitches))
+                 and (p=current_asmdata.asmlists[al_procedures]);
       DoNotSplitLine:=false;
       hp:=tai(p.first);
       while assigned(hp) do
        begin
-         if not(hp.typ in SkipLineInfo) and
-            not DoNotSplitLine then
-           begin
-             hp1 := hp as tailineinfo;
-
-{$ifdef GDB}
-             { write debug info }
-             if (cs_debuginfo in aktmoduleswitches) or
-                (cs_gdb_lineinfo in aktglobalswitches) then
-               WriteFileLineInfo(hp1.fileinfo);
-{$endif GDB}
-
-             if do_line then
-              begin
-           { load infile }
-             if lastfileinfo.fileindex<>hp1.fileinfo.fileindex then
-              begin
-                infile:=current_module.sourcefiles.get_file(hp1.fileinfo.fileindex);
-                if assigned(infile) then
-                 begin
-                   { open only if needed !! }
-                   if (cs_asm_source in aktglobalswitches) then
-                    infile.open;
-                 end;
-                { avoid unnecessary reopens of the same file !! }
-                lastfileinfo.fileindex:=hp1.fileinfo.fileindex;
-                { be sure to change line !! }
-                lastfileinfo.line:=-1;
-              end;
-           { write source }
-             if (cs_asm_source in aktglobalswitches) and
-                assigned(infile) then
-              begin
-                if (infile<>lastinfile) then
-                  begin
-                    AsmWriteLn(target_asm.comment+'['+infile.name^+']');
-                    if assigned(lastinfile) then
-                      lastinfile.close;
-                  end;
-                if (hp1.fileinfo.line<>lastfileinfo.line) and
-                   ((hp1.fileinfo.line<infile.maxlinebuf) or (InlineLevel>0)) then
-                  begin
-                    if (hp1.fileinfo.line<>0) and
-                       ((infile.linebuf^[hp1.fileinfo.line]>=0) or (InlineLevel>0)) then
-                      AsmWriteLn(target_asm.comment+'['+tostr(hp1.fileinfo.line)+'] '+
-                        fixline(infile.GetLineStr(hp1.fileinfo.line)));
-                    { set it to a negative value !
-                    to make that is has been read already !! PM }
-                    if (infile.linebuf^[hp1.fileinfo.line]>=0) then
-                      infile.linebuf^[hp1.fileinfo.line]:=-infile.linebuf^[hp1.fileinfo.line]-1;
-                  end;
-              end;
-             lastfileinfo:=hp1.fileinfo;
-             lastinfile:=infile;
-           end;
+         prefetch(pointer(hp.next)^);
+         if not(hp.typ in SkipLineInfo) then
+          begin
+            current_filepos:=tailineinfo(hp).fileinfo;
+            { no line info for inlined code }
+            if do_line and (inlinelevel=0) and not DoNotSplitLine then
+              WriteSourceLine(hp as tailineinfo);
           end;
 
          DoNotSplitLine:=false;
@@ -880,8 +741,8 @@ var
               ;
             ait_section:
               begin
-                 {if LasTSec<>sec_none then
-                  AsmWriteLn('_'+target_asm.secnames[LasTSec]+#9#9'ENDS');}
+                 {if LastSecType<>sec_none then
+                  AsmWriteLn('_'+target_asm.secnames[LastSecType]+#9#9'ENDS');}
 
                  if tai_section(hp).sectype<>sec_none then
                   begin
@@ -900,11 +761,8 @@ var
 
                     AsmLn;
                     AsmWriteLn(#9+secnames[tai_section(hp).sectype]+' '+cur_CSECT_name+cur_CSECT_class);
-{$ifdef GDB}
-                    lastfileinfo.line:=-1;
-{$endif GDB}
                   end;
-                 LasTSec:=tai_section(hp).sectype;
+                 LastSecType:=tai_section(hp).sectype;
                end;
             ait_align:
               begin
@@ -931,111 +789,116 @@ var
                    end;
               end;
 
-           ait_const_128bit:
+            ait_const:
               begin
-                internalerror(200404291);
-              end;
-           ait_const_64bit:
-              begin
-                if assigned(tai_const(hp).sym) then
-                  internalerror(200404292);
-                AsmWrite(ait_const2str[ait_const_32bit]);
-                if target_info.endian = endian_little then
-                  begin
-                    AsmWrite(tostr(longint(lo(tai_const(hp).value))));
-                    AsmWrite(',');
-                    AsmWrite(tostr(longint(hi(tai_const(hp).value))));
-                  end
-                else
-                  begin
-                    AsmWrite(tostr(longint(hi(tai_const(hp).value))));
-                    AsmWrite(',');
-                    AsmWrite(tostr(longint(lo(tai_const(hp).value))));
-                  end;
-                AsmLn;
-              end;
+                consttype:=tai_const(hp).consttype;
+                case consttype of
+                   aitconst_128bit:
+                      begin
+                        internalerror(200404291);
+                      end;
+                   aitconst_64bit:
+                      begin
+                        if assigned(tai_const(hp).sym) then
+                          internalerror(200404292);
+                        AsmWrite(ait_const2str[aitconst_32bit]);
+                        if target_info.endian = endian_little then
+                          begin
+                            AsmWrite(tostr(longint(lo(tai_const(hp).value))));
+                            AsmWrite(',');
+                            AsmWrite(tostr(longint(hi(tai_const(hp).value))));
+                          end
+                        else
+                          begin
+                            AsmWrite(tostr(longint(hi(tai_const(hp).value))));
+                            AsmWrite(',');
+                            AsmWrite(tostr(longint(lo(tai_const(hp).value))));
+                          end;
+                        AsmLn;
+                      end;
 
-           ait_const_uleb128bit,
-           ait_const_sleb128bit,
-           ait_const_32bit,
-           ait_const_16bit,
-           ait_const_8bit,
-           ait_const_rva_symbol,
-           ait_const_indirect_symbol :
-             begin
-               AsmWrite(ait_const2str[hp.typ]);
-               consttyp:=hp.typ;
-               l:=0;
-               repeat
-                 if assigned(tai_const(hp).sym) then
-                   begin
-                     if assigned(tai_const(hp).endsym) then
-                       begin
-                         if (tai_const(hp).endsym.typ = AT_FUNCTION) and use_PR then
-                           AsmWrite('.');
-
-                         s:=tai_const(hp).endsym.name;
-                         ReplaceForbiddenChars(s);
-                         AsmWrite(s);
-                         inc(l,length(s));
-
-                         if tai_const(hp).endsym.typ = AT_FUNCTION then
+                   aitconst_uleb128bit,
+                   aitconst_sleb128bit,
+                   aitconst_32bit,
+                   aitconst_16bit,
+                   aitconst_8bit,
+                   aitconst_rva_symbol :
+                     begin
+                       AsmWrite(ait_const2str[consttype]);
+                       l:=0;
+                       repeat
+                         if assigned(tai_const(hp).sym) then
                            begin
-                             if use_PR then
-                               AsmWrite('[PR]')
+                             if assigned(tai_const(hp).endsym) then
+                               begin
+                                 if (tai_const(hp).endsym.typ = AT_FUNCTION) and use_PR then
+                                   AsmWrite('.');
+
+                                 s:=tai_const(hp).endsym.name;
+                                 ReplaceForbiddenChars(s);
+                                 AsmWrite(s);
+                                 inc(l,length(s));
+
+                                 if tai_const(hp).endsym.typ = AT_FUNCTION then
+                                   begin
+                                     if use_PR then
+                                       AsmWrite('[PR]')
+                                     else
+                                       AsmWrite('[DS]');
+                                   end;
+
+                                 AsmWrite('-');
+                                 inc(l,5); {Approx 5 extra, no need to be exactly}
+                               end;
+
+                             if (tai_const(hp).sym.typ = AT_FUNCTION) and use_PR then
+                               AsmWrite('.');
+
+                             s:= tai_const(hp).sym.name;
+                             ReplaceForbiddenChars(s);
+                             AsmWrite(s);
+                             inc(l,length(s));
+
+                             if tai_const(hp).sym.typ = AT_FUNCTION then
+                               begin
+                                 if use_PR then
+                                   AsmWrite('[PR]')
+                                 else
+                                   AsmWrite('[DS]');
+                               end;
+                             inc(l,5); {Approx 5 extra, no need to be exactly}
+
+                             if tai_const(hp).value > 0 then
+                               s:= '+'+tostr(tai_const(hp).value)
+                             else if tai_const(hp).value < 0 then
+                               s:= '-'+tostr(tai_const(hp).value)
                              else
-                               AsmWrite('[DS]');
+                               s:= '';
+                             if s<>'' then
+                               begin
+                                 AsmWrite(s);
+                                 inc(l,length(s));
+                               end;
+                           end
+                         else
+                           begin
+                             s:= tostr(tai_const(hp).value);
+                             AsmWrite(s);
+                             inc(l,length(s));
                            end;
 
-                         AsmWrite('-');
-                         inc(l,5); {Approx 5 extra, no need to be exactly}
-                       end;
-
-                     if (tai_const(hp).sym.typ = AT_FUNCTION) and use_PR then
-                       AsmWrite('.');
-
-                     s:= tai_const(hp).sym.name;
-                     ReplaceForbiddenChars(s);
-                     AsmWrite(s);
-                     inc(l,length(s));
-
-                     if tai_const(hp).sym.typ = AT_FUNCTION then
-                       begin
-                         if use_PR then
-                           AsmWrite('[PR]')
-                         else
-                           AsmWrite('[DS]');
-                       end;
-                     inc(l,5); {Approx 5 extra, no need to be exactly}
-
-                     if tai_const(hp).value > 0 then
-                       s:= '+'+tostr(tai_const(hp).value)
-                     else if tai_const(hp).value < 0 then
-                       s:= '-'+tostr(tai_const(hp).value)
-                     else
-                       s:= '';
-                     if s<>'' then
-                       begin
-                         AsmWrite(s);
-                         inc(l,length(s));
-                       end;
-                   end
-                 else
-                   begin
-                     s:= tostr(tai_const(hp).value);
-                     AsmWrite(s);
-                     inc(l,length(s));
-                   end;
-
-                 if (l>line_length) or
-                    (hp.next=nil) or
-                    (tai(hp.next).typ<>consttyp) then
-                   break;
-                 hp:=tai(hp.next);
-                 AsmWrite(',');
-               until false;
-               AsmLn;
-             end;
+                         if (l>line_length) or
+                            (hp.next=nil) or
+                            (tai(hp.next).typ<>ait_const) or
+                            (tai_const(hp.next).consttype<>consttype) then
+                           break;
+                         hp:=tai(hp.next);
+                         AsmWrite(',');
+                       until false;
+                       AsmLn;
+                     end;
+                end;
+              end;
 
             ait_real_64bit :
               begin
@@ -1159,9 +1022,9 @@ var
               end;
             ait_label:
               begin
-                 if tai_label(hp).l.is_used then
+                 if tai_label(hp).labsym.is_used then
                   begin
-                    s:= tai_label(hp).l.name;
+                    s:= tai_label(hp).labsym.name;
                     if s[1] = '@' then
                       begin
                         ReplaceForbiddenChars(s);
@@ -1186,11 +1049,6 @@ var
                       end;
                   end;
                end;
-             ait_direct:
-               begin
-                  AsmWritePChar(tai_direct(hp).str);
-                  AsmLn;
-               end;
              ait_symbol:
                begin
                   if tai_symbol(hp).sym.typ=AT_FUNCTION then
@@ -1209,37 +1067,21 @@ var
                     InternalError(2003071301);
                 end;
               ait_symbol_end:
-{$ifdef GDB}
-                if isInFunction then
-                  if ((cs_debuginfo in aktmoduleswitches) or
-                       (cs_gdb_lineinfo in aktglobalswitches)) then
-                    begin
-                      //info for debuggers:
-                      AsmWriteLn(#9'endf ' + tostr(stabslastfileinfo.line));
-                      isInFunction:= false;
-                    end
-{$endif GDB}
                 ;
               ait_instruction:
                 WriteInstruction(hp);
-{$ifdef GDB}
-              ait_stabn: ;
-              ait_stabs: ;
-
-              ait_force_line :
-                 stabslastfileinfo.line:=0;
-
-              ait_stab_function_name: ;
-{$endif GDB}
+              ait_stab,
+              ait_force_line,
+              ait_function_name : ;
               ait_cutobject :
                 begin
                   InternalError(2004101101);  {Smart linking is done transparently by the MPW linker.}
                 end;
               ait_marker :
                  begin
-                   if tai_marker(hp).kind=InlineStart then
+                   if tai_marker(hp).kind=mark_NoLineInfoStart then
                      inc(InlineLevel)
-                   else if tai_marker(hp).kind=InlineEnd then
+                   else if tai_marker(hp).kind=mark_NoLineInfoEnd then
                      dec(InlineLevel);
                  end;
          else
@@ -1252,14 +1094,14 @@ var
     var
       currentasmlist : TExternalAssembler;
 
-    procedure writeexternal(p:tnamedindexitem;arg:pointer);
+    procedure writeexternal(p:tasmsymbol);
 
       var
         s:string;
         replaced: boolean;
 
       begin
-        if tasmsymbol(p).defbind=AB_EXTERNAL then
+        if tasmsymbol(p).bind=AB_EXTERNAL then
           begin
             //Writeln('ZZZ ',p.name,' ',p.classname,' ',Ord(tasmsymbol(p).typ));
             s:= p.name;
@@ -1331,105 +1173,49 @@ var
       end;
 
     procedure TPPCMPWAssembler.WriteExternals;
+      var
+        i : longint;
       begin
         currentasmlist:=self;
-        objectlibrary.symbolsearch.foreach_static(@writeexternal,nil);
-      end;
+//        current_asmdata.asmsymboldict.foreach_static(@writeexternal,nil);
+        for i:=0 to current_asmdata.AsmSymbolDict.Count-1 do
+          begin
+            writeexternal(tasmsymbol(current_asmdata.AsmSymbolDict[i]));
+          end;
+     end;
 
 
     function TPPCMPWAssembler.DoAssemble : boolean;
-    var f : file;
     begin
       DoAssemble:=Inherited DoAssemble;
-      (*
-      { masm does not seem to recognize specific extensions and uses .obj allways PM }
-      if (aktoutputformat = as_i386_masm) then
-        begin
-          if not(cs_asm_extern in aktglobalswitches) then
-            begin
-              if Not FileExists(objfile) and
-                 FileExists(ForceExtension(objfile,'.obj')) then
-                begin
-                  Assign(F,ForceExtension(objfile,'.obj'));
-                  Rename(F,objfile);
-                end;
-            end
-          else
-            AsmRes.AddAsmCommand('mv',ForceExtension(objfile,'.obj')+' '+objfile,objfile);
-        end;
-      *)
     end;
 
     procedure TPPCMPWAssembler.WriteAsmFileHeader;
 
     begin
-      (*
-      AsmWriteLn(#9'.386p');
-      { masm 6.11 does not seem to like LOCALS PM }
-      if (aktoutputformat = as_i386_tasm) then
-        begin
-          AsmWriteLn(#9'LOCALS '+target_asm.labelprefix);
-        end;
-      AsmWriteLn('DGROUP'#9'GROUP'#9'_BSS,_DATA');
-      AsmWriteLn(#9'ASSUME'#9'CS:_CODE,ES:DGROUP,DS:DGROUP,SS:DGROUP');
-      AsmLn;
-      *)
-
       AsmWriteLn(#9'string asis');  {Interpret strings just to be the content between the quotes.}
       AsmWriteLn(#9'aligning off'); {We do our own aligning.}
       AsmLn;
     end;
 
     procedure TPPCMPWAssembler.WriteAsmList;
-
-
-{$ifdef GDB}
     var
-      fileinfo : tfileposinfo;
-{$endif GDB}
-
+      hal : tasmlisttype;
     begin
 {$ifdef EXTDEBUG}
       if assigned(current_module.mainsource) then
        comment(v_info,'Start writing MPW-styled assembler output for '+current_module.mainsource^);
 {$endif}
-      LasTSec:=sec_none;
-{$ifdef GDB}
-      FillChar(stabslastfileinfo,sizeof(stabslastfileinfo),0);
-{$endif GDB}
-{$ifdef GDB}
-      //n_line:=n_bssline;
-      funcname:=nil;
-      linecount:=1;
-      includecount:=0;
-      fileinfo.fileindex:=1;
-      fileinfo.line:=1;
-
-      isInFunction:= false;
-      firstLineInFunction:= 0;
-
-      { Write main file }
-      WriteFileLineInfo(fileinfo);
-
-{$endif GDB}
 
       WriteAsmFileHeader;
       WriteExternals;
 
-      { PowerPC MPW ASM doesn't support stabs, at the moment:}
-(*
-      If (cs_debuginfo in aktmoduleswitches) then
-        WriteTree(debuglist);
-*)
-      WriteTree(codesegment);
-      WriteTree(datasegment);
-      WriteTree(consts);
-      WriteTree(rttilist);
-      WriteTree(resourcestringlist);
-      WriteTree(bsssegment);
-      {$ifdef GDB}
-      WriteFileEndInfo;
-      {$ENDIF}
+      for hal:=low(TasmlistType) to high(TasmlistType) do
+        begin
+          AsmWriteLn(target_asm.comment+'Begin asmlist '+AsmListTypeStr[hal]);
+          writetree(current_asmdata.asmlists[hal]);
+          AsmWriteLn(target_asm.comment+'End asmlist '+AsmListTypeStr[hal]);
+        end;
 
       AsmWriteLn(#9'end');
       AsmLn;
@@ -1451,21 +1237,13 @@ var
             idtxt  : 'MPW';
             asmbin : 'PPCAsm';
             asmcmd : '-case on $ASM -o $OBJ';
-            supported_target : system_any; { what should I write here ?? }
+            supported_targets : [system_powerpc_macos];
             flags : [af_allowdirect,af_needar,af_smartlink_sections,af_labelprefix_only_inside_procedure];
             labelprefix : '@';
             comment : '; ';
+            dollarsign: 's';
           );
 
 initialization
   RegisterAssembler(as_powerpc_mpw_info,TPPCMPWAssembler);
 end.
-{
-  $Log: agppcmpw.pas,v $
-  Revision 1.44  2005/02/14 17:13:10  peter
-    * truncate log
-
-  Revision 1.43  2005/02/08 22:46:00  olle
-    * fixed erroneous asm line directive
-
-}

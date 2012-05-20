@@ -1,5 +1,4 @@
 {
-    $Id: rgobj.pas,v 1.158 2005/04/07 16:25:05 peter Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl
 
     This unit implements the base class for the register allocator
@@ -32,7 +31,7 @@ unit rgobj;
 
     uses
       cutils, cpubase,
-      aasmbase,aasmtai,aasmcpu,
+      aasmbase,aasmtai,aasmdata,aasmcpu,
       cclasses,globtype,cgbase,cgutils,
       cpuinfo
       ;
@@ -101,16 +100,23 @@ unit rgobj;
         adjlist  : Psuperregisterworklist;
         degree   : TSuperregister;
         flags    : Treginfoflagset;
+        weight   : longint;
       end;
       Preginfo=^TReginfo;
 
       tspillreginfo = record
-        spillreg : tregister;
+        { a single register may appear more than once in an instruction,
+          but with different subregister types -> store all subregister types
+          that occur, so we can add the necessary constraints for the inline
+          register that will have to replace it }
+        spillregconstraints : set of TSubRegister;
         orgreg : tsuperregister;
         tempreg : tregister;
         regread,regwritten, mustbespilled: boolean;
       end;
-      tspillregsinfo = array[0..2] of tspillreginfo;
+      tspillregsinfo = array[0..3] of tspillreginfo;
+
+      Tspill_temp_list=array[tsuperregister] of Treference;
 
       {#------------------------------------------------------------------
 
@@ -118,7 +124,7 @@ unit rgobj;
       code generator to allocate and free registers which might be valid
       across nodes. It also contains utility routines related to registers.
 
-      Some of the methods in this class should be overriden
+      Some of the methods in this class should be overridden
       by cpu-specific implementations.
 
       --------------------------------------------------------------------}
@@ -135,49 +141,55 @@ unit rgobj;
 
         {# Allocate a register. An internalerror will be generated if there is
          no more free registers which can be allocated.}
-        function getregister(list:Taasmoutput;subreg:Tsubregister):Tregister;virtual;
+        function getregister(list:TAsmList;subreg:Tsubregister):Tregister;virtual;
         {# Get the register specified.}
-        procedure getcpuregister(list:Taasmoutput;r:Tregister);virtual;
-        procedure ungetcpuregister(list:Taasmoutput;r:Tregister);virtual;
+        procedure getcpuregister(list:TAsmList;r:Tregister);virtual;
+        procedure ungetcpuregister(list:TAsmList;r:Tregister);virtual;
         {# Get multiple registers specified.}
-        procedure alloccpuregisters(list:Taasmoutput;r:Tcpuregisterset);virtual;
+        procedure alloccpuregisters(list:TAsmList;const r:Tcpuregisterset);virtual;
         {# Free multiple registers specified.}
-        procedure dealloccpuregisters(list:Taasmoutput;r:Tcpuregisterset);virtual;
+        procedure dealloccpuregisters(list:TAsmList;const r:Tcpuregisterset);virtual;
         function uses_registers:boolean;virtual;
-        procedure add_reg_instruction(instr:Tai;r:tregister);
+        procedure add_reg_instruction(instr:Tai;r:tregister;aweight:longint);
         procedure add_move_instruction(instr:Taicpu);
         {# Do the register allocation.}
-        procedure do_register_allocation(list:Taasmoutput;headertai:tai);virtual;
+        procedure do_register_allocation(list:TAsmList;headertai:tai);virtual;
         { Adds an interference edge.
           don't move this to the protected section, the arm cg requires to access this (FK) }
         procedure add_edge(u,v:Tsuperregister);
+        { translates a single given imaginary register to it's real register }
+        procedure translate_register(var reg : tregister);
       protected
+        maxreginfo,
+        maxreginfoinc,
+        maxreg            : Tsuperregister;
+
         regtype           : Tregistertype;
         { default subregister used }
         defaultsub        : tsubregister;
         live_registers:Tsuperregisterworklist;
-        { can be overriden to add cpu specific interferences }
+        { can be overridden to add cpu specific interferences }
         procedure add_cpu_interferences(p : tai);virtual;
         procedure add_constraints(reg:Tregister);virtual;
-        function  getregisterinline(list:Taasmoutput;subreg:Tsubregister):Tregister;
-        procedure ungetregisterinline(list:Taasmoutput;r:Tregister);
+        function  get_alias(n:Tsuperregister):Tsuperregister;
+        function  getregisterinline(list:TAsmList;const subregconstraints:Tsubregisterset):Tregister;
+        procedure ungetregisterinline(list:TAsmList;r:Tregister);
         function  get_spill_subreg(r : tregister) : tsubregister;virtual;
-        function  do_spill_replace(list:Taasmoutput;instr:taicpu;orgreg:tsuperregister;const spilltemp:treference):boolean;virtual;
-        procedure do_spill_read(list:Taasmoutput;pos:tai;const spilltemp:treference;tempreg:tregister);virtual;
-        procedure do_spill_written(list:Taasmoutput;pos:tai;const spilltemp:treference;tempreg:tregister);virtual;
+        function  do_spill_replace(list:TAsmList;instr:taicpu;orgreg:tsuperregister;const spilltemp:treference):boolean;virtual;
+        procedure do_spill_read(list:TAsmList;pos:tai;const spilltemp:treference;tempreg:tregister);virtual;
+        procedure do_spill_written(list:TAsmList;pos:tai;const spilltemp:treference;tempreg:tregister);virtual;
 
-        function instr_spill_register(list:Taasmoutput;
+        function instr_spill_register(list:TAsmList;
                                       instr:taicpu;
                                       const r:Tsuperregisterset;
                                       const spilltemplist:Tspill_temp_list): boolean;virtual;
+        procedure insert_regalloc_info_all(list:TAsmList);
       private
+        int_live_range_direction: TRADirection;
         {# First imaginary register.}
         first_imaginary   : Tsuperregister;
         {# Highest register allocated until now.}
         reginfo           : PReginfo;
-        maxreginfo,
-        maxreginfoinc,
-        maxreg            : Tsuperregister;
         usable_registers_cnt : word;
         usable_registers  : array[0..maxcpuregister-1] of tsuperregister;
         ibitmap           : Tinterferencebitmap;
@@ -192,6 +204,9 @@ unit rgobj;
         frozen_moves,
         coalesced_moves,
         constrained_moves : Tlinkedlist;
+        extended_backwards,
+        backwards_was_first : tbitset;
+
 {$ifdef EXTDEBUG}
         procedure writegraph(loopidx:longint);
 {$endif EXTDEBUG}
@@ -203,11 +218,11 @@ unit rgobj;
         procedure epilogue_colouring;
         {# Colour the registers; that is do the register allocation.}
         procedure colour_registers;
-        procedure insert_regalloc_info(list:Taasmoutput;u:tsuperregister);
-        procedure insert_regalloc_info_all(list:Taasmoutput);
-        procedure generate_interference_graph(list:Taasmoutput;headertai:tai);
-        procedure translate_registers(list:Taasmoutput);
-        function  spill_registers(list:Taasmoutput;headertai:tai):boolean;virtual;
+        procedure insert_regalloc_info(list:TAsmList;u:tsuperregister);
+        procedure generate_interference_graph(list:TAsmList;headertai:tai);
+        { translates the registers in the given assembler list }
+        procedure translate_registers(list:TAsmList);
+        function  spill_registers(list:TAsmList;headertai:tai):boolean;virtual;
         function  getnewreg(subreg:tsubregister):tsuperregister;
         procedure add_edges_used(u:Tsuperregister);
         procedure add_to_movelist(u:Tsuperregister;data:Tlinkedlistitem);
@@ -217,7 +232,6 @@ unit rgobj;
         procedure enable_moves(n:Tsuperregister);
         procedure decrement_degree(m:Tsuperregister);
         procedure simplify;
-        function get_alias(n:Tsuperregister):Tsuperregister;
         procedure add_worklist(u:Tsuperregister);
         function adjacent_ok(u,v:Tsuperregister):boolean;
         function conservative(u,v:Tsuperregister):boolean;
@@ -228,6 +242,9 @@ unit rgobj;
         procedure select_spill;
         procedure assign_colours;
         procedure clear_interferences(u:Tsuperregister);
+        procedure set_live_range_direction(dir: TRADirection);
+       public
+        property live_range_direction: TRADirection read int_live_range_direction write set_live_range_direction;
       end;
 
     const
@@ -239,8 +256,8 @@ unit rgobj;
   implementation
 
     uses
-       systems,
-       globals,verbose,tgobj,procinfo;
+       systems,fmodule,globals,
+       verbose,tgobj,procinfo;
 
 
     procedure sort_movelist(ml:Pmovelist);
@@ -248,7 +265,7 @@ unit rgobj;
     {Ok, sorting pointers is silly, but it does the job to make Trgobj.combine
      faster.}
 
-    var h,i,p:word;
+    var h,i,p:longword;
         t:Tlinkedlistitem;
 
     begin
@@ -257,7 +274,7 @@ unit rgobj;
           if header.count<2 then
             exit;
           p:=1;
-          while 2*p<header.count do
+          while 2*cardinal(p)<header.count do
             p:=2*p;
           while p<>0 do
             begin
@@ -266,7 +283,7 @@ unit rgobj;
                   i:=h;
                   t:=data[i];
                   repeat
-                    if ptrint(data[i-p])<=ptrint(t) then
+                    if ptruint(data[i-p])<=ptruint(t) then
                       break;
                     data[i]:=data[i-p];
                     dec(i,p);
@@ -354,17 +371,19 @@ unit rgobj;
                               Afirst_imaginary:Tsuperregister;
                               Apreserved_by_proc:Tcpuregisterset);
        var
-         i : Tsuperregister;
+         i : cardinal;
        begin
          { empty super register sets can cause very strange problems }
-         if high(Ausable)=0 then
+         if high(Ausable)=-1 then
            internalerror(200210181);
+         live_range_direction:=rad_forward;
          first_imaginary:=Afirst_imaginary;
          maxreg:=Afirst_imaginary;
          regtype:=Aregtype;
          defaultsub:=Adefaultsub;
          preserved_by_proc:=Apreserved_by_proc;
-         used_in_proc:=[];
+         // default value set by newinstance
+         // used_in_proc:=[];
          live_registers.init;
          { Get reginfo for CPU registers }
          maxreginfo:=first_imaginary;
@@ -377,7 +396,8 @@ unit rgobj;
              reginfo[i].alias:=RS_INVALID;
            end;
          { Usable registers }
-         fillchar(usable_registers,sizeof(usable_registers),0);
+         // default value set by constructor
+         // fillchar(usable_registers,sizeof(usable_registers),0);
          for i:=low(Ausable) to high(Ausable) do
            usable_registers[i]:=Ausable[i];
          usable_registers_cnt:=high(Ausable)+1;
@@ -402,11 +422,13 @@ unit rgobj;
       live_registers.done;
       worklist_moves.free;
       dispose_reginfo;
+      extended_backwards.free;
+      backwards_was_first.free;
     end;
 
     procedure Trgobj.dispose_reginfo;
 
-    var i:Tsuperregister;
+    var i:cardinal;
 
     begin
       if reginfo<>nil then
@@ -452,7 +474,7 @@ unit rgobj;
       end;
 
 
-    function trgobj.getregister(list:Taasmoutput;subreg:Tsubregister):Tregister;
+    function trgobj.getregister(list:TAsmList;subreg:Tsubregister):Tregister;
       begin
         {$ifdef EXTDEBUG}
         if reginfo=nil then
@@ -471,7 +493,7 @@ unit rgobj;
       end;
 
 
-    procedure trgobj.ungetcpuregister(list:Taasmoutput;r:Tregister);
+    procedure trgobj.ungetcpuregister(list:TAsmList;r:Tregister);
       begin
         if (getsupreg(r)>=first_imaginary) then
           InternalError(2004020901);
@@ -479,7 +501,7 @@ unit rgobj;
       end;
 
 
-    procedure trgobj.getcpuregister(list:Taasmoutput;r:Tregister);
+    procedure trgobj.getcpuregister(list:TAsmList;r:Tregister);
       var
         supreg:Tsuperregister;
       begin
@@ -491,9 +513,9 @@ unit rgobj;
       end;
 
 
-    procedure trgobj.alloccpuregisters(list:Taasmoutput;r:Tcpuregisterset);
+    procedure trgobj.alloccpuregisters(list:TAsmList;const r:Tcpuregisterset);
 
-    var i:Tsuperregister;
+    var i:cardinal;
 
     begin
       for i:=0 to first_imaginary-1 do
@@ -502,9 +524,9 @@ unit rgobj;
     end;
 
 
-    procedure trgobj.dealloccpuregisters(list:Taasmoutput;r:Tcpuregisterset);
+    procedure trgobj.dealloccpuregisters(list:TAsmList;const r:Tcpuregisterset);
 
-    var i:Tsuperregister;
+    var i:cardinal;
 
     begin
       for i:=0 to first_imaginary-1 do
@@ -513,7 +535,7 @@ unit rgobj;
     end;
 
 
-    procedure trgobj.do_register_allocation(list:Taasmoutput;headertai:tai);
+    procedure trgobj.do_register_allocation(list:TAsmList;headertai:tai);
       var
         spillingcounter:byte;
         endspill:boolean;
@@ -523,7 +545,7 @@ unit rgobj;
         ibitmap:=tinterferencebitmap.create;
         generate_interference_graph(list,headertai);
         { Don't do the real allocation when -sr is passed }
-        if (cs_no_regalloc in aktglobalswitches) then
+        if (cs_no_regalloc in current_settings.globalswitches) then
           exit;
         {Do register allocation.}
         spillingcounter:=0;
@@ -550,7 +572,9 @@ unit rgobj;
         until endspill;
         ibitmap.free;
         translate_registers(list);
-        dispose_reginfo;
+        { we need the translation table for debugging info and verbose assembler output (FK)
+          dispose_reginfo;
+        }
       end;
 
 
@@ -591,7 +615,7 @@ unit rgobj;
 
     procedure trgobj.add_edges_used(u:Tsuperregister);
 
-    var i:word;
+    var i:cardinal;
 
     begin
       with live_registers do
@@ -608,7 +632,7 @@ unit rgobj;
 
 
     var f:text;
-        i,j:Tsuperregister;
+        i,j:cardinal;
 
     begin
       assign(f,'igraph'+tostr(loopidx));
@@ -644,7 +668,8 @@ unit rgobj;
         begin
           if movelist=nil then
             begin
-              getmem(movelist,sizeof(tmovelistheader)+60*sizeof(pointer));
+              { don't use sizeof(tmovelistheader), because that ignores alignment }
+              getmem(movelist,ptruint(@movelist^.data)-ptruint(movelist)+60*sizeof(pointer));
               movelist^.header.maxcount:=60;
               movelist^.header.count:=0;
               movelist^.header.sorted_until:=0;
@@ -654,7 +679,8 @@ unit rgobj;
               if movelist^.header.count>=movelist^.header.maxcount then
                 begin
                   movelist^.header.maxcount:=movelist^.header.maxcount*2;
-                  reallocmem(movelist,sizeof(tmovelistheader)+movelist^.header.maxcount*sizeof(pointer));
+                  { don't use sizeof(tmovelistheader), because that ignores alignment }
+                  reallocmem(movelist,ptruint(@movelist^.data)-ptruint(movelist)+movelist^.header.maxcount*sizeof(pointer));
                 end;
             end;
           movelist^.data[movelist^.header.count]:=data;
@@ -663,21 +689,68 @@ unit rgobj;
     end;
 
 
-    procedure trgobj.add_reg_instruction(instr:Tai;r:tregister);
+    procedure trgobj.set_live_range_direction(dir: TRADirection);
+      begin
+        if (dir in [rad_backwards,rad_backwards_reinit]) then
+          begin
+            if not assigned(extended_backwards) then
+              begin
+                { create expects a "size", not a "max bit" parameter -> +1 }
+                backwards_was_first:=tbitset.create(maxreg+1);
+                extended_backwards:=tbitset.create(maxreg+1);
+              end
+            else
+              begin
+                if (dir=rad_backwards_reinit) then
+                  extended_backwards.clear;
+                backwards_was_first.clear;
+              end;
+            int_live_range_direction:=rad_backwards;
+          end
+        else
+          int_live_range_direction:=rad_forward;
+      end;
+
+
+    procedure trgobj.add_reg_instruction(instr:Tai;r:tregister;aweight:longint);
       var
         supreg : tsuperregister;
       begin
         supreg:=getsupreg(r);
 {$ifdef extdebug}
-        if supreg>=maxreginfo then
+        if not (cs_no_regalloc in current_settings.globalswitches) and
+           (supreg>=maxreginfo) then
           internalerror(200411061);
 {$endif extdebug}
         if supreg>=first_imaginary then
           with reginfo[supreg] do
             begin
-              if not assigned(live_start) then
-                live_start:=instr;
-              live_end:=instr;
+              if aweight>weight then
+                weight:=aweight;
+              if (live_range_direction=rad_forward) then
+                begin
+                  if not assigned(live_start) then
+                    live_start:=instr;
+                  live_end:=instr;
+                end
+               else
+                 begin
+                   if not extended_backwards.isset(supreg) then
+                     begin
+                       extended_backwards.include(supreg);
+                       live_start := instr;
+                       if not assigned(live_end) then
+                         begin
+                           backwards_was_first.include(supreg);
+                           live_end := instr;
+                         end;
+                     end
+                   else
+                     begin
+                       if backwards_was_first.isset(supreg) then
+                         live_end := instr;
+                     end
+                 end
             end;
       end;
 
@@ -732,7 +805,7 @@ unit rgobj;
      registers in it cause. This allows simplify to execute in
      constant time.}
 
-    var p,h,i,leni,lent:word;
+    var p,h,i,leni,lent:longword;
         t:Tsuperregister;
         adji,adjt:Psuperregisterworklist;
 
@@ -773,7 +846,7 @@ unit rgobj;
 
     procedure trgobj.make_work_list;
 
-    var n:Tsuperregister;
+    var n:cardinal;
 
     begin
       {If we have 7 cpu registers, and the degree of a node is 7, we cannot
@@ -832,7 +905,7 @@ unit rgobj;
 
     var adj : Psuperregisterworklist;
         n : tsuperregister;
-        d,i : word;
+        d,i : cardinal;
 
     begin
       with reginfo[m] do
@@ -870,7 +943,7 @@ unit rgobj;
 
     var adj : Psuperregisterworklist;
         m,n : Tsuperregister;
-        i : word;
+        i : cardinal;
     begin
       {We take the element with the least interferences out of the
        simplifyworklist. Since the simplifyworklist is now sorted, we
@@ -928,7 +1001,7 @@ unit rgobj;
       end;
 
     var adj : Psuperregisterworklist;
-        i : word;
+        i : cardinal;
         n : tsuperregister;
 
     begin
@@ -953,7 +1026,7 @@ unit rgobj;
 
     var adj : Psuperregisterworklist;
         done : Tsuperregisterset; {To prevent that we count nodes twice.}
-        i,k:word;
+        i,k:cardinal;
         n : tsuperregister;
 
     begin
@@ -994,8 +1067,7 @@ unit rgobj;
         i,n,p,q:cardinal;
         t : tsuperregister;
         searched:Tlinkedlistitem;
-
-    label l1;
+        found : boolean;
 
     begin
       if not freezeworklist.delete(v) then
@@ -1028,7 +1100,6 @@ unit rgobj;
           with reginfo[u].movelist^ do
             if header.count<8*(header.count-header.sorted_until) then
               sort_movelist(reginfo[u].movelist);
-
           if assigned(reginfo[v].movelist) then
             begin
               for n:=0 to reginfo[v].movelist^.header.count-1 do
@@ -1041,7 +1112,7 @@ unit rgobj;
                   if q<>0 then
                     repeat
                       i:=(p+q) shr 1;
-                      if ptrint(searched)>ptrint(reginfo[u].movelist^.data[i]) then
+                      if ptruint(searched)>ptruint(reginfo[u].movelist^.data[i]) then
                         p:=i+1
                       else
                         q:=i;
@@ -1050,12 +1121,15 @@ unit rgobj;
                     if searched<>data[i] then
                       begin
                         {Linear search the unsorted part of the list.}
+                        found:=false;
                         for i:=header.sorted_until+1 to header.count-1 do
                           if searched=data[i] then
-                            goto l1;
-                        {Not found -> add}
-                        add_to_movelist(u,searched);
-                      l1:
+                            begin
+                              found:=true;
+                              break;
+                            end;
+                        if not found then
+                          add_to_movelist(u,searched);
                       end;
                 end;
             end;
@@ -1098,7 +1172,7 @@ unit rgobj;
     procedure trgobj.coalesce;
 
     var m:Tmoveins;
-        x,y,u,v:Tsuperregister;
+        x,y,u,v:cardinal;
 
     begin
       m:=Tmoveins(worklist_moves.getfirst);
@@ -1197,12 +1271,11 @@ unit rgobj;
     end;
 
     procedure trgobj.select_spill;
-
     var
       n : tsuperregister;
       adj : psuperregisterworklist;
       max,p,i:word;
-
+      minweight: longint;
     begin
       { We must look for the element with the most interferences in the
         spillworklist. This is required because those registers are creating
@@ -1211,6 +1284,7 @@ unit rgobj;
         to get too much conflicts with the result that the spilling code
         will never converge (PFV) }
       max:=0;
+      minweight:=high(longint);
       p:=0;
       with spillworklist do
         begin
@@ -1218,10 +1292,15 @@ unit rgobj;
           for i:=0 to length-1 do
             begin
               adj:=reginfo[buf^[i]].adjlist;
-              if assigned(adj) and (adj^.length>max) then
+              if assigned(adj) and
+                 (
+                  (adj^.length>max) or
+                  ((adj^.length=max) and (reginfo[buf^[i]].weight<minweight))
+                 ) then
                 begin
                   p:=i;
                   max:=adj^.length;
+                  minweight:=reginfo[buf^[i]].weight;
                 end;
             end;
           n:=buf^[p];
@@ -1237,7 +1316,7 @@ unit rgobj;
     {Assign_colours assigns the actual colours to the registers.}
 
     var adj : Psuperregisterworklist;
-        i,j,k : word;
+        i,j,k : cardinal;
         n,a,c : Tsuperregister;
         colourednodes : Tsuperregisterset;
         adj_colours:set of 0..255;
@@ -1318,7 +1397,7 @@ unit rgobj;
 
     procedure trgobj.epilogue_colouring;
     var
-      i : Tsuperregister;
+      i : cardinal;
     begin
       worklist_moves.clear;
       active_moves.destroy;
@@ -1377,19 +1456,28 @@ unit rgobj;
     end;
 
 
-    function trgobj.getregisterinline(list:Taasmoutput;subreg:Tsubregister):Tregister;
+    function trgobj.getregisterinline(list:TAsmList;const subregconstraints:Tsubregisterset):Tregister;
       var
         p : Tsuperregister;
+        subreg: tsubregister;
       begin
+        for subreg:=high(tsubregister) downto low(tsubregister) do
+          if subreg in subregconstraints then
+            break;
         p:=getnewreg(subreg);
         live_registers.add(p);
         result:=newreg(regtype,p,subreg);
         add_edges_used(p);
         add_constraints(result);
+        { also add constraints for other sizes used for this register }
+        if subreg<>low(tsubregister) then
+          for subreg:=pred(subreg) downto low(tsubregister) do
+            if subreg in subregconstraints then
+              add_constraints(newreg(regtype,getsupreg(result),subreg));
       end;
 
 
-    procedure trgobj.ungetregisterinline(list:Taasmoutput;r:Tregister);
+    procedure trgobj.ungetregisterinline(list:TAsmList;r:Tregister);
       var
         supreg:Tsuperregister;
       begin
@@ -1399,7 +1487,7 @@ unit rgobj;
       end;
 
 
-    procedure trgobj.insert_regalloc_info(list:Taasmoutput;u:tsuperregister);
+    procedure trgobj.insert_regalloc_info(list:TAsmList;u:tsuperregister);
       var
         p : tai;
         r : tregister;
@@ -1443,16 +1531,12 @@ unit rgobj;
                   list.insertbefore(pdealloc,p)
                 else
                   list.concat(pdealloc);
-              end
-{$ifdef EXTDEBUG}
-            else
-              Comment(V_Warning,'Register '+std_regname(r)+' not used');
-{$endif EXTDEBUG}
+              end;
           end;
       end;
 
 
-    procedure trgobj.insert_regalloc_info_all(list:Taasmoutput);
+    procedure trgobj.insert_regalloc_info_all(list:TAsmList);
       var
         supreg : tsuperregister;
       begin
@@ -1467,7 +1551,7 @@ unit rgobj;
       end;
 
 
-    procedure trgobj.generate_interference_graph(list:Taasmoutput;headertai:tai);
+    procedure trgobj.generate_interference_graph(list:TAsmList;headertai:tai);
       var
         p : tai;
 {$ifdef EXTDEBUG}
@@ -1523,7 +1607,16 @@ unit rgobj;
       end;
 
 
-    procedure Trgobj.translate_registers(list:taasmoutput);
+    procedure trgobj.translate_register(var reg : tregister);
+      begin
+        if (getregtype(reg)=regtype) then
+          setsupreg(reg,reginfo[getsupreg(reg)].colour)
+        else
+          internalerror(200602021);
+      end;
+
+
+    procedure Trgobj.translate_registers(list:TAsmList);
       var
         hp,p,q:Tai;
         i:shortint;
@@ -1584,10 +1677,36 @@ unit rgobj;
                           end;
                       end;
                   end;
+              ait_varloc:
+                begin
+                  if (getregtype(tai_varloc(p).newlocation)=regtype) then
+                    begin
+                      if (cs_asm_source in current_settings.globalswitches) then
+                        begin
+                          setsupreg(tai_varloc(p).newlocation,reginfo[getsupreg(tai_varloc(p).newlocation)].colour);
+                          if tai_varloc(p).newlocationhi<>NR_NO then
+                            begin
+                              setsupreg(tai_varloc(p).newlocationhi,reginfo[getsupreg(tai_varloc(p).newlocationhi)].colour);
+                                hp:=Tai_comment.Create(strpnew('Var '+tai_varloc(p).varsym.realname+' located in register '+
+                                  std_regname(tai_varloc(p).newlocationhi)+':'+std_regname(tai_varloc(p).newlocation)));
+                            end
+                          else
+                            hp:=Tai_comment.Create(strpnew('Var '+tai_varloc(p).varsym.realname+' located in register '+
+                              std_regname(tai_varloc(p).newlocation)));
+                          list.insertafter(hp,p);
+                        end;
+                      q:=tai(p.next);
+                      list.remove(p);
+                      p.free;
+                      p:=q;
+                      continue;
+                    end;
+                end;
+
               ait_instruction:
                 with Taicpu(p) do
                   begin
-                    aktfilepos:=fileinfo;
+                    current_filepos:=fileinfo;
                     for i:=0 to ops-1 do
                       with oper[i]^ do
                         case typ of
@@ -1596,12 +1715,14 @@ unit rgobj;
                                setsupreg(reg,reginfo[getsupreg(reg)].colour);
                           Top_ref:
                             begin
-                              if regtype=R_INTREGISTER then
+                              if regtype in [R_INTREGISTER,R_ADDRESSREGISTER] then
                                 with ref^ do
                                   begin
-                                    if base<>NR_NO then
+                                    if (base<>NR_NO) and
+                                       (getregtype(base)=regtype) then
                                       setsupreg(base,reginfo[getsupreg(base)].colour);
-                                    if index<>NR_NO then
+                                    if (index<>NR_NO) and
+                                       (getregtype(index)=regtype) then
                                       setsupreg(index,reginfo[getsupreg(index)].colour);
                                   end;
                             end;
@@ -1611,7 +1732,8 @@ unit rgobj;
                               if regtype=R_INTREGISTER then
                                 begin
                                   so:=shifterop;
-                                  if so^.rs<>NR_NO then
+                                  if (so^.rs<>NR_NO) and
+                                     (getregtype(so^.rs)=regtype) then
                                     setsupreg(so^.rs,reginfo[getsupreg(so^.rs)].colour);
                                 end;
                             end;
@@ -1632,20 +1754,21 @@ unit rgobj;
             end;
             p:=Tai(p.next);
           end;
-        aktfilepos:=current_procinfo.exitpos;
+        current_filepos:=current_procinfo.exitpos;
       end;
 
 
-    function trgobj.spill_registers(list:Taasmoutput;headertai:tai):boolean;
+    function trgobj.spill_registers(list:TAsmList;headertai:tai):boolean;
     { Returns true if any help registers have been used }
       var
-        i : word;
+        i : cardinal;
         t : tsuperregister;
         p,q : Tai;
         regs_to_spill_set:Tsuperregisterset;
         spill_temps : ^Tspill_temp_list;
         supreg : tsuperregister;
-        templist : taasmoutput;
+        templist : TAsmList;
+        size: ptrint;
       begin
         spill_registers:=false;
         live_registers.clear;
@@ -1654,7 +1777,7 @@ unit rgobj;
         spill_temps:=allocmem(sizeof(treference)*maxreg);
         supregset_reset(regs_to_spill_set,false,$ffff);
         { Allocate temps and insert in front of the list }
-        templist:=taasmoutput.create;
+        templist:=TAsmList.create;
         {Safe: this procedure is only called if there are spilled nodes.}
         with spillednodes do
           for i:=0 to length-1 do
@@ -1667,9 +1790,15 @@ unit rgobj;
               {Get a temp for the spilled register, the size must at least equal a complete register,
                take also care of the fact that subreg can be larger than a single register like doubles
                that occupy 2 registers }
+              { only force the whole register in case of integers. Storing a register that contains
+                a single precision value as a double can cause conversion errors on e.g. ARM VFP }
+              if (regtype=R_INTREGISTER) then
+                size:=max(tcgsize2size[reg_cgsize(newreg(regtype,t,R_SUBWHOLE))],
+                               tcgsize2size[reg_cgsize(newreg(regtype,t,reginfo[t].subreg))])
+              else
+                size:=tcgsize2size[reg_cgsize(newreg(regtype,t,reginfo[t].subreg))];
               tg.gettemp(templist,
-                         max(tcgsize2size[reg_cgsize(newreg(regtype,t,R_SUBWHOLE))],
-                             tcgsize2size[reg_cgsize(newreg(regtype,t,reginfo[t].subreg))]),
+                         size,size,
                          tt_noreuse,spill_temps^[t]);
             end;
         list.insertlistafter(headertai,templist);
@@ -1709,14 +1838,14 @@ unit rgobj;
               ait_instruction:
                 with Taicpu(p) do
                   begin
-                    aktfilepos:=fileinfo;
+                    current_filepos:=fileinfo;
                     if instr_spill_register(list,taicpu(p),regs_to_spill_set,spill_temps^) then
                       spill_registers:=true;
                   end;
             end;
             p:=Tai(p.next);
           end;
-        aktfilepos:=current_procinfo.exitpos;
+        current_filepos:=current_procinfo.exitpos;
         {Safe: this procedure is only called if there are spilled nodes.}
         with spillednodes do
           for i:=0 to length-1 do
@@ -1725,21 +1854,29 @@ unit rgobj;
       end;
 
 
-    function trgobj.do_spill_replace(list:Taasmoutput;instr:taicpu;orgreg:tsuperregister;const spilltemp:treference):boolean;
+    function trgobj.do_spill_replace(list:TAsmList;instr:taicpu;orgreg:tsuperregister;const spilltemp:treference):boolean;
       begin
         result:=false;
       end;
 
 
-    procedure Trgobj.do_spill_read(list:Taasmoutput;pos:tai;const spilltemp:treference;tempreg:tregister);
+    procedure trgobj.do_spill_read(list:TAsmList;pos:tai;const spilltemp:treference;tempreg:tregister);
+      var
+        ins:Taicpu;
       begin
-        list.insertafter(spilling_create_load(spilltemp,tempreg),pos);
+        ins:=spilling_create_load(spilltemp,tempreg);
+        add_cpu_interferences(ins);
+        list.insertafter(ins,pos);
       end;
 
 
-    procedure Trgobj.do_spill_written(list:Taasmoutput;pos:tai;const spilltemp:treference;tempreg:tregister);
+    procedure Trgobj.do_spill_written(list:TAsmList;pos:tai;const spilltemp:treference;tempreg:tregister);
+      var
+        ins:Taicpu;
       begin
-        list.insertafter(spilling_create_store(tempreg,spilltemp),pos);
+        ins:=spilling_create_store(tempreg,spilltemp);
+        add_cpu_interferences(ins);
+        list.insertafter(ins,pos);
       end;
 
 
@@ -1749,7 +1886,7 @@ unit rgobj;
       end;
 
 
-    function trgobj.instr_spill_register(list:Taasmoutput;
+    function trgobj.instr_spill_register(list:TAsmList;
                                          instr:taicpu;
                                          const r:Tsuperregisterset;
                                          const spilltemplist:Tspill_temp_list): boolean;
@@ -1764,7 +1901,7 @@ unit rgobj;
           supreg : tsuperregister;
         begin
           tmpindex := regindex;
-          supreg:=getsupreg(reg);
+          supreg:=get_alias(getsupreg(reg));
           { did we already encounter this register? }
           for i := 0 to pred(regindex) do
             if (regs[i].orgreg = supreg) then
@@ -1775,7 +1912,7 @@ unit rgobj;
           if tmpindex > high(regs) then
             internalerror(2003120301);
           regs[tmpindex].orgreg := supreg;
-          regs[tmpindex].spillreg:=reg;
+          include(regs[tmpindex].spillregconstraints,get_spill_subreg(reg));
           if supregset_in(r,supreg) then
             begin
               { add/update info on this register }
@@ -1802,7 +1939,7 @@ unit rgobj;
           i: longint;
           supreg: tsuperregister;
         begin
-          supreg:=getsupreg(reg);
+          supreg:=get_alias(getsupreg(reg));
           for i:=0 to pred(regindex) do
             if (regs[i].mustbespilled) and
                (regs[i].orgreg=supreg) then
@@ -1812,6 +1949,7 @@ unit rgobj;
                 break;
               end;
         end;
+
 
       var
         loadpos,
@@ -1863,7 +2001,7 @@ unit rgobj;
           exit;
 
 {$ifdef x86}
-        { Try replacing the register with the spilltemp. This is usefull only
+        { Try replacing the register with the spilltemp. This is useful only
           for the i386,x86_64 that support memory locations for several instructions }
         for counter := 0 to pred(regindex) do
           with regs[counter] do
@@ -1939,7 +2077,7 @@ unit rgobj;
             begin
               if mustbespilled and regread then
                 begin
-                  tempreg:=getregisterinline(list,get_spill_subreg(regs[counter].spillreg));
+                  tempreg:=getregisterinline(list,regs[counter].spillregconstraints);
                   do_spill_read(list,tai(loadpos.previous),spilltemplist[orgreg],tempreg);
                 end;
             end;
@@ -1952,7 +2090,7 @@ unit rgobj;
               if mustbespilled and regread and (not regwritten) then
                 begin
                   { The original instruction will be the next that uses this register }
-                  add_reg_instruction(instr,tempreg);
+                  add_reg_instruction(instr,tempreg,1);
                   ungetregisterinline(list,tempreg);
                 end;
             end;
@@ -1966,10 +2104,10 @@ unit rgobj;
                 begin
                   { When the register is also loaded there is already a register assigned }
                   if (not regread) then
-                    tempreg:=getregisterinline(list,get_spill_subreg(regs[counter].spillreg));
+                    tempreg:=getregisterinline(list,regs[counter].spillregconstraints);
                   { The original instruction will be the next that uses this register, this
                     also needs to be done for read-write registers }
-                  add_reg_instruction(instr,tempreg);
+                  add_reg_instruction(instr,tempreg,1);
                 end;
             end;
 
@@ -1993,8 +2131,7 @@ unit rgobj;
 
         { substitute registers }
         for counter:=0 to instr.ops-1 do
-         with instr.oper[counter]^ do
-          begin
+          with instr.oper[counter]^ do
             case typ of
               top_reg:
                 begin
@@ -2017,33 +2154,10 @@ unit rgobj;
                 end;
 {$endif ARM}
             end;
-          end;
+         {We have modified the instruction; perhaps the new instruction has
+          certain constraints regarding which imaginary registers interfere
+          with certain physical registers.}
+         add_cpu_interferences(instr);
       end;
 
 end.
-{
-  $Log: rgobj.pas,v $
-  Revision 1.158  2005/04/07 16:25:05  peter
-    * during spilling only add deallocs to live_registers that belong
-      to the instruction
-
-  Revision 1.157  2005/04/07 15:42:04  peter
-    * only in EXTDEBUG leave register allocator when it fails. Otherwise
-      give an IE
-
-  Revision 1.156  2005/03/25 21:55:43  jonas
-    * removed some unused variables
-
-  Revision 1.155  2005/03/20 19:47:46  peter
-    * fix spilling code when explicit cpu registers are used in an
-      instruction
-
-  Revision 1.154  2005/02/18 23:37:51  jonas
-    * fixed spilling for several ppc instructions which only read registers
-    + added support for registers in references that get changed (load/store
-      with update)
-
-  Revision 1.153  2005/02/14 17:13:07  peter
-    * truncate log
-
-}

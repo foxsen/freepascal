@@ -1,5 +1,4 @@
 {
-    $Id: genfuncs.inc,v 1.5 2005/02/14 17:13:31 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2002 by Marco van de Voort.
 
@@ -24,7 +23,7 @@ var
   pp,p : ppchar;
 //  temp : string; !! Never pass a local var back!!
 begin
-  getmem(pp,4*4);
+  getmem(pp,4*sizeof(pointer));
   p:=pp;
   p^:=@Shell[1];
   inc(p);
@@ -116,9 +115,3 @@ Begin
   fpgetenv:=fpgetenv(@name[1]);
 end;
 
-{
-  $Log: genfuncs.inc,v $
-  Revision 1.5  2005/02/14 17:13:31  peter
-    * truncate log
-
-}

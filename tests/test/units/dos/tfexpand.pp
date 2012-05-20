@@ -1,5 +1,6 @@
+{ %skiptarget=wince }
+
 {
-  $Id: tfexpand.pp,v 1.9 2005/02/14 17:13:37 peter Exp $
     This file is part of the Free Pascal test suite.
     Copyright (c) 1999-2004 by the Free Pascal development team.
 
@@ -78,13 +79,11 @@ uses
 {$ENDIF MACOS}
 
 const
-{$IFDEF MACOS}
- CC = 'C';
-{$ELSE MACOS}
+{$IFNDEF NODRIVEC}
  CC = 'C:';
-{$ENDIF MACOS}
+{$ENDIF NODRIVEC}
 {$IFNDEF FPC}
- FileNameCaseSensitive = false;
+ FileNameCasePreserving = false;
  DirectorySeparator = '\';
  DirectorySeparator2 = '\';
  DirSep = '\';
@@ -97,18 +96,19 @@ const
   {$IFDEF MACOS}
  DirectorySeparator = ':';
  LFNSupport = true;
- FileNameCaseSensitive = false;
+ FileNameCasePreserving = true;
   {$ELSE MACOS}
    {$IFDEF UNIX}
  DirectorySeparator = '/';
- FileNameCaseSensitive = true;
+ DriveSeparator = '/';
+ FileNameCasePreserving = true;
    {$ELSE UNIX}
     {$IFDEF AMIGA}
  DirectorySeparator = ':';
- FileNameCaseSensitive = true;
+ FileNameCasePreserving = true;
     {$ELSE AMIGA}
  DirectorySeparator = '\';
- FileNameCaseSensitive = false;
+ FileNameCasePreserving = false;
     {$ENDIF AMIGA}
    {$ENDIF UNIX}
   {$ENDIF MACOS}
@@ -151,12 +151,14 @@ begin
   for I := 1 to Length (S) do
    if S [I] = DirectorySeparator2 then
     S [I] := DirectorySeparator;
+{$IFNDEF FPC_FEXPAND_DRIVES}
  if DriveSeparator = DirectorySeparator then
-  begin
-   I := Pos (DirectorySeparator + DirectorySeparator, S);
-   if I <> 0 then
-    Delete (S, I, 1);
-  end;
+  I := Pos (DirectorySeparator + DirectorySeparator, S)
+ else
+  I := Pos (DriveSeparator, S);
+ if I <> 0 then
+  Delete (S, 1, I);
+{$ENDIF FPC_FEXPAND_DRIVES}
 end;
 
 procedure GetDir (Drive: byte; var Directory: string);
@@ -169,7 +171,10 @@ end;
 {$ENDIF DIRECT}
 
 var
- TestDir, TestDir0, OrigDir, OrigTstDir, CurDir, CDir, S: DirStr;
+{$IFNDEF NODRIVEC}
+ CDir,
+{$endif}
+ TestDir, TestDir0, OrigDir, OrigTstDir, CurDir, S: DirStr;
  TestDrive: string [2];
  I: byte;
  IOR: longint;
@@ -183,9 +188,10 @@ begin
  if (Length (S) > 1) and (S [2] = ':') then Delete (S, 1, 2);
 {$ELSE UNIX}
  for I := 1 to Length (S) do if S [I] = '/' then S [I] := DirSep;
- if (Length (S) > 0) and (S [1] in ['a'..'z']) then S [1] := UpCase (S [1]);
+ if (Length (S) > 1) and (S [1] in ['a'..'z']) and (S[2]=DriveSep) then
+   S [1] := UpCase (S [1]);
 {$ENDIF UNIX}
- if not (FileNameCaseSensitive) then
+ if not (FileNameCasePreserving) then
                            for I := 1 to Length (S) do S [I] := UpCase (S [I]);
  Translate := S;
 end;
@@ -199,6 +205,17 @@ begin
 {$ENDIF DEBUG}
  Rslt := Translate (Rslt);
  Rslt2 := FExpand (Src);
+{$IFDEF DIRECT}
+ {$IFNDEF FPC_FEXPAND_DRIVES}
+ I := Pos (System.DriveSeparator, Rslt2);
+ if I <> 0 then
+  Delete (Rslt2, 1, I);
+ {$ENDIF FPC_FEXPAND_DRIVES}
+{$ENDIF DIRECT}
+{$IFNDEF UNIX}
+ if (Length (Rslt2) > 1) and (Rslt2 [1] in ['a'..'z']) and (Rslt2[2]=DriveSep) then
+   Rslt2 [1] := UpCase (Rslt2 [1]);
+{$ENDIF NDEF UNIX}
  if Rslt <> Rslt2 then
  begin
   WriteLn ('Error: FExpand (', Src, ') should be "', Rslt, '", not "',
@@ -246,6 +263,11 @@ begin
  TestDir0 := TestDir;
 {$IFDEF DIRECT}
  XToDirect (TestDir);
+ {$IFNDEF FPC_FEXPAND_DRIVES}
+ I := Pos (System.DriveSeparator, TestDir);
+ if I <> 0 then
+  Delete (TestDir, 1, I);
+ {$ENDIF FPC_FEXPAND_DRIVES}
 {$ENDIF DIRECT}
  Assign (F, TestFileName);
  Rewrite (F);
@@ -256,13 +278,14 @@ begin
 {$ENDIF DIRECT}
 {$I+}
  GetDir (0, CurDir);
-{$IFDEF NODRIVEC}
- {$IFDEF UNIX}
- CDir := CurDir;
- {$ELSE UNIX}
- CDir := 'C:';
- {$ENDIF UNIX}
-{$ELSE NODRIVEC}
+{$IFDEF DIRECT}
+ {$IFNDEF FPC_FEXPAND_DRIVES}
+ I := Pos (System.DriveSeparator, CurDir);
+ if I <> 0 then
+  Delete (CurDir, 1, I);
+ {$ENDIF FPC_FEXPAND_DRIVES}
+{$ENDIF DIRECT}
+{$IFNDEF NODRIVEC}
  GetDir (3, CDir);
 {$ENDIF NODRIVEC}
  Check (' ', CurDir + DirSep + ' ');
@@ -276,20 +299,17 @@ begin
 {$ELSE MACOS}
  Check ('.', CurDir);
 {$ENDIF MACOS}
-{$IFDEF NODOTS}
- Check ('C:.', 'C:.');
-{$ELSE NODOTS}
- Check ('C:.', CDir);
-{$ENDIF NODOTS}
+
 {$IFNDEF NODRIVEC}
- if CDir [Length (CDir)] = DirSep then Check ('c:anything', CDir + 'anything')
+if CDir [Length (CDir)] = DirSep then Check ('c:anything', CDir + 'anything')
                          else Check ('c:anything', CDir + DirSep + 'anything');
-{$ENDIF NODRIVEC}
  Check (CC + DirSep, CDrive + DirSep);
 {$IFDEF NODOTS}
+ Check ('C:.', 'C:.');
  Check (CC + DirSep + '.', CDrive + DirSep + '.');
  Check (CC + DirSep + '..', CDrive + DirSep + '..');
 {$ELSE NODOTS}
+ Check ('C:.', CDir);
  Check (CC + DirSep + '.', CDrive + DirSep);
  Check (CC + DirSep + '..', CDrive + DirSep);
 {$ENDIF NODOTS}
@@ -312,6 +332,8 @@ begin
  Check ('C:' + DirSep + 'DOS' + DirSep + 'TEST' + DirSep + '..' + DirSep,
                                              CDrive + DirSep + 'DOS' + DirSep);
 {$ENDIF NODOTS}
+{$ENDIF NODRIVEC}
+
 {$IFNDEF MACOS}
  Check (DirSep, TestDrive + DirSep);
  Check (DirSep + '.', TestDrive + DirSep);
@@ -326,6 +348,7 @@ begin
  Check ('.' + DirSep + 'd', CurDir + DirSep + 'd');
  {$ENDIF NODOTS}
 {$ENDIF MACOS}
+ Check ('d' + DirSep + TestFileName, CurDir + DirSep + 'd' + DirSep + TestFileName);
  Check (' d', CurDir + DirSep + ' d');
  Check ('dd', CurDir + DirSep + 'dd');
 {$IFDEF MACOS}
@@ -394,13 +417,14 @@ begin
  Check (TestDrive + '.' + DirSep + '.', CurDir);
  Check (TestDrive + '.' + DirSep + '..', TestDir + TestDir1Name);
 {$I-}
-{ $ ifndef unix
- { avoid a and b drives for
+(*
+{ $ ifndef unix }
+{   avoid a and b drives for
    no unix systems to reduce the
    probablility of getting an alert message box }
- (* This should not be needed - unit popuperr should solve this?! TH *)
+ { This should not be needed - unit popuperr should solve this?! TH }
  I := 3;
-$else unix}
+{$else unix} *)
  I := 1;
 { $ endif unix}
  repeat
@@ -474,10 +498,3 @@ $else unix}
   Halt (1);
  end;
 end.
-
-{
-  $Log: tfexpand.pp,v $
-  Revision 1.9  2005/02/14 17:13:37  peter
-    * truncate log
-
-}

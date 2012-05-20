@@ -1,7 +1,6 @@
 {
-    $Id: ptypes.inc,v 1.7 2005/02/14 17:13:31 peter Exp $
     This file is part of the Free Pascal run time library.
-    Copyright (c) 2001 by Free Pascal development team
+    Copyright (c) 2001,2010 by Free Pascal development team
 
     This file implements all the base types and limits required
     for a minimal POSIX compliant subset required to port the compiler
@@ -25,15 +24,16 @@
 
 type
 
-    dev_t    = cuint32;         { used for device numbers      }
+    dev_t    = cint32;          { used for device numbers      }
     TDev     = dev_t;
     pDev     = ^dev_t;
 
     gid_t    = cuint32;         { used for group IDs           }
     TGid     = gid_t;
     pGid     = ^gid_t;
+    TIOCtlRequest = cuLong;
 
-    ino_t    = clong;           { used for file serial numbers }
+    ino_t    = cuint32;         { used for file serial numbers }
     TIno     = ino_t;
     pIno     = ^ino_t;
 
@@ -56,6 +56,7 @@ type
     size_t   = cuint32;         { as definied in the C standard}
     TSize    = size_t;
     pSize    = ^size_t;
+    pSize_t  = ^size_t;
 
     ssize_t  = cint32;          { used by function for returning number of bytes }
     TsSize   = ssize_t;
@@ -65,12 +66,16 @@ type
     TUid     = Uid_t;
     pUid     = ^Uid_t;
 
+    wint_t   = cint32;
+    wchar_t  = cint32;
+    pwchar_t = ^wchar_t;
+
     clock_t  = culong;
     TClock   = clock_t;
     pClock   = ^clock_t;
 
     time_t   = clong;           { used for returning the time  }
-    TTime    = time_t;
+    // TTime    = time_t;    // Not allowed in system unit, -> unixtype
     pTime    = ^time_t;
     ptime_t  = ^time_t;
 
@@ -92,18 +97,31 @@ type
   ptimespec= ^timespec;
   Ttimespec= timespec;
 
-   pthread_t            = pointer;
-   pthread_attr_t       = pointer;
-   pthread_mutex_t      = pointer;
-   pthread_mutexattr_t  = pointer;
-   pthread_cond_t       = pointer;
-   pthread_condattr_t   = pointer;
+   pthread_t_rec		= record end;
+   pthread_attr_t_rec		= record end;
+//   See pmutext.inc
+//   pthread_mutex_t_rec	= record end;
+   pthread_mutexattr_t_rec	= record end;
+   pthread_cond_t_rec		= record end;
+   pthread_condattr_t_rec	= record end;
+   pthread_once_t_rec		= record end;
+   pthread_rwlock_t_rec   	= record end;
+   pthread_rwlockattr_t_rec	= record end;
+
+   pthread_t            = ^pthread_t_rec;
+   pthread_attr_t       = ^pthread_attr_t_rec;
+   pthread_mutex_t      = {$i pmutext.inc}
+   pthread_mutexattr_t  = ^pthread_mutexattr_t_rec;
+   pthread_cond_t       = ^pthread_cond_t_rec;
+   pthread_condattr_t   = ^pthread_condattr_t_rec;
    pthread_key_t        = cint;
-   pthread_rwlock_t     = pointer;
-   pthread_rwlockattr_t = pointer;
+   pthread_once_t	= ^pthread_once_t_rec;
+   pthread_rwlock_t     = ^pthread_rwlock_t_rec;
+   pthread_rwlockattr_t = ^pthread_rwlockattr_t_rec;
 
    sem_t                = pointer;
-
+   rlim_t		= int64;
+   TRlim		= rlim_t;
   {
      Mutex types (Single UNIX Specification, Version 2, 1997).
 
@@ -127,9 +145,74 @@ type
     _MUTEX_TYPE_MAX
   );
 
+Const
+     MNAMLEN   = 90;		// length of buffer for returned name
+     MFSNamLen = 16;		// length of fs type name, including nul
+
+type
+  fsid_t  = array[0..1] of cint;
+
+  ufs_args_rec		= record end;
+  mfs_args_rec		= record end;
+  nfs_args_rec		= record end;
+  isofs_args_rec       	= record end;
+  procfs_args_rec	= record end;
+  msdosfs_args_rec	= record end;
+  ntfs_args_rec		= record end;
+
+  mountinfo = record
+      case byte of
+        0: (ufs_args:     ^ufs_args_rec);
+        1: (mfs_args:     ^mfs_args_rec);
+	2: (nfs_args:     ^nfs_args_rec);
+	3: (isofs_args:   ^isofs_args_rec);
+	4: (procfs_args:  ^procfs_args_rec);
+	5: (msdosfs_args: ^msdosfs_args_rec);
+	6: (ntfs_args:    ^ntfs_args_rec);
+	7: (__align: array[0..159] of char); { 64-bit alignment and room to grow }
+    end;
+
+// kernel statfs from mount.h
+  TStatfs = packed record
+    flags,			  { copy of mount flags }
+    bsize,			  { filesystem block size}
+    iosize		: cint;   { optimal transfr block size }
+    blocks,			  { total data block in file system }
+    bfree		: cuint64;  { blocks free in fs }
+    bavail		: cint64; { block available for non-superuser }
+    files,			  { total file nodes in file system }
+    ffree		: cuint64;  { free files nodes in fs }
+    favail		: cint64; { free file nodes avail to non-root }
+    fsyncwrites,		  { count of sync writes since mount }
+    fasyncwrites,		  { count of async writes since mount }
+    fsyncreads,			  { count of sync reads since mount }
+    fasyncreads		: cuint64;  { count of async reads since mount }
+    fsid		: fsid_t; { file system id }
+    namemax		: cint;   { maximum fileystem length }
+    fowner		: tuid;   { user that mounted the fileystem }
+    ctime		: cint;   { last mount [-u] time }
+    fspare3		: array[0..2] of cint; { spare for later }
+    fstypename		: array[0..MFSNamLen-1] of char; { fs type name }
+    mountpoint		: array[0..MNAMLEN-1] of char; { directory on which mounted}
+    mnfromname		: array[0..MNAMLEN-1] of char; { mounted file system }
+    mount_info		: mountinfo; { per-filesystem mount options }
+  end;
+  PStatFS=^TStatFS;
+
+  mbstate_t = record
+      case byte of
+        0: (__mbstate8: array[0..127] of char);
+        1: (_mbstateL: cint64); { for alignment }
+    end;
+  pmbstate_t = ^mbstate_t;
+
+  ITimerVal= Record
+              It_Interval,
+              It_Value      : TimeVal;
+             end;
 
 const
-  _PTHREAD_MUTEX_DEFAULT     = _PTHREAD_MUTEX_ERRORCHECK;
+  _PTHREAD_MUTEX_DEFAULT    = _PTHREAD_MUTEX_ERRORCHECK;
   _MUTEX_TYPE_FAST          = _PTHREAD_MUTEX_NORMAL;
   _MUTEX_TYPE_COUNTING_FAST = _PTHREAD_MUTEX_RECURSIVE;
 
@@ -141,14 +224,12 @@ const
     NAME_MAX = 255;        {14}    { Maximum number of bytes in filename }
     PATH_MAX = 1024;       {255}   { Maximum number of bytes in pathname }
 
-    SYS_NMLN = 32;              {BSD utsname struct limit}
+    SYS_NMLN = 256;                {BSD utsname struct limit}
 
-    SIG_MAXSIG      = 128;      // highest signal version
-    wordsinsigset   = 4;                // words in sigset_t
+    SIG_MAXSIG      = 33;      	   // highest signal version
+    // set in ostypes.inc wordsinsigset   = 4;           // words in sigset_t
 
-{
-  $Log: ptypes.inc,v $
-  Revision 1.7  2005/02/14 17:13:31  peter
-    * truncate log
-
-}
+  { For getting/setting priority }
+   Prio_Process = 0;
+   Prio_PGrp    = 1;
+   Prio_User    = 2;

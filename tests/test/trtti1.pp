@@ -11,7 +11,8 @@ Const TypeNames : Array [TTYpeKind] of string[15] =
                      'Float','Set','Method','ShortString','LongString',
                      'AnsiString','WideString','Variant','Array','Record',
                      'Interface','Class','Object','WideChar','Bool','Int64','QWord',
-                     'DynamicArray','RawInterface');
+                     'DynamicArray','RawInterface','ProcVar','UnicodeString','UnicodeChar',
+					 'Helper');
 
 Const OrdinalTypes = [tkInteger,tkChar,tkENumeration,tkbool];
 
@@ -31,6 +32,7 @@ Type
        FMyEnum   : TMyEnum;
        FAnsiString   : AnsiSTring;
        FObj      : TObject;
+       FIntf      : IInterface;
        FStored   : Boolean;
        Function GetBoolean : Boolean;
        Function GetByte : Byte;
@@ -83,6 +85,7 @@ Type
        Destructor Destroy;override;
        Published
        Property ObjField: TObject read FObj write FObj;
+       Property IntfField: IInterface read FIntf write FIntf;
        Property BooleanField : Boolean Read FBoolean Write FBoolean;
        Property ByteField : Byte Read FByte Write FByte;
        Property CharField : Char Read FChar Write FChar;
@@ -137,11 +140,14 @@ begin
   FExtended :=8.0; { Extended;}
   FMyEnum:=methird; { TMyEnum;}
   FAnsiString:='this is an AnsiString';
+  FObj:=TObject.Create;
+  FIntf:=TInterfacedObject.Create;
 end;
 
 Destructor TMyTestObject.Destroy;
 
 begin
+  FObj.Free;
   Inherited Destroy;
 end;
 
@@ -457,6 +463,7 @@ begin
       Writeln (' Default : ',Default,' Index : ',Index);
       Writeln (' NameIndex : ',NameIndex);
       end;
+    FreeMem (PP);
 end;
 
 Procedure PrintObject ( Obj: TMyTestObject);
@@ -465,6 +472,8 @@ begin
   With Obj do
     begin
     Writeln ('Field properties :');
+    Writeln ('Property ObjField        : ',PtrUInt(ObjField));
+    Writeln ('Property IntfField       : ',PtrUInt(IntfField));
     Writeln ('Property booleanField    : ',booleanField);
     Writeln ('Property ByteField       : ',ByteField);
     Writeln ('Property CharField       : ',CharField);
@@ -511,7 +520,7 @@ Var
     I,J : Longint;
     PP : PPropList;
     prI : PPropInfo;
-
+    Intf : IInterface;
 begin
   PI:=O.ClassInfo;
   Writeln ('Type kind : ',TypeNames[PI^.Kind]);
@@ -550,13 +559,27 @@ begin
                     flush (output);
                     Write(GetStrProp(O,Pri));
                     end;
+        tkInterface : begin
+                       Write ('value : ');
+                       flush (output);
+                       Write(PtrUInt(GetInterfaceProp(O,Pri)));
+                       { play a little bit with the interface to test SetInterfaceProp }
+                       SetInterfaceProp(O,Pri,TInterfacedObject.Create);
+                     end;
+        tkClass   : begin
+                       Write ('value : ');
+                       flush (output);
+                       Write(PtrUInt(GetObjectProp(O,Pri)));
+                     end;
         else
           Write ('Untested type:',ord(pri^.proptype^.kind));
         end;
           Writeln (')');
       end;
     end;
+  FreeMem (PP);
 end;
+
 
 Var O : TMyTestObject;
 
@@ -565,4 +588,5 @@ begin
   DumpTypeInfo(O);
   PrintObject(O);
   testget(o);
+  O.Free;
 end.

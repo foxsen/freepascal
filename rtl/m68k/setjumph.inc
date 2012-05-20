@@ -1,5 +1,4 @@
 {
-    $Id: setjumph.inc,v 1.6 2005/02/14 17:13:30 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by xxxx
     member of the Free Pascal development team
@@ -26,12 +25,6 @@ Type
   end;
   PJmp_buf = ^jmp_buf;
 
-Function Setjmp (Var S : Jmp_buf) : longint;
-Procedure longjmp (Var S : Jmp_buf; value : longint);
+Function Setjmp (Var S : Jmp_buf) : longint;[external name 'FPC_SETJMP'];
+Procedure longjmp (Var S : Jmp_buf; value : longint);[external name 'FPC_LONGJMP'];
 
-{
-  $Log: setjumph.inc,v $
-  Revision 1.6  2005/02/14 17:13:30  peter
-    * truncate log
-
-}

@@ -1,7 +1,6 @@
 {Set tabsize to 4.}
 {****************************************************************************
 
-  $Id: moncalls.pas,v 1.4 2005/02/14 17:13:31 peter Exp $
 
                            MONCALLS interface unit
                      Free Pascal Runtime Library for OS/2
@@ -240,12 +239,9 @@ external 'EMXWRAP' index 404;
 {external 'MONCALLS' index 4;}
 
 function DosMonOpen(DevName:string;var MonHandle:word):word;
-var
-  i : byte;
 begin
     if DevName[0]=#255 then
     begin
-        I:=byte(DevName[0]);
         Move(DevName[1],DevName[0],255);
         DevName[255]:=#0;
         DosMonOpen:=DosMonOpen(@DevName,MonHandle);
@@ -272,10 +268,3 @@ external 'EMXWRAP' index 401;
 
 
 end.
-
-{
-  $Log: moncalls.pas,v $
-  Revision 1.4  2005/02/14 17:13:31  peter
-    * truncate log
-
-}

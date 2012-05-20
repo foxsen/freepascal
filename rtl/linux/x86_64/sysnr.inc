@@ -1,5 +1,4 @@
 {
-    $Id: sysnr.inc,v 1.3 2005/02/14 17:13:30 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Michael Van Canneyt,
     member of the Free Pascal development team.
@@ -282,10 +281,10 @@ const
   syscall_nr_restart_syscall    = 219;
   syscall_nr_semtimedop         = 220;
   syscall_nr_fadvise64          = 221;
-  syscall_nr_timer_create               = 222;
-  syscall_nr_timer_settime              = 223;
-  syscall_nr_timer_gettime              = 224;
-  syscall_nr_timer_getoverrun           = 225;
+  syscall_nr_timer_create       = 222;
+  syscall_nr_timer_settime      = 223;
+  syscall_nr_timer_gettime      = 224;
+  syscall_nr_timer_getoverrun   = 225;
   syscall_nr_timer_delete       = 226;
   syscall_nr_clock_settime      = 227;
   syscall_nr_clock_gettime      = 228;
@@ -297,12 +296,48 @@ const
   syscall_nr_tgkill             = 234;
   syscall_nr_utimes             = 235;
   syscall_nr_vserver            = 236;
+  syscall_nr_mbind              = 237;
+  syscall_nr_set_mempolicy      = 238;
+  syscall_nr_get_mempolicy      = 239;
+  syscall_nr_mq_open            = 240;
+  syscall_nr_mq_unlink          = 241;
+  syscall_nr_mq_timedsend       = 242;
+  syscall_nr_mq_timedreceive    = 243;
+  syscall_nr_mq_notify          = 244;
+  syscall_nr_mq_getsetattr      = 245;
+  syscall_nr_kexec_load         = 246;
+  syscall_nr_waitid             = 247;
+  syscall_nr_add_key            = 248;
+  syscall_nr_request_key        = 249;
+  syscall_nr_keyctl             = 250;
+  syscall_nr_ioprio_set         = 251;
+  syscall_nr_ioprio_get         = 252;
+  syscall_nr_inotify_init       = 253;
+  syscall_nr_inotify_add_watch  = 254;
+  syscall_nr_inotify_rm_watch   = 255;
 
-{ 237,238,239 reserved for NUMA API }
+  syscall_nr_migrate_pages      = 256;
+  syscall_nr_openat             = 257;
+  syscall_nr_mkdirat            = 258;
+  syscall_nr_mknodat            = 259;
+  syscall_nr_fchownat           = 260;
+  syscall_nr_futimesat          = 261;
+  syscall_nr_newfstatat         = 262;
+  syscall_nr_unlinkat           = 263;
+  syscall_nr_renameat           = 264;
+  syscall_nr_linkat             = 265;
+  syscall_nr_symlinkat          = 266;
+  syscall_nr_readlinkat         = 267;
+  syscall_nr_fchmodat           = 268;
+  syscall_nr_faccessat          = 269;
+  syscall_nr_pselect6           = 270;
+  syscall_nr_ppoll              = 271;
+  syscall_nr_unshare            = 272;
+  syscall_nr_set_robust_list    = 273;
+  syscall_nr_get_robust_list    = 274;
+  syscall_nr_splice             = 275;
+  syscall_nr_tee                = 276;
+  syscall_nr_sync_file_range    = 277;
+  syscall_nr_vmsplice           = 278;
+  syscall_nr_move_pages         = 279;
 
-{
-    $Log: sysnr.inc,v $
-    Revision 1.3  2005/02/14 17:13:30  peter
-      * truncate log
-
-}

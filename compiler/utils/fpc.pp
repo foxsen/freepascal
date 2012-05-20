@@ -1,5 +1,4 @@
 {
-    $Id: fpc.pp,v 1.20 2005/05/08 19:56:59 marco Exp $
     Copyright (c) 2000-2002 by Florian Klaempfl
 
     This file is the "loader" for the Free Pascal compiler
@@ -24,7 +23,7 @@ program fpc;
 {$mode objfpc}{$H+}
 
   uses
-     Sysutils,dos;
+     Sysutils;
 
   const
 {$ifdef UNIX}
@@ -66,45 +65,68 @@ program fpc;
 
   function FileExists ( Const F : String) : Boolean;
     var
-      Info : SearchRec;
+      Info : TSearchRec;
     begin
-      findfirst(F,readonly+archive+hidden,info);
-      FileExists:=(doserror=0);
+      FileExists:= findfirst(F,fareadonly+faarchive+fahidden,info)=0;
       findclose(Info);
     end;
 
+  var
+    extrapath : ansistring;
 
-  procedure findexe(var ppcbin:string);
+  function findexe(var ppcbin:string): boolean;
     var
       path : string;
     begin
       { add .exe extension }
+      findexe:=false;
       ppcbin:=ppcbin+exeext;
 
+      if (extrapath<>'') and (extrapath[length(extrapath)]<>DirectorySeparator) then
+        extrapath:=extrapath+DirectorySeparator;
       { get path of fpc.exe }
       path:=splitpath(paramstr(0));
-      if FileExists(path+ppcbin) then
-       ppcbin:=path+ppcbin
+      { don't try with an empty extra patch, this might have strange results
+        if the current directory contains a compiler
+      }
+      if (extrapath<>'') and FileExists(extrapath+ppcbin) then
+       begin
+         ppcbin:=extrapath+ppcbin;
+         findexe:=true;
+       end
+      else if FileExists(path+ppcbin) then
+       begin
+         ppcbin:=path+ppcbin;
+         findexe:=true;
+       end
       else
        begin
-         path:=FSearch(ppcbin,getenv('PATH'));
+         path:=ExeSearch(ppcbin,getenvironmentvariable('PATH'));
          if path<>'' then
-          ppcbin:=path;
+          begin
+            ppcbin:=path;
+            findexe:=true;
+          end
        end;
     end;
 
-
   var
      s              : ansistring;
+     cpusuffix,
      processorname,
      ppcbin,
      versionStr,
      processorstr   : string;
-     ppccommandline : ansistring;
+     ppccommandline : array of ansistring;
+     ppccommandlinelen : longint;
      i : longint;
      errorvalue     : Longint;
   begin
-     ppccommandline:='';
+     setlength(ppccommandline,paramcount);
+     ppccommandlinelen:=0;
+     cpusuffix     :='';        // if not empty, signals attempt at cross
+                                // compiler.
+     extrapath     :='';
 {$ifdef i386}
      ppcbin:='ppc386';
      processorname:='i386';
@@ -113,14 +135,14 @@ program fpc;
      ppcbin:='ppc68k';
      processorname:='m68k';
 {$endif m68k}
-{$ifdef alpha}
-     ppcbin:='ppcapx';
-     processorname:='alpha';
-{$endif alpha}
 {$ifdef powerpc}
      ppcbin:='ppcppc';
      processorname:='powerpc';
 {$endif powerpc}
+{$ifdef powerpc64}
+     ppcbin:='ppcppc64';
+     processorname:='powerpc64';
+{$endif powerpc64}
 {$ifdef arm}
      ppcbin:='ppcarm';
      processorname:='arm';
@@ -133,12 +155,15 @@ program fpc;
      ppcbin:='ppcx64';
      processorname:='x86_64';
 {$endif x86_64}
-{$ifdef ia64}
-     ppcbin:='ppcia64';
-     processorname:='ia64';
-{$endif ia64}
      versionstr:='';                      { Default is just the name }
-     for i:=1 to paramcount do
+     if ParamCount = 0 then
+       begin
+         SetLength (PPCCommandLine, 1);
+         PPCCommandLine [PPCCommandLineLen] := '-?F' + ParamStr (0);
+         Inc (PPCCommandLineLen);
+       end
+     else
+      for i:=1 to paramcount do
        begin
           s:=paramstr(i);
           if pos('-V',s)=1 then
@@ -149,7 +174,7 @@ program fpc;
                  begin
                    processorstr:=copy(s,3,length(s)-2);
                   { -PB is a special code that will show the
-                    default compiler and exit immediatly. It's
+                    default compiler and exit immediately. It's
                      main usage is for Makefile }
                    if processorstr='B' then
                      begin
@@ -159,7 +184,7 @@ program fpc;
                        halt(0);
                      end
                      { -PP is a special code that will show the
-                       processor and exit immediatly. It's
+                       processor and exit immediately. It's
                        main usage is for Makefile }
                      else if processorstr='P' then
                       begin
@@ -167,33 +192,73 @@ program fpc;
                         writeln(processorname);
                         halt(0);
                       end
-                     else if processorstr='i386' then
-                       ppcbin:='ppc386'
-                     else if processorstr='m68k' then
-                       ppcbin:='ppc68k'
-                     else if processorstr='alpha' then
-                       ppcbin:='ppcapx'
-                     else if processorstr='powerpc' then
-                       ppcbin:='ppcppc'
-                     else if processorstr='arm' then
-                       ppcbin:='ppcarm'
-                     else if processorstr='sparc' then
-                       ppcbin:='ppcsparc'
-                     else if processorstr='ia64' then
-                       ppcbin:='ppcia64'
-                     else if processorstr='x86_64' then
-                       ppcbin:='ppcx64'
-                     else error('Illegal processor type "'+processorstr+'"');
-                     end
-                   else
-                    ppccommandline:=ppccommandline+s+' ';
+                     else
+                       if processorstr <> processorname then
+                         begin
+                           if processorstr='arm' then
+                             cpusuffix:='arm'
+                           else if processorstr='i386' then
+                             cpusuffix:='386'
+                           else if processorstr='m68k' then
+                             cpusuffix:='68k'
+                           else if processorstr='mips' then
+                             cpusuffix:='mips'
+                           else if processorstr='mipsel' then
+                             cpusuffix:='mipsel'
+                           else if processorstr='powerpc' then
+                             cpusuffix:='ppc'
+                           else if processorstr='powerpc64' then
+                             cpusuffix:='ppc64'
+                           else if processorstr='sparc' then
+                             cpusuffix:='sparc'
+                           else if processorstr='x86_64' then
+                             cpusuffix:='x64'
+                           else if processorstr='jvm' then
+                             cpusuffix:='jvm'
+                           else
+                             error('Illegal processor type "'+processorstr+'"');
+
+{$ifndef darwin}
+                           ppcbin:='ppcross'+cpusuffix;
+{$else not darwin}
+                           { the mach-o format supports "fat" binaries whereby }
+                           { a single executable contains machine code for     }
+                           { several architectures -> it is counter-intuitive  }
+                           { and non-standard to use different binary names    }
+                           { for cross-compilers vs. native compilers          }
+                           ppcbin:='ppc'+cpusuffix;
+{$endif not darwin}
+                         end;
+                 end
+              else if pos('-Xp',s)=1 then
+                extrapath:=copy(s,4,length(s)-3)
+              else
+                begin
+                  if pos('-h',s)=1 then
+                    ppccommandline[ppccommandlinelen] := '-hF' + ParamStr (0)
+                  else if pos('-?',s)=1 then
+                    ppccommandline[ppccommandlinelen] := '-?F' + ParamStr (0)
+                  else
+                    ppccommandline[ppccommandlinelen]:=s;
+                  inc(ppccommandlinelen);
+                end;
             end;
        end;
+     SetLength(ppccommandline,ppccommandlinelen);
 
      if versionstr<>'' then
        ppcbin:=ppcbin+'-'+versionstr;
      { find the full path to the specified exe }
-     findexe(ppcbin);
+     if not findexe(ppcbin) then
+        begin
+          if cpusuffix<>'' Then
+            begin
+              ppcbin:='ppc'+cpusuffix;
+              if versionstr<>'' then
+                ppcbin:=ppcbin+'-'+versionstr;
+              findexe(ppcbin);
+            end;
+        end;
 
      { call ppcXXX }
      try
@@ -202,19 +267,8 @@ program fpc;
        on e : exception do
          error(ppcbin+' can''t be executed, error message: '+e.message);
      end;
-     if errorvalue<>0 then
-       error(ppcbin+' returned an error exitcode (normal if you did not specify a source file to be compiled)');
+     if (errorvalue<>0) and
+        (paramcount<>0) then
+       error(ppcbin+' returned an error exitcode');
      halt(errorvalue);
   end.
-{
-  $Log: fpc.pp,v $
-  Revision 1.20  2005/05/08 19:56:59  marco
-   * typo fixed
-
-  Revision 1.19  2005/02/14 17:13:10  peter
-    * truncate log
-
-  Revision 1.18  2005/01/14 21:04:44  armin
-  * added .nlm extension for netware
-
-}

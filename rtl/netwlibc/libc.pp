@@ -1,5 +1,4 @@
 {
-    $Id: libc.pp,v 1.11 2005/02/14 17:13:30 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2004 Armin Diehl, member of the Free Pascal
     development team
@@ -19,6 +18,7 @@
 unit libc;
 interface
 
+
 { Netware libc interface
   Translated from c ndk Armin Diehl 2004/09/02 }
 {$endif}
@@ -29,15 +29,15 @@ const
 
 { Pointers to basic pascal types, inserted by h2pas conversion program.}
 Type
-{$ifndef INCLUDED_FROM_SYSTEM}
+{ $ifndef INCLUDED_FROM_SYSTEM - (always available in 2.0.x and above - TH)
   PLongint  = ^Longint;
   PSmallInt = ^SmallInt;
   PByte     = ^Byte;
   PWord     = ^Word;
   PDWord    = ^DWord;
   PDouble   = ^Double;
-{$endif}
-  PPPChar   = ^PPChar;
+$endif}
+//  PPPChar   = ^PPChar;
   void      = pointer;
   cint      = longint;
   TNLMHandle = Pointer;
@@ -1101,7 +1101,7 @@ type
 
    Ptime_t = ^time_t;
    time_t = longint;
-   Ttime  = time_t;
+   Ttime_t  = time_t;
 
 { turn on 1-byte packing...  }
 
@@ -1205,12 +1205,12 @@ function asctime(localtime:Ptm):Pchar;cdecl;external libc_nlm name 'asctime';
 function asctime(var localtime:Ttm):Pchar;cdecl;external libc_nlm name 'asctime';
 function clock:clock_t;cdecl;external libc_nlm name 'clock';
 function ctime(calendar:Ptime_t):Pchar;cdecl;external libc_nlm name 'ctime';
-function ctime(var calendar:Ttime):Pchar;cdecl;external libc_nlm name 'ctime';
-function difftime(t1, t2:Ttime):double;cdecl;external libc_nlm name 'difftime';
+function ctime(var calendar:Ttime_t):Pchar;cdecl;external libc_nlm name 'ctime';
+function difftime(t1, t2:Ttime_t):double;cdecl;external libc_nlm name 'difftime';
 function gmtime(calendar:Ptime_t):Ptm;cdecl;external libc_nlm name 'gmtime';
-function gmtime(var calendar:Ttime):Ptm;cdecl;external libc_nlm name 'gmtime';
+function gmtime(var calendar:Ttime_t):Ptm;cdecl;external libc_nlm name 'gmtime';
 function localtime(calendar:Ptime_t):Ptm;cdecl;external libc_nlm name 'localtime';
-function localtime(var calendar:Ttime):Ptm;cdecl;external libc_nlm name 'localtime';
+function localtime(var calendar:Ttime_t):Ptm;cdecl;external libc_nlm name 'localtime';
 function mktime(localtime:Ptm):time_t;cdecl;external libc_nlm name 'mktime';
 function mktime(var localtime:Ttm):time_t;cdecl;external libc_nlm name 'mktime';
 
@@ -1219,7 +1219,7 @@ function mktime(var localtime:Ttm):time_t;cdecl;external libc_nlm name 'mktime';
 //                      const tm * __restrict localtime );
 
 function time(calendar:Ptime_t):time_t;cdecl;external libc_nlm name 'time';
-function time(var calendar:Ttime):time_t;cdecl;external libc_nlm name 'time';
+function time(var calendar:Ttime_t):time_t;cdecl;external libc_nlm name 'time';
 function ___clocks_per_sec:longint;cdecl;external libc_nlm name '___clocks_per_sec';
 { POSIX data and helper functions...  }
 function ___daylight:Plongint;cdecl;external libc_nlm name '___daylight';
@@ -1234,17 +1234,17 @@ procedure tzset;cdecl;external libc_nlm name 'tzset';
 function asctime_r(localtime:Ptm; timestr:Pchar):Pchar;cdecl;external libc_nlm name 'asctime_r';
 function asctime_r(var localtime:Ttm; timestr:Pchar):Pchar;cdecl;external libc_nlm name 'asctime_r';
 function ctime_r(calendar:Ptime_t; timestr:Pchar):Pchar;cdecl;external libc_nlm name 'ctime_r';
-function ctime_r(var calendar:Ttime; timestr:Pchar):Pchar;cdecl;external libc_nlm name 'ctime_r';
+function ctime_r(var calendar:Ttime_t; timestr:Pchar):Pchar;cdecl;external libc_nlm name 'ctime_r';
 function gmtime_r(calendar:Ptime_t; localtime:Ptm):Ptm;cdecl;external libc_nlm name 'gmtime_r';
-function gmtime_r(var calendar:Ttime; localtime:Ptm):Ptm;cdecl;external libc_nlm name 'gmtime_r';
+function gmtime_r(var calendar:Ttime_t; localtime:Ptm):Ptm;cdecl;external libc_nlm name 'gmtime_r';
 function localtime_r(calendar:Ptime_t; localtime:Ptm):Ptm;cdecl;external libc_nlm name 'localtime_r';
-function localtime_r(var calendar:Ttime; var localtime:Ttm):Ptm;cdecl;external libc_nlm name 'localtime_r';
+function localtime_r(var calendar:Ttime_t; var localtime:Ttm):Ptm;cdecl;external libc_nlm name 'localtime_r';
 { Single UNIX Specification additions...  }
 function nanosleep(rqtp, rmtp:Ptimespec):longint;cdecl;external libc_nlm name 'nanosleep';
 function nanosleep(var rqtp, rmtp:Ttimespec):longint;cdecl;external libc_nlm name 'nanosleep';
 { Novell-defined additions...  }
 function ltime(calendar:Ptime_t):time_t;cdecl;external libc_nlm name 'ltime';
-function ltime(var calendar:Ttime):time_t;cdecl;external libc_nlm name 'ltime';
+function ltime(var calendar:Ttime_t):time_t;cdecl;external libc_nlm name 'ltime';
 function mkgmtime(gmtime:Ptm):time_t;cdecl;external libc_nlm name 'mkgmtime';
 function mkgmtime(var gmtime:Ttm):time_t;cdecl;external libc_nlm name 'mkgmtime';
 function dos2calendar(dostime:Tdos_d):time_t;cdecl;external libc_nlm name 'dos2calendar';
@@ -9126,13 +9126,13 @@ type
    BOOL = longint;
 
    PHMODULE = ^HMODULE;
-   HMODULE = void;
+   //HMODULE = void;
 
    PLPCTSTR = ^LPCTSTR;
    LPCTSTR = char;
 
-   PHINSTANCE = ^HINSTANCE;
-   HINSTANCE = void;
+   _PHINSTANCE = ^_HINSTANCE;
+   _HINSTANCE = void;
 { Win32 DLL solutions for dynamic NLM libraries on NetWare...  }
 
 function GetLastError:dword;cdecl;external libc_nlm name 'GetLastError';
@@ -9144,7 +9144,7 @@ function LoadLibrary(lpFileName:LPCTSTR):HMODULE;cdecl;external libc_nlm name 'L
 ** This is not an interface, but only a prototype for code furnished by the
 ** NLM library.
  }
-function DllMain(hinstDLL:HINSTANCE; fdwReason:dword; lpvReserve:LPVOID):BOOL;cdecl;external libc_nlm name 'DllMain';
+function DllMain(hinstDLL:_HINSTANCE; fdwReason:dword; lpvReserve:LPVOID):BOOL;cdecl;external libc_nlm name 'DllMain';
 
 
 // xmalloc.h
@@ -9219,19 +9219,6 @@ begin
    a.flag0:=a.flag0 or ((__year shl bp_dos_tm_year) and bm_dos_tm_year);
 end;
 
-
 end.
+
 {$endif}
-
-{
-  $Log: libc.pp,v $
-  Revision 1.11  2005/02/14 17:13:30  peter
-    * truncate log
-
-  Revision 1.10  2005/02/06 16:57:18  peter
-    * threads for go32v2,os,emx,netware
-
-  Revision 1.9  2005/01/04 11:25:33  armin
-  * rtl code cleanup, compat fixes between clib and libc
-
-}

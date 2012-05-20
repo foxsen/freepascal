@@ -1,5 +1,4 @@
 {
-    $Id: racpu.pas,v 1.4 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 1998-2003 by Mazen NEIFER
 
     Handles the common Sparc assembler reader routines
@@ -27,7 +26,7 @@ unit racpu;
 interface
 
   uses
-    aasmbase,aasmtai,aasmcpu,
+    aasmbase,aasmtai,aasmdata,aasmcpu,
     cpubase,rautils,cclasses;
 
   type
@@ -37,24 +36,19 @@ interface
     TSparcInstruction=class(TInstruction)
       delayslot_annulled : boolean;
       { opcode adding }
-      function ConcatInstruction(p : taasmoutput) : tai;override;
+      function ConcatInstruction(p : TAsmList) : tai;override;
     end;
 
 implementation
 
-    function TSparcInstruction.ConcatInstruction(p : taasmoutput) : tai;
+    function TSparcInstruction.ConcatInstruction(p : TAsmList) : tai;
       begin
         result:=inherited ConcatInstruction(p);
         { delay slot annulled support }
-        if (result.typ=ait_instruction) and
+        if assigned(result) and
+           (result.typ=ait_instruction) and
            delayslot_annulled then
           taicpu(result).delayslot_annulled:=true;
       end;
 
 end.
-{
-  $Log: racpu.pas,v $
-  Revision 1.4  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

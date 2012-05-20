@@ -1,5 +1,4 @@
 {
-    $Id: wviews.pas,v 1.15 2005/04/04 16:16:09 peter Exp $
     This file is part of the Free Pascal Integrated Development Environment
     Copyright (c) 1998 by Berczi Gabor
 
@@ -12,6 +11,7 @@
 
  **********************************************************************}
 {$I globdir.inc}
+
 unit WViews;
 
 interface
@@ -20,6 +20,11 @@ uses Objects,Drivers,Views,Menus,Dialogs;
 
 const
       evIdle                 = $8000;
+
+      cmCopyWin = 240;
+      cmPasteWin = 241;
+      cmSelectAll         = 246;
+      cmUnselect          = 247;
 
       cmLocalMenu            = 54100;
       cmUpdate               = 54101;
@@ -39,7 +44,7 @@ const
       CPlainCluster          = #7#8#9#9;
 
 type
-    longstring = {$ifdef TP}string{$else}ansistring{$endif};
+    longstring = ansistring;
 
     PCenterDialog = ^TCenterDialog;
     TCenterDialog = object(TDialog)
@@ -259,7 +264,7 @@ procedure RegisterWViews;
 implementation
 
 uses Mouse,
-     Resource,
+{     Resource,}
 {$ifdef WinClipSupported}
      WinClip,
      FpConst,
@@ -295,6 +300,16 @@ const
      Store:   @TDlgWindow.Store
   );
 {$endif}
+
+{$ifdef USERESSTRINGS}
+    resourcestring
+{$else}
+    const
+{$endif}
+      sConfirm='Confirm';
+      sError='Error';
+      sInformation='Information';
+      sWarning='Warning';
 
 const
   MessageDialog  : PCenterDialog = nil;
@@ -2469,7 +2484,7 @@ begin
   if R.Empty then
   begin
     GetStaticTextDimensions(S,40,Cols,Rows);
-    if Cols<30 then Cols:=30; if Rows=0 then Rows:=1;
+    if Cols<32 then Cols:=32; if Rows=0 then Rows:=1;
     R.Assign(0,0,3+Cols+3,Rows+6);
     if (AOptions and mfInsertInApp)= 0 then
       R.Move((Desktop^.Size.X-(R.B.X-R.A.X)) div 2,(Desktop^.Size.Y-(R.B.Y-R.A.Y)) div 2)
@@ -2523,14 +2538,14 @@ end;
 
 procedure InitAdvMsgBox;
 begin
-  ButtonName[0] := Labels^.Get(slYes);
-  ButtonName[1] := Labels^.Get(slNo);
-  ButtonName[2] := Labels^.Get(slOk);
-  ButtonName[3] := Labels^.Get(slCancel);
-  Titles[0] := Labels^.Get(sWarning);
-  Titles[1] := Labels^.Get(sError);
-  Titles[2] := Labels^.Get(sInformation);
-  Titles[3] := Labels^.Get(sConfirm);
+  ButtonName[0] := slYes;
+  ButtonName[1] := slNo;
+  ButtonName[2] := slOk;
+  ButtonName[3] := slCancel;
+  Titles[0] := sWarning;
+  Titles[1] := sError;
+  Titles[2] := sInformation;
+  Titles[3] := sConfirm;
 end;
 
 procedure DoneAdvMsgBox;
@@ -2550,12 +2565,3 @@ end;
 
 
 END.
-{
-  $Log: wviews.pas,v $
-  Revision 1.15  2005/04/04 16:16:09  peter
-    * use res instead of result
-
-  Revision 1.14  2005/02/14 17:13:19  peter
-    * truncate log
-
-}

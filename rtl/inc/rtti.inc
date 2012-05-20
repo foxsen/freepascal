@@ -1,5 +1,4 @@
 {
-    $Id: rtti.inc,v 1.22 2005/02/14 17:13:26 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Michael Van Canneyt
     member of the Free Pascal development team
@@ -15,251 +14,321 @@
 
 { Run-Time type information routines }
 
-{ The RTTI is implemented through a series of constants : }
-
-Const
-       tkUnknown       = 0;
-       tkInteger       = 1;
-       tkChar          = 2;
-       tkEnumeration   = 3;
-       tkFloat         = 4;
-       tkSet           = 5;
-       tkMethod        = 6;
-       tkSString       = 7;
-       tkString        = tkSString;
-       tkLString       = 8;
-       tkAString       = 9;
-       tkWString       = 10;
-       tkVariant       = 11;
-       tkArray         = 12;
-       tkRecord        = 13;
-       tkInterface     = 14;
-       tkClass         = 15;
-       tkObject        = 16;
-       tkWChar         = 17;
-       tkBool          = 18;
-       tkInt64         = 19;
-       tkQWord         = 20;
-       tkDynArray      = 21;
-
+{ the tk* constants are now declared in system.inc }
 
 type
   TRTTIProc=procedure(Data,TypeInfo:Pointer);
 
-procedure RecordRTTI(Data,TypeInfo:Pointer;rttiproc:TRTTIProc);
-{
-  A record is designed as follows :
-    1    : tkrecord
-    2    : Length of name string (n);
-    3    : name string;
-    3+n  : record size;
-    7+n  : number of elements (N)
-    11+n : N times : Pointer to type info
-                     Offset in record
-}
-var
-  Temp : pbyte;
-  namelen : byte;
-  count,
-  offset,
-  i : longint;
-  info : pointer;
+  PRecordElement=^TRecordElement;
+  TRecordElement=packed record
+    TypeInfo: Pointer;
+    Offset: Longint;
+  end;
+
+  PRecordInfo=^TRecordInfo;
+  TRecordInfo=packed record
+    Size: Longint;
+    Count: Longint;
+    { Elements: array[count] of TRecordElement }
+  end;
+
+  PArrayInfo=^TArrayInfo;
+  TArrayInfo=packed record
+    ElSize: SizeInt;
+    ElCount: SizeInt;
+    ElInfo: Pointer;
+  end;
+
+
+function RTTIArraySize(typeInfo: Pointer): SizeInt;
 begin
-  Temp:=PByte(TypeInfo);
-  inc(Temp);
-  { Skip Name }
-  namelen:=Temp^;
-  inc(temp,namelen+1);
-  temp:=aligntoptr(temp);
-  { Skip size }
-  inc(Temp,4);
-  { Element count }
-  Count:=PLongint(Temp)^;
-  inc(Temp,sizeof(Count));
+  typeInfo:=aligntoptr(typeInfo+2+PByte(typeInfo)[1]);
+  result:=PArrayInfo(typeInfo)^.ElSize * PArrayInfo(typeInfo)^.ElCount;
+end;
+
+function RTTIRecordSize(typeInfo: Pointer): SizeInt;
+begin
+  typeInfo:=aligntoptr(typeInfo+2+PByte(typeInfo)[1]);
+  result:=PRecordInfo(typeInfo)^.Size;
+end;
+
+function RTTISize(typeInfo: Pointer): SizeInt;
+begin
+  case PByte(typeinfo)^ of
+    tkAString,tkWString,tkUString,
+    tkInterface,tkDynarray:
+      result:=sizeof(Pointer);
+{$ifdef FPC_HAS_FEATURE_VARIANTS}
+    tkVariant:
+      result:=sizeof(TVarData);
+{$endif FPC_HAS_FEATURE_VARIANTS}
+    tkArray:
+      result:=RTTIArraySize(typeinfo);
+    tkObject,tkRecord:
+      result:=RTTIRecordSize(typeinfo);
+  else
+    result:=-1;
+  end;
+end;
+
+{ if you modify this procedure, fpc_copy must be probably modified as well }
+procedure RecordRTTI(Data,TypeInfo:Pointer;rttiproc:TRTTIProc);
+var
+  count,
+  i : longint;
+begin
+  typeInfo:=aligntoptr(typeInfo+2+PByte(typeInfo)[1]);
+  Count:=PRecordInfo(typeInfo)^.Count;
+  Inc(PRecordInfo(typeInfo));
   { Process elements }
   for i:=1 to count Do
     begin
-      Info:=PPointer(Temp)^;
-      inc(Temp,sizeof(Info));
-      Offset:=PLongint(Temp)^;
-      inc(Temp,sizeof(Offset));
-      rttiproc (Data+Offset,Info);
+      rttiproc (Data+PRecordElement(typeInfo)^.Offset,PRecordElement(typeInfo)^.TypeInfo);
+      Inc(PRecordElement(typeInfo));
     end;
 end;
 
 
+{ if you modify this procedure, fpc_copy must be probably modified as well }
 procedure ArrayRTTI(Data,TypeInfo:Pointer;rttiproc:TRTTIProc);
-{
-  An array is designed as follows :
-   1    : tkArray;
-   2    : length of name string (n);
-   3    : NAme string
-   3+n  : Element Size
-   7+n  : Number of elements
-   11+n : Pointer to type of elements
-}
 var
-  Temp : pbyte;
-  namelen : byte;
-  count,
-  size,
   i : SizeInt;
-  info : pointer;
 begin
-  Temp:=PByte(TypeInfo);
-  inc(Temp);
-  { Skip Name }
-  namelen:=Temp^;
-  inc(temp,namelen+1);
-  temp:=aligntoptr(temp);
-  { Element size }
-  size:=PSizeInt(Temp)^;
-  inc(Temp,sizeof(Size));
-  { Element count }
-  Count:=PSizeInt(Temp)^;
-  inc(Temp,sizeof(Count));
-  Info:=PPointer(Temp)^;
-  inc(Temp,sizeof(Info));
+  typeInfo:=aligntoptr(typeInfo+2+PByte(typeInfo)[1]);
   { Process elements }
-  for I:=0 to Count-1 do
-    rttiproc(Data+(I*size),Info);
+  for I:=0 to PArrayInfo(typeInfo)^.ElCount-1 do
+    rttiproc(Data+(I*PArrayInfo(typeInfo)^.ElSize),PArrayInfo(typeInfo)^.ElInfo);
 end;
 
 
-
-Procedure fpc_Initialize (Data,TypeInfo : pointer);{$ifndef NOSAVEREGISTERS}saveregisters;{$endif}[Public,Alias : 'FPC_INITIALIZE'];  {$ifdef hascompilerproc} compilerproc; {$endif}
+Procedure fpc_Initialize (Data,TypeInfo : pointer);[Public,Alias : 'FPC_INITIALIZE'];  compilerproc;
 begin
   case PByte(TypeInfo)^ of
-    tkAstring,tkWstring,tkInterface,tkDynArray:
+{$ifdef FPC_HAS_FEATURE_DYNARRAYS}
+    tkDynArray,
+{$endif FPC_HAS_FEATURE_DYNARRAYS}
+{$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
+    tkAstring,
+{$endif FPC_HAS_FEATURE_ANSISTRINGS}
+{$ifdef FPC_HAS_FEATURE_WIDESTRINGS}
+    tkWstring,tkUString,
+{$endif FPC_HAS_FEATURE_WIDESTRINGS}
+    tkInterface:
       PPchar(Data)^:=Nil;
     tkArray:
       arrayrtti(data,typeinfo,@int_initialize);
+{$ifdef FPC_HAS_FEATURE_OBJECTS}
     tkObject,
+{$endif FPC_HAS_FEATURE_OBJECTS}
     tkRecord:
       recordrtti(data,typeinfo,@int_initialize);
-{$ifdef HASVARIANT}
+{$ifdef FPC_HAS_FEATURE_VARIANTS}
     tkVariant:
       variant_init(PVarData(Data)^);
-{$endif HASVARIANT}
+{$endif FPC_HAS_FEATURE_VARIANTS}
   end;
 end;
 
 
-Procedure fpc_finalize (Data,TypeInfo: Pointer);{$ifndef NOSAVEREGISTERS}saveregisters;{$endif}[Public,Alias : 'FPC_FINALIZE'];  {$ifdef hascompilerproc} compilerproc; {$endif}
+Procedure fpc_finalize (Data,TypeInfo: Pointer);[Public,Alias : 'FPC_FINALIZE'];  compilerproc;
 begin
   case PByte(TypeInfo)^ of
+{$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
     tkAstring :
-      begin
-       fpc_AnsiStr_Decr_Ref(PPointer(Data)^);
-        PPointer(Data)^:=nil;
-      end;
-{$ifdef HASWIDESTRING}
+      fpc_AnsiStr_Decr_Ref(PPointer(Data)^);
+{$endif FPC_HAS_FEATURE_ANSISTRINGS}
+{$ifdef FPC_HAS_FEATURE_WIDESTRINGS}
+    tkUstring :
+      fpc_UnicodeStr_Decr_Ref(PPointer(Data)^);
+  {$ifndef FPC_WIDESTRING_EQUAL_UNICODESTRING}
     tkWstring :
-      begin
-        fpc_WideStr_Decr_Ref(PPointer(Data)^);
-        PPointer(Data)^:=nil;
-      end;
-{$endif HASWIDESTRING}
+      fpc_WideStr_Decr_Ref(PPointer(Data)^);
+  {$endif FPC_WIDESTRING_EQUAL_UNICODESTRING}
+{$endif FPC_HAS_FEATURE_WIDESTRINGS}
     tkArray :
       arrayrtti(data,typeinfo,@int_finalize);
+{$ifdef FPC_HAS_FEATURE_OBJECTS}
     tkObject,
+{$endif FPC_HAS_FEATURE_OBJECTS}
     tkRecord:
       recordrtti(data,typeinfo,@int_finalize);
-{$ifdef HASINTF}
-    tkInterface:
-      begin
-        Intf_Decr_Ref(PPointer(Data)^);
-        PPointer(Data)^:=nil;
-      end;
-{$endif HASINTF}
-    tkDynArray:
-      fpc_dynarray_decr_ref(PPointer(Data)^,TypeInfo);
-{$ifdef HASVARIANT}
-    tkVariant:
-      variant_clear(PVarData(Data)^);
-{$endif HASVARIANT}
-  end;
-end;
-
-
-Procedure fpc_Addref (Data,TypeInfo : Pointer);{$ifndef NOSAVEREGISTERS}saveregisters;{$endif} [Public,alias : 'FPC_ADDREF'];  {$ifdef hascompilerproc} compilerproc; {$endif}
-begin
-  case PByte(TypeInfo)^ of
-    tkAstring :
-      fpc_AnsiStr_Incr_Ref(PPointer(Data)^);
-{$ifdef HASWIDESTRING}
-    tkWstring :
-      fpc_WideStr_Incr_Ref(PPointer(Data)^);
-{$endif HASWIDESTRING}
-    tkArray :
-      arrayrtti(data,typeinfo,@int_addref);
-    tkobject,
-    tkrecord :
-      recordrtti(data,typeinfo,@int_addref);
-    tkDynArray:
-      fpc_dynarray_incr_ref(PPointer(Data)^);
-{$ifdef HASINTF}
-    tkInterface:
-      Intf_Incr_Ref(PPointer(Data)^);
-{$endif HASINTF}
-{$ifdef HASVARIANT}
-    tkVariant:
-      variant_addref(pvardata(Data)^);
-{$endif HASVARIANT}
-  end;
-end;
-
-
-{ alias for internal use }
-{ we use another name else the compiler gets puzzled because of the wrong forward def }
-procedure fpc_systemDecRef (Data, TypeInfo : Pointer);{$ifndef NOSAVEREGISTERS}saveregisters;{$endif}[external name 'FPC_DECREF'];
-
-Procedure fpc_DecRef (Data, TypeInfo : Pointer);{$ifndef NOSAVEREGISTERS}saveregisters;{$endif}[Public,alias : 'FPC_DECREF'];  {$ifdef hascompilerproc} compilerproc; {$endif}
-begin
-  case PByte(TypeInfo)^ of
-    { see AddRef for comment about below construct (JM) }
-    tkAstring:
-      fpc_AnsiStr_Decr_Ref(PPointer(Data)^);
-{$ifdef HASWIDESTRING}
-    tkWstring:
-      fpc_WideStr_Decr_Ref(PPointer(Data)^);
-{$endif HASWIDESTRING}
-    tkArray:
-      arrayrtti(data,typeinfo,@fpc_systemDecRef);
-    tkobject,
-    tkrecord:
-      recordrtti(data,typeinfo,@fpc_systemDecRef);
-    tkDynArray:
-      fpc_dynarray_decr_ref(PPointer(Data)^,TypeInfo);
-{$ifdef HASINTF}
     tkInterface:
       Intf_Decr_Ref(PPointer(Data)^);
-{$endif HASINTF}
-{$ifdef HASVARIANT}
+{$ifdef FPC_HAS_FEATURE_DYNARRAYS}
+    tkDynArray:
+      fpc_dynarray_clear(PPointer(Data)^,TypeInfo);
+{$endif FPC_HAS_FEATURE_DYNARRAYS}
+{$ifdef FPC_HAS_FEATURE_VARIANTS}
     tkVariant:
-      variant_clear(pvardata(data)^);
-{$endif HASVARIANT}
+      variant_clear(PVarData(Data)^);
+{$endif FPC_HAS_FEATURE_VARIANTS}
   end;
 end;
 
 
-procedure fpc_finalize_array(data,typeinfo : pointer;count,size : longint); [Public,Alias:'FPC_FINALIZEARRAY'];  {$ifdef hascompilerproc} compilerproc; {$endif}
+Procedure fpc_Addref (Data,TypeInfo : Pointer); [Public,alias : 'FPC_ADDREF'];  compilerproc;
+begin
+  case PByte(TypeInfo)^ of
+{$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
+    tkAstring :
+      fpc_AnsiStr_Incr_Ref(PPointer(Data)^);
+{$endif FPC_HAS_FEATURE_ANSISTRINGS}
+{$ifdef FPC_HAS_FEATURE_WIDESTRINGS}
+  {$ifndef FPC_WIDESTRING_EQUAL_UNICODESTRING}
+    tkWstring :
+      fpc_WideStr_Incr_Ref(PPointer(Data)^);
+  {$endif FPC_WIDESTRING_EQUAL_UNICODESTRING}
+    tkUstring :
+      fpc_UnicodeStr_Incr_Ref(PPointer(Data)^);
+{$endif FPC_HAS_FEATURE_WIDESTRINGS}
+    tkArray :
+      arrayrtti(data,typeinfo,@int_addref);
+{$ifdef FPC_HAS_FEATURE_OBJECTS}
+    tkobject,
+{$endif FPC_HAS_FEATURE_OBJECTS}
+    tkrecord :
+      recordrtti(data,typeinfo,@int_addref);
+{$ifdef FPC_HAS_FEATURE_DYNARRAYS}
+    tkDynArray:
+      fpc_dynarray_incr_ref(PPointer(Data)^);
+{$endif FPC_HAS_FEATURE_DYNARRAYS}
+    tkInterface:
+      Intf_Incr_Ref(PPointer(Data)^);
+{$ifdef FPC_HAS_FEATURE_VARIANTS}
+    tkVariant:
+      variant_addref(pvardata(Data)^);
+{$endif FPC_HAS_FEATURE_DYNARRAYS}
+  end;
+end;
+
+
+{ define alias for internal use in the system unit }
+Function fpc_Copy_internal (Src, Dest, TypeInfo : Pointer) : SizeInt;[external name 'FPC_COPY'];
+
+Function fpc_Copy (Src, Dest, TypeInfo : Pointer) : SizeInt;[Public,alias : 'FPC_COPY']; compilerproc;
+var
+  ArrayInfo: PArrayInfo;
+  Temp : pbyte;
+  copiedsize,
+  expectedoffset,
+  count,
+  offset,
+  i : SizeInt;
+  info : pointer;
+begin
+  result:=sizeof(pointer);
+  case PByte(TypeInfo)^ of
+{$ifdef FPC_HAS_FEATURE_ANSISTRINGS}
+    tkAstring:
+      fpc_AnsiStr_Assign(PPointer(Dest)^,PPointer(Src)^);
+{$endif FPC_HAS_FEATURE_ANSISTRINGS}
+{$ifdef FPC_HAS_FEATURE_WIDESTRINGS}
+  {$ifndef FPC_WIDESTRING_EQUAL_UNICODESTRING}
+    tkWstring:
+      fpc_WideStr_Assign(PPointer(Dest)^,PPointer(Src)^);
+  {$endif FPC_WIDESTRING_EQUAL_UNICODESTRING}
+    tkUstring:
+      fpc_UnicodeStr_Assign(PPointer(Dest)^,PPointer(Src)^);
+{$endif FPC_HAS_FEATURE_WIDESTRINGS}
+    tkArray:
+      begin
+        ArrayInfo:=aligntoptr(typeInfo+2+PByte(typeInfo)[1]);
+        { Process elements }
+        for I:=0 to ArrayInfo^.ElCount-1 do
+          fpc_Copy_internal(Src+(I*ArrayInfo^.ElSize),Dest+(I*ArrayInfo^.ElSize),ArrayInfo^.ElInfo);
+        Result:=ArrayInfo^.ElSize*ArrayInfo^.ElCount;
+      end;
+{$ifdef FPC_HAS_FEATURE_OBJECTS}
+    tkobject,
+{$endif FPC_HAS_FEATURE_OBJECTS}
+    tkrecord:
+      begin
+        Temp:=aligntoptr(typeInfo+2+PByte(typeInfo)[1]);
+
+        Result:=PRecordInfo(Temp)^.Size;
+        Count:=PRecordInfo(Temp)^.Count;
+        Inc(PRecordInfo(Temp));
+        expectedoffset:=0;
+        { Process elements with rtti }
+        for i:=1 to count Do
+          begin
+            Info:=PRecordElement(Temp)^.TypeInfo;
+            Offset:=PRecordElement(Temp)^.Offset;
+            Inc(PRecordElement(Temp));
+            if Offset>expectedoffset then
+              move((Src+expectedoffset)^,(Dest+expectedoffset)^,Offset-expectedoffset);
+            copiedsize:=fpc_Copy_internal(Src+Offset,Dest+Offset,Info);
+            expectedoffset:=Offset+copiedsize;
+          end;
+        { elements remaining? }
+        if result>expectedoffset then
+          move((Src+expectedoffset)^,(Dest+expectedoffset)^,Result-expectedoffset);
+      end;
+{$ifdef FPC_HAS_FEATURE_DYNARRAYS}
+    tkDynArray:
+      fpc_dynarray_assign(PPointer(Dest)^,PPointer(Src)^,typeinfo);
+{$endif FPC_HAS_FEATURE_DYNARRAYS}
+    tkInterface:
+      fpc_intf_assign(PPointer(Dest)^,PPointer(Src)^);
+{$ifdef FPC_HAS_FEATURE_VARIANTS}
+    tkVariant:
+      begin
+        VarCopyProc(pvardata(dest)^,pvardata(src)^);
+        result:=sizeof(tvardata);
+      end;
+{$endif FPC_HAS_FEATURE_VARIANTS}
+  end;
+end;
+
+
+{ For internal use by the compiler, because otherwise $x- can cause trouble. }
+{ Generally disabling extended syntax checking for all compilerprocs may     }
+{ have unintended side-effects                                               }
+procedure fpc_Copy_proc (Src, Dest, TypeInfo : Pointer);compilerproc; inline;
+begin
+  fpc_copy_internal(src,dest,typeinfo);
+end;
+
+
+procedure fpc_initialize_array(data,typeinfo : pointer;count : SizeInt); [public,alias:'FPC_INITIALIZE_ARRAY'] compilerproc;
   var
-     i : longint;
+     i, size : SizeInt;
   begin
-     for i:=0 to count-1 do
-       int_finalize(data+size*i,typeinfo);
+     size:=RTTISize(typeinfo);
+     if size>0 then
+       for i:=0 to count-1 do
+         int_initialize(data+size*i,typeinfo);
   end;
 
-{
-  $Log: rtti.inc,v $
-  Revision 1.22  2005/02/14 17:13:26  peter
-    * truncate log
 
-  Revision 1.21  2005/01/15 18:47:26  florian
-    * several variant init./final. stuff fixed
+procedure fpc_finalize_array(data,typeinfo : pointer;count : SizeInt); [Public,Alias:'FPC_FINALIZE_ARRAY'];  compilerproc;
+  var
+     i, size: SizeInt;
+  begin
+     size:=RTTISize(typeinfo);
+     if size>0 then
+       for i:=0 to count-1 do
+         int_finalize(data+size*i,typeinfo);
+  end;
 
-  Revision 1.20  2005/01/08 20:43:44  florian
-    + init/cleaning code for variants added
+procedure fpc_addref_array(data,typeinfo: pointer; count: SizeInt); [public,alias:'FPC_ADDREF_ARRAY']; compilerproc;
+  var
+    i, size: SizeInt;
+  begin
+    size:=RTTISize(typeinfo);
+    if size>0 then
+      for i:=0 to count-1 do
+        int_addref(data+size*i,typeinfo);
+  end;
 
-}
+{ The following two procedures are now obsolete, needed only for bootstrapping }
+procedure fpc_decref (Data, TypeInfo : Pointer);[Public,alias : 'FPC_DECREF'];  compilerproc;
+  begin
+    int_finalize(Data,TypeInfo);
+  end;
+
+procedure fpc_decref_array(data,typeinfo: pointer; count: SizeInt); [public,alias:'FPC_DECREF_ARRAY']; compilerproc;
+  begin
+    int_finalizeArray(data,typeinfo,count);
+  end;
+

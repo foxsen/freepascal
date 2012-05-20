@@ -1,5 +1,4 @@
 {
-    $Id: aoptobj.pas,v 1.17 2005/02/26 01:26:59 jonas Exp $
     Copyright (c) 1998-2004 by Jonas Maebe, member of the Free Pascal
     Development Team
 
@@ -33,7 +32,7 @@ Unit AoptObj;
 
     uses
       globtype,
-      aasmbase,aasmcpu,aasmtai,
+      aasmbase,aasmcpu,aasmtai,aasmdata,
       cclasses,
       cgbase,cgutils,
       cpubase,
@@ -57,31 +56,37 @@ Unit AoptObj;
     { ************************************************************************* }
     { ************************* Some general type definitions ***************** }
     { ************************************************************************* }
-      TRefCompare = Function(r1, r2: TReference): Boolean;
+      TRefCompare = Function(const r1, r2: TReference): Boolean;
       //!!! FIXME
       TRegArray = Array[byte] of tsuperregister;
+
+
       TRegSet = Set of byte;
-    { possible actions on an operand: read, write or modify (= read & write) }
+      { possible actions on an operand: read, write or modify (= read & write) }
       TOpAction = (OpAct_Read, OpAct_Write, OpAct_Modify, OpAct_Unknown);
 
     { ************************************************************************* }
     { * Object to hold information on which regiters are in use and which not * }
     { ************************************************************************* }
+
+      { TUsedRegs }
+
       TUsedRegs = class
-        Constructor create;
-        Constructor create_regset(Const _RegSet: TRegSet);
+        Constructor create(aTyp : TRegisterType);
+        Constructor create_regset(aTyp : TRegisterType;Const _RegSet: TRegSet);
 
         Destructor Destroy;override;
-        { update the info with the pairegalloc objects coming after }
-        { p                                                         }
+
+        Procedure Clear;
+        { update the info with the pairegalloc objects coming after
+          p                                                         }
         Procedure Update(p: Tai);
         { is Reg currently in use }
         Function IsUsed(Reg: TRegister): Boolean;
         { get all the currently used registers }
         Function GetUsedRegs: TRegSet;
-
       Private
-
+        Typ : TRegisterType;
         UsedRegs: TRegSet;
       End;
 
@@ -121,14 +126,14 @@ Unit AoptObj;
     { gets one of these assigned: a pointer to it is stored in the OptInfo field }
     { ************************************************************************** }
 
+      { TPaiProp }
+
       TPaiProp = class(TAoptBaseCpu)
         Regs: TRegContent;
-        { info about allocation of general purpose integer registers }
-        UsedRegs: TUsedRegs;
         { can this instruction be removed? }
         CanBeRemoved: Boolean;
 
-        Constructor create;
+        Constructor create; reintroduce;
 
         { checks the whole sequence of which (so regs[which].StartMod and and  }
         { the next NrOfMods Tai objects) to see whether Reg is used somewhere, }
@@ -159,17 +164,17 @@ Unit AoptObj;
           TInstrSinceLastMod);
         { destroy the contents of all registers }
         Procedure DestroyAllRegs(var InstrSinceLastMod: TInstrSinceLastMod);
-        { a register's contents are modified, but not destroyed (the new value }
-        { depends on the old one)                                              }
+        { a register's contents are modified, but not destroyed (the new value
+          depends on the old one)                                              }
         Procedure ModifyReg(reg: TRegister; var InstrSinceLastMod:
           TInstrSinceLastMod);
-        { an operand's contents are modified, but not destroyed (the new value }
-        { depends on the old one)                                              }
+        { an operand's contents are modified, but not destroyed (the new value
+          depends on the old one)                                              }
         Procedure ModifyOp(const oper: TOper; var InstrSinceLastMod:
           TInstrSinceLastMod);
 
-        { increase the write state of a register (call every time a register is }
-        { written to)                                                           }
+        { increase the write state of a register (call every time a register is
+          written to)                                                           }
         Procedure IncWState(Reg: TRegister);
         { increase the read state of a register (call every time a register is }
         { read from)                                                           }
@@ -211,18 +216,14 @@ Unit AoptObj;
         PaiObj: Tai;
       End;
 
-    {$ifndef TP}
       TLabelTable = Array[0..2500000] Of TLabelTableItem;
-    {$else TP}
-      TLabelTable = Array[0..(65520 div sizeof(TLabelTableItem))] Of TLabelTableItem;
-    {$endif TP}
       PLabelTable = ^TLabelTable;
       PLabelInfo = ^TLabelInfo;
       TLabelInfo = Record
         { the highest and lowest label number occurring in the current code }
         { fragment                                                          }
-        LowLabel, HighLabel: AWord;
-        LabelDif: AWord;
+        LowLabel, HighLabel: longint;
+        LabelDif: cardinal;
         { table that contains the addresses of the Pai_Label objects associated
           with each label number                                                }
         LabelTable: PLabelTable;
@@ -232,9 +233,12 @@ Unit AoptObj;
     { ********** General optimizer object, used to derive others from ********* }
     { ************************************************************************* }
 
+      TAllUsedRegs = array[TRegisterType] of TUsedRegs;
+      { TAOptObj }
+
       TAOptObj = class(TAoptBaseCpu)
         { the PAasmOutput list this optimizer instance works on }
-        AsmL: TAasmOutput;
+        AsmL: TAsmList;
 
         { The labelinfo record contains the addresses of the Tai objects }
         { that are labels, how many labels there are and the min and max }
@@ -245,14 +249,30 @@ Unit AoptObj;
         BlockStart, BlockEnd: Tai;
 
         DFA: TAOptDFA;
+
+        UsedRegs: TAllUsedRegs;
+
         { _AsmL is the PAasmOutpout list that has to be optimized,     }
         { _BlockStart and _BlockEnd the start and the end of the block }
         { that has to be optimized and _LabelInfo a pointer to a       }
         { TLabelInfo record                                            }
-        Constructor create(_AsmL: TAasmOutput; _BlockStart, _BlockEnd: Tai;
-                           _LabelInfo: PLabelInfo);
+        Constructor create(_AsmL: TAsmList; _BlockStart, _BlockEnd: Tai;
+                           _LabelInfo: PLabelInfo); virtual; reintroduce;
+        Destructor Destroy;override;
 
         { processor independent methods }
+
+        Procedure CreateUsedRegs(var regs: TAllUsedRegs);
+        Procedure ClearUsedRegs;
+        Procedure UpdateUsedRegs(p : Tai);
+        procedure UpdateUsedRegs(var Regs: TAllUsedRegs; p: Tai);
+        Function CopyUsedRegs(var dest : TAllUsedRegs) : boolean;
+        Procedure ReleaseUsedRegs(const regs : TAllUsedRegs);
+        Function RegInUsedRegs(reg : TRegister;regs : TAllUsedRegs) : boolean;
+        Procedure IncludeRegInUsedRegs(reg : TRegister;var regs : TAllUsedRegs);
+        Procedure ExcludeRegFromUsedRegs(reg: TRegister;var regs : TAllUsedRegs);
+
+        Function GetAllocationString(const regs : TAllUsedRegs) : string;
 
         { returns true if the label L is found between hp and the next }
         { instruction                                                  }
@@ -260,7 +280,6 @@ Unit AoptObj;
 
         { inserts new_one between prev and foll in AsmL }
         Procedure InsertLLItem(prev, foll, new_one: TLinkedListItem);
-
 
         { If P is a Tai object releveant to the optimizer, P is returned
           If it is not relevant tot he optimizer, the first object after P
@@ -274,6 +293,9 @@ Unit AoptObj;
           of Tai's starting with StartPai and ending with the next "real"
           instruction                                                      }
         Function FindRegAlloc(Reg: TRegister; StartPai: Tai): Boolean;
+
+        { reg used after p? }
+        function RegUsedAfterInstruction(reg: Tregister; p: tai; var AllUsedRegs: TAllUsedRegs): Boolean;
 
        { traces sucessive jumps to their final destination and sets it, e.g.
          je l1                je l3
@@ -291,12 +313,15 @@ Unit AoptObj;
         function getlabelwithsym(sym: tasmlabel): tai;
 
         { peephole optimizer }
-        procedure PrePeepHoleOpts;virtual;
-        procedure PeepHoleOptPass1;virtual;
-        procedure PeepHoleOptPass2;virtual;
-        procedure PostPeepHoleOpts;virtual;
+        procedure PrePeepHoleOpts;
+        procedure PeepHoleOptPass1;
+        procedure PeepHoleOptPass2; virtual;
+        procedure PostPeepHoleOpts;
 
         { processor dependent methods }
+        // if it returns true, perform a "continue"
+        function PeepHoleOptPass1Cpu(var p: tai): boolean; virtual;
+        function PostPeepHoleOptsCpu(var p: tai): boolean; virtual;
       End;
 
        Function ArrayRefsEq(const r1, r2: TReference): Boolean;
@@ -306,6 +331,7 @@ Unit AoptObj;
   Implementation
 
     uses
+      cutils,
       globals,
       verbose,
       procinfo;
@@ -314,56 +340,76 @@ Unit AoptObj;
       { ******************************** TUsedRegs ****************************** }
       { ************************************************************************* }
 
-      Constructor TUsedRegs.create;
+    Constructor TUsedRegs.create(aTyp : TRegisterType);
       Begin
+        Typ:=aTyp;
         UsedRegs := [];
       End;
 
-      Constructor TUsedRegs.create_regset(Const _RegSet: TRegSet);
+
+    Constructor TUsedRegs.create_regset(aTyp : TRegisterType;Const _RegSet: TRegSet);
       Begin
+        Typ:=aTyp;
         UsedRegs := _RegSet;
       End;
 
-      Procedure TUsedRegs.Update(p: Tai);
-      {updates UsedRegs with the RegAlloc Information coming after P}
+
+    {
+      updates UsedRegs with the RegAlloc Information coming after P
+    }
+    Procedure TUsedRegs.Update(p: Tai);
       Begin
-        Repeat
-          While Assigned(p) And
+        repeat
+          while assigned(p) and
                 ((p.typ in (SkipInstr - [ait_RegAlloc])) or
-                 ((p.typ = ait_label) And
-                  Not(Tai_Label(p).l.is_used))) Do
-               p := Tai(p.next);
-          While Assigned(p) And
+                 ((p.typ = ait_label) and
+                  labelCanBeSkipped(tai_label(p))) or
+                 ((p.typ = ait_marker) and
+                  (tai_Marker(p).Kind in [mark_AsmBlockEnd,mark_NoLineInfoStart,mark_NoLineInfoEnd]))) do
+               p := tai(p.next);
+          while assigned(p) and
                 (p.typ=ait_RegAlloc) Do
-            Begin
-          {!!!!!!!! FIXME
-              if tai_regalloc(p).ratype=ra_alloc then
-                UsedRegs := UsedRegs + [tai_regalloc(p).Reg]
-              else
-                UsedRegs := UsedRegs - [tai_regalloc(p).Reg];
-              p := Tai(p.next);
-          }
-            End;
-        Until Not(Assigned(p)) Or
-              (Not(p.typ in SkipInstr) And
-               Not((p.typ = ait_label) And
-                  Not(Tai_Label(p).l.is_used)));
+            begin
+              if (getregtype(tai_regalloc(p).reg) = typ) then
+                begin
+                  case tai_regalloc(p).ratype of
+                    ra_alloc :
+                      Include(UsedRegs, getsupreg(tai_regalloc(p).reg));
+                    ra_dealloc :
+                      Exclude(UsedRegs, getsupreg(tai_regalloc(p).reg));
+                  end;
+                end;
+              p := tai(p.next);
+            end;
+        until not(assigned(p)) or
+              (not(p.typ in SkipInstr) and
+               not((p.typ = ait_label) and
+                   labelCanBeSkipped(tai_label(p))));
       End;
 
-      Function TUsedRegs.IsUsed(Reg: TRegister): Boolean;
+
+    Function TUsedRegs.IsUsed(Reg: TRegister): Boolean;
       Begin
-        //!!!!!!!!!!! IsUsed := Reg in UsedRegs
+        IsUsed := (getregtype(Reg)=Typ) and (getsupreg(Reg) in UsedRegs);
       End;
 
-      Function TUsedRegs.GetUsedRegs: TRegSet;
+
+    Function TUsedRegs.GetUsedRegs: TRegSet;
       Begin
         GetUsedRegs := UsedRegs;
       End;
 
-      Destructor TUsedRegs.Destroy;
-        Begin
-          inherited destroy;
-        end;
+
+    Destructor TUsedRegs.Destroy;
+      Begin
+        inherited destroy;
+      end;
+
+
+    procedure TUsedRegs.Clear;
+      begin
+        UsedRegs := [];
+      end;
 
       { ************************************************************************* }
       { **************************** TPaiProp *********************************** }
@@ -378,14 +424,18 @@ Unit AoptObj;
         {  DirFlag: TFlagContents; I386 specific}
         End;
 
+
       Function TPaiProp.RegInSequence(Reg, which: TRegister): Boolean;
+      {
       Var p: Tai;
           RegsChecked: TRegSet;
           content: TContent;
           Counter: Byte;
           TmpResult: Boolean;
-      Begin
-      {!!!!!!!!!!1
+      }
+      begin
+        Result:=False; { unimplemented }
+      (*!!!!!!!!!!1
         RegsChecked := [];
         content := regs[which];
         p := content.StartMod;
@@ -397,9 +447,9 @@ Unit AoptObj;
             If IsLoadMemReg(p) Then
               With PInstr(p)^.oper[LoadSrc]^.ref^ Do
                 If (Base = ProcInfo.FramePointer)
-      {$ifdef RefsHaveIndexReg}
+      {$ifdef cpurefshaveindexreg}
                    And (Index = R_NO)
-      {$endif RefsHaveIndexReg} Then
+      {$endif cpurefshaveindexreg} Then
                   Begin
                     RegsChecked := RegsChecked +
                       [RegMaxSize(PInstr(p)^.oper[LoadDst]^.reg)];
@@ -411,19 +461,19 @@ Unit AoptObj;
                     If (Base = Reg) And
                        Not(Base In RegsChecked)
                       Then TmpResult := True;
-      {$ifdef RefsHaveIndexReg}
+      {$ifdef cpurefshaveindexreg}
                     If Not(TmpResult) And
                        (Index = Reg) And
                          Not(Index In RegsChecked)
                       Then TmpResult := True;
-      {$Endif RefsHaveIndexReg}
+      {$Endif cpurefshaveindexreg}
                   End
             Else TmpResult := RegInInstruction(Reg, p);
             Inc(Counter);
             GetNextInstruction(p,p)
           End;
         RegInSequence := TmpResult
-      }
+      *)
       End;
 
 
@@ -431,8 +481,10 @@ Unit AoptObj;
                   TInstrSinceLastMod);
       { Destroys the contents of the register Reg in the PPaiProp p1, as well as }
       { the contents of registers are loaded with a memory location based on Reg }
+      {
       Var TmpWState, TmpRState: Byte;
           Counter: TRegister;
+      }
       Begin
       {!!!!!!!
         Reg := RegMaxSize(Reg);
@@ -456,14 +508,15 @@ Unit AoptObj;
 
       Function ArrayRefsEq(const r1, r2: TReference): Boolean;
       Begin
-      {!!!!!!!!!!
+        Result:=False; { unimplemented }
+      (*!!!!!!!!!!
         ArrayRefsEq := (R1.Offset+R1.OffsetFixup = R2.Offset+R2.OffsetFixup) And
       {$ifdef refsHaveSegmentReg}
                        (R1.Segment = R2.Segment) And
       {$endif}
                        (R1.Base = R2.Base) And
                        (R1.Symbol=R2.Symbol);
-      }
+      *)
       End;
 
       Procedure TPaiProp.DestroyRefs(Const Ref: TReference; WhichReg: TRegister;
@@ -471,25 +524,27 @@ Unit AoptObj;
       { destroys all registers which possibly contain a reference to Ref, WhichReg }
       { is the register whose contents are being written to memory (if this proc   }
       { is called because of a "mov?? %reg, (mem)" instruction)                    }
+      {
       Var RefsEq: TRefCompare;
           Counter: TRegister;
+      }
       Begin
-      {!!!!!!!!!!!
+      (*!!!!!!!!!!!
         WhichReg := RegMaxSize(WhichReg);
         If (Ref.base = procinfo.FramePointer) or
             Assigned(Ref.Symbol) Then
           Begin
             If
-      {$ifdef refsHaveIndexReg}
+      {$ifdef cpurefshaveindexreg}
                (Ref.Index = R_NO) And
-      {$endif refsHaveIndexReg}
+      {$endif cpurefshaveindexreg}
                (Not(Assigned(Ref.Symbol)) or
                 (Ref.base = R_NO)) Then
         { local variable which is not an array }
-              RefsEq := {$ifdef fpc}@{$endif}RefsEqual
+              RefsEq := @RefsEqual
             Else
         { local variable which is an array }
-              RefsEq := {$ifdef fpc}@{$endif}ArrayRefsEq;
+              RefsEq := @ArrayRefsEq;
       {write something to a parameter, a local or global variable, so
          * with uncertain optimizations on:
             - destroy the contents of registers whose contents have somewhere a
@@ -503,7 +558,7 @@ Unit AoptObj;
               With Regs[Counter] Do
                 Begin
                   If (typ = Con_Ref) And
-                     ((Not(cs_UncertainOpts in aktglobalswitches) And
+                     ((Not(cs_opt_size in current_settings.optimizerswitches) And
                        (NrOfMods <> 1)
                       ) Or
                       (RefInSequence(Ref,Regs[Counter], RefsEq) And
@@ -531,7 +586,7 @@ Unit AoptObj;
             For Counter := LoGPReg to HiGPReg Do
               With Regs[Counter] Do
                 If (typ = Con_Ref) And
-                   (Not(cs_UncertainOpts in aktglobalswitches) Or
+                   (Not(cs_opt_size in current_settings.optimizerswitches) Or
       {$ifdef x86}
               {for movsl}
                     (Ref.Base = R_EDI) Or
@@ -545,13 +600,14 @@ Unit AoptObj;
                        )
                    )
                 Then DestroyReg(Counter, InstrSinceLastMod)
-      }
+      *)
       End;
 
+
       Procedure TPaiProp.DestroyAllRegs(var InstrSinceLastMod: TInstrSinceLastMod);
-      Var Counter: TRegister;
+      {Var Counter: TRegister;}
       Begin {initializes/desrtoys all registers}
-      {!!!!!!!!!
+      (*!!!!!!!!!
         For Counter := LoGPReg To HiGPReg Do
           Begin
             ReadReg(Counter);
@@ -559,7 +615,7 @@ Unit AoptObj;
           End;
         CondRegs.Init;
       { FPURegs.Init; }
-      }
+      *)
       End;
 
       Procedure TPaiProp.DestroyOp(const o:Toper; var InstrSinceLastMod:
@@ -589,14 +645,14 @@ Unit AoptObj;
 
       Procedure TPaiProp.ReadRef(Ref: PReference);
       Begin
-      {!!!!!!!
+      (*!!!!!!
         If Ref^.Base <> R_NO Then
           ReadReg(Ref^.Base);
-      {$ifdef refsHaveIndexReg}
+      {$ifdef cpurefshaveindexreg}
         If Ref^.Index <> R_NO Then
           ReadReg(Ref^.Index);
-      {$endif}
-      }
+      {$endif cpurefshaveindexreg}
+      *)
       End;
 
       Procedure TPaiProp.ReadOp(const o:toper);
@@ -612,7 +668,7 @@ Unit AoptObj;
       Procedure TPaiProp.ModifyReg(reg: TRegister; Var InstrSinceLastMod:
                                      TInstrSinceLastMod);
       Begin
-      {!!!!!!!
+      (*!!!!!!!
         With Regs[reg] Do
           If (Typ = Con_Ref)
             Then
@@ -627,7 +683,7 @@ Unit AoptObj;
               End
             Else
               DestroyReg(Reg, InstrSinceLastMod);
-      }
+      *)
       End;
 
       Procedure TPaiProp.ModifyOp(const oper: TOper; var InstrSinceLastMod:
@@ -654,16 +710,19 @@ Unit AoptObj;
 
       Function TPaiProp.GetWState(Reg: TRegister): TStateInt; {$ifdef inl} inline;{$endif inl}
       Begin
+        Result:=0; { unimplemented }
         //!!!! GetWState := Regs[Reg].WState
       End;
 
       Function TPaiProp.GetRState(Reg: TRegister): TStateInt; {$ifdef inl} inline;{$endif inl}
       Begin
+        Result:=0; { unimplemented }
         //!!!! GetRState := Regs[Reg].RState
       End;
 
       Function TPaiProp.GetRegContentType(Reg: TRegister): Byte; {$ifdef inl} inline;{$endif inl}
       Begin
+        Result:=0; { unimplemented }
         //!!!! GetRegContentType := Regs[Reg].typ
       End;
 
@@ -712,7 +771,7 @@ Unit AoptObj;
               (Counter <= Content.NrOfMods) Do
           Begin
             If (p.typ = ait_instruction) And
-               RefInInstruction(Ref, p, {$ifdef fpc}@{$endif}references_equal)
+               RefInInstruction(Ref, p, @references_equal)
               Then TmpResult := True;
             Inc(Counter);
             GetNextInstruction(p,p)
@@ -724,14 +783,112 @@ Unit AoptObj;
       { ***************************** TAoptObj ********************************** }
       { ************************************************************************* }
 
-      Constructor TAoptObj.create(_AsmL: TAasmOutput; _BlockStart, _BlockEnd: Tai;
+      Constructor TAoptObj.create(_AsmL: TAsmList; _BlockStart, _BlockEnd: Tai;
                                   _LabelInfo: PLabelInfo);
       Begin
         AsmL := _AsmL;
         BlockStart := _BlockStart;
         BlockEnd := _BlockEnd;
-        LabelInfo := _LabelInfo
+        LabelInfo := _LabelInfo;
+        CreateUsedRegs(UsedRegs);
       End;
+
+      destructor TAOptObj.Destroy;
+        var
+          i : TRegisterType;
+        begin
+          for i:=low(TRegisterType) to high(TRegisterType) do
+            UsedRegs[i].Destroy;
+          inherited Destroy;
+        end;
+
+
+      procedure TAOptObj.CreateUsedRegs(var regs: TAllUsedRegs);
+        var
+          i : TRegisterType;
+        begin
+          for i:=low(TRegisterType) to high(TRegisterType) do
+            Regs[i]:=TUsedRegs.Create(i);
+        end;
+
+
+      procedure TAOptObj.ClearUsedRegs;
+        var
+          i : TRegisterType;
+        begin
+          for i:=low(TRegisterType) to high(TRegisterType) do
+            UsedRegs[i].Clear;
+        end;
+
+
+      procedure TAOptObj.UpdateUsedRegs(p : Tai);
+        var
+          i : TRegisterType;
+        begin
+          for i:=low(TRegisterType) to high(TRegisterType) do
+            UsedRegs[i].Update(p);
+        end;
+
+
+      procedure TAOptObj.UpdateUsedRegs(var Regs : TAllUsedRegs;p : Tai);
+        var
+          i : TRegisterType;
+        begin
+          for i:=low(TRegisterType) to high(TRegisterType) do
+            Regs[i].Update(p);
+        end;
+
+
+      function TAOptObj.CopyUsedRegs(var dest: TAllUsedRegs): boolean;
+      var
+        i : TRegisterType;
+      begin
+        Result:=true;
+        for i:=low(TRegisterType) to high(TRegisterType) do
+          dest[i]:=TUsedRegs.Create_Regset(i,UsedRegs[i].GetUsedRegs);
+      end;
+
+
+      procedure TAOptObj.ReleaseUsedRegs(const regs: TAllUsedRegs);
+        var
+          i : TRegisterType;
+      begin
+        for i:=low(TRegisterType) to high(TRegisterType) do
+          regs[i].Free;
+      end;
+
+
+      Function TAOptObj.RegInUsedRegs(reg : TRegister;regs : TAllUsedRegs) : boolean;
+      begin
+        result:=regs[getregtype(reg)].IsUsed(reg);
+      end;
+
+
+      procedure TAOptObj.IncludeRegInUsedRegs(reg: TRegister;
+       var regs: TAllUsedRegs);
+      begin
+        include(regs[getregtype(reg)].UsedRegs,getsupreg(Reg));
+      end;
+
+
+      procedure TAOptObj.ExcludeRegFromUsedRegs(reg: TRegister;
+       var regs: TAllUsedRegs);
+      begin
+        exclude(regs[getregtype(reg)].UsedRegs,getsupreg(Reg));
+      end;
+
+
+      function TAOptObj.GetAllocationString(const regs: TAllUsedRegs): string;
+      var
+        i : TRegisterType;
+        j : TSuperRegister;
+      begin
+        Result:='';
+        for i:=low(TRegisterType) to high(TRegisterType) do
+          for j in regs[i].UsedRegs do
+            Result:=Result+std_regname(newreg(i,j,R_SUBWHOLE))+' ';
+      end;
+
 
       Function TAOptObj.FindLabel(L: TasmLabel; Var hp: Tai): Boolean;
       Var TempP: Tai;
@@ -740,7 +897,7 @@ Unit AoptObj;
         While Assigned(TempP) and
              (TempP.typ In SkipInstr + [ait_label]) Do
           If (TempP.typ <> ait_Label) Or
-             (Tai_label(TempP).l <> L)
+             (Tai_label(TempP).labsym <> L)
             Then GetNextInstruction(TempP, TempP)
             Else
               Begin
@@ -780,19 +937,19 @@ Unit AoptObj;
           OldP := P;
           If (P.typ in SkipInstr) Or
              ((P.typ = ait_marker) And
-              (Tai_Marker(P).Kind = AsmBlockEnd)) Then
+              (Tai_Marker(P).Kind = mark_AsmBlockEnd)) Then
             GetNextInstruction(P, P)
           Else If ((P.Typ = Ait_Marker) And
-              (Tai_Marker(P).Kind = NoPropInfoStart)) Then
-       { a marker of the type NoPropInfoStart can't be the first instruction of a }
+              (Tai_Marker(P).Kind = mark_NoPropInfoStart)) Then
+       { a marker of the type mark_NoPropInfoStart can't be the first instruction of a }
        { paasmoutput list                                                         }
             GetNextInstruction(Tai(P.Previous),P);
           If (P.Typ = Ait_Marker) And
-             (Tai_Marker(P).Kind = AsmBlockStart) Then
+             (Tai_Marker(P).Kind = mark_AsmBlockStart) Then
             Begin
               P := Tai(P.Next);
               While (P.typ <> Ait_Marker) Or
-                    (Tai_Marker(P).Kind <> AsmBlockEnd) Do
+                    (Tai_Marker(P).Kind <> mark_AsmBlockEnd) Do
                 P := Tai(P.Next)
             End;
           Until P = OldP;
@@ -812,7 +969,9 @@ Unit AoptObj;
             Top_None :
               OpsEqual := True
             else OpsEqual := False
-          End;
+          End
+        else
+          OpsEqual := False;
       End;
 
       Function TAOptObj.FindRegAlloc(Reg: TRegister; StartPai: Tai): Boolean;
@@ -822,12 +981,12 @@ Unit AoptObj;
           While Assigned(StartPai) And
                 ((StartPai.typ in (SkipInstr - [ait_regAlloc])) Or
                  ((StartPai.typ = ait_label) and
-                  Not(Tai_Label(StartPai).l.Is_Used))) Do
+                  Not(Tai_Label(StartPai).labsym.Is_Used))) Do
             StartPai := Tai(StartPai.Next);
           If Assigned(StartPai) And
-             (StartPai.typ = ait_regAlloc) and (tai_regalloc(StartPai).ratype=ra_alloc) Then
+             (StartPai.typ = ait_regAlloc) Then
             Begin
-              if tai_regalloc(StartPai).Reg = Reg then
+              if (tai_regalloc(StartPai).ratype=ra_alloc) and (getsupreg(tai_regalloc(StartPai).Reg) = getsupreg(Reg)) then
                begin
                  FindRegAlloc:=true;
                  exit;
@@ -838,6 +997,17 @@ Unit AoptObj;
             exit;
         Until false;
       End;
+
+
+      function TAOptObj.RegUsedAfterInstruction(reg: Tregister; p: tai;
+       var AllUsedRegs: TAllUsedRegs): Boolean;
+       begin
+         AllUsedRegs[getregtype(reg)].Update(tai(p.Next));
+         RegUsedAfterInstruction :=
+           (AllUsedRegs[getregtype(reg)].IsUsed(reg)); { optimization and
+              (not(getNextInstruction(p,p)) or
+               not(regLoadedWithNewValue(supreg,false,p))); }
+       end;
 
 
     function SkipLabels(hp: tai; var hp2: tai): boolean;
@@ -869,27 +1039,22 @@ Unit AoptObj;
            (tai(hp.next).typ = ait_label) then
           begin
             FindAnyLabel := true;
-            l := tai_label(hp.next).l;
+            l := tai_label(hp.next).labsym;
           end
       end;
 
 
-{$ifopt r+}
-{$define rangewason}
+{$push}
 {$r-}
-{$endif}
     function tAOptObj.getlabelwithsym(sym: tasmlabel): tai;
       begin
-        if (sym.labelnr >= labelinfo^.lowlabel) and
-           (sym.labelnr <= labelinfo^.highlabel) then   { range check, a jump can go past an assembler block! }
+        if (int64(sym.labelnr) >= int64(labelinfo^.lowlabel)) and
+           (int64(sym.labelnr) <= int64(labelinfo^.highlabel)) then   { range check, a jump can go past an assembler block! }
           getlabelwithsym := labelinfo^.labeltable^[sym.labelnr-labelinfo^.lowlabel].paiobj
         else
           getlabelwithsym := nil;
       end;
-{$ifdef rangewason}
-{$r+}
-{$undef rangewason}
-{$endif}
+{$pop}
 
     function TAOptObj.GetFinalDestination(hp: taicpu; level: longint): boolean;
       {traces sucessive jumps to their final destination and sets it, e.g.
@@ -919,18 +1084,30 @@ Unit AoptObj;
                (taicpu(p1).is_jmp) then
               if { the next instruction after the label where the jump hp arrives}
                  { is unconditional or of the same type as hp, so continue       }
-                 ((taicpu(p1).opcode = aopt_uncondjmp) or
+                 (((taicpu(p1).opcode = aopt_uncondjmp) and
+{$ifdef arm}
+                   (taicpu(p1).condition = C_None) and
+{$endif arm}
+                   (taicpu(p1).oper[0]^.typ = top_ref) and
+                   (assigned(taicpu(p1).oper[0]^.ref^.symbol)) and
+                   (taicpu(p1).oper[0]^.ref^.symbol is TAsmLabel)) or
                   conditions_equal(taicpu(p1).condition,hp.condition)) or
-                 { the next instruction after the label where the jump hp arrives}
-                 { is the opposite of hp (so this one is never taken), but after }
-                 { that one there is a branch that will be taken, so perform a   }
-                 { little hack: set p1 equal to this instruction (that's what the}
-                 { last SkipLabels is for, only works with short bool evaluation)}
+                 { the next instruction after the label where the jump hp arrives
+                   is the opposite of hp (so this one is never taken), but after
+                   that one there is a branch that will be taken, so perform a
+                   little hack: set p1 equal to this instruction (that's what the
+                   last SkipLabels is for, only works with short bool evaluation)}
                  (conditions_equal(taicpu(p1).condition,inverse_cond(hp.condition)) and
                   SkipLabels(p1,p2) and
                   (p2.typ = ait_instruction) and
                   (taicpu(p2).is_jmp) and
-                  ((taicpu(p2).opcode = aopt_uncondjmp) or
+                  (((taicpu(p2).opcode = aopt_uncondjmp) and
+{$ifdef arm}
+                    (taicpu(p1).condition = C_None) and
+{$endif arm}
+                    (taicpu(p2).oper[0]^.typ = top_ref) and
+                    (assigned(taicpu(p2).oper[0]^.ref^.symbol)) and
+                    (taicpu(p2).oper[0]^.ref^.symbol is TAsmLabel)) or
                    (conditions_equal(taicpu(p2).condition,hp.condition))) and
                   SkipLabels(p1,p1)) then
                 begin
@@ -952,7 +1129,7 @@ Unit AoptObj;
                       insertllitem(asml,p1,p1.next,tai_comment.Create(
                         strpnew('previous label inserted'))));
       {$endif finaldestdebug}
-                      objectlibrary.getlabel(l);
+                      current_asmdata.getjumplabel(l);
                       insertllitem(p1,p1.next,tai_label.Create(l));
                       tasmlabel(taicpu(hp).oper[0]^.ref^.symbol).decrefs;
                       hp.oper[0]^.ref^.symbol := l;
@@ -969,6 +1146,7 @@ Unit AoptObj;
                         strpnew('next label reused'))));
       {$endif finaldestdebug}
                       l.increfs;
+                      tasmlabel(hp.oper[0]^.ref^.symbol).decrefs;
                       hp.oper[0]^.ref^.symbol := l;
                       if not GetFinalDestination(hp,succ(level)) then
                         exit;
@@ -988,10 +1166,19 @@ Unit AoptObj;
         p,hp1,hp2 : tai;
       begin
         p := BlockStart;
-        //!!!! UsedRegs := [];
+        ClearUsedRegs;
         while (p <> BlockEnd) Do
           begin
-            //!!!! UpDateUsedRegs(UsedRegs, tai(p.next));
+            { I'am not sure why this is done, UsedRegs should reflect the register usage before the instruction
+              If an instruction needs the information of this, it can easily create a TempUsedRegs (FK)
+            UpdateUsedRegs(tai(p.next));
+            }
+{$ifdef DEBUG_OPTALLOC}
+            if p.Typ=ait_instruction then
+              InsertLLItem(tai(p.Previous),p,tai_comment.create(strpnew(GetAllocationString(UsedRegs))));
+{$endif DEBUG_OPTALLOC}
+            if PeepHoleOptPass1Cpu(p) then
+              continue;
             case p.Typ Of
               ait_instruction:
                 begin
@@ -1001,14 +1188,34 @@ Unit AoptObj;
                       { the following if-block removes all code between a jmp and the next label,
                         because it can never be executed
                       }
-                      if (taicpu(p).opcode = aopt_uncondjmp) then
+                      if (taicpu(p).opcode = aopt_uncondjmp) and
+{$ifdef arm}
+                         (taicpu(p).condition = C_None) and
+{$endif arm}
+                         (taicpu(p).oper[0]^.typ = top_ref) and
+                         (assigned(taicpu(p).oper[0]^.ref^.symbol)) and
+                         (taicpu(p).oper[0]^.ref^.symbol is TAsmLabel) then
                         begin
-                          while GetNextInstruction(p, hp1) and
+                          hp2:=p;
+                          while GetNextInstruction(hp2, hp1) and
                                 (hp1.typ <> ait_label) do
                             if not(hp1.typ in ([ait_label,ait_align]+skipinstr)) then
                               begin
-                                asml.remove(hp1);
-                                hp1.free;
+                                if (hp1.typ = ait_instruction) and
+                                   taicpu(hp1).is_jmp and
+                                   (taicpu(hp1).oper[0]^.typ = top_ref) and
+                                   assigned(taicpu(hp1).oper[0]^.ref^.symbol) and
+                                   (taicpu(hp1).oper[0]^.ref^.symbol is TAsmLabel) then
+                                   TAsmLabel(taicpu(hp1).oper[0]^.ref^.symbol).decrefs;
+                                { don't kill start/end of assembler block,
+                                  no-line-info-start/end etc }
+                                if hp1.typ<>ait_marker then
+                                  begin
+                                    asml.remove(hp1);
+                                    hp1.free;
+                                  end
+                                else
+                                  hp2:=hp1;
                               end
                             else break;
                           end;
@@ -1016,11 +1223,12 @@ Unit AoptObj;
                       if GetNextInstruction(p, hp1) then
                         begin
                           if FindLabel(tasmlabel(taicpu(p).oper[0]^.ref^.symbol), hp1) and
-        {$warning FIXME removing the first instruction fails}
+        { TODO: FIXME removing the first instruction fails}
                               (p<>blockstart) then
                             begin
                               hp2:=tai(hp1.next);
                               asml.remove(p);
+                              tasmlabel(taicpu(p).oper[0]^.ref^.symbol).decrefs;
                               p.free;
                               p:=hp2;
                               continue;
@@ -1031,15 +1239,29 @@ Unit AoptObj;
                                 SkipLabels(hp1,hp1);
                               if (tai(hp1).typ=ait_instruction) and
                                   (taicpu(hp1).opcode=aopt_uncondjmp) and
+{$ifdef arm}
+                                  (taicpu(hp1).condition=C_None) and
+{$endif arm}
+                                  (taicpu(hp1).oper[0]^.typ = top_ref) and
+                                  (assigned(taicpu(hp1).oper[0]^.ref^.symbol)) and
+                                  (taicpu(hp1).oper[0]^.ref^.symbol is TAsmLabel) and
                                   GetNextInstruction(hp1, hp2) and
                                   FindLabel(tasmlabel(taicpu(p).oper[0]^.ref^.symbol), hp2) then
                                 begin
-                                  if taicpu(p).opcode=aopt_condjmp then
+                                  if (taicpu(p).opcode=aopt_condjmp)
+{$ifdef arm}
+                                    and (taicpu(p).condition<>C_None)
+{$endif arm}
+                                  then
                                     begin
                                       taicpu(p).condition:=inverse_cond(taicpu(p).condition);
-                                      tai_label(hp2).l.decrefs;
+                                      tai_label(hp2).labsym.decrefs;
                                       taicpu(p).oper[0]^.ref^.symbol:=taicpu(hp1).oper[0]^.ref^.symbol;
-                                      taicpu(p).oper[0]^.ref^.symbol.increfs;
+                                      { when freeing hp1, the reference count
+                                        isn't decreased, so don't increase
+
+                                       taicpu(p).oper[0]^.ref^.symbol.increfs;
+                                      }
 {$ifdef SPARC}
                                       hp2:=tai(hp1.next);
                                       asml.remove(hp2);
@@ -1067,7 +1289,7 @@ Unit AoptObj;
                     end; { if is_jmp }
                 end;
             end;
-            //!!!!!!!! updateUsedRegs(UsedRegs,p);
+            UpdateUsedRegs(p);
             p:=tai(p.next);
           end;
       end;
@@ -1079,27 +1301,31 @@ Unit AoptObj;
 
 
     procedure TAOptObj.PostPeepHoleOpts;
+      var
+        p: tai;
       begin
+        p := BlockStart;
+        ClearUsedRegs;
+        while (p <> BlockEnd) Do
+          begin
+            UpdateUsedRegs(tai(p.next));
+            if PostPeepHoleOptsCpu(p) then
+              continue;
+            UpdateUsedRegs(p);
+            p:=tai(p.next);
+          end;
       end;
 
 
+    function TAOptObj.PeepHoleOptPass1Cpu(var p: tai): boolean;
+      begin
+        result := false;
+      end;
+
+
+    function TAOptObj.PostPeepHoleOptsCpu(var p: tai): boolean;
+      begin
+        result := false;
+      end;
+
 End.
-
-{
- $Log: aoptobj.pas,v $
- Revision 1.17  2005/02/26 01:26:59  jonas
-   * fixed generic jumps optimizer and enabled it for ppc (the label table
-     was not being initialised -> getfinaldestination always failed, which
-     caused wrong optimizations in some cases)
-   * changed the inverse_cond into a function, because tasmcond is a record
-     on ppc
-   + added a compare_conditions() function for the same reason
-
- Revision 1.16  2005/02/25 20:50:53  jonas
-   * fixed uninitialised function result in getfinaldestination() when
-     maximum recursion reached
-
- Revision 1.15  2005/02/14 17:13:06  peter
-   * truncate log
-
-}

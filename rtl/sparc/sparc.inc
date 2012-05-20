@@ -1,5 +1,4 @@
 {
-    $Id: sparc.inc,v 1.21 2005/02/14 17:13:31 peter Exp $
 
     This file is part of the Free Pascal run time library.
     Copyright (c) 2002-2004 by the Free Pascal development team.
@@ -46,11 +45,27 @@ function get_got : pointer;assembler;nostackframe;[public, alias: 'FPC_GETGOT'];
   end;
 
 
+{$define FPC_SYSTEM_HAS_SYSINITFPU}
+Procedure SysInitFPU;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    softfloat_exception_mask:=float_flag_underflow or float_flag_inexact or float_flag_denormal;
+    { enable div by 0 and invalid operation fpu exceptions
+      round towards zero; ieee compliant arithmetics }
+    set_fsr((get_fsr and $3fbfffff) or $09000000);
+  end;
+  
+{$define FPC_SYSTEM_HAS_SYSRESETFPU}
+Procedure SysResetFPU;{$ifdef SYSTEMINLINE}inline;{$endif}
+  begin
+    softfloat_exception_flags:=0;
+  end;
+
+
 procedure fpc_cpuinit;
   begin
-    { enable div by 0 and invalid operation fpu exceptions }
-    { round towards zero; ieee compliant arithmetics }
-    set_fsr((get_fsr and $3fbfffff) or $09000000);
+    SysResetFPU;
+    if not(IsLibrary) then
+      SysInitFPU;
   end;
 
 
@@ -65,21 +80,29 @@ function get_frame:pointer;assembler;nostackframe;
 function get_caller_addr(framebp:pointer):pointer;assembler;nostackframe;
   asm
     { framebp = %o0 }
+    subcc   %o0,0,%o0
+    be      .Lframezero
+    nop
     { flush register windows, so they are stored in the stack }
     ta      3
     ld [%o0+60],%o0
     { add 8 to skip jmpl and delay slot }
     add %o0,8,%o0
+.Lframezero:
   end;
 
 
 {$define FPC_SYSTEM_HAS_GET_CALLER_FRAME}
 function get_caller_frame(framebp:pointer):pointer;assembler;nostackframe;
   asm
+    { framebp = %o0 }
+    subcc   %o0,0,%o0
+    be      .Lframezero
+    nop
     { flush register windows, so they are stored in the stack }
     ta      3
-    { framebp = %o0 }
     ld [%o0+56],%o0
+.Lframezero:
   end;
 
 
@@ -296,7 +319,7 @@ procedure Move(const source;var dest;count:longint);[public, alias: 'FPC_MOVE'];
 ****************************************************************************}
 
 {$define FPC_SYSTEM_HAS_ABS_LONGINT}
-function abs(l:longint):longint; assembler;{$ifdef SYSTEMINLINE}inline;{$endif}nostackframe;{$ifndef INTERNCONSTINTF}[internconst:fpc_in_const_abs];{$endif}
+function abs(l:longint):longint; assembler;{$ifdef SYSTEMINLINE}inline;{$endif}nostackframe;
 asm
   sra %o0,31,%g1
   add %o0,%g1,%o0
@@ -360,21 +383,180 @@ asm
 end;
 
 
-{
-  $Log: sparc.inc,v $
-  Revision 1.21  2005/02/14 17:13:31  peter
-    * truncate log
+function InterLockedDecrement (var Target: longint) : longint; assembler; nostackframe;
+asm
+  { usually, we shouldn't lock here so saving the stack frame for these extra intructions is
+    worse the effort, especially while waiting :)
+  }
+.LInterLockedDecrement1:
+  sethi %hi(fpc_system_lock), %g1
+  or %g1,%lo(fpc_system_lock), %g1
+  ldstub [%g1],%g1
+  cmp %g1,0
+  bne .LInterLockedDecrement1
+  nop
 
-  Revision 1.20  2005/02/13 18:58:27  florian
-    + FPU controll routines in math unit
+  ld [%o0],%g1
+  sub %g1,1,%g1
+  st %g1,[%o0]
 
-  Revision 1.19  2005/02/07 22:17:48  peter
-    * add $ifdef for move
+  mov %g1,%o0
 
-  Revision 1.18  2005/01/27 21:26:39  florian
-    + getgot function added
+  { unlock }
+  sethi %hi(fpc_system_lock), %g1
+  or %g1,%lo(fpc_system_lock), %g1
+  stb %g0,[%g1]
+end;
 
-  Revision 1.17  2005/01/18 20:37:26  florian
-    * set floating point precision and ieee compliance
+function InterLockedIncrement (var Target: longint) : longint; assembler; nostackframe;
+asm
+  { usually, we shouldn't lock here so saving the stack frame for these extra intructions is
+    worse the effort, especially while waiting :)
+  }
+.LInterLockedIncrement1:
+  sethi %hi(fpc_system_lock), %g1
+  or %g1,%lo(fpc_system_lock), %g1
+  ldstub [%g1],%g1
+  cmp %g1,0
+  bne .LInterLockedIncrement1
+  nop
 
-}
+  ld [%o0],%g1
+  add %g1,1,%g1
+  st %g1,[%o0]
+
+  mov %g1,%o0
+
+  { unlock }
+  sethi %hi(fpc_system_lock), %g1
+  or %g1,%lo(fpc_system_lock), %g1
+  stb %g0,[%g1]
+end;
+
+
+function InterLockedExchange (var Target: longint;Source : longint) : longint; assembler; nostackframe;
+asm
+  { usually, we shouldn't lock here so saving the stack frame for these extra intructions is
+    worse the effort, especially while waiting :)
+  }
+.LInterLockedExchange1:
+  sethi %hi(fpc_system_lock), %g1
+  or %g1,%lo(fpc_system_lock), %g1
+  ldstub [%g1],%g1
+  cmp %g1,0
+  bne .LInterLockedExchange1
+  nop
+
+  ld [%o0],%g1
+  st %o1,[%o0]
+
+  mov %g1,%o0
+
+  { unlock }
+  sethi %hi(fpc_system_lock), %g1
+  or %g1,%lo(fpc_system_lock), %g1
+  stb %g0,[%g1]
+end;
+
+
+function InterLockedExchangeAdd (var Target: longint;Source : longint) : longint; assembler; nostackframe;
+asm
+  { usually, we shouldn't lock here so saving the stack frame for these extra intructions is
+    worse the effort, especially while waiting :)
+  }
+.LInterLockedExchangeAdd1:
+  sethi %hi(fpc_system_lock), %g1
+  or %g1,%lo(fpc_system_lock), %g1
+  ldstub [%g1],%g1
+  cmp %g1,0
+  bne .LInterLockedExchangeAdd1
+  nop
+
+  ld [%o0],%g1
+  add %g1,%o1,%o1
+  st %o1,[%o0]
+
+  mov %g1,%o0
+
+  { unlock }
+  sethi %hi(fpc_system_lock), %g1
+  or %g1,%lo(fpc_system_lock), %g1
+  stb %g0,[%g1]
+end;
+
+
+function InterlockedCompareExchange(var Target: longint; NewValue: longint; Comperand: longint): longint; assembler; nostackframe;
+asm
+  { usually, we shouldn't lock here so saving the stack frame for these extra intructions is
+    worse the effort, especially while waiting :)
+  }
+{ input:  address of target in o0, newvalue in o1, comparand in o2 }
+{ output: value stored in target before entry of the function      }
+{ side-effect: NewValue stored in target if (target = comparand)   }
+.LInterlockedCompareExchange1:
+  sethi %hi(fpc_system_lock), %g1
+  or %g1,%lo(fpc_system_lock), %g1
+  ldstub [%g1],%g1
+  cmp %g1,0
+  bne .LInterlockedCompareExchange1
+  nop
+
+  ld [%o0],%g1
+  cmp %g1,%o2
+  bne  .LInterlockedCompareExchange2
+  nop
+  st %o1,[%o0]
+.LInterlockedCompareExchange2:
+  mov %g1,%o0
+
+  { unlock }
+  sethi %hi(fpc_system_lock), %g1
+  or %g1,%lo(fpc_system_lock), %g1
+  stb %g0,[%g1]
+end;
+
+{$ifndef FPC_SYSTEM_HAS_MEM_BARRIER}
+{$define FPC_SYSTEM_HAS_MEM_BARRIER}
+
+const
+  LoadLoad   = $01;
+  StoreLoad  = $02;
+  LoadStore  = $04;
+  StoreStore = $08;
+  LookAside  = $10;
+  MemIssue   = $20;
+  Sync       = $40;
+
+procedure ReadBarrier;assembler;nostackframe;{$ifdef SYSTEMINLINE}inline;{$endif}
+asm
+{$ifdef FPC_HAS_MEMBAR}
+  ba,pt .L1
+  membar LoadLoad
+.L1:
+{$endif}
+end;
+
+procedure ReadDependencyBarrier;{$ifdef SYSTEMINLINE}inline;{$endif}
+begin
+  { reads imply barrier on earlier reads depended on }
+end;
+
+procedure ReadWriteBarrier;assembler;nostackframe;{$ifdef SYSTEMINLINE}inline;{$endif}
+asm
+{$ifdef FPC_HAS_MEMBAR}
+  ba,pt .L1
+  membar LoadLoad + LoadStore + StoreLoad + StoreStore
+.L1:
+{$endif}
+end;
+
+procedure WriteBarrier;assembler;nostackframe;{$ifdef SYSTEMINLINE}inline;{$endif}
+asm
+{$ifdef FPC_HAS_MEMBAR}
+  ba,pt .L1
+  stbar
+.L1:
+{$endif}
+end;
+
+{$endif}

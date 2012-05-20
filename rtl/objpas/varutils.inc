@@ -1,5 +1,4 @@
 {
-    $Id: varutils.inc,v 1.24 2005/03/28 21:52:43 florian Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2001 by the Free Pascal development team
 
@@ -14,12 +13,13 @@
 
  **********************************************************************}
 
-{$ifdef HASVARIANT}
 { ---------------------------------------------------------------------
     Some general stuff: Error handling and so on.
   ---------------------------------------------------------------------}
 
-
+{ we do ugly things with tvararray here }
+{$PUSH}
+{$RANGECHECKS OFF}
 
 Procedure SetUnlockResult (P : PVarArray; Res : HResult);
 
@@ -46,14 +46,13 @@ end;
     Basic variant handling.
   ---------------------------------------------------------------------}
 
-function VariantInit(var Varg: TVarData): HRESULT;stdcall;
+procedure VariantInit(var Varg: TVarData); stdcall;
 begin
   With Varg do
     begin
       FillChar(VBytes, SizeOf(VBytes), 0);
       VType:=varEmpty;
     end;
-  Result:=VAR_OK;
 end;
 
 function VariantClear(var Varg: TVarData): HRESULT;stdcall;
@@ -61,14 +60,19 @@ begin
   With Varg do
     if (VType and varArray)=varArray then
       begin
-      Exit(SafeArrayDestroy(VArray))
+        Result:=SafeArrayDestroy(VArray);
+        if Result<>VAR_OK then
+          exit;
       end
     else
       begin
       if (VType and varByRef) = 0 then
         case VType of
-          varEmpty, varNull, varSmallint, varInteger, varSingle, varDouble, varWord,
-          varCurrency, varDate, varError, varBoolean, varByte,VarShortInt,
+          varEmpty, varNull, varSmallint, varInteger, varWord,
+{$ifndef FPUNONE}
+          varSingle, varDouble, varCurrency, varDate,
+{$endif}
+          varError, varBoolean, varByte,VarShortInt,
           varInt64, VarLongWord,VarQWord:
             ;
           varOleStr:
@@ -80,7 +84,8 @@ begin
           exit(VAR_BADVARTYPE)
         end;
     end;
-  Result:=VariantInit(Varg);
+  VariantInit(Varg);
+  Result:=VAR_OK;
 end;
 
 function VariantCopy(var VargDest: TVarData; const VargSrc: TVarData): HRESULT;stdcall;
@@ -101,8 +106,11 @@ begin
       else
         case (VType and varTypeMask) of
           varEmpty, varNull:;
-          varSmallint, varInteger, varSingle, varDouble, varCurrency, varWord,
-          varDate, varError, varBoolean, varByte,VarShortInt,
+          varSmallint, varInteger, varWord,
+{$ifndef FPUNONE}
+          varSingle, varDouble, varCurrency, varDate,
+{$endif}
+          varError, varBoolean, varByte,VarShortInt,
           varInt64, VarLongWord,VarQWord:
             Move(VBytes, VargDest.VBytes, SizeOf(VargDest.VBytes));
           varOleStr:
@@ -132,10 +140,12 @@ begin
       varEmpty, varNull:;
       varSmallint : VargDest.VSmallInt:=PSmallInt(VPointer)^;
       varInteger  : VargDest.VInteger:=PLongint(VPointer)^;
+{$ifndef FPUNONE}
       varSingle   : VargDest.VSingle:=PSingle(VPointer)^;
       varDouble   : VargDest.VDouble:=PDouble(VPointer)^;
       varCurrency : VargDest.VCurrency:=PCurrency(VPointer)^;
       varDate     : VargDest.VDate:=PDate(VPointer)^;
+{$endif}
       varBoolean  : VargDest.VBoolean:=PWordBool(VPointer)^;
       varError    : VargDest.VError:=PError(VPointer)^;
       varByte     : VargDest.VByte:=PByte(VPointer)^;
@@ -147,7 +157,7 @@ begin
       varVariant  : Variant(VargDest):=Variant(PVarData(VPointer)^);
       varOleStr   : CopyAsWideString(VargDest.VOleStr,PVarData(VPointer)^.VoleStr);
       varDispatch,
-      varUnknown  : NoInterfaces;
+      varUnknown  : IInterface(VargDest.vUnknown):=IInterface(PInterface(VargSrc.VPointer)^);
       else
         Exit(VAR_BADVARTYPE);
       end;
@@ -175,10 +185,12 @@ begin
         case Vartype of
           varSmallInt : VargDest.VSmallInt:=VariantToSmallInt(Tmp);
           varInteger  : VargDest.VInteger:=VariantToLongint(Tmp);
+{$ifndef FPUNONE}
           varSingle   : VargDest.VSingle:=VariantToSingle(Tmp);
           varDouble   : VargDest.VDouble:=VariantToDouble(Tmp);
           varCurrency : VargDest.VCurrency:=VariantToCurrency(Tmp);
           varDate     : VargDest.VDate:=VariantToDate(tmp);
+{$endif}
           varOleStr   : MakeWideString(VargDest.VoleStr, VariantToWideString(tmp));
           varDispatch : Result:=VAR_TYPEMISMATCH;
           varUnknown  : Result:=VAR_TYPEMISMATCH;
@@ -202,6 +214,7 @@ begin
     finally
       VariantClear(Tmp);
     end;
+  {$RANGECHECKS OFF}
 end;
 
 { ---------------------------------------------------------------------
@@ -234,17 +247,8 @@ end;
 
 Function CheckVarArrayAndCalculateAddress(psa: PVarArray;
   Indices: PVarArrayCoorArray; var Address: Pointer; Lockit: Boolean): HRESULT;
-
-  Function CountElements(D: Longint): Longint;
-  begin
-    if (D<psa^.DimCount) then
-      Result:=CountElements(D+1)+psa^.Bounds[D-1].ElementCount
-    else
-      Result:=1;
-  end;
-
 var
-  LB,HB,I,Count : LongInt;
+  I,D,Count,Idx : LongInt;
 
 begin
   Result:=CheckVarArray(psa);
@@ -252,14 +256,18 @@ begin
   Count:=0;
   If Result<>VAR_OK then
     exit;
-  for I:=1 to psa^.DimCount do
+  D:=0;
+  for I:=0 to psa^.DimCount-1 do
     begin
-    LB:=psa^.Bounds[I-1].LowBound;
-    HB:=LB+psa^.Bounds[I-1].ElementCount;
-    if (LB=HB) or ((Indices^[I-1]< LB) or(Indices^[I-1]>HB)) then
-      Exit(VAR_BADINDEX);
-    Count:=Count+(Indices^[I-1]-LB)*CountElements(I+1);
-  end;
+      Idx:=Indices^[psa^.DimCount-I-1] - psa^.Bounds[I].LowBound;
+      if (Idx<0) or (Idx>=psa^.Bounds[I].ElementCount) then
+        Exit(VAR_BADINDEX);
+      if I=0 then
+        Count:=Idx
+      else
+        Inc(Count,Idx*D);
+      Inc(D,psa^.Bounds[I].ElementCount);
+    end;
   Address:=SafeArrayCalculateElementAddress(psa, Count);
   if LockIt then
     Result:=SafeArrayLock(psa);
@@ -278,7 +286,7 @@ begin
 end;
 
 type
-  TVariantArrayType = (vatNormal, vatInterface, vatWideString);
+  TVariantArrayType = (vatNormal, vatInterface, vatWideString, vatVariant);
 
 Function VariantArrayType(psa: PVarArray): TVariantArrayType;
 
@@ -288,6 +296,8 @@ begin
     Result:=vatInterface
   else if (psa^.Flags AND ARR_OLESTR) <> 0 then
     Result:=vatWideString
+  else if (psa^.Flags and ARR_VARIANT) <> 0 then
+    Result := vatVariant
   else
     Result:=vatNormal;
 end;
@@ -296,16 +306,32 @@ Function SafeArrayClearDataSpace(psa: PVarArray; WipeBytes: Boolean {= True}): H
 
 var
   vat: TVariantArrayType;
-
+  P : Pointer;
+  J,Count : Integer;
 begin
   try
+    count:=SafeArrayElementTotal(psa);
     vat:=VariantArrayType(psa);
     case vat of
-      vatNormal     : FillChar(psa^.Data^,
-                         SafeArrayElementTotal(psa)*psa^.ElementSize,
-                         0);
-      vatInterface  : NoInterfaces;
-      vatWideString : NoWidestrings;
+      vatNormal : FillChar(psa^.Data^,Count*psa^.ElementSize,0);
+      vatInterface :
+         for j := 0 to Count - 1 do
+           begin
+           P := SafeArrayCalculateElementAddress(psa,j);
+           IUnknown(PUnknown(P)^):=Nil
+           end;
+      vatWideString :
+         for j := 0 to Count - 1 do
+           begin
+           P := SafeArrayCalculateElementAddress(psa,j);
+           WideString(PPointer(P)^):='';
+           end;
+      vatVariant :
+         for j := 0 to Count - 1 do
+           begin
+           P := SafeArrayCalculateElementAddress(psa,j);
+           VariantClear(PVarData(P)^);
+           end;
     end;
     Result:=VAR_OK;
   except
@@ -316,17 +342,36 @@ end;
 
 Function SafeArrayCopyDataSpace(psa, psaOut: PVarArray): HRESULT;
 var
-  vVargSrc, vTarget: Pointer;
   vat: TVariantArrayType;
+  P1,P2 : Pointer;
+  J,Count : Integer;
 begin
   try
+    Count:=SafeArrayElementTotal(psa);
     vat:=VariantArrayType(psa);
     case vat of
-      vatNormal: Move(psa^.Data^,
-                      psaOut^.Data^,
-                      SafeArrayElementTotal(psa)*psa^.ElementSize);
-      vatInterface : NoInterfaces; // Copy element per element...
-      vatWideString: NoWideStrings; // here also...
+      vatNormal: Move(psa^.Data^,psaOut^.Data^,Count*psa^.ElementSize);
+      vatInterface :
+         for j := 0 to Count - 1 do
+           begin
+           P1 := SafeArrayCalculateElementAddress(psa,j);
+           P2 := SafeArrayCalculateElementAddress(psaout,j);
+           IUnknown(PUnknown(P2)^):=IUnknown(PUnknown(P1)^);
+           end;
+      vatWideString :
+         for j := 0 to Count - 1 do
+           begin
+           P1 := SafeArrayCalculateElementAddress(psa,j);
+           P2 := SafeArrayCalculateElementAddress(psaOut,j);
+           WideString(PPointer(P2)^):=WideString(PPointer(P1)^);
+           end;
+      vatVariant :
+         for j := 0 to Count - 1 do
+           begin
+           P1 := SafeArrayCalculateElementAddress(psa,j);
+           P2 := SafeArrayCalculateElementAddress(psaOut,j);
+           VariantCopy(PVarData(P2)^,PVarData(P2)^);
+           end;
     end;
     Result:=VAR_OK;
   except
@@ -335,24 +380,44 @@ begin
   end;
 end;
 
-Type
-  TVartypes = varEmpty..varByte;
-
 Const
-  Supportedpsas : set of TVarTypes =
-    [varSmallint,varInteger,varSingle,varDouble,varCurrency,varDate,varOleStr,
-     varDispatch,varError,varBoolean,varVariant,varUnknown,varByte];
-  psaElementSizes : Array [varEmpty..varByte] of Byte =
-    (0,0,2,4,4,8,8,8,4,4,4,2,16,4,0,0,0,1);
-  psaElementFlags : Array [varEmpty..varByte] of Longint =
+  Supportedpsas = [varSmallint,varInteger,
+{$ifndef FPUNONE}
+     varSingle,varDouble,varCurrency,varDate,
+{$endif}
+     varOleStr,varDispatch,varError,varBoolean,varVariant,varUnknown,varShortInt,varByte,
+     varWord,varLongWord,varInt64,varQWord];
+  psaElementFlags : Array [varEmpty..varQWord] of Longint =
     (ARR_NONE,ARR_NONE,ARR_NONE,ARR_NONE,ARR_NONE,ARR_NONE,ARR_NONE,ARR_NONE,
-     ARR_OLESTR,ARR_DISPATCH,ARR_NONE,ARR_NONE,ARR_NONE,ARR_UNKNOWN,
-     ARR_NONE,ARR_NONE,ARR_NONE,ARR_NONE);
+     ARR_OLESTR,ARR_DISPATCH,ARR_NONE,ARR_NONE,ARR_VARIANT,ARR_UNKNOWN,
+     ARR_NONE,ARR_NONE,ARR_NONE,ARR_NONE,ARR_NONE,ARR_NONE,ARR_NONE,ARR_NONE);
+  psaElementSizes : Array [varEmpty..varQWord] of Byte =
+    (0,0,                  // varempty, varnull
+     SizeOf(SmallInt),     // varsmallint
+     SizeOf(Integer),      // varinteger
+     SizeOf(Single),       // varsingle
+     SizeOf(Double),       // vardouble
+     SizeOf(Currency),     // varcurrency
+     SizeOf(TDateTime),    // vardate
+     SizeOf(PWideString),  // varolestr
+     SizeOf(IInterface),   // vardispatch
+     SizeOf(TError),       // varerror
+     SizeOf(Boolean),      // varboolean
+     SizeOf(TVarData),     // varvariant
+     SizeOf(IUnknown),     // varunknown
+     0, // Decimal         // vardecimal
+     0, // Unused
+     SizeOf(ShortInt),     // varshortint
+     SizeOf(Byte),         // varbyte
+     SizeOf(Word),         // varword
+     SizeOf(LongWord),     // varlongword
+     SizeOf(Int64),        // varint64
+     SizeOf(QWord));       // varqword
 
-Function SafeArrayCreate(VarType, Dim: SizeInt; const Bounds: TVarArrayBoundArray): PVarArray;stdcall;
+Function SafeArrayCreate(VarType, Dim: DWord; const Bounds: TVarArrayBoundArray): PVarArray;stdcall;
   var
     res : HRESULT;
-    I   : SizeInt;
+    I   : DWord;
   begin
     Result:=nil;
     if Not (VarType in Supportedpsas) Then
@@ -363,6 +428,7 @@ Function SafeArrayCreate(VarType, Dim: SizeInt; const Bounds: TVarArrayBoundArra
     Result^.DimCount:=Dim;
     Result^.Flags:=psaElementFlags[VarType];
     Result^.ElementSize:=psaElementSizes[VarType];
+    Result^.LockCount := 0;
     for i:=0 to Dim-1 do
       begin
         Result^.Bounds[i].LowBound:=Bounds[Dim-I-1].LowBound;
@@ -375,12 +441,13 @@ Function SafeArrayCreate(VarType, Dim: SizeInt; const Bounds: TVarArrayBoundArra
       Result:=nil;
       end;
   end;
-  
 
-Function SafeArrayAllocDescriptor(DimCount: SizeInt; var psa: PVarArray): HRESULT;stdcall;
+
+Function SafeArrayAllocDescriptor(DimCount: Dword; var psa: PVarArray): HRESULT;stdcall;
 begin
   try
-    psa:=GetMem(SizeOf(TVarArray) + SizeOf(TVarArrayBound) * (DimCount - 1));
+    { one bound item is included in TVarArray }
+    psa:=GetMem(SizeOf(TVarArray) + SizeOf(TVarArrayBound)*(DimCount-1));
     Result:=VAR_OK;
   except
     On E : Exception do
@@ -392,7 +459,10 @@ Function SafeArrayAllocData(psa: PVarArray): HRESULT;stdcall;
 begin
   try
     With psa^ do
-      Data:=GetMem(SafeArrayElementTotal(psa)*ElementSize);
+      begin
+        Data:=GetMem(SafeArrayElementTotal(psa)*ElementSize);
+        fillchar(Data^,SafeArrayElementTotal(psa)*ElementSize,0);
+      end;
     Result:=VAR_OK;
   except
     On E : Exception do
@@ -481,12 +551,16 @@ begin
           begin
           P:=SafeArrayCalculateElementAddress(psa,j);
           if vat = vatInterface then
-            NoInterfaces // Set to nil
-          else
-            NoWideStrings; // Set to empty...
+            IUnknown(PPointer(P)^):=Nil
+          else if vat=vatWideString then
+            WideString(PPointer(P)^):=''
+          else if vat=vatVariant then
+            VariantClear(PVarData(P)^);
           end;
         end;
-      ReAllocMem(psa^.Data,Count+D);
+      ReAllocMem(psa^.Data,(Count+D)*psa^.ElementSize);
+      if D>0 then
+        fillchar((PChar(psa^.Data)+Count*psa^.ElementSize)^,D*psa^.ElementSize,0);
       end;
     psa^.Bounds[0].ElementCount:=NewBound.ElementCount;
     psa^.Bounds[0].LowBound:=NewBound.LowBound;
@@ -518,6 +592,7 @@ begin
         begin
         Flags:=psa^.Flags;
         ElementSize:=psa^.ElementSize;
+        LockCount := 0;
         DimCount:=psa^.DimCount;
         for i:=0 to DimCount-1 do
           begin
@@ -584,30 +659,30 @@ begin
   end;
 end;
 
-Function SafeArrayGetLBound(psa: PVarArray; Dim: SizeInt; var LBound: SizeInt): HRESULT;stdcall;
+Function SafeArrayGetLBound(psa: PVarArray; Dim: DWord; var LBound: LongInt): HRESULT;stdcall;
 begin
   Result:=CheckVarArray(psa);
   if Result<>VAR_OK then
     exit;
   if (Dim>0) and (Dim<=psa^.DimCount) then
-    LBound:=psa^.Bounds[Dim-1].LowBound
+    LBound:=psa^.Bounds[psa^.dimcount-Dim].LowBound
   else
     Result:=VAR_BADINDEX;
 end;
 
-Function SafeArrayGetUBound(psa: PVarArray; Dim: SizeInt; var UBound: SizeInt): HRESULT;stdcall;
+Function SafeArrayGetUBound(psa: PVarArray; Dim : DWord; var UBound: LongInt): HRESULT;stdcall;
 begin
   Result:=CheckVarArray(psa);
   if Result<>VAR_OK then
     exit;
   if (Dim>0) and (Dim<=psa^.DimCount) then
-    UBound:=psa^.Bounds[Dim-1].LowBound +
-            psa^.Bounds[Dim-1].ElementCount-1
+    UBound:=psa^.Bounds[psa^.dimcount-Dim].LowBound +
+            psa^.Bounds[psa^.dimcount-Dim].ElementCount-1
   else
     Result:=VAR_BADINDEX
 end;
 
-Function SafeArrayGetDim(psa: PVarArray): SizeInt;stdcall;
+Function SafeArrayGetDim(psa: PVarArray): HRESULT;stdcall;
 begin
   if CheckVarArray(psa)<>VAR_OK then
     Result:=0
@@ -663,9 +738,11 @@ begin
       vatNormal:
         Move(P^, Data^, psa^.ElementSize);
       vatInterface:
-        NoInterfaces; // Just assign...
+        IInterface(PInterface(Data)^) := IInterface(PInterface(P)^);
       vatWideString:
-        NoWideStrings; // Just assign...
+        CopyAsWideString(PWideChar(Data^), PWideChar(P^));
+      vatVariant:
+        VariantCopy(PVarData(Data)^, PVarData(P)^);
     end;
   except
     On E : Exception do
@@ -688,9 +765,11 @@ begin
       vatNormal:
         Move(Data^,P^,psa^.ElementSize);
       vatInterface:
-        NoInterfaces;
+        IInterface(PInterface(P)^):=IInterface(Data);
       vatWideString:
-        NoWideStrings;
+        CopyAsWideString(PWideChar(P^), PWideChar(Data));
+      vatVariant:
+        VariantCopy(PVarData(P)^, PVarData(Data)^);    // !! Untested
     end;
   except
     On E : Exception do
@@ -714,47 +793,6 @@ begin
   else
     Result:=psa^.ElementSize;
 end;
+{$POP}
 
-{$endif HASVARIANT}
-{
-  $Log: varutils.inc,v $
-  Revision 1.24  2005/03/28 21:52:43  florian
-    * SafeCreateArray fixed
 
-  Revision 1.23  2005/03/28 17:04:58  florian
-    * compilation on non win32 fixed
-
-  Revision 1.22  2005/03/28 13:38:05  florian
-    + a lot of vararray stuff
-
-  Revision 1.21  2005/02/25 14:39:31  peter
-    * 64bit fixes
-
-  Revision 1.20  2005/02/24 22:36:36  florian
-    + some variant stuff fixed and added
-
-  Revision 1.19  2005/02/14 17:13:31  peter
-    * truncate log
-
-  Revision 1.18  2005/02/08 21:17:25  florian
-    * fixed variant copy for interfaces
-
-  Revision 1.17  2005/02/08 07:25:26  marco
-   * patch from Peter
-
-  Revision 1.16  2005/02/07 21:52:08  florian
-    + basic variant<->intf conversion
-
-  Revision 1.15  2005/01/16 16:56:32  florian
-    + some missing word handling added
-
-  Revision 1.14  2005/01/16 16:15:30  florian
-    * olestring copying fixed
-
-  Revision 1.13  2005/01/15 18:47:26  florian
-    * several variant init./final. stuff fixed
-
-  Revision 1.12  2005/01/08 16:19:42  florian
-    * made some variants stuff more readable
-
-}

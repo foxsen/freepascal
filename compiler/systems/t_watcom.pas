@@ -1,5 +1,4 @@
 {
-    $Id: t_watcom.pas,v 1.8 2005/02/14 17:13:10 peter Exp $
     Copyright (c) 2003 by Wiktor Sywula
 
     This unit implements support import, export, link routines
@@ -32,7 +31,8 @@ implementation
 
     uses
        link,
-       cclasses,cutils,strings,globtype,globals,
+       SysUtils,
+       cclasses,cutils,cfileutl,globtype,globals,
        systems,verbose,script,fmodule,i_watcom;
 
 
@@ -69,14 +69,14 @@ end;
 Function TLinkerWatcom.WriteResponseFile(isdll:boolean) : Boolean;
 Var
   linkres  : TLinkRes;
-  i        : longint;
+  {i        : longint;}
   s        : string;
-  linklibc : boolean;
+  {linklibc : boolean;}
 begin
   WriteResponseFile:=False;
 
   { Open link.res file }
-  LinkRes:=TLinkRes.Create(outputexedir+Info.ResName);
+  LinkRes:=TLinkRes.Create(outputexedir+Info.ResName,true);
 
   { Write object files, start with prt0 }
   LinkRes.Add('file '+GetShortName(FindObjectFile('prt0','',false)));
@@ -133,17 +133,17 @@ end;
 
 function TLinkerWatcom.MakeExecutable:boolean;
 var
-  binstr : String;
+  binstr,
   cmdstr  : TCmdStr;
   success : boolean;
   StripStr : string[40];
 begin
-  if not(cs_link_extern in aktglobalswitches) then
-   Message1(exec_i_linking,current_module.exefilename^);
+  if not(cs_link_nolink in current_settings.globalswitches) then
+   Message1(exec_i_linking,current_module.exefilename);
 
 { Create some replacements }
   StripStr:='debug dwarf all';
-  if (cs_link_strip in aktglobalswitches) then
+  if (cs_link_strip in current_settings.globalswitches) then
    StripStr:='';
 
 { Write used files and libraries }
@@ -151,15 +151,15 @@ begin
 
 { Call linker }
   SplitBinCmd(Info.ExeCmd[1],binstr,cmdstr);
-  Replace(cmdstr,'$EXE',maybequoted(current_module.exefilename^));
+  Replace(cmdstr,'$EXE',maybequoted(current_module.exefilename));
   Replace(cmdstr,'$OPT',Info.ExtraOptions);
   Replace(cmdstr,'$RES',maybequoted(outputexedir+Info.ResName));
   Replace(cmdstr,'$STRIP',StripStr);
   success:=DoExec(FindUtil(utilsprefix+BinStr),cmdstr,true,false);
 
 { Remove ReponseFile }
-  if (success) and not(cs_link_extern in aktglobalswitches) then
-   RemoveFile(outputexedir+Info.ResName);
+  if (success) and not(cs_link_nolink in current_settings.globalswitches) then
+   DeleteFile(outputexedir+Info.ResName);
 
   MakeExecutable:=success;   { otherwise a recursive call to link method }
 end;
@@ -177,9 +177,3 @@ initialization
   RegisterExternalLinker(system_i386_watcom_info,TLinkerWatcom);
   RegisterTarget(system_i386_watcom_info);
 end.
-{
-  $Log: t_watcom.pas,v $
-  Revision 1.8  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

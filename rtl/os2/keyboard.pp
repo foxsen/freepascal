@@ -1,5 +1,4 @@
 {
-    $Id: keyboard.pp,v 1.7 2005/02/14 17:13:31 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Florian Klaempfl
     member of the Free Pascal development team
@@ -64,8 +63,8 @@ var
  K: TKbdKeyInfo;
 begin
   KbdGetFocus (IO_Wait, Handle);
-  while (KbdCharIn (K, IO_Wait, Handle) <> No_Error)
-        or (K.fbStatus and $40 = 0) do
+  while (KbdCharIn (K, IO_NoWait, Handle) <> No_Error)
+        or (K.fbStatus and $41 <> $40) do
     DosSleep (5);
   with K do
     begin
@@ -103,7 +102,6 @@ function SysGetShiftState: Byte;
 
 var
  K: TKbdInfo;
- L: cardinal;
 begin
  KbdGetFocus (IO_NoWait, Handle);
  K.cb := SizeOf (K);
@@ -127,10 +125,5 @@ Const
 
 begin
   SetKeyBoardDriver(SysKeyBoardDriver);
+  SetKbdCtrlBreakHandler;
 end.
-{
-  $Log: keyboard.pp,v $
-  Revision 1.7  2005/02/14 17:13:31  peter
-    * truncate log
-
-}

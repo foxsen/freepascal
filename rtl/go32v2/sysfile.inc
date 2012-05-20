@@ -1,5 +1,4 @@
 {
-    $Id: sysfile.inc,v 1.1 2005/02/06 16:57:18 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2001 by Free Pascal development team
 
@@ -30,15 +29,6 @@
                         Low level File Routines
  ****************************************************************************}
 
-procedure AllowSlash(p:pchar);
-var
-  i : longint;
-begin
-{ allow slash as backslash }
-  for i:=0 to strlen(p) do
-   if p[i]='/' then p[i]:='\';
-end;
-
 procedure do_close(handle : thandle);
 var
   regs : trealregs;
@@ -68,7 +58,7 @@ procedure do_erase(p : pchar);
 var
   regs : trealregs;
 begin
-  AllowSlash(p);
+  DoDirSeparators(p);
   syscopytodos(longint(p),strlen(p)+1);
   regs.realedx:=tb_offset;
   regs.realds:=tb_segment;
@@ -88,8 +78,8 @@ procedure do_rename(p1,p2 : pchar);
 var
   regs : trealregs;
 begin
-  AllowSlash(p1);
-  AllowSlash(p2);
+  DoDirSeparators(p1);
+  DoDirSeparators(p2);
   if strlen(p1)+strlen(p2)+3>tb_size then
    HandleError(217);
   sysseg_move(get_ds,longint(p2),dos_selector,tb,strlen(p2)+1);
@@ -302,7 +292,7 @@ var
   regs   : trealregs;
   action : longint;
 begin
-  AllowSlash(p);
+  DoDirSeparators(p);
 { close first if opened }
   if ((flags and $10000)=0) then
    begin
@@ -447,14 +437,4 @@ end;
 
 
 
-{
-   $Log: sysfile.inc,v $
-   Revision 1.1  2005/02/06 16:57:18  peter
-     * threads for go32v2,os,emx,netware
-
-   Revision 1.1  2005/02/06 13:06:20  peter
-     * moved file and dir functions to sysfile/sysdir
-     * win32 thread in systemunit
-
-}
 

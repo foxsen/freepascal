@@ -1,5 +1,4 @@
 {
-    $Id: bunxsysc.inc,v 1.4 2005/03/03 20:58:38 florian Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2002 by Marco van de Voort
 
@@ -48,8 +47,21 @@ function fpsigsuspend(const sigmask:TSigSet):cint;
 }
 
 begin
-  fpsigsuspend:= do_syscall(syscall_nr_rt_sigsuspend,TSysParam(@sigmask));
+  fpsigsuspend:= do_syscall(syscall_nr_rt_sigsuspend,TSysParam(@sigmask),TSysParam(8));
 end;
+
+function fpsigtimedwait(const sigset:TSigSet;info:Psiginfo;timeout:Ptimespec):cint;
+
+begin
+  {Sizeof(Tsigset)=16 for Free Pascal, but the Linux kernel has a different idea,
+   it wants a Tsigset of 8 bytes. So we have to hardcode :( }
+  FpSigTimedWait:=do_syscall(syscall_nr_rt_sigtimedwait,
+                             Tsysparam(@sigset),
+                             Tsysparam(info),
+                             Tsysparam(timeout),
+                             Tsysparam(8 {sizeof(Tsigset)}));
+end;
+
 
 Type
   ITimerVal= Record
@@ -294,6 +306,12 @@ begin
  fpsetsid:=do_syscall(syscall_nr_setsid);
 end;
 
+function fpgetsid (pid:TPid): pid_t;
+
+begin
+ fpgetsid:=do_syscall(syscall_nr_getsid,pid);
+end;
+
 Function fpumask(cmask:mode_t):mode_t;
 {
   Sets file creation mask to (Mask and 0777 (octal) ), and returns the
@@ -331,11 +349,28 @@ begin
   fpChOwn:=do_syscall(syscall_nr_chown,TSysParam(path),TSysParam(owner),TSysParam(group));
 end;
 
+{$ifndef NO_SYSCALL_UTIME}
+
 Function fpUtime(path:pchar;times:putimbuf):cint;
 
 begin
- fputime:=do_syscall(syscall_nr_utime,TSysParam(path),TSysParam(times));
+  fputime:=do_syscall(syscall_nr_utime,TSysParam(path),TSysParam(times));
 end;
+
+{$else}
+
+Function fpUtime(path:pchar;times:putimbuf):cint;
+var
+  tva: Array[0..1] of timeval;
+begin
+  tva[0].tv_sec := times^.actime;
+  tva[0].tv_usec := 0;
+  tva[1].tv_sec := times^.modtime;
+  tva[1].tv_usec := 0;
+  fputime:=do_syscall(syscall_nr_utimes,TSysParam(path),TSysParam(@tva));
+end;
+
+{$endif}
 
 
 {$ifndef FPC_BASEUNIX_HAS_FPPIPE}
@@ -382,52 +417,28 @@ begin
   fptimes:=Do_syscall(syscall_nr_times,TSysParam(@buffer));
 end;
 
-function pfpgetcwd(path : pchar; siz:tsize):pchar;  [public, alias : 'FPC_SYSC_GETCWD'];
-
-begin
-  pfpgetcwd:=pchar(Do_Syscall(Syscall_nr_getcwd,TSysParam(Path),TSysParam(siz)));
-end;
-
 Function fpSelect(N:cint;readfds,writefds,exceptfds:pfdSet;TimeOut:PTimeVal):cint;
 {
   Select checks whether the file descriptor sets in readfs/writefs/exceptfs
   have changed.
 }
 
-{$ifdef cpui386}
-Var
-  SelectArray : Array[1..5] of TSysParam;
-{$endif}
-
 begin
-{$ifdef cpui386}
-  {$define bunxfunc_fpselect_implemented}
-  SelectArray[1]:=n;
-  SelectArray[2]:=TSysParam(Readfds);
-  Selectarray[3]:=TSysParam(Writefds);
-  selectarray[4]:=TSysParam(exceptfds);
-  Selectarray[5]:=TSysParam(TimeOut);
-  fpSelect:=do_syscall(syscall_nr_select,TSysParam(@selectarray));
-{$endif cpui386}
 {$ifdef cpux86_64}
   {$define bunxfunc_fpselect_implemented}
   fpSelect:=do_syscall(syscall_nr_select,n,tsysparam(readfds),tsysparam(writefds),tsysparam(exceptfds),tsysparam(timeout));
-{$endif cpux86_64}
-{$ifdef cpuarm}
+{$else}
   {$define bunxfunc_fpselect_implemented}
   fpSelect:=do_syscall(syscall_nr__newselect,n,tsysparam(readfds),tsysparam(writefds),tsysparam(exceptfds),tsysparam(timeout));
-{$endif cpuarm}
-{$ifdef cpupowerpc}
-  {$define bunxfunc_fpselect_implemented}
-  fpSelect:=do_syscall(syscall_nr__newselect,n,tsysparam(readfds),tsysparam(writefds),tsysparam(exceptfds),tsysparam(timeout));
-{$endif cpupowerpc}
-{$ifdef cpusparc}
-  {$define bunxfunc_fpselect_implemented}
-  fpSelect:=do_syscall(syscall_nr__newselect,n,tsysparam(readfds),tsysparam(writefds),tsysparam(exceptfds),tsysparam(timeout));
-{$endif cpusparc}
+{$endif}
 {$ifndef bunxfunc_fpselect_implemented}
   {$error Implement fpselect}
 {$endif bunxfunc_fpselect_implemented}
+end;
+
+function fpPoll(fds: ppollfd; nfds: cuint; timeout: clong): cint;
+begin
+  fpPoll:=do_syscall(syscall_nr_poll,tsysparam(fds),tsysparam(nfds),tsysparam(timeout));
 end;
 
 Function fpLstat(path:pchar;Info:pstat):cint;
@@ -436,16 +447,13 @@ Function fpLstat(path:pchar;Info:pstat):cint;
 }
 
 begin
- fpLStat:=do_syscall(syscall_nr_lstat,TSysParam(path),TSysParam(info));
-end;
-
-Function fpLstat(Filename: ansistring;Info:pstat):cint;
-{
-  Get all information on a link (the link itself), and return it in info.
-}
-
-begin
- fpLStat:=do_syscall(syscall_nr_lstat,TSysParam(pchar(filename)),TSysParam(info));
+ fpLStat:=do_syscall(
+{$ifdef cpu64}
+    syscall_nr_lstat,
+{$else}
+    syscall_nr_lstat64,
+{$endif}
+    TSysParam(path),TSysParam(info));
 end;
 
 
@@ -528,27 +536,60 @@ Function fpSymlink(oldname,newname:pchar):cint;
 }
 
 begin
- fpsymlink:=do_syscall(syscall_nr_symlink,TSysParam(oldname),TSysParam(newname));
+  fpsymlink:=do_syscall(syscall_nr_symlink,TSysParam(oldname),TSysParam(newname));
 end;
 
+function Fppread(fd: cint; buf: pchar; nbytes : size_t; offset:Toff): ssize_t; [public, alias : 'FPC_SYSC_PREAD'];
 
-{
- $Log: bunxsysc.inc,v $
- Revision 1.4  2005/03/03 20:58:38  florian
-   + routines in baseunix can be overriden by processor specifics in bsyscall.inc
+begin
+{$ifdef CPU64}
+  Fppread:=do_syscall(syscall_nr_pread64,Fd,TSysParam(buf),nbytes,TSysParam(OffSet));
+{$else}
+{$ifdef CPUMIPS32}
+  Fppread:=do_syscall(syscall_nr_pread64,Fd,TSysParam(buf),nbytes,0,  { align parameters as required with dummy }
+    {$ifdef FPC_BIG_ENDIAN}    hi(offset),lo(offset){$endif}
+    {$ifdef FPC_LITTLE_ENDIAN} lo(offset),hi(offset){$endif}
+   );
+{$else CPUMIPS32}
+  Fppread:=do_syscall(syscall_nr_pread,Fd,TSysParam(buf),nbytes,
+    {$ifdef FPC_ABI_EABI}      0,  { align parameters as required with dummy } {$endif FPC_ABI_EABI}
+    {$ifdef FPC_BIG_ENDIAN}    hi(offset),lo(offset){$endif}
+    {$ifdef FPC_LITTLE_ENDIAN} lo(offset),hi(offset){$endif}
+   );
+{$endif CPUMIPS32}
+{$endif}
+end;
 
- Revision 1.3  2005/03/03 20:13:44  florian
-   + sparc specific pipe implementation
+function Fppwrite(fd: cint;buf:pchar; nbytes : size_t; offset:Toff): ssize_t; [public, alias : 'FPC_SYSC_PWRITE'];
 
- Revision 1.2  2005/02/14 17:13:30  peter
-   * truncate log
+begin
+{$ifdef CPU64}
+  Fppwrite:=do_syscall(syscall_nr_pwrite64,Fd,TSysParam(buf),nbytes,TSysParam(OffSet));
+{$else}
+{$ifdef CPUMIPS32}
+Fppwrite:=do_syscall(syscall_nr_pwrite64,Fd,TSysParam(buf),nbytes,0,  { align parameters as required with dummy }
+  {$ifdef FPC_BIG_ENDIAN}    hi(offset),lo(offset){$endif}
+  {$ifdef FPC_LITTLE_ENDIAN} lo(offset),hi(offset){$endif}
+ );
+{$else CPUMIPS32}
+Fppwrite:=do_syscall(syscall_nr_pwrite,Fd,TSysParam(buf),nbytes,
+  {$ifdef FPC_ABI_EABI}      0,  { align parameters as required with dummy } {$endif FPC_ABI_EABI}
+  {$ifdef FPC_BIG_ENDIAN}    hi(offset),lo(offset){$endif}
+  {$ifdef FPC_LITTLE_ENDIAN} lo(offset),hi(offset){$endif}
+ );
+{$endif CPUMIPS32}
+{$endif}
+end;
 
- Revision 1.1  2005/02/13 20:01:38  peter
-   * include file cleanup
+function Fpreadv(fd: cint; const iov : piovec; iovcnt : cint):ssize_t; [public, alias : 'FPC_SYSC_READV'];
 
- Revision 1.15  2005/01/30 18:01:15  peter
-   * signal cleanup for linux
-   * sigactionhandler instead of tsigaction for bsds
-   * sigcontext moved to cpu dir
+begin
+  Fpreadv:=do_syscall(syscall_nr_readv,Fd,TSysParam(iov),iovcnt);
+end;
 
-}
+function Fpwritev(fd: cint; const iov : piovec; iovcnt : cint):ssize_t;  [public, alias : 'FPC_SYSC_WRITEV'];
+
+begin
+  Fpwritev:=do_syscall(syscall_nr_writev,Fd,TSysParam(iov),iovcnt);
+end;
+

@@ -1,5 +1,4 @@
 {
-    $Id: i_go32v2.pas,v 1.7 2005/03/20 22:36:45 olle Exp $
     Copyright (c) 1998-2002 by Peter Vreman
 
     This unit implements support information structures for go32v2
@@ -22,6 +21,8 @@
 { This unit implements support information structures for go32v2. }
 unit i_go32v2;
 
+{$i fpcdefs.inc}
+
   interface
 
     uses
@@ -33,7 +34,7 @@ unit i_go32v2;
             system       : system_i386_GO32V2;
             name         : 'GO32 V2 DOS extender';
             shortname    : 'Go32v2';
-            flags        : [tf_use_8_3];
+            flags        : [tf_use_8_3,tf_smartlink_library];
             cpu          : cpu_i386;
             unit_env     : 'GO32V2UNITS';
             extradefines : 'DPMI';
@@ -55,17 +56,18 @@ unit i_go32v2;
             staticClibext : '.a';
             staticClibprefix : '';
             sharedClibprefix : '';
-            p_ext_support : false;
+            importlibprefix : '';
+            importlibext : '.al';
             Cprefix      : '_';
             newline      : #13#10;
             dirsep       : '\';
-            files_case_relevent : false;
             assem        : as_i386_coff;
             assemextern  : as_gas;
             link         : nil;
             linkextern   : nil;
             ar           : ar_gnu_ar;
             res          : res_none;
+            dbg          : dbg_stabs;
             script       : script_dos;
             endian       : endian_little;
             alignment    :
@@ -85,8 +87,7 @@ unit i_go32v2;
               );
             first_parm_offset : 8;
             stacksize    : 262144;
-            DllScanSupported : false;
-            use_function_relative_addresses : true
+            abi          : abi_default;
           );
 
   implementation
@@ -98,13 +99,3 @@ initialization
   {$endif go32v2}
 {$endif cpu86}
 end.
-{
-  $Log: i_go32v2.pas,v $
-  Revision 1.7  2005/03/20 22:36:45  olle
-    * Cleaned up handling of source file extension.
-    + Added support for .p extension for macos and darwin
-
-  Revision 1.6  2005/02/14 17:13:10  peter
-    * truncate log
-
-}

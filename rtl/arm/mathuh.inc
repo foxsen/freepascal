@@ -1,5 +1,4 @@
 {
-    $Id: mathuh.inc,v 1.2 2005/02/14 17:13:21 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2004 by Florian Klaempfl
     member of the Free Pascal development team
@@ -12,9 +11,17 @@
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
  **********************************************************************}
-{
-  $Log: mathuh.inc,v $
-  Revision 1.2  2005/02/14 17:13:21  peter
-    * truncate log
+type
+  TFPURoundingMode = (rmNearest, rmDown, rmUp, rmTruncate);
+  TFPUPrecisionMode = (pmSingle, pmReserved, pmDouble, pmExtended);
+  TFPUException = (exInvalidOp, exDenormalized, exZeroDivide,
+                   exOverflow, exUnderflow, exPrecision);
+  TFPUExceptionMask = set of TFPUException;
 
-}
+function GetRoundMode: TFPURoundingMode;
+function SetRoundMode(const RoundMode: TFPURoundingMode): TFPURoundingMode;
+function GetPrecisionMode: TFPUPrecisionMode;
+function SetPrecisionMode(const Precision: TFPUPrecisionMode): TFPUPrecisionMode;
+function GetExceptionMask: TFPUExceptionMask;
+function SetExceptionMask(const Mask: TFPUExceptionMask): TFPUExceptionMask;
+procedure ClearExceptions(RaisePending: Boolean =true);

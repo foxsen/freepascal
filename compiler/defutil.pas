@@ -1,6 +1,5 @@
 {
-    $Id: defutil.pas,v 1.24 2005/02/14 17:13:06 peter Exp $
-    Copyright (c) 1998-2002 by Florian Klaempfl
+    Copyright (c) 1998-2006 by Florian Klaempfl
 
     This unit provides some help routines for type handling
 
@@ -28,7 +27,7 @@ interface
 
     uses
        cclasses,
-       globtype,globals,
+       globtype,globals,constexp,node,
        symconst,symbase,symtype,symdef,
        cgbase,cpubase;
 
@@ -44,21 +43,33 @@ interface
     {# Returns true, if definition defines an ordinal type }
     function is_ordinal(def : tdef) : boolean;
 
+    {# Returns true, if definition defines a string type }
+    function is_string(def : tdef): boolean;
+
     {# Returns the minimal integer value of the type }
     function get_min_value(def : tdef) : TConstExprInt;
 
+    {# Returns the maximal integer value of the type }
+    function get_max_value(def : tdef) : TConstExprInt;
+
     {# Returns basetype of the specified integer range }
-    function range_to_basetype(l,h:TConstExprInt):tbasetype;
+    function range_to_basetype(l,h:TConstExprInt):tordtype;
 
-    procedure range_to_type(l,h:TConstExprInt;var tt:ttype);
+    procedure range_to_type(l,h:TConstExprInt;var def:tdef);
 
-    procedure int_to_type(v:TConstExprInt;var tt:ttype);
+    procedure int_to_type(v:TConstExprInt;var def:tdef);
 
     {# Returns true, if definition defines an integer type }
     function is_integer(def : tdef) : boolean;
 
     {# Returns true if definition is a boolean }
     function is_boolean(def : tdef) : boolean;
+
+    {# Returns true if definition is a Pascal-style boolean (1 = true, zero = false) }
+    function is_pasbool(def : tdef) : boolean;
+
+    {# Returns true if definition is a C-style boolean (non-zero value = true, zero = false) }
+    function is_cbool(def : tdef) : boolean;
 
     {# Returns true if definition is a char
 
@@ -68,6 +79,9 @@ interface
 
     {# Returns true if definition is a widechar }
     function is_widechar(def : tdef) : boolean;
+
+    {# Returns true if definition is either an AnsiChar or a WideChar }
+    function is_anychar(def : tdef) : boolean;
 
     {# Returns true if definition is a void}
     function is_void(def : tdef) : boolean;
@@ -80,11 +94,14 @@ interface
     }
     function is_signed(def : tdef) : boolean;
 
-    {# Returns true whether def_from's range is comprised in def_to's if both are
+    {# Returns whether def_from's range is comprised in def_to's if both are
       orddefs, false otherwise                                              }
     function is_in_limit(def_from,def_to : tdef) : boolean;
 
-    function is_in_limit_value(val_from:TConstExprInt;def_from,def_to : tdef) : boolean;
+    {# Returns whether def is reference counted }
+    function is_managed_type(def: tdef) : boolean;{$ifdef USEINLINE}inline;{$endif}
+
+{    function is_in_limit_value(val_from:TConstExprInt;def_from,def_to : tdef) : boolean;}
 
 {*****************************************************************************
                               Array helper functions
@@ -118,8 +135,16 @@ interface
        That is if the array is an open array, a variant
        array, an array constants constructor, or an
        array of const.
+
+       Bitpacked arrays aren't special in this regard though.
     }
     function is_special_array(p : tdef) : boolean;
+
+    {# Returns true if p is a bitpacked array }
+    function is_packed_array(p: tdef) : boolean;
+
+    {# Returns true if p is a bitpacked record }
+    function is_packed_record_or_object(p: tdef) : boolean;
 
     {# Returns true if p is a char array def }
     function is_chararray(p : tdef) : boolean;
@@ -143,11 +168,20 @@ interface
     {# Returns true if p is an ansi string type }
     function is_ansistring(p : tdef) : boolean;
 
+    {# Returns true if p is an ansi string type with codepage 0 }
+    function is_rawbytestring(p : tdef) : boolean;
+
     {# Returns true if p is a long string type }
     function is_longstring(p : tdef) : boolean;
 
     {# returns true if p is a wide string type }
     function is_widestring(p : tdef) : boolean;
+
+    {# true if p is an unicode string def }
+    function is_unicodestring(p : tdef) : boolean;
+
+    {# returns true if p is a wide or unicode string type }
+    function is_wide_or_unicode_string(p : tdef) : boolean;
 
     {# Returns true if p is a short string type }
     function is_shortstring(p : tdef) : boolean;
@@ -176,6 +210,9 @@ interface
     {# Returns true, if def is an extended type }
     function is_extended(def : tdef) : boolean;
 
+    {# Returns true, if definition is a "real" real (i.e. single/double/extended) }
+    function is_real(def : tdef) : boolean;
+
     {# Returns true, if def is a 32 bit integer type }
     function is_32bitint(def : tdef) : boolean;
 
@@ -185,15 +222,18 @@ interface
     {# Returns true, if def is a 64 bit type }
     function is_64bit(def : tdef) : boolean;
 
-    {# If @var(l) isn't in the range of def a range check error (if not explicit) is generated and
+    {# If @var(l) isn't in the range of todef a range check error (if not explicit) is generated and
       the value is placed within the range
     }
-    procedure testrange(def : tdef;var l : tconstexprint;explicit:boolean);
+    procedure testrange(todef : tdef;var l : tconstexprint;explicit,forcerangecheck:boolean);
 
     {# Returns the range of def, where @var(l) is the low-range and @var(h) is
       the high-range.
     }
-    procedure getrange(def : tdef;var l : TConstExprInt;var h : TConstExprInt);
+    procedure getrange(def : tdef;out l, h : TConstExprInt);
+
+    { type being a vector? }
+    function is_vector(p : tdef) : boolean;
 
     { some type helper routines for MMX support }
     function is_mmx_able_array(p : tdef) : boolean;
@@ -201,10 +241,34 @@ interface
     {# returns the mmx type }
     function mmx_type(p : tdef) : tmmxtype;
 
+    { returns if the passed type (array) fits into an mm register }
+    function fits_in_mm_register(p : tdef) : boolean;
+
     {# From a definition return the abstract code generator size enum. It is
        to note that the value returned can be @var(OS_NO) }
     function def_cgsize(def: tdef): tcgsize;
 
+    {# returns true, if the type passed is can be used with windows automation }
+    function is_automatable(p : tdef) : boolean;
+
+    { # returns true if the procdef has no parameters and no specified return type }
+    function is_bareprocdef(pd : tprocdef): boolean;
+
+    { # returns the smallest base integer type whose range encompasses that of
+        both ld and rd; if keep_sign_if_equal, then if ld and rd have the same
+        signdness, the result will also get that signdness }
+    function get_common_intdef(ld, rd: torddef; keep_sign_if_equal: boolean): torddef;
+
+    { # returns whether the type is potentially a valid type of/for an "univ" parameter
+        (basically: it must have a compile-time size) }
+    function is_valid_univ_para_type(def: tdef): boolean;
+
+    { # returns whether the procdef/procvardef represents a nested procedure
+        or not }
+    function is_nested_pd(def: tabstractprocdef): boolean;{$ifdef USEINLINE}inline;{$endif}
+
+    { # returns whether def is a type parameter of a generic }
+    function is_typeparam(def : tdef) : boolean;{$ifdef USEINLINE}inline;{$endif}
 
 implementation
 
@@ -214,20 +278,20 @@ implementation
     { returns true, if def uses FPU }
     function is_fpu(def : tdef) : boolean;
       begin
-         is_fpu:=(def.deftype=floatdef);
+         is_fpu:=(def.typ=floatdef);
       end;
 
 
     { returns true, if def is a currency type }
     function is_currency(def : tdef) : boolean;
       begin
-         case s64currencytype.def.deftype of
+         case s64currencytype.typ of
            orddef :
-             result:=(def.deftype=orddef) and
-                     (torddef(s64currencytype.def).typ=torddef(def).typ);
+             result:=(def.typ=orddef) and
+                     (torddef(s64currencytype).ordtype=torddef(def).ordtype);
            floatdef :
-             result:=(def.deftype=floatdef) and
-                     (tfloatdef(s64currencytype.def).typ=tfloatdef(def).typ);
+             result:=(def.typ=floatdef) and
+                     (tfloatdef(s64currencytype).floattype=tfloatdef(def).floattype);
            else
              internalerror(200304222);
          end;
@@ -237,38 +301,46 @@ implementation
     { returns true, if def is a single type }
     function is_single(def : tdef) : boolean;
       begin
-        result:=(def.deftype=floatdef) and
-          (tfloatdef(def).typ=s32real);
+        result:=(def.typ=floatdef) and
+          (tfloatdef(def).floattype=s32real);
       end;
 
 
     { returns true, if def is a double type }
     function is_double(def : tdef) : boolean;
       begin
-        result:=(def.deftype=floatdef) and
-          (tfloatdef(def).typ=s64real);
+        result:=(def.typ=floatdef) and
+          (tfloatdef(def).floattype=s64real);
       end;
 
 
     function is_extended(def : tdef) : boolean;
       begin
-        result:=(def.deftype=floatdef) and
-          (tfloatdef(def).typ=s80real);
+        result:=(def.typ=floatdef) and
+          (tfloatdef(def).floattype in [s80real,sc80real]);
       end;
 
 
-    function range_to_basetype(l,h:TConstExprInt):tbasetype;
+    { returns true, if definition is a "real" real (i.e. single/double/extended) }
+    function is_real(def : tdef) : boolean;
+      begin
+        result:=(def.typ=floatdef) and
+          (tfloatdef(def).floattype in [s32real,s64real,s80real]);
+      end;
+
+
+    function range_to_basetype(l,h:TConstExprInt):tordtype;
       begin
         { prefer signed over unsigned }
-        if (l>=-128) and (h<=127) then
+        if (l>=int64(-128)) and (h<=127) then
          range_to_basetype:=s8bit
         else if (l>=0) and (h<=255) then
          range_to_basetype:=u8bit
-        else if (l>=-32768) and (h<=32767) then
+        else if (l>=int64(-32768)) and (h<=32767) then
          range_to_basetype:=s16bit
         else if (l>=0) and (h<=65535) then
          range_to_basetype:=u16bit
-        else if (l>=low(longint)) and (h<=high(longint)) then
+        else if (l>=int64(low(longint))) and (h<=high(longint)) then
          range_to_basetype:=s32bit
         else if (l>=low(cardinal)) and (h<=high(cardinal)) then
          range_to_basetype:=u32bit
@@ -277,45 +349,48 @@ implementation
       end;
 
 
-    procedure range_to_type(l,h:TConstExprInt;var tt:ttype);
+    procedure range_to_type(l,h:TConstExprInt;var def:tdef);
       begin
         { prefer signed over unsigned }
-        if (l>=-128) and (h<=127) then
-         tt:=s8inttype
+        if (l>=int64(-128)) and (h<=127) then
+         def:=s8inttype
         else if (l>=0) and (h<=255) then
-         tt:=u8inttype
-        else if (l>=-32768) and (h<=32767) then
-         tt:=s16inttype
+         def:=u8inttype
+        else if (l>=int64(-32768)) and (h<=32767) then
+         def:=s16inttype
         else if (l>=0) and (h<=65535) then
-         tt:=u16inttype
-        else if (l>=low(longint)) and (h<=high(longint)) then
-         tt:=s32inttype
+         def:=u16inttype
+        else if (l>=int64(low(longint))) and (h<=high(longint)) then
+         def:=s32inttype
         else if (l>=low(cardinal)) and (h<=high(cardinal)) then
-         tt:=u32inttype
+         def:=u32inttype
+        else if (l>=low(int64)) and (h<=high(int64)) then
+         def:=s64inttype
         else
-         tt:=s64inttype;
+         def:=u64inttype;
       end;
 
 
-    procedure int_to_type(v:TConstExprInt;var tt:ttype);
+    procedure int_to_type(v:TConstExprInt;var def:tdef);
       begin
-        range_to_type(v,v,tt);
+        range_to_type(v,v,def);
       end;
 
 
     { true if p is an ordinal }
     function is_ordinal(def : tdef) : boolean;
       var
-         dt : tbasetype;
+         dt : tordtype;
       begin
-         case def.deftype of
+         case def.typ of
            orddef :
              begin
-               dt:=torddef(def).typ;
+               dt:=torddef(def).ordtype;
                is_ordinal:=dt in [uchar,uwidechar,
                                   u8bit,u16bit,u32bit,u64bit,
                                   s8bit,s16bit,s32bit,s64bit,
-                                  bool8bit,bool16bit,bool32bit];
+                                  pasbool8,pasbool16,pasbool32,pasbool64,
+                                  bool8bit,bool16bit,bool32bit,bool64bit];
              end;
            enumdef :
              is_ordinal:=true;
@@ -324,17 +399,37 @@ implementation
          end;
       end;
 
+    { true if p is a string }
+    function is_string(def : tdef) : boolean;
+      begin
+        is_string := (assigned(def) and (def.typ = stringdef));
+      end;
+
 
     { returns the min. value of the type }
     function get_min_value(def : tdef) : TConstExprInt;
       begin
-         case def.deftype of
+         case def.typ of
            orddef:
-             get_min_value:=torddef(def).low;
+             result:=torddef(def).low;
            enumdef:
-             get_min_value:=tenumdef(def).min;
+             result:=int64(tenumdef(def).min);
            else
-             get_min_value:=0;
+             result:=0;
+         end;
+      end;
+
+
+    { returns the max. value of the type }
+    function get_max_value(def : tdef) : TConstExprInt;
+      begin
+         case def.typ of
+           orddef:
+             result:=torddef(def).high;
+           enumdef:
+             result:=tenumdef(def).max;
+           else
+             result:=0;
          end;
       end;
 
@@ -342,8 +437,8 @@ implementation
     { true if p is an integer }
     function is_integer(def : tdef) : boolean;
       begin
-        is_integer:=(def.deftype=orddef) and
-                    (torddef(def).typ in [u8bit,u16bit,u32bit,u64bit,
+        result:=(def.typ=orddef) and
+                    (torddef(def).ordtype in [u8bit,u16bit,u32bit,u64bit,
                                           s8bit,s16bit,s32bit,s64bit]);
       end;
 
@@ -351,101 +446,109 @@ implementation
     { true if p is a boolean }
     function is_boolean(def : tdef) : boolean;
       begin
-        is_boolean:=(def.deftype=orddef) and
-                    (torddef(def).typ in [bool8bit,bool16bit,bool32bit]);
+        result:=(def.typ=orddef) and
+                    (torddef(def).ordtype in [pasbool8,pasbool16,pasbool32,pasbool64,bool8bit,bool16bit,bool32bit,bool64bit]);
+      end;
+
+
+    function is_pasbool(def : tdef) : boolean;
+      begin
+        result:=(def.typ=orddef) and
+                    (torddef(def).ordtype in [pasbool8,pasbool16,pasbool32,pasbool64]);
+      end;
+
+    { true if def is a C-style boolean (non-zero value = true, zero = false) }
+    function is_cbool(def : tdef) : boolean;
+      begin
+        result:=(def.typ=orddef) and
+                    (torddef(def).ordtype in [bool8bit,bool16bit,bool32bit,bool64bit]);
       end;
 
 
     { true if p is a void }
     function is_void(def : tdef) : boolean;
       begin
-        is_void:=(def.deftype=orddef) and
-                 (torddef(def).typ=uvoid);
+        result:=(def.typ=orddef) and
+                 (torddef(def).ordtype=uvoid);
       end;
 
 
     { true if p is a char }
     function is_char(def : tdef) : boolean;
       begin
-        is_char:=(def.deftype=orddef) and
-                 (torddef(def).typ=uchar);
+        result:=(def.typ=orddef) and
+                 (torddef(def).ordtype=uchar);
       end;
 
 
     { true if p is a wchar }
     function is_widechar(def : tdef) : boolean;
       begin
-        is_widechar:=(def.deftype=orddef) and
-                 (torddef(def).typ=uwidechar);
+        result:=(def.typ=orddef) and
+                 (torddef(def).ordtype=uwidechar);
+      end;
+
+
+    { true if p is a char or wchar }
+    function is_anychar(def : tdef) : boolean;
+      begin
+        result:=(def.typ=orddef) and
+                 (torddef(def).ordtype in [uchar,uwidechar])
       end;
 
 
     { true if p is signed (integer) }
     function is_signed(def : tdef) : boolean;
-      var
-         dt : tbasetype;
       begin
-         case def.deftype of
+         case def.typ of
            orddef :
-             begin
-               dt:=torddef(def).typ;
-               is_signed:=(dt in [s8bit,s16bit,s32bit,s64bit,scurrency]);
-             end;
+             result:=torddef(def).low < 0;
            enumdef :
-             is_signed:=tenumdef(def).min < 0;
+             result:=tenumdef(def).min < 0;
            arraydef :
-             is_signed:=is_signed(tarraydef(def).rangetype.def);
+             result:=is_signed(tarraydef(def).rangedef);
            else
-             is_signed:=false;
+             result:=false;
          end;
       end;
 
 
     function is_in_limit(def_from,def_to : tdef) : boolean;
 
-      var
-        fromqword, toqword: boolean;
-
       begin
-         if (def_from.deftype <> orddef) or
-            (def_to.deftype <> orddef) then
+         if (def_from.typ<>def_to.typ) or
+            not(def_from.typ in [orddef,enumdef,setdef]) then
            begin
              is_in_limit := false;
              exit;
            end;
-         fromqword := torddef(def_from).typ = u64bit;
-         toqword := torddef(def_to).typ = u64bit;
-         is_in_limit:=(toqword and is_signed(def_from)) or
-                      ((not fromqword) and
-                       (torddef(def_from).low>=torddef(def_to).low) and
-                       (torddef(def_from).high<=torddef(def_to).high));
+         case def_from.typ of
+           orddef:
+             is_in_limit:=(torddef(def_from).low>=torddef(def_to).low) and
+                          (torddef(def_from).high<=torddef(def_to).high);
+           enumdef:
+             is_in_limit:=(tenumdef(def_from).min>=tenumdef(def_to).min) and
+                          (tenumdef(def_from).max<=tenumdef(def_to).max);
+           setdef:
+             is_in_limit:=(tsetdef(def_from).setbase>=tsetdef(def_to).setbase) and
+                          (tsetdef(def_from).setmax<=tsetdef(def_to).setmax);
+         else
+           is_in_limit:=false;
+         end;
       end;
 
 
-    function is_in_limit_value(val_from:TConstExprInt;def_from,def_to : tdef) : boolean;
-
+    function is_managed_type(def: tdef): boolean;{$ifdef USEINLINE}inline;{$endif}
       begin
-         if (def_from.deftype <> orddef) and
-            (def_to.deftype <> orddef) then
-           internalerror(200210062);
-         if (torddef(def_to).typ = u64bit) then
-          begin
-            is_in_limit_value:=((TConstExprUInt(val_from)>=TConstExprUInt(torddef(def_to).low)) and
-                                (TConstExprUInt(val_from)<=TConstExprUInt(torddef(def_to).high)));
-          end
-         else
-          begin;
-            is_in_limit_value:=((val_from>=torddef(def_to).low) and
-                                (val_from<=torddef(def_to).high));
-          end;
+        result:=def.needs_inittable;
       end;
 
 
     { true, if p points to an open array def }
     function is_open_string(p : tdef) : boolean;
       begin
-         is_open_string:=(p.deftype=stringdef) and
-                         (tstringdef(p).string_typ=st_shortstring) and
+         is_open_string:=(p.typ=stringdef) and
+                         (tstringdef(p).stringtype=st_shortstring) and
                          (tstringdef(p).len=0);
       end;
 
@@ -453,16 +556,16 @@ implementation
     { true, if p points to a zero based array def }
     function is_zero_based_array(p : tdef) : boolean;
       begin
-         is_zero_based_array:=(p.deftype=arraydef) and
-                              (tarraydef(p).lowrange=0) and
-                              not(is_special_array(p));
+         result:=(p.typ=arraydef) and
+                 (tarraydef(p).lowrange=0) and
+                 not(is_special_array(p));
       end;
 
     { true if p points to a dynamic array def }
     function is_dynamic_array(p : tdef) : boolean;
       begin
-         is_dynamic_array:=(p.deftype=arraydef) and
-           tarraydef(p).IsDynamicArray;
+         result:=(p.typ=arraydef) and
+                 (ado_IsDynamicArray in tarraydef(p).arrayoptions);
       end;
 
 
@@ -471,102 +574,130 @@ implementation
       begin
          { check for s32inttype is needed, because for u32bit the high
            range is also -1 ! (PFV) }
-         is_open_array:=(p.deftype=arraydef) and
-                        (tarraydef(p).rangetype.def=s32inttype.def) and
-                        (tarraydef(p).lowrange=0) and
-                        (tarraydef(p).highrange=-1) and
-                        not(tarraydef(p).IsConstructor) and
-                        not(tarraydef(p).IsVariant) and
-                        not(tarraydef(p).IsArrayOfConst) and
-                        not(tarraydef(p).IsDynamicArray);
-
+         result:=(p.typ=arraydef) and
+                 (tarraydef(p).rangedef=s32inttype) and
+                 (tarraydef(p).lowrange=0) and
+                 (tarraydef(p).highrange=-1) and
+                 ((tarraydef(p).arrayoptions * [ado_IsVariant,ado_IsArrayOfConst,ado_IsConstructor,ado_IsDynamicArray])=[]);
       end;
 
     { true, if p points to an array of const def }
     function is_array_constructor(p : tdef) : boolean;
       begin
-         is_array_constructor:=(p.deftype=arraydef) and
-                        (tarraydef(p).IsConstructor);
+         result:=(p.typ=arraydef) and
+                 (ado_IsConstructor in tarraydef(p).arrayoptions);
       end;
 
     { true, if p points to a variant array }
     function is_variant_array(p : tdef) : boolean;
       begin
-         is_variant_array:=(p.deftype=arraydef) and
-                        (tarraydef(p).IsVariant);
+         result:=(p.typ=arraydef) and
+                 (ado_IsVariant in tarraydef(p).arrayoptions);
       end;
 
     { true, if p points to an array of const }
     function is_array_of_const(p : tdef) : boolean;
       begin
-         is_array_of_const:=(p.deftype=arraydef) and
-                        (tarraydef(p).IsArrayOfConst);
+         result:=(p.typ=arraydef) and
+                 (ado_IsArrayOfConst in tarraydef(p).arrayoptions);
       end;
 
-    { true, if p points to a special array }
+    { true, if p points to a special array, bitpacked arrays aren't special in this regard though }
     function is_special_array(p : tdef) : boolean;
       begin
-         is_special_array:=(p.deftype=arraydef) and
-                        ((tarraydef(p).IsVariant) or
-                         (tarraydef(p).IsArrayOfConst) or
-                         (tarraydef(p).IsConstructor) or
-                         (tarraydef(p).IsDynamicArray) or
-                         is_open_array(p)
-                        );
+         result:=(p.typ=arraydef) and
+                 (
+                  ((tarraydef(p).arrayoptions * [ado_IsVariant,ado_IsArrayOfConst,ado_IsConstructor,ado_IsDynamicArray])<>[]) or
+                  is_open_array(p)
+                 );
       end;
 
-{$ifdef ansistring_bits}
     { true if p is an ansi string def }
     function is_ansistring(p : tdef) : boolean;
       begin
-         is_ansistring:=(p.deftype=stringdef) and
-                        (tstringdef(p).string_typ in [st_ansistring16,st_ansistring32,st_ansistring64]);
+         is_ansistring:=(p.typ=stringdef) and
+                        (tstringdef(p).stringtype=st_ansistring);
       end;
-{$else}
-    { true if p is an ansi string def }
-    function is_ansistring(p : tdef) : boolean;
+
+    { true if p is an ansi string def with codepage CP_NONE }
+    function is_rawbytestring(p : tdef) : boolean;
       begin
-         is_ansistring:=(p.deftype=stringdef) and
-                        (tstringdef(p).string_typ=st_ansistring);
+        is_rawbytestring:=(p.typ=stringdef) and
+                       (tstringdef(p).stringtype=st_ansistring) and
+                       (tstringdef(p).encoding=globals.CP_NONE);
       end;
-{$endif}
 
     { true if p is an long string def }
     function is_longstring(p : tdef) : boolean;
       begin
-         is_longstring:=(p.deftype=stringdef) and
-                        (tstringdef(p).string_typ=st_longstring);
+         is_longstring:=(p.typ=stringdef) and
+                        (tstringdef(p).stringtype=st_longstring);
       end;
 
 
     { true if p is an wide string def }
     function is_widestring(p : tdef) : boolean;
       begin
-         is_widestring:=(p.deftype=stringdef) and
-                        (tstringdef(p).string_typ=st_widestring);
+         is_widestring:=(p.typ=stringdef) and
+                        (tstringdef(p).stringtype=st_widestring);
+      end;
+
+
+    { true if p is an wide string def }
+    function is_wide_or_unicode_string(p : tdef) : boolean;
+      begin
+         is_wide_or_unicode_string:=(p.typ=stringdef) and
+                        (tstringdef(p).stringtype in [st_widestring,st_unicodestring]);
+      end;
+
+
+    { true if p is an unicode string def }
+    function is_unicodestring(p : tdef) : boolean;
+      begin
+         is_unicodestring:=(p.typ=stringdef) and
+                        (tstringdef(p).stringtype=st_unicodestring);
       end;
 
 
     { true if p is an short string def }
     function is_shortstring(p : tdef) : boolean;
       begin
-         is_shortstring:=(p.deftype=stringdef) and
-                         (tstringdef(p).string_typ=st_shortstring);
+         is_shortstring:=(p.typ=stringdef) and
+                         (tstringdef(p).stringtype=st_shortstring);
       end;
+
+
+    { true if p is bit packed array def }
+    function is_packed_array(p: tdef) : boolean;
+      begin
+        is_packed_array :=
+           (p.typ = arraydef) and
+           (ado_IsBitPacked in tarraydef(p).arrayoptions);
+      end;
+
+
+    { true if p is bit packed record def }
+    function is_packed_record_or_object(p: tdef) : boolean;
+      begin
+        is_packed_record_or_object :=
+           (p.typ in [recorddef,objectdef]) and
+           (tabstractrecorddef(p).is_packed);
+      end;
+
 
     { true if p is a char array def }
     function is_chararray(p : tdef) : boolean;
       begin
-        is_chararray:=(p.deftype=arraydef) and
-                      is_char(tarraydef(p).elementtype.def) and
+        is_chararray:=(p.typ=arraydef) and
+                      is_char(tarraydef(p).elementdef) and
                       not(is_special_array(p));
       end;
 
     { true if p is a widechar array def }
     function is_widechararray(p : tdef) : boolean;
       begin
-        is_widechararray:=(p.deftype=arraydef) and
-                          is_widechar(tarraydef(p).elementtype.def) and
+        is_widechararray:=(p.typ=arraydef) and
+                          is_widechar(tarraydef(p).elementdef) and
                           not(is_special_array(p));
       end;
 
@@ -575,145 +706,114 @@ implementation
     function is_open_chararray(p : tdef) : boolean;
       begin
         is_open_chararray:= is_open_array(p) and
-                            is_char(tarraydef(p).elementtype.def);
+                            is_char(tarraydef(p).elementdef);
       end;
 
     { true if p is a open wide char array def }
     function is_open_widechararray(p : tdef) : boolean;
       begin
         is_open_widechararray:= is_open_array(p) and
-                                is_widechar(tarraydef(p).elementtype.def);
+                                is_widechar(tarraydef(p).elementdef);
       end;
 
     { true if p is a pchar def }
     function is_pchar(p : tdef) : boolean;
       begin
-        is_pchar:=(p.deftype=pointerdef) and
-                  (is_char(tpointerdef(p).pointertype.def) or
-                   (is_zero_based_array(tpointerdef(p).pointertype.def) and
-                    is_chararray(tpointerdef(p).pointertype.def)));
+        is_pchar:=(p.typ=pointerdef) and
+                  (is_char(tpointerdef(p).pointeddef) or
+                   (is_zero_based_array(tpointerdef(p).pointeddef) and
+                    is_chararray(tpointerdef(p).pointeddef)));
       end;
 
     { true if p is a pchar def }
     function is_pwidechar(p : tdef) : boolean;
       begin
-        is_pwidechar:=(p.deftype=pointerdef) and
-                      (is_widechar(tpointerdef(p).pointertype.def) or
-                       (is_zero_based_array(tpointerdef(p).pointertype.def) and
-                        is_widechararray(tpointerdef(p).pointertype.def)));
+        is_pwidechar:=(p.typ=pointerdef) and
+                      (is_widechar(tpointerdef(p).pointeddef) or
+                       (is_zero_based_array(tpointerdef(p).pointeddef) and
+                        is_widechararray(tpointerdef(p).pointeddef)));
       end;
 
 
     { true if p is a voidpointer def }
     function is_voidpointer(p : tdef) : boolean;
       begin
-        is_voidpointer:=(p.deftype=pointerdef) and
-                        (tpointerdef(p).pointertype.def.deftype=orddef) and
-                        (torddef(tpointerdef(p).pointertype.def).typ=uvoid);
-      end;
-
-
-    { true if p is a smallset def }
-    function is_smallset(p : tdef) : boolean;
-      begin
-        is_smallset:=(p.deftype=setdef) and
-                     (tsetdef(p).settype=smallset);
+        is_voidpointer:=(p.typ=pointerdef) and
+                        (tpointerdef(p).pointeddef.typ=orddef) and
+                        (torddef(tpointerdef(p).pointeddef).ordtype=uvoid);
       end;
 
 
     { true, if def is a 32 bit int type }
     function is_32bitint(def : tdef) : boolean;
       begin
-         result:=(def.deftype=orddef) and (torddef(def).typ in [u32bit,s32bit])
+         result:=(def.typ=orddef) and (torddef(def).ordtype in [u32bit,s32bit])
       end;
 
 
     { true, if def is a 64 bit int type }
     function is_64bitint(def : tdef) : boolean;
       begin
-         is_64bitint:=(def.deftype=orddef) and (torddef(def).typ in [u64bit,s64bit])
+         is_64bitint:=(def.typ=orddef) and (torddef(def).ordtype in [u64bit,s64bit])
       end;
 
 
     { true, if def is a 64 bit type }
     function is_64bit(def : tdef) : boolean;
       begin
-         is_64bit:=(def.deftype=orddef) and (torddef(def).typ in [u64bit,s64bit,scurrency])
+         is_64bit:=(def.typ=orddef) and (torddef(def).ordtype in [u64bit,s64bit,scurrency,pasbool64,bool64bit])
       end;
 
 
-    { if l isn't in the range of def a range check error (if not explicit) is generated and
+    { if l isn't in the range of todef a range check error (if not explicit) is generated and
       the value is placed within the range }
-    procedure testrange(def : tdef;var l : tconstexprint;explicit:boolean);
+    procedure testrange(todef : tdef;var l : tconstexprint;explicit,forcerangecheck:boolean);
       var
          lv,hv: TConstExprInt;
-         error: boolean;
       begin
-         error := false;
          { for 64 bit types we need only to check if it is less than }
          { zero, if def is a qword node                              }
-         if is_64bitint(def) then
+         getrange(todef,lv,hv);
+         if (l<lv) or (l>hv) then
            begin
-              if (l<0) and (torddef(def).typ=u64bit) then
-                begin
-                   { don't zero the result, because it may come from hex notation
-                     like $ffffffffffffffff! (JM)
-                   l:=0; }
-                   if not explicit then
-                    begin
-                      if (cs_check_range in aktlocalswitches) then
-                        Message(parser_e_range_check_error)
-                      else
-                        Message(parser_w_range_check_error);
-                    end;
-                   error := true;
-                end;
-           end
-         else
-           begin
-              getrange(def,lv,hv);
-              if (l<lv) or (l>hv) then
-                begin
-                   if not explicit then
-                    begin
-                      if ((def.deftype=enumdef) and
-                          { delphi allows range check errors in
-                           enumeration type casts FK }
-                          not(m_delphi in aktmodeswitches)) or
-                         (cs_check_range in aktlocalswitches) then
-                        Message(parser_e_range_check_error)
-                      else
-                        Message(parser_w_range_check_error);
-                    end;
-                   error := true;
-                end;
-           end;
-         if error then
-          begin
+             if not explicit then
+               begin
+                 if ((todef.typ=enumdef) and
+                     { delphi allows range check errors in
+                      enumeration type casts FK }
+                     not(m_delphi in current_settings.modeswitches)) or
+                    (cs_check_range in current_settings.localswitches) or
+                    forcerangecheck then
+                   Message3(type_e_range_check_error_bounds,tostr(l),tostr(lv),tostr(hv))
+                 else
+                   Message3(type_w_range_check_error_bounds,tostr(l),tostr(lv),tostr(hv));
+               end;
              { Fix the value to fit in the allocated space for this type of variable }
-             case longint(def.size) of
+             case longint(todef.size) of
                1: l := l and $ff;
                2: l := l and $ffff;
-               { work around sign extension bug (to be fixed) (JM) }
-               4: l := l and (int64($fffffff) shl 4 + $f);
+               4: l := l and $ffffffff;
              end;
+             {reset sign, i.e. converting -1 to qword changes the value to high(qword)}
+             l.signed:=false;
              { do sign extension if necessary (JM) }
-             if is_signed(def) then
+             if is_signed(todef) then
               begin
-                case longint(def.size) of
-                  1: l := shortint(l);
-                  2: l := smallint(l);
-                  4: l := longint(l);
+                case longint(todef.size) of
+                  1: l.svalue := shortint(l.svalue);
+                  2: l.svalue := smallint(l.svalue);
+                  4: l.svalue := longint(l.svalue);
                 end;
+                l.signed:=true;
               end;
-          end;
+           end;
       end;
 
 
     { return the range from def in l and h }
-    procedure getrange(def : tdef;var l : TConstExprInt;var h : TConstExprInt);
+    procedure getrange(def : tdef;out l, h : TConstExprInt);
       begin
-        case def.deftype of
+        case def.typ of
           orddef :
             begin
               l:=torddef(def).low;
@@ -721,16 +821,16 @@ implementation
             end;
           enumdef :
             begin
-              l:=tenumdef(def).min;
-              h:=tenumdef(def).max;
+              l:=int64(tenumdef(def).min);
+              h:=int64(tenumdef(def).max);
             end;
           arraydef :
             begin
-              l:=tarraydef(def).lowrange;
-              h:=tarraydef(def).highrange;
+              l:=int64(tarraydef(def).lowrange);
+              h:=int64(tarraydef(def).highrange);
             end;
-        else
-          internalerror(987);
+          else
+            internalerror(200611054);
         end;
       end;
 
@@ -740,13 +840,13 @@ implementation
          mmx_type:=mmxno;
          if is_mmx_able_array(p) then
            begin
-              if tarraydef(p).elementtype.def.deftype=floatdef then
-                case tfloatdef(tarraydef(p).elementtype.def).typ of
+              if tarraydef(p).elementdef.typ=floatdef then
+                case tfloatdef(tarraydef(p).elementdef).floattype of
                   s32real:
                     mmx_type:=mmxsingle;
                 end
               else
-                case torddef(tarraydef(p).elementtype.def).typ of
+                case torddef(tarraydef(p).elementdef).ordtype of
                    u8bit:
                      mmx_type:=mmxu8bit;
                    s8bit:
@@ -764,38 +864,75 @@ implementation
       end;
 
 
+    function is_vector(p : tdef) : boolean;
+      begin
+        result:=(p.typ=arraydef) and
+                not(is_special_array(p)) and
+                (tarraydef(p).elementdef.typ=floatdef) and
+                (tfloatdef(tarraydef(p).elementdef).floattype in [s32real,s64real]);
+      end;
+
+
+    { returns if the passed type (array) fits into an mm register }
+    function fits_in_mm_register(p : tdef) : boolean;
+      begin
+{$ifdef x86}
+        result:= is_vector(p) and
+                 (
+                  (tarraydef(p).elementdef.typ=floatdef) and
+                  (
+                   (tarraydef(p).lowrange=0) and
+                   (tarraydef(p).highrange=3) and
+                   (tfloatdef(tarraydef(p).elementdef).floattype=s32real)
+                  )
+                 ) or
+
+                 (
+                  (tarraydef(p).elementdef.typ=floatdef) and
+                  (
+                   (tarraydef(p).lowrange=0) and
+                   (tarraydef(p).highrange=1) and
+                   (tfloatdef(tarraydef(p).elementdef).floattype=s64real)
+                  )
+                 );
+{$else x86}
+        result:=false;
+{$endif x86}
+      end;
+
+
     function is_mmx_able_array(p : tdef) : boolean;
       begin
 {$ifdef SUPPORT_MMX}
-         if (cs_mmx_saturation in aktlocalswitches) then
+         if (cs_mmx_saturation in current_settings.localswitches) then
            begin
-              is_mmx_able_array:=(p.deftype=arraydef) and
+              is_mmx_able_array:=(p.typ=arraydef) and
                 not(is_special_array(p)) and
                 (
                  (
-                  (tarraydef(p).elementtype.def.deftype=orddef) and
+                  (tarraydef(p).elementdef.typ=orddef) and
                   (
                    (
                     (tarraydef(p).lowrange=0) and
                     (tarraydef(p).highrange=1) and
-                    (torddef(tarraydef(p).elementtype.def).typ in [u32bit,s32bit])
+                    (torddef(tarraydef(p).elementdef).ordtype in [u32bit,s32bit])
                    )
                    or
                    (
                     (tarraydef(p).lowrange=0) and
                     (tarraydef(p).highrange=3) and
-                    (torddef(tarraydef(p).elementtype.def).typ in [u16bit,s16bit])
+                    (torddef(tarraydef(p).elementdef).ordtype in [u16bit,s16bit])
                    )
                   )
                  )
                  or
                 (
                  (
-                  (tarraydef(p).elementtype.def.deftype=floatdef) and
+                  (tarraydef(p).elementdef.typ=floatdef) and
                   (
                    (tarraydef(p).lowrange=0) and
                    (tarraydef(p).highrange=1) and
-                   (tfloatdef(tarraydef(p).elementtype.def).typ=s32real)
+                   (tfloatdef(tarraydef(p).elementdef).floattype=s32real)
                   )
                  )
                 )
@@ -803,37 +940,37 @@ implementation
            end
          else
            begin
-              is_mmx_able_array:=(p.deftype=arraydef) and
+              is_mmx_able_array:=(p.typ=arraydef) and
                 (
                  (
-                  (tarraydef(p).elementtype.def.deftype=orddef) and
+                  (tarraydef(p).elementdef.typ=orddef) and
                   (
                    (
                     (tarraydef(p).lowrange=0) and
                     (tarraydef(p).highrange=1) and
-                    (torddef(tarraydef(p).elementtype.def).typ in [u32bit,s32bit])
+                    (torddef(tarraydef(p).elementdef).ordtype in [u32bit,s32bit])
                    )
                    or
                    (
                     (tarraydef(p).lowrange=0) and
                     (tarraydef(p).highrange=3) and
-                    (torddef(tarraydef(p).elementtype.def).typ in [u16bit,s16bit])
+                    (torddef(tarraydef(p).elementdef).ordtype in [u16bit,s16bit])
                    )
                    or
                    (
                     (tarraydef(p).lowrange=0) and
                     (tarraydef(p).highrange=7) and
-                    (torddef(tarraydef(p).elementtype.def).typ in [u8bit,s8bit])
+                    (torddef(tarraydef(p).elementdef).ordtype in [u8bit,s8bit])
                    )
                   )
                  )
                  or
                  (
-                  (tarraydef(p).elementtype.def.deftype=floatdef) and
+                  (tarraydef(p).elementdef.typ=floatdef) and
                   (
                    (tarraydef(p).lowrange=0) and
                    (tarraydef(p).highrange=1) and
-                   (tfloatdef(tarraydef(p).elementtype.def).typ=s32real)
+                   (tfloatdef(tarraydef(p).elementdef).floattype=s32real)
                   )
                  )
                 );
@@ -846,7 +983,7 @@ implementation
 
     function def_cgsize(def: tdef): tcgsize;
       begin
-        case def.deftype of
+        case def.typ of
           orddef,
           enumdef,
           setdef:
@@ -860,28 +997,36 @@ implementation
             result := OS_ADDR;
           procvardef:
             begin
-              if tprocvardef(def).is_methodpointer and
-                 (not tprocvardef(def).is_addressonly) then
-                result := OS_64
+              if not tprocvardef(def).is_addressonly then
+                {$if sizeof(pint) = 4}
+                  result:=OS_64
+                {$else} {$if sizeof(pint) = 8}
+                  result:=OS_128
+                {$else}
+                  internalerror(200707141)
+                {$endif} {$endif}
               else
-                result := OS_ADDR;
+                result:=OS_ADDR;
             end;
           stringdef :
             begin
-              if is_ansistring(def) or is_widestring(def) then
+              if is_ansistring(def) or is_wide_or_unicode_string(def) then
                 result := OS_ADDR
               else
                 result:=int_cgsize(def.size);
             end;
           objectdef :
             begin
-              if is_class_or_interface(def) then
+              if is_implicit_pointer_object_type(def) then
                 result := OS_ADDR
               else
                 result:=int_cgsize(def.size);
             end;
           floatdef:
-            result := tfloat2tcgsize[tfloatdef(def).typ];
+            if cs_fp_emulation in current_settings.moduleswitches then
+              result:=int_cgsize(def.size)
+            else
+              result:=tfloat2tcgsize[tfloatdef(def).floattype];
           recorddef :
             result:=int_cgsize(def.size);
           arraydef :
@@ -904,17 +1049,115 @@ implementation
         end;
       end;
 
+    { In Windows 95 era, ordinals were restricted to [u8bit,s32bit,s16bit,bool16bit]
+      As of today, both signed and unsigned types from 8 to 64 bits are supported. }
+    function is_automatable(p : tdef) : boolean;
+      begin
+        result:=false;
+        case p.typ of
+          orddef:
+            result:=torddef(p).ordtype in [u8bit,s8bit,u16bit,s16bit,u32bit,s32bit,
+              u64bit,s64bit,bool16bit,scurrency];
+          floatdef:
+            result:=tfloatdef(p).floattype in [s64currency,s64real,s32real];
+          stringdef:
+            result:=tstringdef(p).stringtype in [st_ansistring,st_widestring,st_unicodestring];
+          variantdef:
+            result:=true;
+          objectdef:
+            result:=tobjectdef(p).objecttype in [odt_interfacecom,odt_dispinterface,odt_interfacecorba];
+        end;
+      end;
 
+
+    {# returns true, if the type passed is a varset }
+    function is_smallset(p : tdef) : boolean;
+      begin
+        result:=(p.typ=setdef) and (p.size in [1,2,4])
+      end;
+
+
+    function is_bareprocdef(pd : tprocdef): boolean;
+      begin
+        result:=(pd.maxparacount=0) and
+                (is_void(pd.returndef) or
+                 (pd.proctypeoption = potype_constructor));
+      end;
+
+
+    function get_common_intdef(ld, rd: torddef; keep_sign_if_equal: boolean): torddef;
+      var
+        llow, lhigh: tconstexprint;
+      begin
+        llow:=rd.low;
+        if llow<ld.low then
+          llow:=ld.low;
+        lhigh:=rd.high;
+        if lhigh<ld.high then
+          lhigh:=ld.high;
+        case range_to_basetype(llow,lhigh) of
+          s8bit:
+            result:=torddef(s8inttype);
+          u8bit:
+            result:=torddef(u8inttype);
+          s16bit:
+            result:=torddef(s16inttype);
+          u16bit:
+            result:=torddef(u16inttype);
+          s32bit:
+            result:=torddef(s32inttype);
+          u32bit:
+            result:=torddef(u32inttype);
+          s64bit:
+            result:=torddef(s64inttype);
+          u64bit:
+            result:=torddef(u64inttype);
+          else
+            begin
+              { avoid warning }
+              result:=nil;
+              internalerror(200802291);
+            end;
+        end;
+        if keep_sign_if_equal and
+           (is_signed(ld)=is_signed(rd)) and
+           (is_signed(result)<>is_signed(ld)) then
+          case result.ordtype of
+            s8bit:
+              result:=torddef(u8inttype);
+            u8bit:
+              result:=torddef(s16inttype);
+            s16bit:
+              result:=torddef(u16inttype);
+            u16bit:
+              result:=torddef(s32inttype);
+            s32bit:
+              result:=torddef(u32inttype);
+            u32bit:
+              result:=torddef(s64inttype);
+            s64bit:
+              result:=torddef(u64inttype);
+          end;
+      end;
+
+
+    function is_valid_univ_para_type(def: tdef): boolean;
+      begin
+        result:=
+          not is_open_array(def) and
+          not is_void(def) and
+          (def.typ<>formaldef);
+      end;
+
+
+    function is_nested_pd(def: tabstractprocdef): boolean;{$ifdef USEINLINE}inline;{$endif}
+      begin
+        result:=def.parast.symtablelevel>normal_function_level;
+      end;
+
+
+    function is_typeparam(def : tdef) : boolean;{$ifdef USEINLINE}inline;{$endif}
+      begin
+        result:=(def.typ=undefineddef);
+      end;
 end.
-{
-  $Log: defutil.pas,v $
-  Revision 1.24  2005/02/14 17:13:06  peter
-    * truncate log
-
-  Revision 1.23  2005/02/03 17:10:21  peter
-    * fix win32 small array parameters
-
-  Revision 1.22  2005/01/10 22:10:26  peter
-    * widestring patches from Alexey Barkovoy
-
-}

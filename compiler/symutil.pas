@@ -1,5 +1,4 @@
 {
-    $Id: symutil.pas,v 1.8 2005/02/14 17:13:09 peter Exp $
     Copyright (c) 1998-2002 by Florian Klaempfl
 
     This unit provides some help routines for symbol handling
@@ -27,36 +26,25 @@ unit symutil;
 interface
 
     uses
-       symbase,symtype,symsym,cclasses;
+       symbase,symtype,symsym;
 
-    function is_funcret_sym(p:tsymentry):boolean;
-
-    { returns true, if sym needs an entry in the proplist of a class rtti }
-    function needs_prop_entry(sym : tsym) : boolean;
+    function is_funcret_sym(p:TSymEntry):boolean;
 
     function equal_constsym(sym1,sym2:tconstsym):boolean;
 
-    procedure count_locals(p:tnamedindexitem;arg:pointer);
 
 implementation
 
     uses
-       globtype,cpuinfo,procinfo,
-       symconst;
+       cclasses,
+       globtype,cpuinfo,procinfo,constexp,
+       symconst,widestr;
 
 
-    function is_funcret_sym(p:tsymentry):boolean;
+    function is_funcret_sym(p:TSymEntry):boolean;
       begin
         is_funcret_sym:=(p.typ in [absolutevarsym,localvarsym,paravarsym]) and
                         (vo_is_funcret in tabstractvarsym(p).varoptions);
-      end;
-
-
-    function needs_prop_entry(sym : tsym) : boolean;
-
-      begin
-         needs_prop_entry:=(sp_published in tsym(sym).symoptions) and
-         (sym.typ in [propertysym,fieldvarsym]);
       end;
 
 
@@ -90,6 +78,12 @@ implementation
                    equal_constsym:=true;
                 end;
              end;
+           constwstring :
+             begin
+               if (sym1.value.len=sym2.value.len) and
+                  (comparewidestrings(sym1.value.valueptr,sym2.value.valueptr)=0) then
+                 equal_constsym:=true;
+             end;
            constreal :
              equal_constsym:=(pbestreal(sym1.value.valueptr)^=pbestreal(sym2.value.valueptr)^);
            constset :
@@ -99,22 +93,5 @@ implementation
         end;
       end;
 
-
-    procedure count_locals(p:tnamedindexitem;arg:pointer);
-      begin
-        { Count only varsyms, but ignore the funcretsym }
-        if (tsym(p).typ in [localvarsym,paravarsym]) and
-           (tsym(p)<>current_procinfo.procdef.funcretsym) and
-           (not(vo_is_parentfp in tabstractvarsym(p).varoptions) or
-            (tstoredsym(p).refs>0)) then
-          inc(plongint(arg)^);
-      end;
-
-
 end.
-{
-  $Log: symutil.pas,v $
-  Revision 1.8  2005/02/14 17:13:09  peter
-    * truncate log
 
-}

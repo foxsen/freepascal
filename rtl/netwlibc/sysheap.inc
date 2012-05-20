@@ -1,5 +1,4 @@
 {
-    $Id: sysheap.inc,v 1.1 2005/02/06 16:57:18 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 2001 by Free Pascal development team
 
@@ -33,7 +32,7 @@ var  HeapSbrkBlockList : ^THeapSbrkBlockList = nil;
 { must return the first address of new data space or nil if fail }
 { for netware all allocated blocks are saved to free them at }
 { exit (to avoid message "Module did not release xx resources") }
-Function SysOSAlloc(size : longint):pointer;
+Function SysOSAlloc(size : ptruint):pointer;
 var P2 : POINTER;
     i  : longint;
     Slept : longint;
@@ -107,7 +106,7 @@ end;
 
 {$define HAS_SYSOSFREE}
 
-procedure SysOSFree(p: pointer; size: ptrint);
+procedure SysOSFree(p: pointer; size: ptruint);
 var i : longint;
 begin
   if HeapSbrkReleased then
@@ -134,7 +133,7 @@ begin
   _free (p);
 end;
 
-function SysOSAlloc(size: ptrint): pointer;
+function SysOSAlloc(size: ptruint): pointer;
 begin
   SysOSAlloc := _Alloc(size,HeapAllocResourceTag);
 end;
@@ -143,14 +142,4 @@ end;
 
 
 
-{
-   $Log: sysheap.inc,v $
-   Revision 1.1  2005/02/06 16:57:18  peter
-     * threads for go32v2,os,emx,netware
-
-   Revision 1.1  2005/02/06 13:06:20  peter
-     * moved file and dir functions to sysfile/sysdir
-     * win32 thread in systemunit
-
-}
 

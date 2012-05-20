@@ -1,5 +1,4 @@
 {
-    $Id: raatt.pas,v 1.19 2005/02/14 17:13:07 peter Exp $
     Copyright (c) 1998-2002 by Carl Eric Codere and Peter Vreman
 
     Does the parsing for the GAS styled inline assembler.
@@ -32,7 +31,7 @@ unit raatt;
       { global }
       globtype,
       { aasm }
-      cpubase,cpuinfo,aasmbase,aasmtai,aasmcpu,
+      cpubase,cpuinfo,aasmbase,aasmtai,aasmdata,aasmcpu,
       { assembler reader }
       rabase,
       rasm,
@@ -52,11 +51,14 @@ unit raatt;
         {------------------ Assembler directives --------------------}
         AS_DB,AS_DW,AS_DD,AS_DQ,AS_GLOBAL,
         AS_ALIGN,AS_BALIGN,AS_P2ALIGN,AS_ASCII,
-        AS_ASCIIZ,AS_LCOMM,AS_COMM,AS_SINGLE,AS_DOUBLE,AS_EXTENDED,
-        AS_DATA,AS_TEXT,AS_END,
+        AS_ASCIIZ,AS_LCOMM,AS_COMM,AS_SINGLE,AS_DOUBLE,AS_EXTENDED,AS_CEXTENDED,
+        AS_DATA,AS_TEXT,AS_INIT,AS_FINI,AS_RVA,AS_END,
         {------------------ Assembler Operators  --------------------}
-        AS_TYPE,AS_SIZEOF,AS_MOD,AS_SHL,AS_SHR,AS_NOT,AS_AND,AS_OR,AS_XOR,AS_NOR,AS_AT,
-        AS_LO,AS_HI);
+        AS_TYPE,AS_SIZEOF,AS_VMTOFFSET,AS_MOD,AS_SHL,AS_SHR,AS_NOT,AS_AND,AS_OR,AS_XOR,AS_NOR,AS_AT,
+        AS_LO,AS_HI,
+        {------------------ Target-specific directive ---------------}
+        AS_TARGET_DIRECTIVE
+        );
 
         tasmkeyword = string[10];
 
@@ -74,9 +76,10 @@ unit raatt;
         '#','{','}','[',']',
         '.byte','.word','.long','.quad','.globl',
         '.align','.balign','.p2align','.ascii',
-        '.asciz','.lcomm','.comm','.single','.double','.tfloat',
-        '.data','.text','END',
-        'TYPE','SIZEOF','%','<<','>>','!','&','|','^','~','@','lo','hi');
+        '.asciz','.lcomm','.comm','.single','.double','.tfloat','.tcfloat',
+        '.data','.text','.init','.fini','.rva','END',
+        'TYPE','SIZEOF','VMTOFFSET','%','<<','>>','!','&','|','^','~','@','lo','hi',
+        'directive');
 
     type
        tattreader = class(tasmreader)
@@ -87,7 +90,8 @@ unit raatt;
          procedure BuildConstantOperand(oper : toperand);
          procedure BuildRealConstant(typ : tfloattype);
          procedure BuildStringConstant(asciiz: boolean);
-         procedure BuildRecordOffsetSize(const expr: string;var offset:aint;var size:aint);
+         procedure BuildRva;
+         procedure BuildRecordOffsetSize(const expr: string;var offset:aint;var size:aint; var mangledname: string; needvmtofs: boolean);
          procedure BuildConstSymbolExpression(allowref,betweenbracket,needofs:boolean;var value:aint;var asmsym:string;var asmsymtyp:TAsmsymtype);
          function BuildConstExpression(allowref,betweenbracket:boolean): aint;
          function Assemble: tlinkedlist;override;
@@ -96,10 +100,13 @@ unit raatt;
          Function is_asmdirective(const s: string):boolean;
          function is_register(const s:string):boolean;virtual;
          function is_locallabel(const s: string):boolean;
+         function is_targetdirective(const s: string): boolean;virtual;
          procedure GetToken;
          function consume(t : tasmtoken):boolean;
          procedure RecoverConsume(allowcomma:boolean);
          procedure handlepercent;virtual;
+         procedure handledollar;virtual;
+         procedure HandleTargetDirective;virtual;
        end;
        tcattreader = class of tattreader;
 
@@ -114,7 +121,7 @@ unit raatt;
       { input }
       scanner,
       { symtable }
-      symbase,symtype,symsym,symtable,
+      symbase,symtype,symsym,symdef,symtable,
 {$ifdef x86}
       rax86,
 {$endif x86}
@@ -123,20 +130,12 @@ unit raatt;
 
 
     procedure tattreader.SetupTables;
-      { creates uppercased symbol tables for speed access }
       var
         i : tasmop;
-        str2opentry: tstr2opentry;
       Begin
-        { opcodes }
-        iasmops:=TDictionary.Create;
-        iasmops.delete_doubles:=true;
+        iasmops:=TFPHashList.create;
         for i:=firstop to lastop do
-          begin
-            str2opentry:=tstr2opentry.createname(upper(gas_op2str[i]));
-            str2opentry.op:=i;
-            iasmops.insert(str2opentry);
-          end;
+          iasmops.Add(upper(gas_op2str[i]),Pointer(PtrInt(i)));
       end;
 
 
@@ -176,18 +175,32 @@ unit raatt;
       end;
 
 
+    procedure tattreader.handledollar;
+      begin
+        c:=current_scanner.asmgetchar;
+        actasmtoken:=AS_DOLLAR;
+      end;
+
     procedure tattreader.handlepercent;
       begin
         c:=current_scanner.asmgetchar;
         actasmtoken:=AS_MOD;
       end;
 
+    function tattreader.is_targetdirective(const s: string): boolean;
+      begin
+        result:=false;
+      end;
+
+    procedure tattreader.handletargetdirective;
+      begin
+      end;
 
     procedure tattreader.GetToken;
       var
         len : longint;
         srsym : tsym;
-        srsymtable : tsymtable;
+        srsymtable : TSymtable;
       begin
         { save old token and reset new token }
         prevasmtoken:=actasmtoken;
@@ -198,20 +211,10 @@ unit raatt;
         while c in [' ',#9] do
          c:=current_scanner.asmgetchar;
         { get token pos }
-{$ifdef arm}
-        if not (c in [#10,#13,';']) then
-          current_scanner.gettokenpos;
-{$else arm}
         if not (c in [#10,#13,'{',';']) then
           current_scanner.gettokenpos;
-{$endif arm}
-
         { Local Label, Label, Directive, Prefix or Opcode }
-{$ifdef arm}
-        if firsttoken and not(c in [#10,#13,';']) then
-{$else arm}
         if firsttoken and not(c in [#10,#13,'{',';']) then
-{$endif arm}
          begin
            firsttoken:=FALSE;
            len:=0;
@@ -244,6 +247,11 @@ unit raatt;
                  { directives are case sensitive!! }
                  if is_asmdirective(actasmpattern) then
                   exit;
+                 if is_targetdirective(actasmpattern) then
+                   begin
+                     actasmtoken:=AS_TARGET_DIRECTIVE;
+                     exit;
+                   end;
                  Message1(asmr_e_not_directive_or_local_symbol,actasmpattern);
                end;
             end;
@@ -264,7 +272,7 @@ unit raatt;
               firsttoken:=true;
               exit;
             end;
-{$ifdef POWERPC}
+{$if defined(POWERPC) or defined(POWERPC64)}
            { some PowerPC instructions can have the postfix -, + or .
              this code could be moved to is_asmopcode but I think
              it's better to ifdef it here (FK)
@@ -277,6 +285,25 @@ unit raatt;
                end
            end;
 {$endif POWERPC}
+{$if defined(ARM)}
+           { Thumb-2 instructions can have a .W postfix to indicate 32bit instructions
+           }
+           case c of
+             '.':
+               begin
+                 actasmpattern:=actasmpattern+c;
+                 c:=current_scanner.asmgetchar;
+
+                 if upcase(c) = 'W' then
+                   begin
+                     actasmpattern:=actasmpattern+c;
+                     c:=current_scanner.asmgetchar;
+                   end
+                 else
+                   internalerror(2010122301);
+               end
+           end;
+{$endif ARM}
            { Opcode ? }
            If is_asmopcode(upper(actasmpattern)) then
             Begin
@@ -315,6 +342,11 @@ unit raatt;
                   end;
                  if is_asmdirective(actasmpattern) then
                   exit;
+                 if is_targetdirective(actasmpattern) then
+                   begin
+                     actasmtoken:=AS_TARGET_DIRECTIVE;
+                     exit;
+                   end;
                  { local label references and directives }
                  { are case sensitive                    }
                  actasmtoken:=AS_ID;
@@ -357,6 +389,11 @@ unit raatt;
                  if actasmpattern = 'SIZEOF' then
                   Begin
                     actasmtoken:=AS_SIZEOF;
+                    exit;
+                  end;
+                 if actasmpattern = 'VMTOFFSET' then
+                  Begin
+                    actasmtoken:=AS_VMTOFFSET;
                     exit;
                   end;
                  if is_register(actasmpattern) then
@@ -573,8 +610,7 @@ unit raatt;
 
              '$' :
                begin
-                 actasmtoken:=AS_DOLLAR;
-                 c:=current_scanner.asmgetchar;
+                 handledollar;
                  exit;
                end;
 
@@ -793,12 +829,13 @@ unit raatt;
             AS_TYPE,
             AS_SIZEOF,
             AS_NOT,
+            AS_VMTOFFSET,
             AS_ID :
               Begin
                 BuildConstSymbolExpression(false,false,false,value,asmsym,asmsymtyp);
                 if asmsym<>'' then
                  begin
-                   if constsize<>sizeof(aint) then
+                   if constsize<>sizeof(pint) then
                     Message(asmr_w_32bit_const_for_address);
                    ConcatConstSymbol(curlist,asmsym,asmsymtyp,value)
                  end
@@ -936,7 +973,7 @@ unit raatt;
      Var
        hl         : tasmlabel;
        commname   : string;
-       lasTSec    : TAsmSectionType;
+       lasTSec    : TAsmSectiontype;
        l1,l2      : longint;
      Begin
        Message1(asmr_d_start_reading,'GNU AS');
@@ -947,7 +984,7 @@ unit raatt;
           SetupTables;
           _asmsorted:=TRUE;
         end;
-       curlist:=TAAsmoutput.Create;
+       curlist:=TAsmList.Create;
        lasTSec:=sec_code;
        { setup label linked list }
        LocalLabelList:=TLocalLabelList.Create;
@@ -993,6 +1030,20 @@ unit raatt;
                Consume(AS_TEXT);
              end;
 
+           AS_INIT:
+             Begin
+               new_section(curList,sec_init,lower(current_procinfo.procdef.mangledname),0);
+               lasTSec:=sec_init;
+               Consume(AS_INIT);
+             end;
+
+           AS_FINI:
+             Begin
+               new_section(curList,sec_fini,lower(current_procinfo.procdef.mangledname),0);
+               lasTSec:=sec_fini;
+               Consume(AS_FINI);
+             end;
+
            AS_DB:
              Begin
                Consume(AS_DB);
@@ -1008,11 +1059,11 @@ unit raatt;
            AS_DQ:
              Begin
                Consume(AS_DQ);
-{$ifdef cpu64bit}
+{$ifdef cpu64bitaddr}
                BuildConstant(8);
-{$else cpu64bit}
+{$else cpu64bitaddr}
                BuildRealConstant(s64comp);
-{$endif cpu64bit}
+{$endif cpu64bitaddr}
              end;
 
            AS_SINGLE:
@@ -1031,6 +1082,12 @@ unit raatt;
              Begin
                Consume(AS_EXTENDED);
                BuildRealConstant(s80real);
+             end;
+
+           AS_CEXTENDED:
+             Begin
+               Consume(AS_CEXTENDED);
+               BuildRealConstant(sc80real);
              end;
 
            AS_GLOBAL:
@@ -1107,7 +1164,7 @@ unit raatt;
                commname:=actasmpattern;
                Consume(AS_ID);
                Consume(AS_COMMA);
-               ConcatLocalBss(commname,BuildConstExpression(false,false));
+               curList.concat(Tai_datablock.Create(commname,BuildConstExpression(false,false)));
                if actasmtoken<>AS_SEPARATOR then
                 Consume(AS_SEPARATOR);
              end;
@@ -1118,7 +1175,7 @@ unit raatt;
                commname:=actasmpattern;
                Consume(AS_ID);
                Consume(AS_COMMA);
-               ConcatGlobalBss(commname,BuildConstExpression(false,false));
+               curList.concat(Tai_datablock.Create_global(commname,BuildConstExpression(false,false)));
                if actasmtoken<>AS_SEPARATOR then
                 Consume(AS_SEPARATOR);
              end;
@@ -1132,6 +1189,19 @@ unit raatt;
              Begin
                Consume(AS_SEPARATOR);
              end;
+
+           AS_RVA:
+             begin
+               { .rva generally applies to systems with COFF output format,
+                 not just Windows. }
+               if not (target_info.system in systems_all_windows) then
+                 Message1(asmr_e_unsupported_directive,token2str[AS_RVA]);
+               Consume(AS_RVA);
+               BuildRva;
+             end;
+
+           AS_TARGET_DIRECTIVE:
+             HandleTargetDirective;
 
            AS_END:
              begin
@@ -1164,7 +1234,7 @@ unit raatt;
                                Parsing Helpers
 *****************************************************************************}
 
-    Procedure tattreader.BuildRecordOffsetSize(const expr: string;var offset:aint;var size:aint);
+    Procedure tattreader.BuildRecordOffsetSize(const expr: string;var offset:aint;var size:aint; var mangledname: string; needvmtofs: boolean);
       { Description: This routine builds up a record offset after a AS_DOT }
       { token is encountered.                                              }
       { On entry actasmtoken should be equal to AS_DOT                     }
@@ -1185,7 +1255,7 @@ unit raatt;
               break;
             end;
          end;
-        if not GetRecordOffsetSize(s,offset,size) then
+        if not GetRecordOffsetSize(s,offset,size,mangledname,needvmtofs) then
          Message(asmr_e_building_record_offset);
       end;
 
@@ -1193,13 +1263,13 @@ unit raatt;
     procedure tattreader.BuildConstSymbolExpression(allowref,betweenbracket,needofs:boolean;var value:aint;var asmsym:string;var asmsymtyp:TAsmsymtype);
       var
         hssymtyp : TAsmSymType;
-        hs,tempstr,expr : string;
+        hs,tempstr,expr,mangledname : string;
         parenlevel : longint;
         l,k : aint;
         errorflag : boolean;
         prevtok : tasmtoken;
         sym : tsym;
-        srsymtable : tsymtable;
+        srsymtable : TSymtable;
         hl  : tasmlabel;
       Begin
         asmsym:='';
@@ -1339,21 +1409,23 @@ unit raatt;
                    tempstr:=actasmpattern;
                    Consume(AS_ID);
                    if actasmtoken=AS_DOT then
-                    BuildRecordOffsetSize(tempstr,k,l)
+                    begin
+                      BuildRecordOffsetSize(tempstr,k,l,mangledname,false);
+                      if mangledname<>'' then
+                        Message(asmr_e_wrong_sym_type);
+                    end
                    else
                     begin
                       searchsym(tempstr,sym,srsymtable);
                       if assigned(sym) then
                        begin
                          case sym.typ of
-                           globalvarsym,
+                           staticvarsym,
                            localvarsym,
                            paravarsym :
                              l:=tabstractvarsym(sym).getsize;
-                           typedconstsym :
-                             l:=ttypedconstsym(sym).getsize;
                            typesym :
-                             l:=ttypesym(sym).restype.def.size;
+                             l:=ttypesym(sym).typedef.size;
                            else
                              Message(asmr_e_wrong_sym_type);
                          end;
@@ -1364,6 +1436,22 @@ unit raatt;
                  end;
                 str(l, tempstr);
                 expr:=expr + tempstr;
+              end;
+            AS_VMTOFFSET:
+              begin
+                Consume(actasmtoken);
+                if actasmtoken<>AS_ID then
+                  Message(asmr_e_type_without_identifier)
+                else
+                  begin
+                    tempstr:=actasmpattern;
+                    consume(AS_ID);
+                    BuildRecordOffsetSize(tempstr,k,l,mangledname,true);
+                    if (mangledname <> '') then
+                      Message(asmr_e_wrong_sym_type);
+                    str(k,tempstr);
+                    expr := expr + tempstr;
+                  end
               end;
             AS_ID:
               Begin
@@ -1383,7 +1471,7 @@ unit raatt;
                     begin
                       CreateLocalLabel(tempstr,hl,false);
                       hs:=hl.name;
-                      hssymtyp:=AT_FUNCTION;
+                      hssymtyp:=AT_LABEL;
                     end
                    else
                     if SearchLabel(tempstr,hl,false) then
@@ -1397,24 +1485,21 @@ unit raatt;
                       if assigned(sym) then
                        begin
                          case sym.typ of
-                           globalvarsym :
-                             hs:=tglobalvarsym(sym).mangledname;
+                           staticvarsym :
+                             hs:=tstaticvarsym(sym).mangledname;
                            localvarsym,
                            paravarsym :
                              Message(asmr_e_no_local_or_para_allowed);
-                           typedconstsym :
-                             hs:=ttypedconstsym(sym).mangledname;
                            procsym :
-                             with Tprocsym(sym) do
-                               begin
-                                 if procdef_count>1 then
-                                   message(asmr_w_calling_overload_func);
-                                 hs:=first_procdef.mangledname;
-                                 hssymtyp:=AT_FUNCTION;
-                               end;
+                             begin
+                               if Tprocsym(sym).ProcdefList.Count>1 then
+                                Message(asmr_w_calling_overload_func);
+                               hs:=tprocdef(tprocsym(sym).ProcdefList[0]).mangledname;
+                               hssymtyp:=AT_FUNCTION;
+                             end;
                            typesym :
                              begin
-                               if not(ttypesym(sym).restype.def.deftype in [recorddef,objectdef]) then
+                               if not(ttypesym(sym).typedef.typ in [recorddef,objectdef]) then
                                 Message(asmr_e_wrong_sym_type);
                              end;
                            else
@@ -1447,9 +1532,14 @@ unit raatt;
                     end;
                    if actasmtoken=AS_DOT then
                     begin
-                      BuildRecordOffsetSize(tempstr,l,k);
-                      str(l, tempstr);
-                      expr:=expr + tempstr;
+                      BuildRecordOffsetSize(tempstr,l,k,hs,false);
+                      if (hs<>'') then
+                        hssymtyp:=AT_FUNCTION
+                      else
+                        begin
+                          str(l, tempstr);
+                          expr:=expr + tempstr;
+                        end
                     end
                    else
                     begin
@@ -1510,7 +1600,7 @@ unit raatt;
          begin
            oper.opr.typ:=OPR_SYMBOL;
            oper.opr.symofs:=l;
-           oper.opr.symbol:=objectlibrary.newasmsymbol(tempstr,AB_EXTERNAL,tempsymtyp);
+           oper.opr.symbol:=current_asmdata.RefAsmSymbol(tempstr);
          end
         else
          begin
@@ -1519,18 +1609,43 @@ unit raatt;
          end;
       end;
 
+    procedure tattreader.BuildRva;
+      var
+       asmsymtyp : TAsmSymType;
+       asmsym: string;
+       value : aint;
+       ai:tai_const;
+      begin
+        repeat
+          case actasmtoken of
+            AS_INTNUM,
+            AS_PLUS,
+            AS_MINUS,
+            AS_LPAREN,
+            AS_ID :
+              Begin
+                BuildConstSymbolExpression(false,false,false,value,asmsym,asmsymtyp);
+                if asmsym<>'' then
+                 begin
+                   ai:=tai_const.create_type_sym(aitconst_rva_symbol,current_asmdata.RefAsmSymbol(asmsym));
+                   ai.value:=value;
+                   curlist.concat(ai);
+                 end
+                else
+                 Message(asmr_e_invalid_symbol_ref);
+              end;
+            AS_COMMA:
+              Consume(AS_COMMA);
+            AS_END,
+            AS_SEPARATOR:
+              break;
+            else
+              begin
+                Message(asmr_e_syn_constant);
+                RecoverConsume(false);
+              end
+          end; { end case }
+        until false;
+      end;
+
 end.
-
-{
-  $Log: raatt.pas,v $
-  Revision 1.19  2005/02/14 17:13:07  peter
-    * truncate log
-
-  Revision 1.18  2005/01/20 17:05:53  peter
-    * use val() for decoding integers
-
-  Revision 1.17  2005/01/19 22:19:41  peter
-    * unit mapping rewrite
-    * new derefmap added
-
-}

@@ -1,10 +1,9 @@
 {
-    $Id: mouse.pp,v 1.4 2005/02/14 17:13:31 peter Exp $
     This file is part of the Free Pascal run time library.
     Copyright (c) 1999-2000 by Florian Klaempfl
     member of the Free Pascal development team
 
-    Mouse unit for linux
+    Mouse unit for OS/2
 
     See the file COPYING.FPC, included in this distribution,
     for details about the copyright.
@@ -18,6 +17,9 @@ unit Mouse;
 interface
 
 {$i mouseh.inc}
+
+const
+  MouseIsVisible: boolean = false;
 
 implementation
 
@@ -69,6 +71,7 @@ begin
 *)
 
   MouDrawPtr (Handle);
+  MouseIsVisible := true;
  end;
 end;
 
@@ -98,7 +101,6 @@ end;
 function SysDetectMouse:byte;
 var
  Buttons: word;
- RC: longint;
  TempHandle: word;
 begin
  MouOpen (nil, TempHandle);
@@ -117,6 +119,7 @@ begin
   begin
    Dec (HideCounter);
    if HideCounter = 0 then MouDrawPtr (Handle);
+   MouseIsVisible := true;
   end;
  end;
 end;
@@ -136,6 +139,7 @@ begin
        PtrRect.cRow := Pred (ScreenHeight);
        PtrRect.cCol := Pred (ScreenWidth);
        MouRemovePtr (PtrRect, Handle);
+       MouseIsVisible := false;
       end;
   end;
  end;
@@ -277,7 +281,7 @@ begin
    WF := Mou_NoWait;
    if (MouReadEventQue (SysEvent, WF, Handle) = 0) then
    begin
-    if PendingMouseHead = @PendingMouseEvent then
+    if PendingMouseHead = @PendingMouseEvent[0] then
                            P := @PendingMouseEvent [MouseEventBufSize - 1] else
     begin
      P := PendingMouseHead;
@@ -299,7 +303,7 @@ begin
        TranslateEvents (SysEvent, Event);
        if Event.Action <> MouseActionMove then
        begin
-        if Q = @PendingMouseEvent then
+        if Q = @PendingMouseEvent[0] then
                   Q := @PendingMouseEvent [MouseEventBufSize - 1] else Dec (Q);
         if MouseEventOrderHead = 0 then
                   MouseEventOrderHead := MouseEventBufSize - 1 else
@@ -348,8 +352,6 @@ begin
 end;
 
 procedure SysGetMouseEvent (var MouseEvent: TMouseEvent);
-var
- Event: TMouEventInfo;
 begin
  if (PendingMouseEvents = 0) or
                        (PendingMouseEventOrder [MouseEventOrderHead] <> 0) then
@@ -363,8 +365,8 @@ begin
   LastMouseEvent := MouseEvent;
  end;
  Inc (PendingMouseHead);
- if longint (PendingMouseHead) = longint (@PendingMouseEvent)
-      + SizeOf (PendingMouseEvent) then PendingMouseHead := @PendingMouseEvent;
+ if PendingMouseHead = @PendingMouseEvent[0]+MouseEventBufsize then
+   PendingMouseHead := @PendingMouseEvent[0];
  Inc (MouseEventOrderHead);
  if MouseEventOrderHead = MouseEventBufSize then MouseEventOrderHead := 0;
  Dec (PendingMouseEvents);
@@ -378,8 +380,8 @@ begin
  begin
   PendingMouseTail^ := MouseEvent;
   Inc (PendingMouseTail);
-  if longint (PendingMouseTail) = longint (@PendingMouseEvent) +
-        SizeOf (PendingMouseEvent) then PendingMouseTail := @PendingMouseEvent;
+  if PendingMouseTail=@PendingMouseEvent[0]+MouseEventBufSize then
+    PendingMouseTail := @PendingMouseEvent[0];
   MouGetNumQueEl (QI, Handle);
   PendingMouseEventOrder [MouseEventOrderTail] := QI.cEvents;
   Inc (MouseEventOrderTail);
@@ -408,9 +410,3 @@ Const
 Begin
   SetMouseDriver(SysMouseDriver);
 end.
-{
-  $Log: mouse.pp,v $
-  Revision 1.4  2005/02/14 17:13:31  peter
-    * truncate log
-
-}
