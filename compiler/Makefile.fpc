@@ -113,6 +113,8 @@ ifndef FPCLANG
 FPCLANG=e
 endif
 
+override OPT= -Xs- -g
+
 # Local options for the compiler only
 ifndef LOCALOPT
 LOCALOPT:=$(OPT)
@@ -124,7 +126,7 @@ RTLOPT:=$(OPT)
 endif
 
 # Make OPT empty. It is copied to LOCALOPT and RTLOPT
-override OPT=
+override OPT= -Xs- -g
 
 # Message files
 MSGFILES=$(wildcard msg/error*.msg)
@@ -655,7 +657,7 @@ ifndef CROSSINSTALL
         $(MAKE) 'FPC=$(BASEDIR)/$(PPCROSSNAME)' 'OPT=$(RTLOPT) $(CROSSOPT)' rtlclean rtl
 # building a native compiler for JVM and embedded targets is not possible
 ifndef NoNativeBinaries
-        $(MAKE) 'FPC=$(BASEDIR)/$(PPCROSSNAME)' 'OPT=$(LOCALOPT) $(CROSSOPT)' cycleclean compiler
+       # $(MAKE) 'FPC=$(BASEDIR)/$(PPCROSSNAME)' 'OPT=$(LOCALOPT) $(CROSSOPT)' cycleclean compiler
 endif
 endif
 

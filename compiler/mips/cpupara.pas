@@ -191,7 +191,7 @@ implementation
         else
          { Return in register }
           begin
-{$ifndef cpu64bit}
+{$ifndef cpu64bitalu}
             if retcgsize in [OS_64,OS_S64] then
              begin
                { high }
@@ -211,7 +211,7 @@ implementation
                paraloc^.size:=OS_32;
              end
             else
-{$endif cpu64bit}
+{$endif cpu64bitalu}
              begin
                paraloc^.loc:=LOC_REGISTER;
                paraloc^.size:=retcgsize;
@@ -317,7 +317,7 @@ implementation
                       end
                     else
                       begin
-                        paraloc^.reference.index := {NR_R18;//}NR_FRAME_POINTER_REG;
+                        paraloc^.reference.index := {NR_R18;//} NR_FRAME_POINTER_REG;
                         paraloc^.reference.offset:=target_info.first_parm_offset+parasize;
                         param_offset[i] := @paraloc^.reference.offset;
                       end;
