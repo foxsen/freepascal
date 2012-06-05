@@ -45,7 +45,7 @@ asm
   sw   $2,temp
   lui   $4,%hi(errno)
   addiu   $4,$4,%lo(errno)
-  jal   $8
+  jalr   $8
   nop
   lw  $8,-4($fp)
   sw  $8,0($2)
@@ -86,7 +86,7 @@ asm
   sw   $2,temp
   lui   $4,%hi(errno)
   addiu   $4,$4,%lo(errno)
-  jal   $8
+  jalr   $8
   nop
   lw  $8,temp
   sw  $8,0($2)
@@ -124,7 +124,7 @@ asm
   sw   $2,temp
   lui   $4,%hi(errno)
   addiu   $4,$4,%lo(errno)
-  jal   $8
+  jalr   $8
   nop
   lw  $8,temp
   sw  $8,0($2)
@@ -163,7 +163,7 @@ asm
   sw   $2,temp
   lui   $4,%hi(errno)
   addiu   $4,$4,%lo(errno)
-  jal   $8
+  jalr   $8
   nop
   lw  $8,temp
   sw  $8,0($2)
@@ -203,7 +203,7 @@ asm
   sw   $2,temp
   lui   $4,%hi(errno)
   addiu   $4,$4,%lo(errno)
-  jal   $8
+  jalr   $8
   nop
   lw  $8,temp
   sw  $8,0($2)
@@ -225,8 +225,7 @@ asm
   move  $a0,$a1
   move  $a1,$a2
   move  $a2,$a3
-  //lw    $a3,16($sp)
-  move  $a3,$8 //register passing is wrong, hack for now
+  lw    $a3,16($fp)
   syscall
   nop
   beq $7,$0,.LDone
@@ -245,7 +244,7 @@ asm
   sw   $2,temp
   lui   $4,%hi(errno)
   addiu   $4,$4,%lo(errno)
-  jal   $8
+  jalr   $8
   nop
   lw  $8,temp
   sw  $8,0($2)
@@ -267,9 +266,9 @@ asm
   move  $a0,$a1
   move  $a1,$a2
   move  $a2,$a3
-  move  $a3, $8
-  
-  sw    $9, 16($sp)
+  lw	$a3,16($fp)
+  lw    $t0,20($fp)
+  sw    $t0,16($sp)
    
   syscall
   nop
@@ -289,7 +288,7 @@ asm
   sw   $2,temp
   lui   $4,%hi(errno)
   addiu   $4,$4,%lo(errno)
-  jal   $8
+  jalr   $8
   nop
   lw  $8,temp
   sw  $8,0($2)
@@ -312,11 +311,11 @@ asm
   move  $a0,$a1
   move  $a1,$a2
   move  $a2,$a3
-  move  $a3, $8
-  
-  sw    $9, 16($sp)
-  lw    $at,0($fp)
-  sw    $at,20($sp)
+  lw	$a3,16($fp)
+  lw    $t0,20($fp)
+  sw    $t0,16($sp)
+  lw    $t0,24($fp)
+  sw    $t0,20($sp)
   syscall
   nop
   beq $7,$0,.LDone
@@ -335,7 +334,7 @@ asm
   sw   $2,temp
   lui   $4,%hi(errno)
   addiu   $4,$4,%lo(errno)
-  jal   $8
+  jalr   $8
   nop
   lw  $8,temp
   sw  $8,0($2)
