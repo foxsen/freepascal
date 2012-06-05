@@ -1340,21 +1340,15 @@ var
   reg : Tsuperregister;
   helplist : TAsmList;
 begin
-  a_reg_alloc(list,NR_STACK_POINTER_REG);
-  //if current_procinfo.framepointer<>NR_STACK_POINTER_REG then
-    a_reg_alloc(list,NR_FRAME_POINTER_REG);
-
   if nostackframe then
     exit;
 
+  a_reg_alloc(list,NR_STACK_POINTER_REG);
+  if (TMIPSProcinfo(current_procinfo).needs_frame_pointer) then
+    a_reg_alloc(list,NR_FRAME_POINTER_REG);
+
   helplist:=TAsmList.Create;
   cgcpu_calc_stackframe_size := LocalSize;
-  { if current_procinfo.framepointer<>NR_STACK_POINTER_REG then
-    list.concat(Taicpu.Op_reg_const_reg(A_P_FRAME, NR_FRAME_POINTER_REG, LocalSize, NR_R31)); }
-  { if current_procinfo.framepointer<>NR_STACK_POINTER_REG then
-    list.concat(Taicpu.Op_reg_reg_const(A_P_SW, NR_FRAME_POINTER_REG, NR_STACK_POINTER_REG, -LocalSize));
-  }
-  
 
   reference_reset(href,0);
   href.base:=NR_STACK_POINTER_REG;
@@ -1363,7 +1357,7 @@ begin
   fmask:=0;
   nextoffset:=TMIPSProcInfo(current_procinfo).floatregstart;
   lastfpuoffset:=LocalSize;
-  for reg := RS_F0 to RS_F30 do
+  for reg := RS_F0 to RS_F30 do { to check: what if F30 is double? }
     begin
       if reg in (rg[R_FPUREGISTER].used_in_proc-paramanager.get_volatile_registers_fpu(pocall_stdcall)) then
         begin
@@ -1401,15 +1395,16 @@ begin
   list.concat(Taicpu.op_const_const(A_P_FMASK,Fmask,-(LocalSize-lastfpuoffset)));
   list.concat(Taicpu.op_none(A_P_SET_NOREORDER));
   list.concat(Taicpu.op_none(A_P_SET_NOMACRO));
+  if (TMIPSProcinfo(current_procinfo).needs_frame_pointer) then
+    list.concat(Taicpu.Op_reg_reg(A_MOVE,NR_FRAME_POINTER_REG,NR_STACK_POINTER_REG));
 
-  list.concat(Taicpu.Op_reg_reg_const(A_ADDIU,NR_FRAME_POINTER_REG,NR_STACK_POINTER_REG,current_procinfo.para_stack_size));
 
   if (-LocalSize >= simm16lo) and (-LocalSize <= simm16hi) then
     list.concat(Taicpu.Op_reg_reg_const(A_ADDIU,NR_STACK_POINTER_REG,NR_STACK_POINTER_REG,-LocalSize))
   else
     begin
-      list.concat(Taicpu.Op_reg_const(A_LI,NR_R3,-LocalSize));
-      list.concat(Taicpu.Op_reg_reg_reg(A_ADD,NR_STACK_POINTER_REG,NR_STACK_POINTER_REG,NR_R3));
+      list.concat(Taicpu.Op_reg_const(A_LI,NR_R1,-LocalSize));
+      list.concat(Taicpu.Op_reg_reg_reg(A_ADD,NR_STACK_POINTER_REG,NR_STACK_POINTER_REG,NR_R1));
     end;
 
   if (cs_create_pic in current_settings.moduleswitches) and
@@ -1417,6 +1412,7 @@ begin
     begin
       current_procinfo.got := NR_GP;
     end;
+
   list.concatList(helplist);
   helplist.Free;
 end;
@@ -1433,7 +1429,7 @@ begin
   stacksize:=current_procinfo.calc_stackframe_size;
    if nostackframe then
      begin
-       list.concat(taicpu.op_reg(A_J, NR_R31));
+       list.concat(taicpu.op_reg(A_JR, NR_R31));
        list.concat(Taicpu.op_none(A_NOP));
        list.concat(Taicpu.op_none(A_P_SET_MACRO));
        list.concat(Taicpu.op_none(A_P_SET_REORDER));
@@ -1469,14 +1465,14 @@ begin
 
        if (-stacksize >= simm16lo) and (-stacksize <= simm16hi) then
          begin
-           list.concat(taicpu.op_reg(A_J, NR_R31));
+           list.concat(taicpu.op_reg(A_JR, NR_R31));
            { correct stack pointer in the delay slot }
            list.concat(Taicpu.Op_reg_reg_const(A_ADDIU, NR_STACK_POINTER_REG, NR_STACK_POINTER_REG, stacksize));
          end
        else
          begin
            a_load_const_reg(list,OS_32,stacksize,NR_R1);
-           list.concat(taicpu.op_reg(A_J, NR_R31));
+           list.concat(taicpu.op_reg(A_JR, NR_R31));
            { correct stack pointer in the delay slot }
            list.concat(taicpu.op_reg_reg_reg(A_ADD,NR_STACK_POINTER_REG,NR_STACK_POINTER_REG,NR_R1));
          end;

@@ -53,14 +53,15 @@ implementation
     uses
       cutils,verbose,systems,
       defutil,
-      cgutils,cgobj;
+      cgutils,cgobj,
+      procinfo,cpupi;
 
     type
-      tparasupregs = array[0..5] of tsuperregister;
+      tparasupregs = array[0..3] of tsuperregister;
       pparasupregs = ^tparasupregs;
     const
-      paraoutsupregs : tparasupregs = (RS_R4, RS_R5, RS_R6, RS_R7, RS_R8, RS_R9);
-      parainsupregs  : tparasupregs = (RS_R4, RS_R5, RS_R6, RS_R7, RS_R8, RS_R9);
+      paraoutsupregs : tparasupregs = (RS_R4, RS_R5, RS_R6, RS_R7);
+      parainsupregs  : tparasupregs = (RS_R4, RS_R5, RS_R6, RS_R7);
 
 
     function TMIPSParaManager.get_volatile_registers_int(calloption : tproccalloption):TCpuRegisterSet;
@@ -71,7 +72,7 @@ implementation
 
     function TMIPSParaManager.get_volatile_registers_fpu(calloption : tproccalloption):TCpuRegisterSet;
       begin
-        result:=[RS_F0..RS_F19,RS_F31];
+        result:=[RS_F0..RS_F19];
       end;
 
 
@@ -88,9 +89,9 @@ implementation
         paraloc:=cgpara.add_location;
         with paraloc^ do
           begin
-            { The six first parameters are passed into registers } {MIPS first four}
+            { The first four parameters are passed into registers } 
             dec(nr);
-            if nr<6 then //MIPSEL nr<6
+            if nr<4 then 
               begin
                 loc:=LOC_REGISTER;
                 register:=newreg(R_INTREGISTER,(RS_R4+nr),R_SUBWHOLE);
@@ -100,7 +101,7 @@ implementation
                 { The other parameters are passed on the stack }
                 loc:=LOC_REFERENCE;
                 reference.index:=NR_STACK_POINTER_REG;
-                reference.offset:=92+(nr-6)*4;
+                reference.offset:=16 + (nr-4)*4;
               end;
             size:=OS_INT;
           end;
@@ -223,9 +224,6 @@ implementation
           end
       end;
 
-    var
-      param_offset:array[0..20] of ^Aint;
-
     procedure TMIPSParaManager.create_paraloc_info_intern(p : tabstractprocdef; side: tcallercallee;paras:tparalist;
                                                            var intparareg,parasize:longint);
       var
@@ -243,7 +241,6 @@ implementation
         for i:=0 to paras.count-1 do
           begin
 
-            param_offset[i] := Nil;
             hp:=tparavarsym(paras[i]);
             { currently only support C-style array of const,
               there should be no location assigned to the vararg array itself }
@@ -293,7 +290,7 @@ implementation
                     begin
                       paraloc^.reference.index := NR_FRAME_POINTER_REG;
                       paraloc^.reference.offset:=target_info.first_parm_offset+parasize;
-                      param_offset[i] := @paraloc^.reference.offset;
+                      TMIPSProcinfo(current_procinfo).needs_frame_pointer := true;
                     end;
                     inc(parasize,align(tcgsize2size[paraloc^.size],sizeof(aint)));
                   end
@@ -306,6 +303,7 @@ implementation
                     paraloc^.loc:=LOC_REGISTER;
                     paraloc^.register:=newreg(R_INTREGISTER,hparasupregs^[intparareg],R_SUBWHOLE);
                     inc(intparareg);
+                    inc(parasize,sizeof(aint));
                   end
                 else
                   begin
@@ -319,7 +317,7 @@ implementation
                       begin
                         paraloc^.reference.index := {NR_R18;//} NR_FRAME_POINTER_REG;
                         paraloc^.reference.offset:=target_info.first_parm_offset+parasize;
-                        param_offset[i] := @paraloc^.reference.offset;
+                        TMIPSProcinfo(current_procinfo).needs_frame_pointer := true;
                       end;
                     { Parameters are aligned at 4 bytes }
                     inc(parasize,align(tcgsize2size[paraloc^.size],sizeof(aint)));
@@ -327,13 +325,8 @@ implementation
                 dec(paralen,tcgsize2size[paraloc^.size]);
               end;
           end;
-        {
-        for i:=0 to paras.count-1 do
-        begin
-          if (side = calleeside) and (param_offset[i] <> nil) then
-            param_offset[i]^ := param_offset[i]^ + parasize - 8;
-        end;
-        }
+          if (parasize < 16) then
+            parasize := 16;
       end;
 
 

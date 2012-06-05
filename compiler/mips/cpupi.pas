@@ -43,6 +43,8 @@ interface
       constructor create(aparent:tprocinfo);override;
       function calc_stackframe_size:longint;override;
       procedure set_first_temp_offset;override;
+     public
+       needs_frame_pointer: boolean;
     end;
 
 implementation
@@ -55,8 +57,9 @@ implementation
     constructor TMIPSProcInfo.create(aparent: tprocinfo);
       begin
         inherited create(aparent);
-        floatregssave:=11;
-        intregssave:=10;
+        floatregssave:=12; { f20-f31 }
+        intregssave:=12;   { r16-r23,r28-r31 }
+        needs_frame_pointer := false;
       end;
 
 
