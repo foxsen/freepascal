@@ -3542,6 +3542,7 @@ cycle:
 ifndef CROSSINSTALL
 	$(MAKE) 'FPC=$(BASEDIR)/$(PPCROSSNAME)' 'OPT=$(RTLOPT) $(CROSSOPT)' rtlclean rtl
 ifndef NoNativeBinaries
+	$(MAKE) 'FPC=$(BASEDIR)/$(PPCROSSNAME)' 'OPT=$(LOCALOPT) $(CROSSOPT)' cycleclean compiler
 endif
 endif
 endif
