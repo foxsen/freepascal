@@ -233,11 +233,19 @@ implementation
         paracgsize   : tcgsize;
         hparasupregs : pparasupregs;
         paralen      : longint;
+	fpparareg    : integer;
+	can_use_float : boolean;
+	reg           : tsuperregister;
+	alignment     : longint;
+	tmp	      : longint;
       begin
+        fpparareg := 0;
+	can_use_float := true;
         if side=callerside then
           hparasupregs:=@paraoutsupregs
         else
           hparasupregs:=@parainsupregs;
+
         for i:=0 to paras.count-1 do
           begin
 
@@ -252,6 +260,8 @@ implementation
                 paraloc^.loc:=LOC_REGISTER;
                 paraloc^.register:=NR_R0;
                 paraloc^.size:=OS_ADDR;
+		{ to check: intparareg? }
+		can_use_float := false;
                 break;
               end;
 
@@ -265,15 +275,33 @@ implementation
               end;
             hp.paraloc[side].reset;
             hp.paraloc[side].size:=paracgsize;
-            hp.paraloc[side].Alignment:=std_param_align;
             paralen:=tcgsize2size[paracgsize];
+            if (paralen > 4) then 
+	      alignment := paralen
+            else
+	      alignment := 4;
+            hp.paraloc[side].Alignment:=alignment;
+	    { check the alignment, mips O32ABI require a nature alignment  }
+	    tmp := align(parasize, alignment) - parasize;
+	    while tmp > 0 do
+              begin
+                inc(intparareg);
+	        inc(parasize,4);
+                dec(tmp,4);
+              end;
+               
             hp.paraloc[side].intsize:=paralen;
+
+	    { any non-float args will disable the use the floating regs }
+	    { up to two fp args }
+	    if (not(paracgsize in [OS_F32, OS_F64])) or (fpparareg = 2) then
+              can_use_float := false;
+
             while paralen>0 do
               begin
                 paraloc:=hp.paraloc[side].add_location;
-                { Floats are passed in int registers,
-                  We can allocate at maximum 32 bits per register }
-                if paracgsize in [OS_64,OS_S64,OS_F32,OS_F64] then
+                { We can allocate at maximum 32 bits per register }
+                if (paracgsize in [OS_64,OS_S64]) or ((paracgsize in [OS_F32,OS_F64]) and not(can_use_float)) then
                   paraloc^.size:=OS_32
                 else
                   paraloc^.size:=paracgsize;
@@ -293,6 +321,7 @@ implementation
                       TMIPSProcinfo(current_procinfo).needs_frame_pointer := true;
                     end;
                     inc(parasize,align(tcgsize2size[paraloc^.size],sizeof(aint)));
+		    inc(intparareg);
                   end
                 { In case of po_delphi_nested_cc, the parent frame pointer
                   is always passed on the stack. }
@@ -300,31 +329,57 @@ implementation
                    (not(vo_is_parentfp in hp.varoptions) or
                     not(po_delphi_nested_cc in p.procoptions)) then
                   begin
-                    paraloc^.loc:=LOC_REGISTER;
-                    paraloc^.register:=newreg(R_INTREGISTER,hparasupregs^[intparareg],R_SUBWHOLE);
-                    inc(intparareg);
-                    inc(parasize,sizeof(aint));
+		    if (can_use_float) then
+                      begin
+                        paraloc^.loc:=LOC_FPUREGISTER;
+                        if (fpparareg = 0) then
+                          reg := RS_F12
+                        else
+                          reg := RS_F14;
+                        if (paraloc^.size = OS_F64) then
+                          begin
+                            paraloc^.register:=newreg(R_FPUREGISTER, reg, R_SUBFD);
+			    inc(fpparareg);
+			    inc(intparareg);
+			    inc(intparareg);
+			    inc(parasize,8);
+                          end
+                        else
+                          begin
+                            paraloc^.register:=newreg(R_FPUREGISTER, reg, R_SUBFS);
+			    inc(fpparareg);
+			    inc(intparareg);
+			    inc(parasize,sizeof(aint));
+                          end;
+                      end
+                    else
+                      begin
+                        paraloc^.loc:=LOC_REGISTER;
+                        paraloc^.register:=newreg(R_INTREGISTER,hparasupregs^[intparareg],R_SUBWHOLE);
+			inc(intparareg);
+			inc(parasize,sizeof(aint));
+                      end;
                   end
                 else
                   begin
                     paraloc^.loc:=LOC_REFERENCE;
                     if side=callerside then
                       begin
-                        paraloc^.reference.index := {NR_R17;//}NR_STACK_POINTER_REG;
+                        paraloc^.reference.index := NR_STACK_POINTER_REG;
                         paraloc^.reference.offset:=parasize;
                       end
                     else
                       begin
-                        paraloc^.reference.index := {NR_R18;//} NR_FRAME_POINTER_REG;
+                        paraloc^.reference.index := NR_FRAME_POINTER_REG;
                         paraloc^.reference.offset:=target_info.first_parm_offset+parasize;
                         TMIPSProcinfo(current_procinfo).needs_frame_pointer := true;
                       end;
-                    { Parameters are aligned at 4 bytes }
                     inc(parasize,align(tcgsize2size[paraloc^.size],sizeof(aint)));
+	    	    inc(intparareg);
                   end;
                 dec(paralen,tcgsize2size[paraloc^.size]);
-              end;
-          end;
+              end; { while }
+          end; {for}
           if (parasize < 16) then
             parasize := 16;
       end;
