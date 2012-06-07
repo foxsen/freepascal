@@ -51,6 +51,7 @@ type
     procedure a_load_const_cgpara(list: tasmlist; size: tcgsize; a: tcgint; const paraloc: TCGPara); override;
     procedure a_load_ref_cgpara(list: tasmlist; sz: tcgsize; const r: TReference; const paraloc: TCGPara); override;
     procedure a_loadaddr_ref_cgpara(list: tasmlist; const r: TReference; const paraloc: TCGPara); override;
+
     procedure a_loadfpu_reg_cgpara(list: tasmlist; size: tcgsize; const r: tregister; const paraloc: TCGPara); override;
     procedure a_loadfpu_ref_cgpara(list: tasmlist; size: tcgsize; const ref: treference; const paraloc: TCGPara); override;
     procedure a_call_name(list: tasmlist; const s: string; weak : boolean); override;
@@ -589,31 +590,29 @@ end;
 
 procedure TCGMIPS.a_load_ref_cgpara(list: tasmlist; sz: TCgSize; const r: TReference; const paraloc: TCGPara);
 var
-  ref:    treference;
-  tmpreg: TRegister;
+  href, href2: treference;
+  hloc: pcgparalocation;
 begin
-  paraloc.check_simple_location;
-  paramanager.allocparaloc(list,paraloc.location);
-  with paraloc.location^ do
+  href := r;
+  hloc := paraloc.location;
+  while assigned(hloc) do
   begin
-    case loc of
-      LOC_REGISTER, LOC_CREGISTER:
-        a_load_ref_reg(list, sz, sz, r, Register);
+    paramanager.allocparaloc(list,hloc);
+    case hloc^.loc of
+      LOC_REGISTER:
+        a_load_ref_reg(list, hloc^.size, hloc^.size, href, hloc^.Register);
+      LOC_FPUREGISTER,LOC_CFPUREGISTER :
+        a_loadfpu_ref_reg(list,hloc^.size,hloc^.size,href,hloc^.register);
       LOC_REFERENCE:
-      begin
-        with Reference do
         begin
-          if (Index = NR_SP) and (Offset < 0) then
-            InternalError(2002081104);
-          reference_reset_base(ref, index, offset, sizeof(aint));
+          reference_reset_base(href2, hloc^.reference.index, hloc^.reference.offset, sizeof(aint));
+          a_load_ref_ref(list, hloc^.size, hloc^.size, href, href2);
         end;
-        tmpreg := GetIntRegister(list, OS_INT);
-        a_load_ref_reg(list, sz, sz, r, tmpreg);
-        a_load_reg_ref(list, sz, sz, tmpreg, ref);
-      end;
       else
-        internalerror(2002081103);
+        internalerror(200408241);
     end;
+    Inc(href.offset, tcgsize2size[hloc^.size]);
+    hloc := hloc^.Next;
   end;
 end;
 

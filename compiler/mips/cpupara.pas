@@ -107,6 +107,7 @@ implementation
           end;
       end;
 
+
     { true if a parameter is too large to copy and only the address is pushed }
     function TMIPSParaManager.push_addr_param(varspez:tvarspez;def : tdef;calloption : tproccalloption) : boolean;
       begin
@@ -118,11 +119,19 @@ implementation
             exit;
           end;
         case def.typ of
-          recorddef,
-          arraydef,
+          recorddef:
+	   begin
+	    //writeln('Struct size=', def.size,'align=', def.alignment, def.TypeName);
+	    result:=false;
+           end;
+          arraydef:
+            result:=true; {(tarraydef(def).highrange>=tarraydef(def).lowrange) or
+                             is_open_array(def) or
+                             is_array_of_const(def) or
+                             is_array_constructor(def);}
           variantdef,
           formaldef :
-            push_addr_param:=true;
+            result:=true;
           objectdef :
             result:=is_object(def);
           stringdef :
@@ -171,6 +180,7 @@ implementation
           end;
         result.size:=retcgsize;
         { Return is passed as var parameter }
+{
         if ret_in_param(def,p.proccalloption) then
           begin
             paraloc:=result.add_location;
@@ -178,6 +188,7 @@ implementation
             paraloc^.size:=retcgsize;
             exit;
           end;
+}
 
         paraloc:=result.add_location;
         { Return in FPU register? }
@@ -195,20 +206,20 @@ implementation
 {$ifndef cpu64bitalu}
             if retcgsize in [OS_64,OS_S64] then
              begin
-               { high }
-               paraloc^.loc:=LOC_REGISTER;
-               if side=callerside then
-                 paraloc^.register:=NR_FUNCTION_RESULT64_HIGH_REG
-               else
-                 paraloc^.register:=NR_FUNCTION_RETURN64_HIGH_REG;
-               paraloc^.size:=OS_32;
                { low }
-               paraloc:=result.add_location;
                paraloc^.loc:=LOC_REGISTER;
                if side=callerside then
                  paraloc^.register:=NR_FUNCTION_RESULT64_LOW_REG
                else
                  paraloc^.register:=NR_FUNCTION_RETURN64_LOW_REG;
+               paraloc^.size:=OS_32;
+               { high }
+               paraloc:=result.add_location;
+               paraloc^.loc:=LOC_REGISTER;
+               if side=callerside then
+                 paraloc^.register:=NR_FUNCTION_RESULT64_HIGH_REG
+               else
+                 paraloc^.register:=NR_FUNCTION_RETURN64_HIGH_REG;
                paraloc^.size:=OS_32;
              end
             else
@@ -230,6 +241,7 @@ implementation
         paraloc      : pcgparalocation;
         i            : integer;
         hp           : tparavarsym;
+	paradef      : tdef;
         paracgsize   : tcgsize;
         hparasupregs : pparasupregs;
         paralen      : longint;
@@ -238,7 +250,10 @@ implementation
 	reg           : tsuperregister;
 	alignment     : longint;
 	tmp	      : longint;
+	hs : string;
       begin
+        if (assigned(current_procinfo) and assigned(current_procinfo.procdef) and assigned(current_procinfo.procdef.procsym)) then 
+          hs:=current_procinfo.procdef.procsym.name;
         fpparareg := 0;
 	can_use_float := true;
         if side=callerside then
@@ -248,39 +263,51 @@ implementation
 
         for i:=0 to paras.count-1 do
           begin
-
             hp:=tparavarsym(paras[i]);
-            { currently only support C-style array of const,
-              there should be no location assigned to the vararg array itself }
+            paradef := hp.vardef;
+
+            { currently only support C-style array of const }
             if (p.proccalloption in [pocall_cdecl,pocall_cppdecl]) and
-               is_array_of_const(hp.vardef) then
+               is_array_of_const(paradef) then
               begin
                 paraloc:=hp.paraloc[side].add_location;
                 { hack: the paraloc must be valid, but is not actually used }
-                paraloc^.loc:=LOC_REGISTER;
-                paraloc^.register:=NR_R0;
-                paraloc^.size:=OS_ADDR;
-		{ to check: intparareg? }
-		can_use_float := false;
+                paraloc^.loc := LOC_REGISTER;
+                paraloc^.register := NR_R0;
+                paraloc^.size := OS_ADDR;
                 break;
               end;
 
-            if push_addr_param(hp.varspez,hp.vardef,p.proccalloption) then
-              paracgsize:=OS_ADDR
+            if (push_addr_param(hp.varspez,paradef,p.proccalloption)) then
+             begin
+                paracgsize := OS_ADDR;
+	    	paralen := tcgsize2size[paracgsize];
+		//writeln(hs);
+             end
             else
               begin
-                paracgsize:=def_cgSize(hp.vardef);
-                if paracgsize=OS_NO then
-                  paracgsize:=OS_ADDR;
-              end;
-            hp.paraloc[side].reset;
-            hp.paraloc[side].size:=paracgsize;
-            paralen:=tcgsize2size[paracgsize];
-            if (paralen > 4) then 
-	      alignment := paralen
+                paracgsize := def_cgsize(paradef);
+                { for things like formaldef }
+                if (paracgsize=OS_NO) then
+                  begin
+                    paracgsize:=OS_ADDR;
+                  end;
+
+                if not is_special_array(paradef) then
+                  paralen := paradef.size
+                else
+                  paralen := tcgsize2size[paracgsize];
+
+               end;
+
+            if (paracgsize in [OS_64, OS_S64, OS_F64]) or (hp.vardef.alignment = 8) then 
+	      alignment := 8
             else
 	      alignment := 4;
+            hp.paraloc[side].reset;
             hp.paraloc[side].Alignment:=alignment;
+            hp.paraloc[side].intsize:=paralen;
+            hp.paraloc[side].size:=paracgsize;
 	    { check the alignment, mips O32ABI require a nature alignment  }
 	    tmp := align(parasize, alignment) - parasize;
 	    while tmp > 0 do
@@ -289,8 +316,6 @@ implementation
 	        inc(parasize,4);
                 dec(tmp,4);
               end;
-               
-            hp.paraloc[side].intsize:=paralen;
 
 	    { any non-float args will disable the use the floating regs }
 	    { up to two fp args }
@@ -306,7 +331,7 @@ implementation
                 else
                   paraloc^.size:=paracgsize;
                 { ret in param? }
-                if vo_is_funcret in hp.varoptions then
+                {if vo_is_funcret in hp.varoptions then
                   begin
                     paraloc^.loc:=LOC_REFERENCE;
                     if side=callerside then
@@ -322,10 +347,10 @@ implementation
                     end;
                     inc(parasize,align(tcgsize2size[paraloc^.size],sizeof(aint)));
 		    inc(intparareg);
+		    //writeln(hs,'funcret',i,' ', parasize);
                   end
-                { In case of po_delphi_nested_cc, the parent frame pointer
-                  is always passed on the stack. }
-                else if (intparareg<=high(tparasupregs)) and
+                // In case of po_delphi_nested_cc, the parent frame pointer is always passed on the stack. 
+                else} if (intparareg<=high(tparasupregs)) and
                    (not(vo_is_parentfp in hp.varoptions) or
                     not(po_delphi_nested_cc in p.procoptions)) then
                   begin
@@ -351,6 +376,7 @@ implementation
 			    inc(intparareg);
 			    inc(parasize,sizeof(aint));
                           end;
+		    //writeln(hs,'fpu',i,' ', parasize);
                       end
                     else
                       begin
@@ -358,11 +384,21 @@ implementation
                         paraloc^.register:=newreg(R_INTREGISTER,hparasupregs^[intparareg],R_SUBWHOLE);
 			inc(intparareg);
 			inc(parasize,sizeof(aint));
+		    //writeln(hs,'REG',i,' ', parasize,'int=',intparareg);
                       end;
                   end
                 else
                   begin
                     paraloc^.loc:=LOC_REFERENCE;
+                    {
+                    if (paradef.typ = floatdef) then
+		      paraloc^.size := int_float_cgsize(paralen)
+                    else
+		      paraloc^.size := int_cgsize(paralen);
+		    if (paralen>8) then 
+		      paraloc^.size := OS_NO;
+                    }
+                      
                     if side=callerside then
                       begin
                         paraloc^.reference.index := NR_STACK_POINTER_REG;
@@ -375,7 +411,15 @@ implementation
                         TMIPSProcinfo(current_procinfo).needs_frame_pointer := true;
                       end;
                     inc(parasize,align(tcgsize2size[paraloc^.size],sizeof(aint)));
-	    	    inc(intparareg);
+                    {
+                    inc(parasize,align(paralen,sizeof(aint)));
+                    while paralen > 0 do
+                      begin
+                        inc(intparareg);
+                        paralen := paralen - 4;
+                      end;
+                    }
+		    //writeln(hs,'REF',i,' ', parasize);
                   end;
                 dec(paralen,tcgsize2size[paraloc^.size]);
               end; { while }
