@@ -914,7 +914,11 @@ unit scandir;
            hs:=current_scanner.readid;
            { C has the special recordalignmax of C_alignment }
            if (hs='C') then
+{$if defined(mips)}
+            current_settings.packrecords:=0
+{$else}
             current_settings.packrecords:=C_alignment
+{$endif}
            else
             if (hs='NORMAL') or (hs='DEFAULT') then
              current_settings.packrecords:=0
